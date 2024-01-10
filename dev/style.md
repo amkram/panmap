@@ -1,31 +1,83 @@
-### Coding Guidelines
+## Coding Guidelines
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**Types** ⏐ &nbsp; [globals](#global-variables
+>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;**Types**: &nbsp; [globals](#global-variables
     )&nbsp;  ▪︎  &nbsp; [declaring](#variable-declaration
     )&nbsp;  ▪︎  &nbsp; [scope](#variable-scope
     )&nbsp;  ▪︎  &nbsp; [parameters](#function-parameters
-)
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ⏐ &nbsp; [auto](#keyword-auto
+    )&nbsp;  ▪︎  &nbsp; [auto](#keyword-auto
     )&nbsp;  ▪︎  &nbsp; [integers](#integers
 )
-
->**Organization** ⏐ &nbsp; [headers](#header-and-source-files
+>
+>**Organization**: &nbsp; [headers](#header-and-source-files
     )&nbsp;  ▪︎  &nbsp; [include guards](#include-guards
     )&nbsp;  ▪︎  &nbsp; [namespaces](#namespaces
 )   
-
->&nbsp;&nbsp;&nbsp;**Formatting** ⏐ &nbsp; [brackets](#header-and-source-files
+>
+>&nbsp;&nbsp;&nbsp;**Formatting**: &nbsp; [brackets](#header-and-source-files
     )&nbsp;  ▪︎  &nbsp; [indentation](#indentation
     )&nbsp;  ▪︎  &nbsp; [line length](#line-length
     )&nbsp;  ▪︎  &nbsp; [case](#case-convention
 )
-
->&nbsp;**Code quality** ⏐ &nbsp; [testing](#testing
+>
+>&nbsp;**Code quality**: &nbsp; [testing](#testing
     )&nbsp;  ▪︎  &nbsp; [documentation](#documentation
     )&nbsp;  ▪︎  &nbsp; [comments](#comments
 )
 ---
-#### Header and source files
+
+### Global variables
+Global variables should almost never be used.
+### Variable declaration
+Initialize variables upon declaration when possible, prefering brace notation for initialization.
+```cpp
+std::vector<int> v; // Bad -- initialize on declaration
+v.push_back(1);
+v.push_back(2);
+
+std::vector<int> v = {1, 2};  // Good -- v initialized (prefer brace notation)
+```
+### Variable scope
+Confine variables to the narrowest scope possible (declare them near their usage). E.g. in a for loop:
+```cpp
+for (int i = 0; i < 100; i++) {
+  int num = 3; // num declared inside loop
+  someFunction(num);
+}
+```
+except when using objects, e.g.:
+```cpp
+Foo f; // outside loop, avoid calling constructor many times
+for (int i = 0; i < 100; i++) {
+    f.doSomething(); 
+}
+```
+### Function parameters
+Pass by reference when possible, except for basic types ( int_*, char, bool, ... ).
+
+Use `const` for all function parameters unless you need to modify them.
+
+Place mutable parameters first in the argument list. E.g., 
+
+```cpp
+void someFunction(mutableType &result, const int32_t newValue) {
+    result.value = newValue;
+}
+```
+### Keyword `auto`  
+Use `auto` sparingly for local variables only. Do not use auto for file-scope or namespace-scope variables, or for class members.
+
+Never initialize an auto-typed variable with a braced initializer list.  
+
+Use `const auto &` in range-based loops, etc., to avoid copying. E.g.
+```cpp
+for (const auto &val : someVector) {
+    // ...
+}
+```
+### Integers
+`<cstdint>` defines types like `int16_t`, `uint32_t`, `int64_t`, etc. You should always use those in preference to `short`, `unsigned long long` and the like, when you need a guarantee on the size of an integer. Of the C integer types, only `int` should be used. When in doubt, `int32_t` is safe.
+
+### Header and source files
 Use header files (`.hpp`) for function declarations with definitions in a corresponding `.cpp` file. Only declare functions in headers that are exposed in the namespace. 
 
 E.g., `pmi.hpp` declares three functions in the `pmi` namespace:
@@ -59,15 +111,15 @@ void pmi::write(std::ofstream &fout, const seedIndex &index, const Tree *T) {
 void pmi::load(seedIndex &index, const Node *root, const std::ifstream &indexFile) {
 }
 ```
-#### Include guards
+### Include guards
 Use the `#pragma once` directive at the top of all header files. Prefer this over `#ifndef` include guards.
-#### Namespaces
+### Namespaces
 Encapsulate related functionality and types into namespaces as appropriate. 
 
 Employ `using namespace foo;` directives judiciously (generally avoid).
 
 ---
-#### Brackets
+### Brackets
 Use attached (same-line) braces for `if` statements, function definitions, etc.
 
 Put a space between keywords `for`, `while`, etc. and their opening parentheses. No spaces after a function name and opening parentheses. E.g.,
@@ -87,73 +139,18 @@ class Foo() // brace on next line
     // ...
 }
 ```
-#### Indentation
+### Indentation
 Indent with four spaces.
-#### Line Length
+### Line Length
 No strict limit, but try to keep lines short (under ~100 characters).
-#### Case convention
+### Case convention
 Use `camelCase` for names of function, variables, and data members.
 
 Use lowercase for namespaces, preferring short names.
 
 ---
 
-#### Global variables
-Global variables should almost never be used.
-#### Variable declaration
-Initialize variables upon declaration when possible, prefering brace notation for initialization.
-```cpp
-std::vector<int> v; // Bad -- initialize on declaration
-v.push_back(1);
-v.push_back(2);
-
-std::vector<int> v = {1, 2};  // Good -- v initialized (prefer brace notation)
-```
-#### Variable scope
-Confine variables to the narrowest scope possible (declare them near their usage). E.g. in a for loop:
-```cpp
-for (int i = 0; i < 100; i++) {
-  int num = 3; // num declared inside loop
-  someFunction(num);
-}
-```
-except when using objects, e.g.:
-```cpp
-Foo f; // outside loop, avoid calling constructor many times
-for (int i = 0; i < 100; i++) {
-    f.doSomething(); 
-}
-```
-#### Function parameters
-Pass by reference when possible, except for basic types ( int_*, char, bool, ... ).
-
-Use `const` for all function parameters unless you need to modify them.
-
-Place mutable parameters first in the argument list. E.g., 
-
-```cpp
-void someFunction(mutableType &result, const int32_t newValue) {
-    result.value = newValue;
-}
-```
----
-#### Keyword `auto`  
-Use `auto` sparingly for local variables only. Do not use auto for file-scope or namespace-scope variables, or for class members.
-
-Never initialize an auto-typed variable with a braced initializer list.  
-
-Use `const auto &` in range-based loops, etc., to avoid copying. E.g.
-```cpp
-for (const auto &val : someVector) {
-    // ...
-}
-```
-#### Integers
-`<cstdint>` defines types like `int16_t`, `uint32_t`, `int64_t`, etc. You should always use those in preference to `short`, `unsigned long long` and the like, when you need a guarantee on the size of an integer. Of the C integer types, only `int` should be used. When in doubt, `int32_t` is safe.
-
----
-
-#### Testing  
+### Testing  
 We use **`boost::unit_test`** for testing. Place tests in the `src/test` directory with naming scheme `[name].test.cpp`. Place data files used in tests in `src/test/data`. The `data` directory is copied to `build` during compilation, so use relative paths like `data/[filename]` to load data in tests.
 
 Example test file:
@@ -198,7 +195,7 @@ BOOST_AUTO_TEST_CASE(integrate_fooLogic) {
 // more test cases... 
 ```
 
-#### Documentation  
+### Documentation  
 Use [Doxygen](https://www.mitk.org/images/1/1c/BugSquashingSeminars$2013-07-17-DoxyReference.pdf) syntax (Javadoc style) to write comments documenting all **header files**, **public and namespace functions**, and **anything else** that is likely to be used often or by others.
 
 Example documentation of a struct:
@@ -245,10 +242,6 @@ Some examples of formatting Doxygen comments:
 */
 int32_t myFunction();
 ```
-
-
-
-
 
 #### Comments
 
