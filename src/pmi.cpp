@@ -358,7 +358,7 @@ void buildHelper(mutableTreeData &data, seedIndex &index, Tree *T, const Node *n
     applyMutations(data, blockMutData, nucMutData, T, node, globalCoords);
 
     /* Use the current state of mutableTreeData to decode node's sequence. */
-    std::string currNodeSequence = tree::getAlignedSequence(data, T, node, true);
+    std::string currNodeSequence = tree::getStringFromCurrData(data, T, node, true);
 
     /* Find ranges overlapping mutations at this node. */
     std::vector<range_t> affectedRanges = getAffectedRanges(data, blockMutData, nucMutData, currNodeSequence, T, k, globalCoords);
