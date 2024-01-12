@@ -29,7 +29,7 @@ std::string tree::getConsensus(Tree *T) {
 // pass by value bc we need to modify sequence object (and not persist changes) before getting nt string
 std::string tree::getAlignedSequence(mutableTreeData data, Tree *T, const Node *node, const bool aligned) {
     // T should be const but [] operator on T->sequenceInverted is non-const
-    if(T->rotationIndexes.find(node->identifier) != T->rotationIndexes.end()) {
+    if(T->rotationIndexes.find(node->identifier) != T->rotationIndexes.end() && T->rotationIndexes[node->identifier] != 0) {
         int ctr = -1, rotInd = 0;
         for(size_t i = 0; i < data.blockExists.size(); i++) {
             if(data.blockExists[i].first) {
