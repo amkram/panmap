@@ -16,7 +16,7 @@ namespace tree {
     typedef std::tuple<int32_t, int32_t, int32_t> range_t;
 
     struct mutableTreeData {
-        // These fields are persistent and mutated at each node
+        // These fields are intendet to be mutated at each node during a DFS
         sequence_t sequence; // the main object encoding the MSA
         std::vector<kmer_t> seeds; // dynamic vector of seeds in each node's sequence
         std::unordered_map<std::string, bool> variableSeeds; // seeds in the consensus that mutate at least once
@@ -28,7 +28,10 @@ namespace tree {
    
     void removeIndices(std::vector<kmer_t>& v, std::stack<int32_t>& rm);
     std::string getConsensus(Tree *T);
-    std::string getAlignedSequence(mutableTreeData data, Tree *T, const Node *node, const bool aligned);
+
+    std::unordered_map<std::string, std::string> getAllNodeStrings(Tree *T);
+    std::string getStringFromCurrData(mutableTreeData data, Tree *T, const Node *node, const bool aligned);
+
     size_t getGlobalCoordinate(const int blockId, const int nucPosition, const int nucGapPosition, const globalCoords_t &globalCoords);
     void setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T);
 }

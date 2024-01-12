@@ -43,7 +43,7 @@ add_dependencies(panmap libminimap2.a)
 if(OPTION_BUILD_TESTS)
     get_filename_component(main_src src/panmap.cpp ABSOLUTE)
     list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
-    add_executable(tests ${PANMAP_SRCS})
+    add_executable(tests ${PANMAP_SRCS} "src/test/main.test.cpp" "src/test/pmi.test.cpp" "src/test/seed.test.cpp" "src/test/tree.test.cpp") 
     add_dependencies(tests libminimap2.a)
 endif(OPTION_BUILD_TESTS)
 

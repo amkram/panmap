@@ -26,9 +26,41 @@ std::string tree::getConsensus(Tree *T) {
     }
     return consensus;
 }
+
+void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings, mutableTreeData &data, Tree *T, const Node *node, globalCoords_t &globalCoords) {
+    /*  Mutate with block and nuc mutations */
+    blockMutData_t blockMutData;
+    nucMutData_t nucMutData;
+    applyMutations(data, blockMutData, nucMutData, T, node, globalCoords);
+
+    /* Use current state of mutableTreeData to decode node's sequence */
+    std::string seq = tree::getStringFromCurrData(data, T, node, true);
+
+    strings[node->identifier] = seq;
+
+    /* Recursive step */
+    for(Node* child: node->children){
+        getAllStringsHelper(strings, data, T, child, globalCoords);
+    }
+
+    /* Undo mutations when backtracking */
+    pmi::seedIndex blank;
+    undoMutations(data, blank, T, node, blockMutData, nucMutData);
+}
+std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
+    std::unordered_map<std::string, std::string> strings;
+    tree::mutableTreeData data;
+    tree::globalCoords_t globalCoords;
+    setup(data, globalCoords, T);
+
+    getAllStringsHelper(strings, data, T, T->root, globalCoords);
+
+    return strings;
+}
 // pass by value bc we need to modify sequence object (and not persist changes) before getting nt string
-std::string tree::getAlignedSequence(mutableTreeData data, Tree *T, const Node *node, const bool aligned) {
+std::string tree::getStringFromCurrData(mutableTreeData data, Tree *T, const Node *node, const bool aligned) {
     // T should be const but [] operator on T->sequenceInverted is non-const
+    // the below line includes  ( && rotationIndexes[root->identifier] != 0 ). In panmat lib, this behavior is different in getFasta vs getStringFromReference? 
     if(T->rotationIndexes.find(node->identifier) != T->rotationIndexes.end() && T->rotationIndexes[node->identifier] != 0) {
         int ctr = -1, rotInd = 0;
         for(size_t i = 0; i < data.blockExists.size(); i++) {
