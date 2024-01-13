@@ -1,6 +1,7 @@
 #include "tree.hpp"
 #include "pmi.hpp"
 #include "seed.hpp"
+#include <cmath>
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -274,4 +275,125 @@ size_t tree::getGlobalCoordinate(const int blockId, const int nucPosition, const
         return globalCoords[blockId].first[nucPosition].first;
     }
     return globalCoords[blockId].first[nucPosition].second[nucGapPosition];
+}
+
+static int getIndexFromNucleotide(char nuc) {
+    switch(nuc) {
+        case 'A':
+            return 0;
+        case 'C':
+            return 1;
+        case 'G':
+            return 2;
+        case 'T':
+            return 3;
+        case '*':
+            return 4;
+        default:
+            return 5;
+    }
+    return 5;
+}
+
+void tree::fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream* infptr) {
+    if (infptr != nullptr) {
+        // read mutation matrix from file if provided
+        std::string line;
+        int idx = 0;
+        while(getline(*infptr, line)) {
+            std::vector<double> probs;
+            std::vector<std::string> fields;
+            stringSplit(line, ' ', fields);
+            for (const auto& f : fields) {
+                probs.push_back(std::stod(f));
+            }
+            if (idx < 4) {
+                mutMat.submat[idx] = move(probs);
+            } else if (idx == 4) {
+                mutMat.insmat = move(probs);
+            } else {
+                mutMat.delmat = move(probs);
+            }
+            idx++;
+        }
+        return;
+    }
+
+    // build mutation matrix from aligned sequences on tree
+    std::unordered_map<std::string, std::string> alignedSequences = getAllNodeStrings(T);
+    for (const auto& sequence : alignedSequences) {
+        std::string parentId;
+        if (T->allNodes[sequence.first]->parent == nullptr || T->allNodes[sequence.first]->nucMutation.size() == 0) {
+            continue;
+        } else {
+            parentId = T->allNodes[sequence.first]->parent->identifier;
+        }
+
+        const std::string& curSeq = sequence.second;
+        const std::string& parSeq = alignedSequences[parentId];
+        size_t insLen = 0;
+        size_t delLen = 0;
+
+        for (size_t i = 0; i < parSeq.size(); i++) {
+            if (parSeq[i] == '-' && curSeq[i] == '-') {
+                continue;
+            } else if (parSeq[i] != '-' && curSeq[i] == '-') {
+                delLen++;
+                if (insLen > 0) {
+                    if (insLen > mutMat.insmat.size() - 1) {
+                        mutMat.insmat.resize(insLen + 1);
+                    }
+                    mutMat.insmat[insLen]++;
+                    mutMat.total_insmut++;
+                    insLen = 0;
+                }
+            } else if (parSeq[i] == '-' && curSeq[i] != '-') {
+                insLen++;
+                if (delLen > 0) {
+                    if (delLen > mutMat.delmat.size() - 1) {
+                        mutMat.delmat.resize(delLen + 1);
+                    }
+                    mutMat.delmat[delLen]++;
+                    mutMat.total_delmut++;
+                    delLen = 0;
+                }
+            } else {
+                if (insLen > mutMat.insmat.size() - 1) {
+                    mutMat.insmat.resize(insLen + 1);
+                }
+                mutMat.insmat[insLen]++;
+                mutMat.total_insmut++;
+                insLen = 0;
+
+                if (delLen > mutMat.delmat.size() - 1) {
+                    mutMat.delmat.resize(delLen + 1);
+                }
+                mutMat.delmat[delLen]++;
+                mutMat.total_delmut++;
+                delLen = 0;
+
+                int parNucIdx = getIndexFromNucleotide(parSeq[i]);
+                int curNucIdx = getIndexFromNucleotide(curSeq[i]);
+                if (parNucIdx > 3 || curNucIdx > 3) { continue; }
+                mutMat.submat[parNucIdx][curNucIdx]++;
+                mutMat.total_submuts[parNucIdx]++;
+            }
+        }
+    }
+
+
+    // insertion
+    for (auto i = 0; i < mutMat.insmat.size(); ++i) {
+        mutMat.insmat[i] = -10 * log10f64x(mutMat.insmat[i] / mutMat.total_insmut);
+    }
+    // deletion
+    for (auto i = 0; i < mutMat.delmat.size(); ++i) {
+        mutMat.delmat[i] =  -10 * log10f64x(mutMat.delmat[i] / mutMat.total_delmut);
+    }
+    // substitution
+    for (auto i = 0; i < 4; i++) {
+        for (auto j = 0; j < 4; j++) {
+            mutMat.submat[i][j] = -10 * log10f64x(mutMat.submat[i][j] / mutMat.total_submuts[i]);
+        }
+    }
 }
