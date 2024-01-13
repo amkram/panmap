@@ -1,6 +1,9 @@
 #include "pmi.hpp"
 #include "tree.hpp"
 #include "seed.hpp"
+#include <iostream>
+#include <sstream>
+
 
 using namespace seed;
 using namespace pmi;
