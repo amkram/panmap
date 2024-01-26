@@ -295,31 +295,7 @@ static int getIndexFromNucleotide(char nuc) {
     return 5;
 }
 
-void tree::fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream* infptr) {
-    if (infptr != nullptr) {
-        // read mutation matrix from file if provided
-        std::string line;
-        int idx = 0;
-        while(getline(*infptr, line)) {
-            std::vector<double> probs;
-            std::vector<std::string> fields;
-            stringSplit(line, ' ', fields);
-            for (const auto& f : fields) {
-                probs.push_back(std::stod(f));
-            }
-            if (idx < 4) {
-                mutMat.submat[idx] = move(probs);
-            } else if (idx == 4) {
-                mutMat.insmat = move(probs);
-            } else {
-                mutMat.delmat = move(probs);
-            }
-            idx++;
-        }
-        return;
-    }
-
-    // build mutation matrix from aligned sequences on tree
+void buildMutationMatrices(mutationMatrices& mutMat, Tree* T) {
     std::unordered_map<std::string, std::string> alignedSequences = getAllNodeStrings(T);
     for (const auto& sequence : alignedSequences) {
         std::string parentId;
@@ -381,7 +357,6 @@ void tree::fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream
         }
     }
 
-
     // insertion
     for (auto i = 0; i < mutMat.insmat.size(); ++i) {
         mutMat.insmat[i] = -10 * log10f64x(mutMat.insmat[i] / mutMat.total_insmut);
@@ -396,4 +371,69 @@ void tree::fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream
             mutMat.submat[i][j] = -10 * log10f64x(mutMat.submat[i][j] / mutMat.total_submuts[i]);
         }
     }
+}
+
+void tree::printMutationMatrices(Tree* T, std::ofstream* ofptr) {
+    mutationMatrices mutMat = mutationMatrices();
+
+    buildMutationMatrices(mutMat, T);
+
+    if (ofptr == nullptr) {
+        for (const auto& row : mutMat.submat) {
+            for (const auto& prob : row) {
+                std::cout << prob << " ";
+            }
+            std::cout << std::endl;
+        }
+        for (const auto& prob : mutMat.insmat) {
+            std::cout << prob << " ";
+        }
+        std::cout << std::endl;
+        for (const auto& prob : mutMat.delmat) {
+            std::cout << prob << " ";
+        }
+    } else {
+        for (const auto& row : mutMat.submat) {
+            for (const auto& prob : row) {
+                *ofptr << prob << " ";
+            }
+            *ofptr << "\n";
+        }
+        for (const auto& prob : mutMat.insmat) {
+            *ofptr << prob << " ";
+        }
+        *ofptr << "\n";
+        for (const auto& prob : mutMat.delmat) {
+            *ofptr << prob << " ";
+        }
+    }
+    
+}
+
+void tree::fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream* infptr) {
+    if (infptr != nullptr) {
+        // read mutation matrix from file if provided
+        std::string line;
+        int idx = 0;
+        while(getline(*infptr, line)) {
+            std::vector<double> probs;
+            std::vector<std::string> fields;
+            stringSplit(line, ' ', fields);
+            for (const auto& f : fields) {
+                probs.push_back(std::stod(f));
+            }
+            if (idx < 4) {
+                mutMat.submat[idx] = move(probs);
+            } else if (idx == 4) {
+                mutMat.insmat = move(probs);
+            } else {
+                mutMat.delmat = move(probs);
+            }
+            idx++;
+        }
+        return;
+    } else {
+        buildMutationMatrices(mutMat, T);
+    }
+
 }

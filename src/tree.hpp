@@ -56,6 +56,9 @@ namespace tree {
     size_t getGlobalCoordinate(const int blockId, const int nucPosition, const int nucGapPosition, const globalCoords_t &globalCoords);
     void setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T);
 
-    // Fill mutation matrices by traversing through all parent-child pairs or reading in from file if mutation matrices precomputed
+    // Fill mutation matrices from tree or file
     void fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream* infptr=nullptr);
+
+    // Build mutation matrices by traversing through all parent-child pairs
+    void printMutationMatrices(Tree* T, std::ofstream* outfptr=nullptr);
 }
