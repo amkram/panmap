@@ -36,5 +36,5 @@ namespace genotype {
     };
 
     pair< vector<VariationSite>, pair<size_t, size_t> > getVariantSites(std::ifstream& fin, const mutationMatrices& mutMat);
-    void printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mutMat);
+    void printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize);
 }
