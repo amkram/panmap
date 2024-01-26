@@ -263,7 +263,7 @@ int parse_readbases(
     regex snp_regex("([.,]|[ACGTacgt*])");
     regex extra_regex("\\^.{1}|\\$");
     readbase_string = regex_replace(readbase_string, extra_regex, "");
-    
+
     string snp_errs, ins_errs, del_errs;
     size_t cur_start = 0, cur_idx = 0;
     size_t indel_size, indel_size_len, indel_size_idx;
@@ -357,7 +357,6 @@ static void printVCFLine(const VariationSite& site) {
     string refAllele;
     int gt;
     
-    // int quality = site.likelihoods[ref_nuc_idx];
 
     string quality;
     if (ref_nuc_idx == 5) {
@@ -468,7 +467,7 @@ static void printVCFLine(const VariationSite& site) {
     cout << pl[pl.size() - 1] << endl;
 }
 
-void genotype::printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mutMat) {
+void genotype::printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize) {
     pair< vector<VariationSite>, pair<size_t, size_t> > variantSites = getVariantSites(fin, mutMat);
     const vector<VariationSite> candidateVariants = variantSites.first;
     if (candidateVariants.empty()) {
@@ -490,11 +489,11 @@ void genotype::printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mut
             continue;
         }
 
-        // if (curSite.most_probable_idx == (curSite.site_info >> 3)) {
-        //     continue;
-        // } // temporary
+        if (variantOnly && curSite.most_probable_idx == (curSite.site_info >> 3)) {
+            continue;
+        }
 
-        if (curSite.ref_position > variantSites.second.first + 100 && curSite.ref_position < variantSites.second.second - 100) {
+        if (curSite.ref_position >= variantSites.second.first + maskSize && curSite.ref_position <= variantSites.second.second - maskSize) {
             printVCFLine(curSite);
         }
     }
