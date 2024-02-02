@@ -43,8 +43,9 @@ struct kmer_t {
 
     std::string seq;
     int32_t pos;  // start position in consensus MSA
+    int32_t rpos; // pos on reference (placement dependent)
     int32_t idx;  // index of kmer in vector used in indexing DFS
-    int32_t pos2;
+    int32_t qpos; // query pos
     bool reversed;
     int32_t gappedEnd;
 
