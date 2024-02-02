@@ -4,7 +4,6 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <iostream>
-#include <json/json.h>
 #include <filesystem>
 #include <tbb/concurrent_unordered_map.h>
 #include <tbb/concurrent_vector.h>
@@ -119,6 +118,27 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
     BOOST_TEST(
 		syncmerize(d, 6, 3, false, true, 0) == ret_d
     );
+}
+
+BOOST_AUTO_TEST_CASE(_jkmerize) {
+
+/* should pick syncmers correctly */
+    std::string a = "AAAAAABCGCGCGCGCGCGGCDSJHFDJHDJFHJJJEEEOOOIOIIOAISOIFAPSNFAJKSBNFKJWRBKJVBSAKLJDECNKDBCJBDEFBBAAAAAABB";
+    
+    
+		std::vector<kmer_t> syncmers = syncmerize(a, 6, 3, true, false, 0);
+    for (const auto &s : syncmers) {
+        std::cout << s.seq << "@" << s.pos << "\n";
+    }
+    std::cout << "jk:\n";
+    std::vector<jkmer> jkmers = jkmerize(syncmers, 3);
+    for (const auto &j : jkmers) {
+        std::cout << j.seq << "@";
+        for (const auto &p : j.positions) {
+            std::cout << p << " ";
+        }
+        std::cout << "\n";
+    }
 }
 
 // template<>
