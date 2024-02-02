@@ -10,6 +10,7 @@ using namespace pmi;
 using namespace PangenomeMAT;
 using namespace tree;
 
+
 /* Helpers */
 bool compareTuples(const range_t &a, const range_t &b) {
     return std::get<0>(a) < std::get<0>(b);
@@ -88,7 +89,16 @@ std::vector<range_t> getAffectedRanges(mutableTreeData &data, const blockMutData
     for (const auto &p : blockMutData) { // when a block turns on or off, seeds should be recomputed
         const int32_t blockId = std::get<0>(p);
         int32_t blockStart = tree::getGlobalCoordinate(blockId, 0, -1, globalCoords);
-        affectedRanges.push_back(std::tuple(blockStart, std::min(blockStart + k, (int32_t) T->blocks[std::get<0>(p)].consensusSeq.size()), blockId));
+        auto gc1 = globalCoords[blockId].first;
+        auto bs1 = gc1[gc1.size() - 1].first;
+        auto bs2 = gc1[gc1.size() - 1].second;
+        int32_t blockStop = 0;
+        if (bs2.size() > 0) {
+            blockStop = bs2[bs2.size() - 1];
+        } else {
+            blockStop = bs1;
+        }
+        affectedRanges.push_back(std::tuple(blockStart, blockStop, blockId));
     }
     return affectedRanges;
 }
@@ -97,6 +107,9 @@ std::vector<kmer_t> getUniqueSeeds(const std::string &seq, const int32_t k, cons
     std::set<kmer_t> seedSet(seedVec.begin(), seedVec.end());
     seedVec.assign(seedSet.begin(), seedSet.end());
     return seedVec;
+}
+std::vector<kmer_t> getAllSeeds(const std::string &seq, const int32_t k, const int32_t s) {    
+    return seed::syncmerize(seq, k, s, false, true, 0);
 }
 void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutData_t &nucMutData, Tree *T, const Node *node, const globalCoords_t &globalCoords) {
 
@@ -246,26 +259,27 @@ void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutD
         }
     }
 }
-void discardSeeds(std::vector<kmer_t> &seeds, std::unordered_map<std::string, kmer_t> &newSeeds, seedIndex &index, const std::vector<range_t>& B, const std::string &seq, const std::string nid, const size_t k) {
+void discardSeeds(std::vector<kmer_t> &seeds, std::vector<kmer_t> &newSeeds, seedIndex &index, const std::vector<range_t>& B, const std::string &seq, const std::string nid, const size_t k) {
 
-    auto cmp = [](kmer_t a, kmer_t b) { return a.idx > b.idx; };
+    auto cmp = [](kmer_t a, kmer_t b) { return a.idx > b.idx;  };
     std::set<kmer_t, decltype(cmp)> dels(cmp);
 
     for (int32_t i = 0; i < seeds.size(); i++) {
         kmer_t &s = seeds[i];
         for (int32_t j = 0; j < B.size(); j++) {
             const auto &b = B[j];
-            if (std::get<0>(b)> s.pos) {
+            if (std::get<0>(b) > s.pos) {
                 break;
             } else if (s.gappedEnd <= std::get<1>(b)) {
-                auto it = newSeeds.find(s.seq);
-                if (it == newSeeds.end()) {
-                    s.idx = i;
+                auto it = std::find(newSeeds.begin(), newSeeds.end(), s);
+                s.idx = i;
+                if (it == newSeeds.end() || it->pos != s.pos) {
                     dels.insert(s);
                 } else {
                     newSeeds.erase(it);
-                    s.pos = it->second.pos;
-                    s.gappedEnd = it->second.gappedEnd;
+                    s.pos = it->pos;
+                    s.gappedEnd = it->gappedEnd;
+                    s.idx = i;
                 }
             }
         }
@@ -287,6 +301,7 @@ void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T, const Node 
         blockExists[std::get<0>(mutation)].first = std::get<1>(mutation);
         blockStrand[std::get<0>(mutation)].first = std::get<2>(mutation);
     }
+
     // Undo nuc mutations when current node and its subtree have been processed
     for(auto it = nucMutData.rbegin(); it != nucMutData.rend(); it++) {
         auto mutation = *it;
@@ -306,13 +321,14 @@ void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T, const Node 
         }
     }
 }
-void addSeeds(std::vector<kmer_t> &seeds, seedIndex &index, const std::string nodeId, const std::unordered_map<std::string, kmer_t> &newSeeds) {
+
+void addSeeds(std::vector<kmer_t> &seeds, seedIndex &index, const std::string nodeId, const std::vector<kmer_t> &newSeeds) {
     for (auto &s : newSeeds) {
-        seeds.push_back(s.second);
-        index.insertions[nodeId].push_back(s.second);
+        seeds.push_back(s);
+        index.insertions[nodeId].push_back(s);
     }
 }
-void recomputeSeeds(mutableTreeData &data, std::unordered_map<std::string, kmer_t> &newSeeds, const std::vector<range_t> &ranges, const std::string &sequence, int32_t k, int32_t s) {
+void recomputeSeeds(mutableTreeData &data, std::vector<kmer_t> &newSeeds, const std::vector<range_t> &ranges, const std::string &sequence, int32_t k, int32_t s) {
     for (const range_t &range : ranges) {
         int32_t start = std::get<0>(range);
         int32_t stop = std::get<1>(range);
@@ -323,7 +339,7 @@ void recomputeSeeds(mutableTreeData &data, std::unordered_map<std::string, kmer_
         std::string redo = sequence.substr(std::max(0, start), std::min(seqLen - start, 1 + stop - start)); 
         auto redone = syncmerize(redo, k, s, false, true, std::max(0, start));
         for (const kmer_t &syncmer : redone) {
-            newSeeds[syncmer.seq] = syncmer;
+            newSeeds.push_back(syncmer);
         }
     }
 }
@@ -333,13 +349,13 @@ void writeIndexDFS(std::stringstream &ss, std::vector<kmer_t> &seeds, Node *curr
     std::stack<int32_t> rmDel;
     for (const kmer_t &d : index.deletions[currNode->identifier]) {
         rmDel.push(d.idx);
-        ss << d.idx << " ";
+        ss << d.pos << " " << d.idx << " " << d.gappedEnd << " ";
     }
     removeIndices(seeds, rmDel);
     ss << "^";
     for (const kmer_t &s : index.insertions[currNode->identifier]) {
         seeds.push_back(s);
-        ss << s.seq << " ";
+        ss << s.seq << " " << s.pos << " " << s.idx << " " << s.gappedEnd << " ";
     }
     ss << "\n";
     for (Node *child : currNode->children) {
@@ -352,7 +368,8 @@ void writeIndexDFS(std::stringstream &ss, std::vector<kmer_t> &seeds, Node *curr
         seeds.insert(seeds.begin() + index.deletions[currNode->identifier][i].idx, index.deletions[currNode->identifier][i]);
     }
 }
-void buildHelper(mutableTreeData &data, seedIndex &index, Tree *T, const Node *node, const size_t k, const size_t s, const globalCoords_t &globalCoords) {
+
+void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tree *T, const Node *node, const int32_t l, const size_t k, const size_t s, const globalCoords_t &globalCoords) {
 
     blockMutData_t blockMutData;
     nucMutData_t nucMutData;
@@ -360,59 +377,187 @@ void buildHelper(mutableTreeData &data, seedIndex &index, Tree *T, const Node *n
     /* Mutate with block and nuc mutations. */
     applyMutations(data, blockMutData, nucMutData, T, node, globalCoords);
 
-    /* Use the current state of mutableTreeData to decode node's sequence. */
-    std::string currNodeSequence = tree::getStringFromCurrData(data, T, node, true);
+    tree::updateConsensus(data, T);
 
-    /* Find ranges overlapping mutations at this node. */
-    std::vector<range_t> affectedRanges = getAffectedRanges(data, blockMutData, nucMutData, currNodeSequence, T, k, globalCoords);
-
-    /* Recompute seeds across affected ranges. If a block is off, all seeds are dropped and not recomputed. */
-    std::unordered_map<std::string, kmer_t> newSeeds;
-    recomputeSeeds(data, newSeeds, affectedRanges, currNodeSequence, k, s);
-
-    /* Discard seeds in affected ranges unless they would be added back in recomputed seeds. */
-    discardSeeds(data.seeds, newSeeds, index, affectedRanges, currNodeSequence, node->identifier, k); 
-
-    /* Add the new seeds to the dynamic seed list and store the index. */
-    addSeeds(data.seeds, index, node->identifier, newSeeds);
-
-    /* Recursive step */
-    for(Node* child: node->children){
-
-        buildHelper(data, index, T, child, k, s, globalCoords);
+    std::unordered_set<std::string> out;
+    nucMutData_t extended = nucMutData;
+    for (const auto &blockMut : blockMutData) {
+        int32_t blockId = std::get<0>(blockMut);
+        int32_t start = tree::getGlobalCoordinate(blockId, 0, -1, globalCoords);
+        int32_t stop = start + data.sequence[blockId].first.size() - 1;
+        bool oldStrand = std::get<2>(blockMut);
+        bool newStrand = std::get<4>(blockMut);
+        if (newStrand) {
+            extended.push_back(std::make_tuple(-1, -1, -1, -1, -1, start, data.sequence[blockId].first.size()));
+        }
     }
 
+    for (const auto &nucMut : extended) {
+        int32_t globalCoord = std::get<5>(nucMut);
+        int32_t len = std::get<6>(nucMut);
+        int32_t lastSeed = -1;
+        for (int32_t c = globalCoord + len; c >= data.regap[data.degap[globalCoord] - k]; c--) {
+            if (c >= data.gappedConsensus.size() || data.gappedConsensus[c] == '-') {
+                continue;
+            }
+            std::string kmer = data.ungappedConsensus.substr(data.degap[c], k);
+            if (seedMap.find(c) != seedMap.end()) {
+                std::string prevJkmer = seedMap[c].second;
+                if (seed::is_syncmer(kmer, k, s)) {
+                    seedMap[c].second = kmer + seedMap[seedMap[c].first].second.substr(0, (l-1)*k);
+                    
+                    if (seedMap[c].second == prevJkmer) {
+                        continue;
+                    }
+                    if (seedMap[c].second.size() == l*k) {
+                        std::string s = "";
+                        s += std::to_string(c);
+                        s += ":@";
+                        s += prevJkmer;
+                        out.insert(s);
+                        s = std::to_string(c);
+                        s += ":";
+                        s += seedMap[c].second;
+                        out.insert(s);
+                    }
+                } else {
+                    std::string s = "";
+                    s += std::to_string(c);
+                    s += ":@";
+                    s += seedMap[c].second;
+                    out.insert(s);
+                    seedMap[c].first = -1;
+                    seedMap[c].second = "";
+                }
+            } else {
+                // not in seed map, could be a seed now
+                if (seed::is_syncmer(kmer, k, s)) {
+                    std::string newJkmer = kmer;
+                    if (lastSeed != -1) {
+                        newJkmer += seedMap[lastSeed].second.substr(0, (l-1)*k);
+                    }
+                    if (newJkmer.size() == l*k) {
+                        std::string s = "";
+                        s += std::to_string(c);
+                        s += ":";
+                        s += newJkmer;
+                        out.insert(s);
+                    }
+                    seedMap[c] = std::make_pair(lastSeed, newJkmer);
+                    lastSeed = c;
+                }
+            }
+        }
+    }
+    index.outStream << node->identifier << " ";
+    for (const std::string &s : out) {
+        index.outStream << s << " ";
+    }
+    index.outStream << "\n";
+
+    /* Recursive step */
+    for (Node* child: node->children){
+        buildHelper(data, seedMap, index, T, child, l, k, s, globalCoords);
+    }
     /* Undo seed and sequence mutations when backtracking */
     undoMutations(data, index, T, node, blockMutData, nucMutData);
 }
-
 /* Interface implementation */
-void pmi::build(seedIndex &index, Tree *T, const size_t k, const size_t s) {
+void pmi::build(seedIndex &index, Tree *T, const size_t l, const size_t k, const size_t s) {
 
     /* Setup for seed indexing */
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
     tree::setup(data, globalCoords, T);
-    
-    /* Get seeds in the consensus MSA */
-    std::string consensus = tree::getConsensus(T);
-    data.seeds = getUniqueSeeds(consensus, k, s);
+    tree::updateConsensus(data, T);
 
+    /*  seed and j-k-mer tracking: 
+    **     global coord => {next seed, jkmer seq}
+    */
+    seedMap_t seedMap;
+    // std::vector<kmer_t> consensusSeeds = getAllSeeds(data.gappedConsensus, k, s);
+    // //jkmers
+    // std::vector<jkmer> jkmers = seed::jkmerize(consensusSeeds, 3);
+    // for (const jkmer &j : jkmers) {
+    //     seedMap[j.positions[0]] = std::make_pair(j.positions[1], j.seq);
+    // }
+    //seedmap
+    // for (const auto &p : seedMap) {
+    //     std::cout << p.first << " " << p.second.first << " " << p.second.second << "\n";
+    // }
+    index.outStream << k << " " << s << "\n";
+ 
     /* Recursive traversal of tree to build the index */
-    buildHelper(data, index, T, T->root, k, s, globalCoords);
-    index.consensusSeeds = data.seeds;
+    buildHelper(data, seedMap, index, T, T->root, l, k, s, globalCoords);
+   
 }
-
-
 void pmi::write(std::ofstream &fout, Tree *T, seedIndex &index) {
+    fout << index.k << " " << index.s << "\n";
     auto consensusSeeds = index.consensusSeeds;
     for (const kmer_t &s : index.consensusSeeds) {
-        fout << s.seq << " ";
+        fout << s.seq << " " << s.pos << " " << s.gappedEnd << " ";
     }
     fout << "\n";
     std::stringstream ss;
     writeIndexDFS(ss, consensusSeeds, T->root, index);
     fout << ss.str();
 }
-void pmi::load(seedIndex &index, const Node *root, const std::ifstream &indexFile) {
+void pmi::load(seedIndex &index, std::ifstream &indexFile) {
+    std::string line;
+
+    // parse syncmer parameters
+    int32_t k;
+    int32_t s;
+    std::getline(indexFile, line); // k s 
+    std::istringstream iss(line);
+    iss >> k;
+    iss >> s;
+
+    // parse consensus seeds
+    std::vector<kmer_t> consensusSeeds;
+    std::getline(indexFile, line);
+    std::vector< std::string > rootSplt;
+    PangenomeMAT::stringSplit(line, ' ', rootSplt);
+
+    for (int32_t i = 0; i < rootSplt.size() - 3 + 1; i += 3) {
+        consensusSeeds.push_back(kmer_t{rootSplt[i], std::stoi(rootSplt[i+1]), i/3, -1, false, std::stoi(rootSplt[i+2])});
+    }
+
+    // parse each node's seed insertions and deletions
+    while (std::getline(indexFile, line)) {
+        if (line.size() < 2) {
+            continue;
+        }
+        std::vector<std::string> spltNid;
+        std::vector<std::string> spltParts;
+        std::vector<std::string> spltDel = {};
+        std::vector<std::string> spltIns = {};
+        stringSplit(line, '\t', spltNid);
+        std::string nodeId = spltNid[0];
+        stringSplit(spltNid[1], '^', spltParts);
+        stringSplit(spltParts[0], ' ', spltDel);
+        if (spltParts.size() > 1) {
+            stringSplit(spltParts[1], ' ', spltIns);
+        }
+        std::vector<kmer_t> deletions;
+        if (spltDel.size() > 0) {
+            for (int32_t i = 0; i < spltDel.size() - 3 + 1; i += 3) {
+                deletions.push_back(kmer_t{"", std::stoi(spltDel[i]), std::stoi(spltDel[i+1]), -1, false, std::stoi(spltDel[i+2])});
+            }
+        }
+        std::vector<kmer_t> insertions;
+        if (spltIns.size() > 0) {
+            for (int32_t i = 0; i < spltIns.size() - 4 + 1; i += 4) {
+                insertions.push_back(kmer_t{spltIns[i], std::stoi(spltIns[i+1]), std::stoi(spltIns[i+2]), -1, false, std::stoi(spltIns[i+3])});
+            }
+        }
+
+        // load insertions and deletions into node maps
+        index.insertions[nodeId] = insertions;
+        index.deletions[nodeId] = deletions;
+    }
+    
+    index.consensusSeeds = consensusSeeds;
+    index.k = k;
+    index.s = s;
 }

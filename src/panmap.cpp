@@ -20,9 +20,7 @@ void loadReads(const std::string& reads1, const std::string& reads2) {
     // Implement your loadReads function here
     std::cout << "Loading reads..." << std::endl;
 }
-void promptAndPlace(Tree *T, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, const bool prompt) {
-    int32_t k = 15;
-    int32_t s = 6;
+void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, const bool prompt) {
     std::cin.clear();
     std::fflush(stdin);
     using namespace std;
@@ -43,17 +41,19 @@ void promptAndPlace(Tree *T, const std::string &indexFile, const std::string &pm
     // Prompt for fastq files
     if (reads1File == "") {
         while (!reads1File.size()) {
-            cout << "Enter path to first paired-end reads FASTQ (or single-end): ";
+            cout << "First FASTQ path: ";
             getline(cin, reads1File);
         }
         string reads2File = "";
-        cout << "Enter path to second paired-end reads FASTQ (leave empty for single-end): ";
+        cout << "[Second FASTQ path]: ";
         getline(cin, reads2File);
     }
-    cout << "\n" << reads1File << std::endl;
+    cout << "\n" << reads1File;
     if (reads2File.size()) {
-        cout << ", " << reads2File << endl;
+        cout << " and  " << reads2File;
     }
+    
+    cout << std::endl;
     std::ifstream ifs(indexFile);
     place::placeIsolate(ifs, reads1File, reads2File, T, k, s);
 }
@@ -62,14 +62,14 @@ void promptAndIndex(Tree *T, int32_t k, int32_t s, const bool prompt, const std:
     string userInput = "";
     char nl;
     if (prompt && (k == -1 || s == -1)) {
-        cout << "Create index? Y(es) / q(uit) ➜ ";
+        cout << "Make index at " << indexFile << "? (yes or quit): ";
         getline(cin, userInput);
         if (!(userInput == "Y" || userInput == "y")) {
             exit(0);
         }
-        cout << "Enter integer value for k ➜ ";
+        cout << "Syncmer parameter k: ";
         cin >> k;
-        cout << "Enter integer value for s ➜ ";
+        cout << "Syncmer parameter s: ";
         cin >> s;
         cout << "Building (" << k << ", " << s << ") index ..." << std::endl;
     } else if (prompt) {
@@ -83,10 +83,10 @@ void promptAndIndex(Tree *T, int32_t k, int32_t s, const bool prompt, const std:
         exit(1);
     }
     seedIndex index;
-    pmi::build(index, T, k, s);
+    pmi::build(index, T, 3, k, s);
     std::cout << "Writing to " << indexFile << "..." << std::endl;
     std::ofstream fout(indexFile);
-    pmi::write(fout, T, index);
+    fout << index.outStream.str();
     std::cout << "Done." << std::endl;
 }
 
@@ -111,12 +111,11 @@ int main(int argc, char *argv[]) {
         po::notify(vm);
         std::string pmatFile = vm["panmat"].as<std::string>();
 
-        std::cout << "  ╭───────────────────╮" << std::endl;
-        std::cout << "  │   ┏━┳━● pan       │" << std::endl;
-        std::cout << "  │   ┃ ┣━━━● map  ◠◡ │" << std::endl;
-        std::cout << "  │ ━━┫ ┗━━━━━━━○ ⤶   │" << std::endl;
-        std::cout << "  │   ┗━━━● v0.0      │" << std::endl;
-        std::cout << "  ╰───────────────────╯" << std::endl;
+        std::cout << "  ╭──────────────╮" << std::endl;
+        std::cout << "  │  ┏━┳━● pan   │" << std::endl;
+        std::cout << "  │ ━┫ ┗━━━● map ◠◡" << std::endl;
+        std::cout << "  │  ┗━ v0.0 ━━○ ⤶" << std::endl;
+        std::cout << "  ╰──────────────╯" << std::endl;
 
         std::ifstream ifs(pmatFile);
         boost::iostreams::filtering_streambuf< boost::iostreams::input> b;
@@ -168,14 +167,15 @@ int main(int argc, char *argv[]) {
                     std::exit(0);
                 }
             } else {
-                std::cout << "No index at \e[3;1m" << pmatFile << ".pmi\e[0m" << std::endl;
+                std::cout << "\nNo index found." << std::endl;
             }
             if (!keep) {
                 promptAndIndex(T, k, s, prompt, defaultIndexPath);
             }
+            indexFile = defaultIndexPath;
         }
 
-        promptAndPlace(T, indexFile, pmatFile, reads1File, reads2File, prompt);
+        promptAndPlace(T, k, s, indexFile, pmatFile, reads1File, reads2File, prompt);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
