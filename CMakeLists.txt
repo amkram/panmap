@@ -9,13 +9,24 @@ option(OPTION_BUILD_TESTS "Build tests." ON)
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20 ") 
 if(OPTION_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O1 -Wall -Wno-unused-function  -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wno-unused-function -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
 else(OPTION_DEBUG)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3") 
 endif(OPTION_DEBUG)
 
 # Cmake options
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+include(FetchContent)
+FetchContent_Declare(docopt
+    GIT_REPOSITORY https://github.com/docopt/docopt.cpp.git
+    GIT_TAG v0.6.3)
+FetchContent_Populate(docopt)
+include(CMakePrintHelpers)
+cmake_print_variables(docopt_SOURCE_DIR)
+cmake_print_variables(docopt_BINARY_DIR)
+
+add_library(remote-deps ${docopt_SOURCE_DIR}/docopt.cpp)
 
 # Dependency: panmat-utils
 find_package(libpanmat REQUIRED)
@@ -47,7 +58,7 @@ if(OPTION_BUILD_TESTS)
     add_dependencies(tests libminimap2.a)
 endif(OPTION_BUILD_TESTS)
 
-target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} z libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a)
+target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps z libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a)
 target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} z libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)

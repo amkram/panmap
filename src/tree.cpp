@@ -7,7 +7,7 @@ using namespace PangenomeMAT;
 using namespace tree;
 
 std::string tree::getConsensus(Tree *T) {
-    std::string consensus = ""; 
+    std::string consensus = "";
     for (size_t i = 0; i < T->blocks.size(); i++) {
         for (size_t j = 0; j < T->blocks[i].consensusSeq.size(); j++) {
             uint32_t c = T->blocks[i].consensusSeq[j];
@@ -27,7 +27,25 @@ std::string tree::getConsensus(Tree *T) {
     }
     return consensus;
 }
-
+void tree::updateConsensus(mutableTreeData &data, Tree *T) {
+    std::string consensus = tree::getStringFromCurrData(data, T, T->root, true);
+    data.gappedConsensus = consensus;
+    std::string ungapped = "";
+    data.degap.clear();
+    data.regap.clear();
+    int32_t ct = 0;
+    for (int32_t i = 0; i < consensus.size(); i ++) {
+        char &c = consensus[i];
+        data.degap.push_back(ungapped.size());
+        data.regap.push_back(i + ct);
+        if (c != '-') {
+            ungapped += c;
+        } else {
+            ct++;
+        }
+    }
+    data.ungappedConsensus = ungapped;
+}
 void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings, mutableTreeData &data, Tree *T, const Node *node, globalCoords_t &globalCoords) {
     /*  Mutate with block and nuc mutations */
     blockMutData_t blockMutData;
@@ -61,29 +79,44 @@ std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
 // pass by value bc we need to modify sequence object (and not persist changes) before getting nt string
 std::string tree::getStringFromCurrData(mutableTreeData data, Tree *T, const Node *node, const bool aligned) {
     // T should be const but [] operator on T->sequenceInverted is non-const
-    // the below line includes  ( && rotationIndexes[root->identifier] != 0 ). In panmat lib, this behavior is different in getFasta vs getStringFromReference? 
-    if(T->rotationIndexes.find(node->identifier) != T->rotationIndexes.end() && T->rotationIndexes[node->identifier] != 0) {
-        int ctr = -1, rotInd = 0;
-        for(size_t i = 0; i < data.blockExists.size(); i++) {
-            if(data.blockExists[i].first) {
-                ctr++;
+    std::string line;
+    if (node == nullptr) { // consensus sequence (all blocks on) rather than a node in the tree
+       for (size_t i = 0; i < T->blocks.size(); i++) {
+        if(data.blockStrand[i].first) {
+                for(size_t j = 0; j < data.sequence[i].first.size(); j++) {
+                    for(size_t k = 0; k < data.sequence[i].first[j].second.size(); k++) {
+                        if(data.sequence[i].first[j].second[k] != '-') {
+                            line += data.sequence[i].first[j].second[k];
+                        } else if(aligned) {
+                            line += '-';
+                        }
+                    }
+                    if(data.sequence[i].first[j].first != '-' && data.sequence[i].first[j].first != 'x') {
+                        line += data.sequence[i].first[j].first;
+                    } else if(aligned) {
+                        line += '-';
+                    }
+                }
+            } else {
+                for(size_t j = data.sequence[i].first.size()-1; j+1 > 0; j--) {
+                    if(data.sequence[i].first[j].first != '-' && data.sequence[i].first[j].first != 'x') {
+                        line += getComplementCharacter(data.sequence[i].first[j].first);
+                    } else if(aligned) {
+                        line += '-';
+                    }
+                    for(size_t k = data.sequence[i].first[j].second.size()-1; k+1 > 0; k--) {
+                        if(data.sequence[i].first[j].second[k] != '-') {
+                            line += getComplementCharacter(data.sequence[i].first[j].second[k]);
+                        } else if(aligned) {
+                            line += '-';
+                        }
+                    }
+                }   
             }
-            if(ctr == T->rotationIndexes[node->identifier]) {
-                rotInd = i;
-                break;
-            }
-        }
-        std::rotate(data.sequence.begin(), data.sequence.begin() + rotInd, data.sequence.end());
-        std::rotate(data.blockExists.begin(), data.blockExists.begin() + rotInd, data.blockExists.end());
-        std::rotate(data.blockStrand.begin(), data.blockStrand.begin() + rotInd, data.blockStrand.end());
-    }
-    if(T->sequenceInverted.find(node->identifier) != T->sequenceInverted.end() && T->sequenceInverted[node->identifier]) {
-        std::reverse(data.sequence.begin(), data.sequence.end());
-        std::reverse(data.blockExists.begin(), data.blockExists.end());
-        std::reverse(data.blockStrand.begin(), data.blockStrand.end());
+       }
+        return line;
     }
 
-    std::string line;
     for(size_t i = 0; i < data.blockExists.size(); i++) {
         if(data.blockExists[i].first) {
             if(data.blockStrand[i].first) {
@@ -359,16 +392,16 @@ void buildMutationMatrices(mutationMatrices& mutMat, Tree* T) {
 
     // insertion
     for (auto i = 0; i < mutMat.insmat.size(); ++i) {
-        mutMat.insmat[i] = -10 * log10f64x(mutMat.insmat[i] / mutMat.total_insmut);
+        mutMat.insmat[i] = -10 * log10f(mutMat.insmat[i] / mutMat.total_insmut);
     }
     // deletion
     for (auto i = 0; i < mutMat.delmat.size(); ++i) {
-        mutMat.delmat[i] =  -10 * log10f64x(mutMat.delmat[i] / mutMat.total_delmut);
+        mutMat.delmat[i] =  -10 * log10f(mutMat.delmat[i] / mutMat.total_delmut);
     }
     // substitution
     for (auto i = 0; i < 4; i++) {
         for (auto j = 0; j < 4; j++) {
-            mutMat.submat[i][j] = -10 * log10f64x(mutMat.submat[i][j] / mutMat.total_submuts[i]);
+            mutMat.submat[i][j] = -10 * log10f(mutMat.submat[i][j] / mutMat.total_submuts[i]);
         }
     }
 }
