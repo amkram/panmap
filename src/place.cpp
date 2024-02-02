@@ -3,6 +3,7 @@
 #include "pmi.hpp"
 #include "tree.hpp"
 #include "util.hpp"
+#include <cmath>
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -296,7 +297,7 @@ std::vector<kmer_t> seedsFromFastq(std::vector<read_t> &reads, std::unordered_ma
             }
             if (counts[m.seq] >= est_coverage) {
                 syncmers.push_back(m);
-                this_read.kmers.push_back(kmer_t{m.seq, m.pos + (int32_t) k - 1, -1, 0, false, -1});
+                this_read.kmers.push_back(kmer_t{m.seq, m.pos + (int32_t) k - 1,0, -1, 0, false, -1});
             }
         }
         for (const auto &m : these_rc) {
@@ -307,7 +308,7 @@ std::vector<kmer_t> seedsFromFastq(std::vector<read_t> &reads, std::unordered_ma
             }
             if (counts[m.seq] >= est_coverage) {
                 syncmers.push_back(m);
-                this_read.kmers.push_back(kmer_t{m.seq, m.pos + (int32_t) k - 1, -1, 0, true, -1});
+                this_read.kmers.push_back(kmer_t{m.seq, m.pos + (int32_t) k - 1,0, -1, 0, true, -1});
             }
         }
         reads[i] = this_read;
