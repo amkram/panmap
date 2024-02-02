@@ -392,16 +392,16 @@ void buildMutationMatrices(mutationMatrices& mutMat, Tree* T) {
 
     // insertion
     for (auto i = 0; i < mutMat.insmat.size(); ++i) {
-        mutMat.insmat[i] = -10 * log10f64x(mutMat.insmat[i] / mutMat.total_insmut);
+        mutMat.insmat[i] = -10 * log10f(mutMat.insmat[i] / mutMat.total_insmut);
     }
     // deletion
     for (auto i = 0; i < mutMat.delmat.size(); ++i) {
-        mutMat.delmat[i] =  -10 * log10f64x(mutMat.delmat[i] / mutMat.total_delmut);
+        mutMat.delmat[i] =  -10 * log10f(mutMat.delmat[i] / mutMat.total_delmut);
     }
     // substitution
     for (auto i = 0; i < 4; i++) {
         for (auto j = 0; j < 4; j++) {
-            mutMat.submat[i][j] = -10 * log10f64x(mutMat.submat[i][j] / mutMat.total_submuts[i]);
+            mutMat.submat[i][j] = -10 * log10f(mutMat.submat[i][j] / mutMat.total_submuts[i]);
         }
     }
 }
