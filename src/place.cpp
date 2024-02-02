@@ -255,14 +255,17 @@ std::vector<kmer_t> seedsFromFastq(std::vector<read_t> &reads, std::unordered_ma
     fp = fopen(fastqPath.c_str(), "r");
     seq = kseq_init(fileno(fp));
     std::vector<std::string> input;
+    std::vector<std::string> input_quality;
     std::vector<std::string> input_names;
     
     int line;
     while ((line = kseq_read(seq)) >= 0) {
         std::string this_seq  = seq->seq.s;
+        std::string this_qual = seq->qual.s;
         std::string this_name = seq->name.s;
 
         input.push_back(this_seq);
+        input_quality.push_back(this_qual);
         input_names.push_back(this_name);
     }
     float est_coverage = 0;
@@ -278,6 +281,7 @@ std::vector<kmer_t> seedsFromFastq(std::vector<read_t> &reads, std::unordered_ma
         std::string name = input_names[i];
         
         this_read.seq = seq;
+        this_read.qseq = input_quality[i];
         this_read.name = name;
 
         std::string rc = reverse_complement(seq);

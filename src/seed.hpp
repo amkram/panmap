@@ -74,7 +74,8 @@ public:
 };
 
 struct read_t {
-    std::string seq;
+    std::string seq;     //genetic sequence
+    std::string qseq;    //quality string
     std::vector<kmer_t> kmers;
     std::string name;
     //std::vector<int> read_coord;

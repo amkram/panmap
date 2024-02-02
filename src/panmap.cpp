@@ -1,6 +1,7 @@
 #include "kseq.h"
 #include "PangenomeMAT.hpp"
 #include "pmi.hpp"
+#include "genotype.hpp"
 #include "place.hpp"
 #include <iostream>
 #include <string>
