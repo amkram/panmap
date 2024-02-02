@@ -1,159 +1,71 @@
+#include <boost/test/unit_test.hpp>
+#include "../pmi.hpp"
 
 
-// BOOST_AUTO_TEST_CASE(_removeIndices) {
-// /* should erase elements at the given positions */
-//     std::vector<kmer_t> a = {
-//         kmer_t{"zero"},
-//         kmer_t{"one"},
-//         kmer_t{"two"},
-//         kmer_t{"three"},
-//         kmer_t{"four"},
-//         kmer_t{"five"}      
-//     };
+BOOST_AUTO_TEST_CASE(_removeIndices) {
+/* should erase elements at the given positions */
+    using namespace seed;
+    std::vector<kmer_t> a = {
+        kmer_t{"zero"},
+        kmer_t{"one"},
+        kmer_t{"two"},
+        kmer_t{"three"},
+        kmer_t{"four"},
+        kmer_t{"five"}      
+    };
     
-//     // smaller values at the top
-//     std::stack<int32_t> indices;
+    // smaller values at the top
+    std::stack<int32_t> indices;
 
-//     indices.push(4);
-//     indices.push(2);
-//     indices.push(0);
+    indices.push(4);
+    indices.push(2);
+    indices.push(0);
 
-//     std::vector<kmer_t> expected = {
-//         kmer_t{"one"},
-//         kmer_t{"three"},
-//         kmer_t{"five"}
-//     };
+    std::vector<kmer_t> expected = {
+        kmer_t{"one"},
+        kmer_t{"three"},
+        kmer_t{"five"}
+    };
 
-//     removeIndices(a, indices);
+    removeIndices(a, indices);
+
+    BOOST_TEST(
+        a == expected
+    );
+
+}
+
+// BOOST_AUTO_TEST_CASE(_getRecomputePositions)
+// {
+//     using namespace tree;
+//     int32_t k = 3;
+
+//     range_t a = {6, 1, 0};
+//     range_t b = {22, 3, 0};
+//     range_t c = {31, 2, 0};
+
+//     //                 length:  0               3        2
+//     //                          *               ***      **  
+//     //      recompute range: xxxxxxx       xxxxxxxxxx  xxxxx
+//     std::string gapped = "ABCD-EF-GH-IJKLM-N-O--P-QRSTUVWXYZ";
+//     //                    0123456789111111111122222222223333
+//     //                              012345678901234567890123
+
+//     range_t expected_a = {3, 9, 0};
+//     range_t expected_b = {17, 26, 0};
+//     range_t expected_c = {29, 33, 0};
+//     getRecomputePositions(expected_a, gapped, k);
 
 //     BOOST_TEST(
-//         a == expected
+//         getRecomputePositions(a, gapped, k) == expected_a
 //     );
-
+//     BOOST_TEST(
+//         getRecomputePositions(b, gapped, k) == expected_b
+//     );
+//     BOOST_TEST(
+//         getRecomputePositions(c, gapped, k) == expected_c
+//     );
 // }
-
-// // BOOST_AUTO_TEST_CASE(_getRecomputePositions)
-// // {
-// //     int32_t k = 3;
-
-// //     std::pair<int32_t, int32_t> a = {6, 1};
-// //     std::pair<int32_t, int32_t> b = {22, 3};
-// //     std::pair<int32_t, int32_t> c = {31, 2};
-
-// //     //                 length:  0               3        2
-// //     //                          *               ***      **  
-// //     //      recompute range: xxxxxxx       xxxxxxxxxx  xxxxx
-// //     std::string gapped = "ABCD-EF-GH-IJKLM-N-O--P-QRSTUVWXYZ";
-// //     //                    0123456789111111111122222222223333
-// //     //                              012345678901234567890123
-
-// //     std::pair<int32_t, int32_t> expected_a = {3, 9};
-// //     std::pair<int32_t, int32_t> expected_b = {17, 26};
-// //     std::pair<int32_t, int32_t> expected_c = {29, 33};
-
-// //     BOOST_TEST(
-// //         getRecomputePositions(a, gapped, k) == expected_a
-// //     );
-// //     BOOST_TEST(
-// //         getRecomputePositions(b, gapped, k) == expected_b
-// //     );
-// //     BOOST_TEST(
-// //         getRecomputePositions(c, gapped, k) == expected_c
-// //     );
-// // }
-
-// // bool eq(tbb::concurrent_unordered_map<std::string, kmer_t> a, tbb::concurrent_unordered_map<std::string, kmer_t> b) {
-// //     if (a.size() != b.size()) {
-// //         return false;
-// //     }
-// //     for (auto &p : a) {
-// //         if (b.find(p.first) == b.end()) {
-// //             return false;
-// //         }
-// //         if (b[p.first].seq != p.second.seq || b[p.first].idx != p.second.idx) {
-// //             return false;
-// //         }
-// //     }
-// //     return true;
-// // }
-
-
-// // BOOST_AUTO_TEST_CASE(_discardSyncmers) {
-// // /*  should discard syncmers contained in any range in B 
-// //     unless they are going to be inserted. Then remove from
-// //     to_insert (based on sequence for now). Also, track variable syncmers.
-// // */
-// //     size_t k = 4;
-
-// //     std::vector<kmer_t> seeds = {
-// //         kmer_t{"AAAA", 0, -1}, // x
-// //         kmer_t{"ACCA", 2, -1}, //
-// //         kmer_t{"AABA", 7, -1}, // x
-// //         kmer_t{"AACA", 8, -1}, // x
-// //         kmer_t{"ABDA", 9, -1}, //
-// //         kmer_t{"ABBA", 15,-1}, // gapped length exceeds bound  
-// //         kmer_t{"CDEF", 23,-1}, 
-// //     };
-// //     std::string seq = "xxxxxxxxxxxxxxxABB---Axxxxxx"; // len 28
-
-// //     tbb::concurrent_vector<std::pair<int32_t, int32_t>> B;
-// //     B.push_back({0, 4});
-// //     B.push_back({7, 11});
-// //     B.push_back({14, 20});
-// //     B.push_back({22, 35});
-
-// //     std::vector<kmer_t> expected_seeds = {
-// //         kmer_t{"ACCA", 2, -1},
-// //         kmer_t{"ABDA", 9, -1},
-// //         kmer_t{"ABBA", 15,-1},
-// //         kmer_t{"CDEF", 23,-1}, 
-// //     };
-
-// //     tbb::concurrent_unordered_map<std::string, kmer_t> to_insert = {
-// //         {"XYZW", kmer_t{"XYZW", 8, -1}},
-// //         {"CDEF", kmer_t{"CDEF", 23, -1}}
-// //     };
-// //     tbb::concurrent_unordered_map<std::string, kmer_t> expected_to_insert = {
-// //         {"XYZW", kmer_t{"XYZW", 8, -1}}
-// //     };
- 
-
-// //     seedIndex index;
-    
-// //     std::vector<kmer_t> expected_deletions = {
-// //                 kmer_t{"AACA", 8, 3},
-// //                 kmer_t{"AABA", 7, 2},
-// //                 kmer_t{"AAAA", 0, 0},
-// //     };
-// //     std::string nid = "my_node_id";
-
-  
-
-// //     std::vector<int32_t> positions;
-// //     for (kmer_t s : seeds) {
-// //         positions.push_back(s.pos);
-// //     }
-// //     tbb::concurrent_unordered_map<int32_t, int32_t> gappedEnds = getGappedEnds(seq, k, positions);
-// //     discardSyncmers(seeds, B, seq, gappedEnds, to_insert, index, nid, k);
-
-// //     BOOST_TEST(
-// //         seeds == expected_seeds
-// //     );
-// //     BOOST_TEST(
-// //         eq(to_insert, expected_to_insert)
-// //     );
-
-// //     BOOST_TEST(
-// //         index.deletions[nid] == expected_deletions
-// //     );
-// //     BOOST_TEST(index.deletions[nid][0].pos == 8);
-// //     BOOST_TEST(index.deletions[nid][0].idx == 3);
-// //     BOOST_TEST(index.deletions[nid][1].pos == 7);
-// //     BOOST_TEST(index.deletions[nid][1].idx == 2);
-// //     BOOST_TEST(index.deletions[nid][2].pos == 0);
-// //     BOOST_TEST(index.deletions[nid][2].idx == 0);
-
-// // }
 
 // // BOOST_AUTO_TEST_CASE(_indexSeeds) {
 // //     size_t k = 13;
