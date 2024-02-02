@@ -4,7 +4,7 @@
 
 namespace util {
     struct scopedTimer {
-        std::chrono::time_point<std::chrono::steady_clock> start, end;
+        std::chrono::time_point<std::chrono::high_resolution_clock> start, end;
         std::chrono::duration<float> duration;
         scopedTimer()  {
             start = std::chrono::high_resolution_clock::now();

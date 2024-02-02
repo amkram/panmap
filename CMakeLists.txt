@@ -39,7 +39,7 @@ include_directories(${Boost_INCLUDE_DIRS})
 
 # Dependency: minimap2
 add_custom_target(libminimap2.a
-   COMMAND make arm_neon=1 aarch64=1 libminimap2.a
+   COMMAND make libminimap2.a
    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/minimap2_src/
 )
 add_custom_target(clean-minimap
@@ -58,8 +58,8 @@ if(OPTION_BUILD_TESTS)
     add_dependencies(tests libminimap2.a)
 endif(OPTION_BUILD_TESTS)
 
-target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps z libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a)
-target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} z libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a)
+target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z)
+target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES ${CMAKE_BINARY_DIR}/clean-minimap)
