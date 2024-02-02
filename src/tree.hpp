@@ -37,6 +37,27 @@ namespace tree {
         blockStrand_t blockStrand; // tracks strand of blocks
     };
     
+    struct mutationMatrices {
+        // Store mutation matrices
+        std::vector< std::vector<double> > submat; // 4 x 4 substitution rate matrix
+        std::vector<double> insmat = {0}; // 1 x N insertion rate by length matrix
+        std::vector<double> delmat = {0}; // 1 x N deletion rate by length matrix
+        
+        // Stores total number of mutations
+        std::vector<double> total_submuts;
+        double total_insmut = 0;
+        double total_delmut = 0;
+        
+        mutationMatrices() {
+            // initialize mutationMatrices object and intialize the correct size for substitution amtrix
+            total_submuts.resize(4);
+            submat.resize(4);
+            for (size_t i = 0; i < 4; ++i) {
+                submat[i].resize(4);
+            }
+        }  
+    };
+
     /* Interface */
 
     void updateConsensus(mutableTreeData &data, Tree *T);
@@ -49,4 +70,10 @@ namespace tree {
 
     size_t getGlobalCoordinate(const int blockId, const int nucPosition, const int nucGapPosition, const globalCoords_t &globalCoords);
     void setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T);
+
+    // Fill mutation matrices from tree or file
+    void fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream* infptr=nullptr);
+
+    // Build mutation matrices by traversing through all parent-child pairs
+    void printMutationMatrices(Tree* T, std::ofstream* outfptr=nullptr);
 }
