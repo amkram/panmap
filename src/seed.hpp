@@ -9,30 +9,60 @@
 
 KSEQ_INIT(int, read)
 
+
+/*
+minimap2:
+
+anchor: (x, y, w)
+    x: ref end position
+    y: read end position
+    w: k-mer size
+
+a(j, i):  min {
+            min ( yi - yj, xi - xj ),
+            w[i]
+        }
+b(j, i): gc( (yi-yj) - (xi-xj) )
+
+gap cost gc(n) =  0.01 * w * n + 0.5 * log2(n)
+
+list of anchors sorted by x:
+    chaining score
+    f(i) = max of {
+            -> max for 1 <= j <= i of f(j) + a(j, i) - b(j, i)
+            -> and w[i]
+    }
+
+
+
+*/
+
 namespace seed {
 
 struct kmer_t {
 
     std::string seq;
-    int32_t pos;
-    int32_t idx; // index of kmer in vector used in indexing DFS
+    int32_t pos;  // start position in consensus MSA
+    int32_t idx;  // index of kmer in vector used in indexing DFS
     int32_t pos2;
     bool reversed;
     int32_t gappedEnd;
 
     bool operator<(const kmer_t &rhs) const {
-        if (seq == "") {
-            return false;
-        } else if (rhs.seq == "") {
-            return true;
-        } else {
-            return seq < rhs.seq;
-        }
+        return pos < rhs.pos;
     };
     bool operator==(const kmer_t &rhs) const {
-        return seq == rhs.seq;
+        return pos == rhs.pos;
     };
 };
+
+struct jkmer {
+    int32_t j;
+    int32_t k;
+    std::string seq; // concatenated string of s kmers
+    std::vector<int32_t> positions; // positions of s kmers
+};
+
 class KHash {
 public:
     size_t operator()(const kmer_t& t) const
@@ -74,10 +104,35 @@ inline bool is_syncmer(const std::string &seq, const int s, const bool open) {
             return true;
         }
     }
-    
     return false;
 }
 
+inline std::vector<jkmer> jkmerize(const std::vector<kmer_t> &kmers, const int32_t j) {
+    std::vector <jkmer> ret;
+    if (kmers.size() < j) {
+        return ret;
+    }
+    for (size_t i = 0; i < kmers.size() - j + 1; i++) {
+        jkmer jk = {j, static_cast<int32_t>(kmers[i].seq.length()), ""};
+        for (size_t k = 0; k < j; k++) {
+            jk.positions.push_back(kmers[i+k].pos);
+            jk.seq += kmers[i+k].seq;
+        }
+        ret.push_back(jk);
+    }
+    return ret; 
+}
+
+inline std::string getNextSyncmer(std::string &seq, const int32_t currPos, const int32_t k, const int32_t s) {
+
+    for (int32_t i = currPos; i < seq.size() - k + 1; i++) {
+        std::string kmer = seq.substr(i, k);
+        if (is_syncmer(kmer, s, false)) {
+            return kmer;
+        }
+    }
+    return "";
+}
 inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, const int32_t s, const bool open, const bool aligned, const int32_t pad) {
     std::mutex mtx;
     std::vector<kmer_t> ret;
@@ -89,12 +144,10 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
     }
     if (aligned) {
         std::unordered_map<int32_t, int32_t> degap;
-        std::atomic<int32_t> pos = 0;
+        int32_t pos = 0;
         std::string ungapped = "";
-        for (size_t i = 0; i < seqLen; i++) {
-            mtx.lock();
+        for (int32_t i = 0; i < seqLen; i++) {
             char c = seq[i];
-            mtx.unlock();
             degap[pos] = i;
             if (c != '-') {
                 ungapped += c;
@@ -109,7 +162,7 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
         for(int32_t i = 0; i < ungapped.size() - k + 1; i++) {
             std::string kmer = ungapped.substr(i, k);
             if (is_syncmer(kmer, s, open)) {
-                ret.push_back(kmer_t{kmer, degap[i]+pad, -1, -1, false, degap[i+k]+pad});
+                ret.push_back(kmer_t{kmer, degap[i]+pad, -1, -1, false, degap[i+k-1]+pad});
             }
         }
     } else {
