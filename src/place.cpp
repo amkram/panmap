@@ -404,6 +404,15 @@ void place::placeIsolate( std::ifstream &indexFile, const std::string &reads1Pat
     getPhyloCounts(phyloCounts, dynamicJkmers, T, T->root, debugStrings, k, s);
 
     placeDFS2(jkIndex, dynamicJkmers, scores, jkmerCounts, phyloCounts, T->root, T, debugStrings, k, s);
+
+    /* after placement, dynamicJkmers looks like:
+    **   [node id] -> pair: { pos, jkmer }
+    ** where pos is the global coordinate. If there is a value in the map for
+    ** a given pos, that position is a seed. The "jkmer" chain of seeds 
+    ** starting at pos is stored in the second pair value. The raw seed at a position is
+    ** jkmer.substr(0, k) where k is seed length.
+    */ 
+
     std::vector<std::pair<std::string, float>> v;
     std::copy(scores.begin(), scores.end(),
        back_inserter<std::vector<std::pair<std::string, float> > >(v)
@@ -412,6 +421,7 @@ void place::placeIsolate( std::ifstream &indexFile, const std::string &reads1Pat
         return left.second < right.second;
     });
     
+    // score for each node
     for (size_t i = 0; i < v.size(); ++i) {
        std::cout << v[i].first << ": " << v[i].second << "\n";
     }
