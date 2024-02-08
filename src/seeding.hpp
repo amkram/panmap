@@ -9,63 +9,34 @@
 
 KSEQ_INIT(int, read)
 
+namespace seeding {
 
-/*
-minimap2:
-
-anchor: (x, y, w)
-    x: ref end position
-    y: read end position
-    w: k-mer size
-
-a(j, i):  min {
-            min ( yi - yj, xi - xj ),
-            w[i]
-        }
-b(j, i): gc( (yi-yj) - (xi-xj) )
-
-gap cost gc(n) =  0.01 * w * n + 0.5 * log2(n)
-
-list of anchors sorted by x:
-    chaining score
-    f(i) = max of {
-            -> max for 1 <= j <= i of f(j) + a(j, i) - b(j, i)
-            -> and w[i]
-    }
-
-
-
-*/
-
-namespace seed {
-
-struct kmer_t {
+struct seed {
 
     std::string seq;
-    int32_t pos;  // start position in consensus MSA
+    int32_t pos;  // start position in sequence
     int32_t idx;  // index of kmer in vector used in indexing DFS
-    int32_t pos2;
     bool reversed;
     int32_t gappedEnd;
 
-    bool operator<(const kmer_t &rhs) const {
+    bool operator<(const seed &rhs) const {
         return pos < rhs.pos;
     };
-    bool operator==(const kmer_t &rhs) const {
+    bool operator==(const seed &rhs) const {
         return pos == rhs.pos;
     };
 };
 
-struct jkmer {
+struct seedmer {
     int32_t j;
     int32_t k;
     std::string seq; // concatenated string of s kmers
     std::vector<int32_t> positions; // positions of s kmers
 };
 
-class KHash {
+class KHash {   
 public:
-    size_t operator()(const kmer_t& t) const
+    size_t operator()(const seed& t) const  
     {
         const std::hash<std::string> h;
         return h(t.seq);
@@ -74,13 +45,10 @@ public:
 };
 
 struct read_t {
-    std::string seq;     //genetic sequence
-    std::string qseq;    //quality string
-    std::vector<kmer_t> kmers;
-    std::string name;
-    //std::vector<int> read_coord;
-    //std::vector<int> ref_coord;
-    //std::vector<bool> reversed;
+    std::string seq; // read sequence
+    std::string qual; // quality string
+    std::vector<int32_t> seedPositions; // positions of seed starts in read
+    std::string name; // read id
 };
 
 
@@ -107,13 +75,13 @@ inline bool is_syncmer(const std::string &seq, const int s, const bool open) {
     return false;
 }
 
-inline std::vector<jkmer> jkmerize(const std::vector<kmer_t> &kmers, const int32_t j) {
-    std::vector <jkmer> ret;
+inline std::vector<seedmer> seedmerize(const std::vector<seed> &kmers, const int32_t j) {
+    std::vector <seedmer> ret;
     if (kmers.size() < j) {
         return ret;
     }
     for (size_t i = 0; i < kmers.size() - j + 1; i++) {
-        jkmer jk = {j, static_cast<int32_t>(kmers[i].seq.length()), ""};
+        seedmer jk = {j, static_cast<int32_t>(kmers[i].seq.length()), ""};
         for (size_t k = 0; k < j; k++) {
             jk.positions.push_back(kmers[i+k].pos);
             jk.seq += kmers[i+k].seq;
@@ -133,9 +101,9 @@ inline std::string getNextSyncmer(std::string &seq, const int32_t currPos, const
     }
     return "";
 }
-inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, const int32_t s, const bool open, const bool aligned, const int32_t pad) {
+inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k, const int32_t s, const bool open, const bool aligned, const int32_t pad) {
     std::mutex mtx;
-    std::vector<kmer_t> ret;
+    std::vector<seed> ret;
     mtx.lock();
     int32_t seqLen = seq.size();
     mtx.unlock();
@@ -162,7 +130,7 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
         for(int32_t i = 0; i < ungapped.size() - k + 1; i++) {
             std::string kmer = ungapped.substr(i, k);
             if (is_syncmer(kmer, s, open)) {
-                ret.push_back(kmer_t{kmer, degap[i]+pad, -1, -1, false, degap[i+k-1]+pad});
+                ret.push_back(seed{kmer, degap[i]+pad, -1, false, degap[i+k-1]+pad});
             }
         }
     } else {
@@ -171,7 +139,7 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
             std::string kmer = seq.substr(i, k);
             mtx.unlock();
             if (is_syncmer(kmer, s, open)) {
-                ret.push_back(kmer_t{kmer, i+pad, -1, -1, false, i+k+pad});
+                ret.push_back(seed{kmer, i+pad, -1, false, i+k+pad});
             }
         }
     }
@@ -179,7 +147,7 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
 }
 }
 
-// std::set<kmer_t> PangenomeMAT::syncmersFromFastq(std::string fastqPath,  std::vector<read_t> &reads, size_t k, size_t s) {
+// std::set<seed> PangenomeMAT::syncmersFromFastq(std::string fastqPath,  std::vector<read_t> &reads, size_t k, size_t s) {
 //     FILE *fp;
 //     kseq_t *seq;
 //     fp = fopen(fastqPath.c_str(), "r");
@@ -198,7 +166,7 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
 //     float est_coverage = 1; //TODO change this to 1
 //     bool open = false;
     
-//     std::set<kmer_t> syncmers;
+//     std::set<seed> syncmers;
 //     std::unordered_map<std::string, int> counts;
 //     std::unordered_map<std::string, int> counts_rc;
 
@@ -215,8 +183,8 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
 
 
 //         std::string rc = reverse_complement(seq);
-//         std::vector<kmer_t> these = syncmerize(seq, k, s, false, false, 0);
-//         std::vector<kmer_t> these_rc = syncmerize(rc, k, s, false, false, 0);
+//         std::vector<seed> these = syncmerize(seq, k, s, false, false, 0);
+//         std::vector<seed> these_rc = syncmerize(rc, k, s, false, false, 0);
         
         
 //         for (const auto &m : these) {
@@ -230,7 +198,7 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
 
 //  //               m.pos = m.pos + k - 1;
 // //                m.reversed = false;
-//                 this_read.kmers.push_back(kmer_t{m.seq, m.pos + (int32_t) k - 1, -1, 0, false, -1});
+//                 this_read.kmers.push_back(seed{m.seq, m.pos + (int32_t) k - 1, -1, 0, false, -1});
 //                 //this_read.read_coord.push_back(m.pos + k - 1);
 //                 //this_read.reversed.push_back(false);
 //             }
@@ -244,7 +212,7 @@ inline std::vector<kmer_t> syncmerize(const std::string &seq, const int32_t k, c
 //             }
 //             if (counts_rc[m.seq] > est_coverage) {
 //                 syncmers.insert(m);
-//                 this_read.kmers.push_back(kmer_t{m.seq, m.pos + (int32_t) k - 1, -1, 0, true, -1});
+//                 this_read.kmers.push_back(seed{m.seq, m.pos + (int32_t) k - 1, -1, 0, true, -1});
 //             }
 //         }
 //         reads[i] = this_read;
