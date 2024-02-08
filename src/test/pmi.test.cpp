@@ -4,14 +4,14 @@
 
 BOOST_AUTO_TEST_CASE(_removeIndices) {
 /* should erase elements at the given positions */
-    using namespace seed;
-    std::vector<kmer_t> a = {
-        kmer_t{"zero"},
-        kmer_t{"one"},
-        kmer_t{"two"},
-        kmer_t{"three"},
-        kmer_t{"four"},
-        kmer_t{"five"}      
+    using namespace seeding;
+    std::vector<seed> a = {
+        seed{"zero"},
+        seed{"one"},
+        seed{"two"},
+        seed{"three"},
+        seed{"four"},
+        seed{"five"}      
     };
     
     // smaller values at the top
@@ -21,10 +21,10 @@ BOOST_AUTO_TEST_CASE(_removeIndices) {
     indices.push(2);
     indices.push(0);
 
-    std::vector<kmer_t> expected = {
-        kmer_t{"one"},
-        kmer_t{"three"},
-        kmer_t{"five"}
+    std::vector<seed> expected = {
+        seed{"one"},
+        seed{"three"},
+        seed{"five"}
     };
 
     removeIndices(a, indices);
@@ -165,14 +165,14 @@ BOOST_AUTO_TEST_CASE(_removeIndices) {
 // // //     PangenomeMAT::loadIndex(T->root, indexFile, index);
 
 // // //     auto fastq_start = std::chrono::high_resolution_clock::now();
-// // //     std::set<kmer_t> readSyncmers = syncmersFromFastq("../r1.fastq", reads, k, s);
+// // //     std::set<seed> readSyncmers = syncmersFromFastq("../r1.fastq", reads, k, s);
 // // //     auto fastq_end = std::chrono::high_resolution_clock::now();
 
 // // //     std::cout << "fastq time: " << std::chrono::duration_cast<std::chrono::milliseconds>(fastq_end - fastq_start).count() << "\n";
 
 // // //     auto place_start = std::chrono::high_resolution_clock::now();
 
-// // //     std::set<kmer_t> rootSyncmers = std::set<kmer_t>(index.rootSeeds.begin(), index.rootSeeds.end());
+// // //     std::set<seed> rootSyncmers = std::set<seed>(index.rootSeeds.begin(), index.rootSeeds.end());
 
 // // //     std::cerr << "\n";
 // // //     std::cerr << "Placing sample...\n";

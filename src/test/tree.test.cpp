@@ -10,7 +10,7 @@
 #include "../pmi.hpp"
 
 using namespace PangenomeMAT;
-using namespace seed;
+using namespace seeding;
 using namespace tree;
 using namespace pmi;
 
