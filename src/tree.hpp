@@ -1,6 +1,6 @@
 #pragma once
 #include "PangenomeMAT.hpp"
-#include "seed.hpp"
+#include "seeding.hpp"
 #include <iostream>
 #include <vector>
 #include "minimap2_src/mmpriv.h"
@@ -10,7 +10,15 @@
 #include "minimap2_src/khash.h"
 #include "minimap2_src/kvec.h"
 
-using namespace seed;
+using namespace seeding;
+
+auto cmp = [](const std::pair<int32_t, std::string> &a, const std::pair<int32_t, std::string> &b) {
+    if(a.second != b.second) {
+        return a.second < b.second;
+    }
+    return a.first < b.first;
+};
+typedef std::unordered_map<std::string, std::set<std::pair<int32_t, std::string>, decltype(cmp)>> seedmerIndex_t;
 
 /* Helpers for interacting with panmats */
 namespace tree {
@@ -29,8 +37,8 @@ namespace tree {
         std::string ungappedConsensus;
         std::vector<int32_t> degap; // ungapped[degap[i]] => gapped[i]
         std::vector<int32_t> regap; // gapped[regap[i]] => ungapped[i]
-        std::vector<kmer_t> seeds; // dynamic vector of seeds in each node's sequence
-        std::vector<jkmer> jkmers;
+        std::vector<seed> seeds; // dynamic vector of seeds in each node's sequence
+        std::vector<seedmer> seedmers;
         std::unordered_map<int32_t, std::pair<int32_t, std::string>> seedMap;
         std::unordered_map<std::string, bool> variableSeeds; // seeds in the consensus that mutate at least once
         blockExists_t blockExists; // tracks if blocks are "on" at a node
@@ -59,10 +67,9 @@ namespace tree {
     };
 
     /* Interface */
-
     void updateConsensus(mutableTreeData &data, Tree *T);
    
-    void removeIndices(std::vector<kmer_t>& v, std::stack<int32_t>& rm);
+    void removeIndices(std::vector<seed>& v, std::stack<int32_t>& rm);
     std::string getConsensus(Tree *T); // ungapped!
 
     std::unordered_map<std::string, std::string> getAllNodeStrings(Tree *T);
