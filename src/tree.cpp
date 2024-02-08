@@ -1,10 +1,12 @@
 #include "tree.hpp"
 #include "pmi.hpp"
-#include "seed.hpp"
+#include "seeding.hpp"
 #include <cmath>
 
 using namespace PangenomeMAT;
 using namespace tree;
+
+
 
 std::string tree::getConsensus(Tree *T) {
     std::string consensus = "";
@@ -220,14 +222,14 @@ void setupGlobalCoordinates(globalCoords_t &globalCoords, const BlockGapList &bl
         }
     }
 }
-void tree::removeIndices(std::vector<kmer_t> &v, std::stack<int32_t> &rm) {
+void tree::removeIndices(std::vector<seed> &v, std::stack<int32_t> &rm) {
     if (rm.size() < 1) {
         return;
     }
     int32_t rmVal = rm.top();
     rm.pop();
     v.erase(
-        std::remove_if(std::begin(v), std::end(v), [&](kmer_t& elem)
+        std::remove_if(std::begin(v), std::end(v), [&](seed& elem)
         {
             if (rmVal == -1) {
                 return false;
