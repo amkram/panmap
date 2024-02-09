@@ -4,15 +4,14 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <iostream>
-#include <json/json.h>
 #include <filesystem>
 #include <tbb/concurrent_unordered_map.h>
 #include <tbb/concurrent_vector.h>
 #include "PangenomeMAT.hpp"
-#include "../seed.hpp"
+#include "../seeding.hpp"
 
 using namespace PangenomeMAT;
-using namespace seed;
+using namespace seeding;
 
 
 BOOST_AUTO_TEST_CASE(_isSyncmer) {
@@ -53,21 +52,21 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
                    *     AAB
                    *      ABB
     */
-    std::vector<kmer_t> ret_a = {
-        kmer_t{"AAA", 0, -1},
-        kmer_t{"AAA", 1, -1},
-        kmer_t{"AAA", 2, -1},
-        kmer_t{"AAA", 3, -1},
-        kmer_t{"AAB", 4, -1},
-        kmer_t{"ABB", 5, -1}                
+    std::vector<seed> ret_a = {
+        seed{"AAA", 0, -1},
+        seed{"AAA", 1, -1},
+        seed{"AAA", 2, -1},
+        seed{"AAA", 3, -1},
+        seed{"AAB", 4, -1},
+        seed{"ABB", 5, -1}                
     };
-    std::vector<kmer_t> ret_a_padded = {
-        kmer_t{"AAA", 42, -1},
-        kmer_t{"AAA", 43, -1},
-        kmer_t{"AAA", 44, -1},
-        kmer_t{"AAA", 45, -1},
-        kmer_t{"AAB", 46, -1},
-        kmer_t{"ABB", 47, -1}                
+    std::vector<seed> ret_a_padded = {
+        seed{"AAA", 42, -1},
+        seed{"AAA", 43, -1},
+        seed{"AAA", 44, -1},
+        seed{"AAA", 45, -1},
+        seed{"AAB", 46, -1},
+        seed{"ABB", 47, -1}                
     };
     BOOST_TEST(
 		syncmerize(a, 3, 2, true, false, 0) == ret_a
@@ -82,9 +81,9 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
                         CBAAAC
                          BAAACC
   */
-    std::vector<kmer_t> ret_b = {
-        kmer_t{"AABCBA", 0, -1},
-        kmer_t{"ABCBAA", 1, -1}
+    std::vector<seed> ret_b = {
+        seed{"AABCBA", 0, -1},
+        seed{"ABCBAA", 1, -1}
     };
     std::string c = "AABCBAAACC"; // k=6 s=3 closed
   /*               * AABCBA 
@@ -93,10 +92,10 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
                         CBAAAC
                          BAAACC
   */
-    std::vector<kmer_t> ret_c = {
-        kmer_t{"AABCBA", 0, -1},
-        kmer_t{"ABCBAA", 1, -1},
-        kmer_t{"BCBAAA", 2, -1}
+    std::vector<seed> ret_c = {
+        seed{"AABCBA", 0, -1},
+        seed{"ABCBAA", 1, -1},
+        seed{"BCBAAA", 2, -1}
     };
     BOOST_TEST(
 		syncmerize(b, 6, 3, true, false, 0) == ret_b
@@ -111,14 +110,35 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
                         CBAAAC
                          BAAACC
     */
-     std::vector<kmer_t> ret_d = {
-        kmer_t{"AABCBA", 2, -1},
-        kmer_t{"ABCBAA", 4, -1},
-        kmer_t{"BCBAAA", 6, -1}
+     std::vector<seed> ret_d = {
+        seed{"AABCBA", 2, -1},
+        seed{"ABCBAA", 4, -1},
+        seed{"BCBAAA", 6, -1}
     };
     BOOST_TEST(
 		syncmerize(d, 6, 3, false, true, 0) == ret_d
     );
+}
+
+BOOST_AUTO_TEST_CASE(_seedmerize) {
+
+/* should pick syncmers correctly */
+    std::string a = "AAAAAABCGCGCGCGCGCGGCDSJHFDJHDJFHJJJEEEOOOIOIIOAISOIFAPSNFAJKSBNFKJWRBKJVBSAKLJDECNKDBCJBDEFBBAAAAAABB";
+    
+    
+		std::vector<seed> syncmers = syncmerize(a, 6, 3, true, false, 0);
+    for (const auto &s : syncmers) {
+        std::cout << s.seq << "@" << s.pos << "\n";
+    }
+    std::cout << "jk:\n";
+    std::vector<seedmer> seedmers = seedmerize(syncmers, 3);
+    for (const auto &j : seedmers) {
+        std::cout << j.seq << "@";
+        for (const auto &p : j.positions) {
+            std::cout << p << " ";
+        }
+        std::cout << "\n";
+    }
 }
 
 // template<>
@@ -158,7 +178,7 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
 //     );
 // }
 
-// bool eq(tbb::concurrent_unordered_map<std::string, kmer_t> a, tbb::concurrent_unordered_map<std::string, kmer_t> b) {
+// bool eq(tbb::concurrent_unordered_map<std::string, seed> a, tbb::concurrent_unordered_map<std::string, seed> b) {
 //     if (a.size() != b.size()) {
 //         return false;
 //     }
@@ -181,14 +201,14 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
 // */
 //     size_t k = 4;
 
-//     std::vector<kmer_t> seeds = {
-//         kmer_t{"AAAA", 0, -1}, // x
-//         kmer_t{"ACCA", 2, -1}, //
-//         kmer_t{"AABA", 7, -1}, // x
-//         kmer_t{"AACA", 8, -1}, // x
-//         kmer_t{"ABDA", 9, -1}, //
-//         kmer_t{"ABBA", 15,-1}, // gapped length exceeds bound  
-//         kmer_t{"CDEF", 23,-1}, 
+//     std::vector<seed> seeds = {
+//         seed{"AAAA", 0, -1}, // x
+//         seed{"ACCA", 2, -1}, //
+//         seed{"AABA", 7, -1}, // x
+//         seed{"AACA", 8, -1}, // x
+//         seed{"ABDA", 9, -1}, //
+//         seed{"ABBA", 15,-1}, // gapped length exceeds bound  
+//         seed{"CDEF", 23,-1}, 
 //     };
 //     std::string seq = "xxxxxxxxxxxxxxxABB---Axxxxxx"; // len 28
 
@@ -198,35 +218,35 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
 //     B.push_back({14, 20});
 //     B.push_back({22, 35});
 
-//     std::vector<kmer_t> expected_seeds = {
-//         kmer_t{"ACCA", 2, -1},
-//         kmer_t{"ABDA", 9, -1},
-//         kmer_t{"ABBA", 15,-1},
-//         kmer_t{"CDEF", 23,-1}, 
+//     std::vector<seed> expected_seeds = {
+//         seed{"ACCA", 2, -1},
+//         seed{"ABDA", 9, -1},
+//         seed{"ABBA", 15,-1},
+//         seed{"CDEF", 23,-1}, 
 //     };
 
-//     tbb::concurrent_unordered_map<std::string, kmer_t> to_insert = {
-//         {"XYZW", kmer_t{"XYZW", 8, -1}},
-//         {"CDEF", kmer_t{"CDEF", 23, -1}}
+//     tbb::concurrent_unordered_map<std::string, seed> to_insert = {
+//         {"XYZW", seed{"XYZW", 8, -1}},
+//         {"CDEF", seed{"CDEF", 23, -1}}
 //     };
-//     tbb::concurrent_unordered_map<std::string, kmer_t> expected_to_insert = {
-//         {"XYZW", kmer_t{"XYZW", 8, -1}}
+//     tbb::concurrent_unordered_map<std::string, seed> expected_to_insert = {
+//         {"XYZW", seed{"XYZW", 8, -1}}
 //     };
  
 
 //     seedIndex index;
     
-//     std::vector<kmer_t> expected_deletions = {
-//                 kmer_t{"AACA", 8, 3},
-//                 kmer_t{"AABA", 7, 2},
-//                 kmer_t{"AAAA", 0, 0},
+//     std::vector<seed> expected_deletions = {
+//                 seed{"AACA", 8, 3},
+//                 seed{"AABA", 7, 2},
+//                 seed{"AAAA", 0, 0},
 //     };
 //     std::string nid = "my_node_id";
 
   
 
 //     std::vector<int32_t> positions;
-//     for (kmer_t s : seeds) {
+//     for (seed s : seeds) {
 //         positions.push_back(s.pos);
 //     }
 //     tbb::concurrent_unordered_map<int32_t, int32_t> gappedEnds = getGappedEnds(seq, k, positions);
@@ -326,14 +346,14 @@ BOOST_AUTO_TEST_CASE(_syncmerize) {
 // //     PangenomeMAT::loadIndex(T->root, indexFile, index);
 
 // //     auto fastq_start = std::chrono::high_resolution_clock::now();
-// //     std::set<kmer_t> readSyncmers = syncmersFromFastq("../r1.fastq", reads, k, s);
+// //     std::set<seed> readSyncmers = syncmersFromFastq("../r1.fastq", reads, k, s);
 // //     auto fastq_end = std::chrono::high_resolution_clock::now();
 
 // //     std::cout << "fastq time: " << std::chrono::duration_cast<std::chrono::milliseconds>(fastq_end - fastq_start).count() << "\n";
 
 // //     auto place_start = std::chrono::high_resolution_clock::now();
 
-// //     std::set<kmer_t> rootSyncmers = std::set<kmer_t>(index.rootSeeds.begin(), index.rootSeeds.end());
+// //     std::set<seed> rootSyncmers = std::set<seed>(index.rootSeeds.begin(), index.rootSeeds.end());
 
 // //     std::cerr << "\n";
 // //     std::cerr << "Placing sample...\n";

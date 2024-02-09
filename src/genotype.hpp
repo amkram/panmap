@@ -1,7 +1,10 @@
+#ifndef __GENOTYPE_HPP
+#define __GENOTYPE_HPP
+
 #pragma once
 #include <iostream>
-#include "tree.hpp"
 #include "PangenomeMAT.hpp"
+#include "tree.hpp"
 
 namespace genotype {
     using namespace std;
@@ -38,3 +41,5 @@ namespace genotype {
     pair< vector<VariationSite>, pair<size_t, size_t> > getVariantSites(std::ifstream& fin, const mutationMatrices& mutMat);
     void printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize);
 }
+
+#endif

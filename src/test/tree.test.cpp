@@ -4,14 +4,13 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <iostream>
-#include <json/json.h>
 #include <filesystem>
 #include <tbb/concurrent_unordered_map.h>
 #include "PangenomeMAT.hpp"
 #include "../pmi.hpp"
 
 using namespace PangenomeMAT;
-using namespace seed;
+using namespace seeding;
 using namespace tree;
 using namespace pmi;
 
