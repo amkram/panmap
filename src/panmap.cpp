@@ -16,23 +16,10 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
 /* Helpers */
-void loadReads(const std::string& reads1, const std::string& reads2) {
-    // Implement your loadReads function here
-    std::cout << "Loading reads..." << std::endl;
-}
 void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, const bool prompt) {
     std::cin.clear();
     std::fflush(stdin);
     using namespace std;
-    string userInput = "";
-    // Confirm unless -f is specified
-    if (prompt) {
-        cout << "Place sample now? (y)es / (q)uit: ";
-        getline(cin, userInput);
-        if (!(userInput == "Y" || userInput == "y")) {
-            exit(0);
-        }
-    }
     // Check if reads were supplied by user       
     if (reads1File == "" && reads2File == "" && !prompt) {
         cout << "Can't place sample because no reads were provided and -f was specified." << std::endl;
@@ -48,42 +35,21 @@ void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string
         cout << "[Second FASTQ path]: ";
         getline(cin, reads2File);
     }
-    cout << "\n" << reads1File;
-    if (reads2File.size()) {
-        cout << " and  " << reads2File;
-    }
-    
-    cout << std::endl;
     std::ifstream ifs(indexFile);
-    place::placeIsolate(ifs, reads1File, reads2File, T, k, s);
+    place::placeIsolate(ifs, reads1File, reads2File, T);
 }
-void promptAndIndex(Tree *T, int32_t k, int32_t s, const bool prompt, const std::string &indexFile) {
+void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
     using namespace std;
-    string userInput = "";
-    char nl;
-    if (prompt && (k == -1 || s == -1)) {
-        cout << "Make index at " << indexFile << "? (yes or quit): ";
-        getline(cin, userInput);
-        if (!(userInput == "Y" || userInput == "y")) {
-            exit(0);
-        }
-        cout << "Syncmer parameter k: ";
-        cin >> k;
-        cout << "Syncmer parameter s: ";
-        cin >> s;
-        cout << "Building (" << k << ", " << s << ") index ..." << std::endl;
-    } else if (prompt) {
-        cout << "\nIndex now with " << "(k,s) = (" << k << "," << s << ")?\n(Y)es / (q)uit ➜ ";
-        getline(cin, userInput);
-        if (!(userInput == "Y" || userInput == "y" || userInput == "")) {
-            exit(0);
-        }
-    } else if (k == -1 || s == -1) {
-        cout << "Can't build index because -f was specified and no parameters provided with -p." << std::endl;
-        exit(1);
-    }
+    int32_t k, s, j;
+    cout << "Syncmer parameter k: ";
+    cin >> k;
+    cout << "Syncmer parameter s: ";
+    cin >> s;
+    cout << "Seed-mer parameter j: ";
+    cin >> j;
+    cout << "Building (" << k << ", " << s << ", " << j << ") index ..." << std::endl;
     seedIndex index;
-    pmi::build(index, T, 3, k, s);
+    pmi::build(index, T, j, k, s);
     std::cout << "Writing to " << indexFile << "..." << std::endl;
     std::ofstream fout(indexFile);
     fout << index.outStream.str();
@@ -110,12 +76,10 @@ int main(int argc, char *argv[]) {
         po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
         po::notify(vm);
         std::string pmatFile = vm["panmat"].as<std::string>();
-
-        std::cout << "  ╭──────────────╮" << std::endl;
-        std::cout << "  │  ┏━┳━● pan   │" << std::endl;
-        std::cout << "  │ ━┫ ┗━━━● map ◠◡" << std::endl;
-        std::cout << "  │  ┗━ v0.0 ━━○ ⤶" << std::endl;
-        std::cout << "  ╰──────────────╯" << std::endl;
+        
+        std::cout << "   ┏━┳━●\033[36;1m\033[1m pan \033[0m" << std::endl;
+        std::cout << "  ━┫ ┗━━━●\033[36;1m\033[1m map\033[0m\033[32;1m\033[0m" << std::endl;
+        std::cout << "   ┗━\033[36;1m v0.0\033[0m ━●\033[32;1m\033[0m" << std::endl;
 
         std::ifstream ifs(pmatFile);
         boost::iostreams::filtering_streambuf< boost::iostreams::input> b;
@@ -158,19 +122,16 @@ int main(int argc, char *argv[]) {
             std::string defaultIndexPath = pmatFile + ".pmi";
             std::string inp;
             if (boost::filesystem::exists(defaultIndexPath)) {
-                std::cout << "Index found at " << defaultIndexPath << std::endl;
-                std::cout << "Use it? (Y)es / (r)ebuild / (q)uit: ";
+                std::cout << "Use existing index? [Y/n]";
                 getline(std::cin, inp);
                 if (inp == "Y" || inp == "y" || inp == "") {
                     keep = true;
-                } else if (inp == "Q" || inp == "q") {
-                    std::exit(0);
                 }
             } else {
                 std::cout << "\nNo index found." << std::endl;
             }
             if (!keep) {
-                promptAndIndex(T, k, s, prompt, defaultIndexPath);
+                promptAndIndex(T, prompt, defaultIndexPath);
             }
             indexFile = defaultIndexPath;
         }

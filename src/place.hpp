@@ -1,8 +1,14 @@
+#ifndef __PLACE_HPP
+#define __PLACE_HPP
+
 #pragma once
-#include "tree.hpp"
+//#include "tree.hpp"
+#include "PangenomeMAT.hpp"
 
 namespace place {
 
-    void placeIsolate( std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, PangenomeMAT::Tree *T, int32_t k, int32_t s);
+    void placeIsolate( std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, PangenomeMAT::Tree *T);
 
 }
+
+#endif
