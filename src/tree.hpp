@@ -15,11 +15,7 @@
 
 using namespace seeding;
 
-<<<<<<< HEAD
-inline auto cmp = [](const std::pair<int32_t, std::string> &a, const std::pair<int32_t, std::string> &b) {
-=======
 inline auto seed_cmp = [](const std::pair<int32_t, std::string> &a, const std::pair<int32_t, std::string> &b) {
->>>>>>> 24491c13c313ac93b0e44aad4bb3759f1dcf71a6
     if(a.second != b.second) {
         return a.second < b.second;
     }
