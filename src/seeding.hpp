@@ -146,3 +146,5 @@ inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k, con
     return ret;
 }
 }
+
+#endif
