@@ -1,5 +1,9 @@
+#ifndef __PMI_HPP
+#define __PMI_HPP
+
 #pragma once
 #include "PangenomeMAT.hpp"
+#include "seeding.hpp"
 #include "tree.hpp"
 
 using namespace PangenomeMAT;
@@ -32,3 +36,5 @@ void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T, const Node 
 void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutData_t &nucMutData, Tree *T, const Node *node, const globalCoords_t &globalCoords);
 range_t getRecomputePositions(const range_t &p, const std::string &gappedSequence, const int32_t k);
 std::vector<range_t> getAffectedRanges(mutableTreeData &data, const blockMutData_t &blockMutData, const nucMutData_t &nucMutData, std::string &seq, Tree *T, const int32_t k, const globalCoords_t &globalCoords);
+
+#endif

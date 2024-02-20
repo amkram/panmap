@@ -1,3 +1,5 @@
+#ifndef __UTIL_HPP
+#define __UTIL_HPP
 #pragma once
 #include <chrono>
 #include <iostream>
@@ -17,3 +19,4 @@ namespace util {
         }
     };
 }
+#endif
