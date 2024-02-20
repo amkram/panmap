@@ -1,5 +1,4 @@
 #include "pmi.hpp"
-#include "tree.hpp"
 #include "seeding.hpp"
 #include <iostream>
 #include <sstream>

@@ -204,16 +204,16 @@ void align_read_given_seeds(const mm_idx_t *mi,const int read_length,const char 
 
 
 
-void align_reads(const char *reference, int n_reads, const char **reads, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions) {
+void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments) {
     mm_idxopt_t iopt;
 	mm_mapopt_t mopt;
 	int n_threads = 1;
 
-	mm_verbose = 2;              // disable message output to stderr
-	mm_set_opt(0, &iopt, &mopt); 
-	mopt.flag |= MM_F_CIGAR;     // perform alignment
+	mm_verbose = 2;             // disable message output to stderr
+	mm_set_opt(0, &iopt, &mopt);
+	mopt.flag |= MM_F_CIGAR;    // perform alignment
 
-
+	
 	iopt.k = 15; //setting seed length
 
 	mm_idx_t *mi = mm_idx_str(10, iopt.k, 0, 14, 1, &reference, NULL); //Read reference into structure
@@ -223,8 +223,9 @@ void align_reads(const char *reference, int n_reads, const char **reads, int *r_
 
 
 	
-	for(int k = 0; k < n_reads; k++){
-
+	for(int k = 0; k < n_reads; k++) {
+		fprintf(stderr, "reached %d\n", k);
+		
 		mm_reg1_t *reg;
 		int j, i, n_reg;
 
@@ -235,16 +236,24 @@ void align_reads(const char *reference, int n_reads, const char **reads, int *r_
 		mm_bseq1_t t;
 		t.l_seq = r_lens[k];
 		t.seq = reads[k];
-		t.name = "test";
-		t.qual = NULL;
+		t.name = read_names[k];
+		t.qual = quality[k];
 		const int n_regss[1] = {1};
 		const mm_reg1_t *regss = {reg};
+		mi->seq[0].name = "*";
 
 		
-
-		mi->seq[0].name = "reference";
-		mm_write_sam3( &sam, mi, &t, 0, 0, 1, n_regss, &regss, NULL, 0, 0);
-		printf("%s\n",sam.s);
+		if(reg->score <= 0 || reg->score > r_lens[k]) {
+			sam_alignments[k] = NULL;
+		} else {
+			mm_write_sam3( &sam, mi, &t, 0, 0, 1, n_regss, &regss, NULL, 0, 0);
+			r_lens[k] = sam.l; //TODO, is this needed
+			sam_alignments[k] = sam.s;
+		}
+		
+		
+		
+		
 
 
 
@@ -259,53 +268,4 @@ void align_reads(const char *reference, int n_reads, const char **reads, int *r_
 	}
 	mm_tbuf_destroy(tbuf);
 	mm_idx_destroy(mi);
-}
-
-
-
-
-
-void test_alignment_null()
-{
-	int n_reads = 3;
-	char *reference = "GACGAAGAGTGTTATGTCTGTCGGCAGTTGAAAGCTAAACGTAGATTACTACGCGCAATATCCAGAAAGAAGTTAGACCCGTGAAAACGTGCGCCTTTCGGGGACTTGAGCGCACAAATA";
-	char *read_0 =    "GACGAAGAGTGTTATGTCTGTCGGCAGTTGAAAGCTAAACGTAGATTACTACGCGCAATA";
-	char *read_1 =                                                                "TCCAGAAAGAAGTTAGACCCGTGAAAACGTGCGCCTTTCGGGGACTTGAGCGCACAAATA";
-	char *read_2 =                                  "ACGTTTTCACGGGTCTAACTTCTTTCTGGATATTGCGCGTAGTAATCTACGTTTAGCTTT";
-
-	char **reads =  malloc(sizeof(char *) * n_reads);
-	reads[0] = read_0;
-	reads[1] = read_1;
-	reads[2] = read_2;
-
-	int *r_lens = malloc(sizeof(int) * n_reads);
-	r_lens[0] = 60;
-	r_lens[1] = 60;
-	r_lens[2] = 60;
-
-
-	uint8_t rev_0[] = {0,0,0,0,0,0,0,0,0,0,0};
-	int qp_0[] = {17,22,31,34,35,36,37,47,53,54,55,};
-	int rp_0[] = {17,22,31,34,35,36,37,47,53,54,55,};
-
-	uint8_t rev_1[] = {0,0,0,0,0,0,0};
-	int qp_1[] = {22,24,28,33,40,50,57,};
-	int rp_1[] = {82,84,88,93,100,110,117,};
-
-	uint8_t rev_2[] = {1,1,1,1,1,1,1,1,1,1,1};
-	int qp_2[] = {23,24,25,34,37,38,41,51,52,54,58,};
-	int rp_2[] = {53,54,55,64,67,68,71,81,82,84,88,};
-
-	int seed_counts[] = {11, 7, 11};
-
-	uint8_t *reversed[]  = {rev_0, rev_1, rev_2};
-	int *ref_positions[] = {rp_0, rp_1, rp_2};
-	int *qry_positions[] = {qp_0, qp_1, qp_2};
-
-
-    align_reads(reference, n_reads, reads, r_lens, seed_counts, reversed, ref_positions, qry_positions);
-    
-	
-	free(reads);
-	free(r_lens);
 }

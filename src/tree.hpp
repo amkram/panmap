@@ -1,3 +1,6 @@
+#ifndef __TREE_HPP
+#define __TREE_HPP
+
 #pragma once
 #include "PangenomeMAT.hpp"
 #include "seeding.hpp"
@@ -12,13 +15,17 @@
 
 using namespace seeding;
 
+<<<<<<< HEAD
 inline auto cmp = [](const std::pair<int32_t, std::string> &a, const std::pair<int32_t, std::string> &b) {
+=======
+inline auto seed_cmp = [](const std::pair<int32_t, std::string> &a, const std::pair<int32_t, std::string> &b) {
+>>>>>>> 24491c13c313ac93b0e44aad4bb3759f1dcf71a6
     if(a.second != b.second) {
         return a.second < b.second;
     }
     return a.first < b.first;
 };
-typedef std::unordered_map<std::string, std::set<std::pair<int32_t, std::string>, decltype(cmp)>> seedmerIndex_t;
+typedef std::unordered_map<std::string, std::set<std::pair<int32_t, std::string>, decltype(seed_cmp)>> seedmerIndex_t;
 
 /* Helpers for interacting with panmats */
 namespace tree {
@@ -84,3 +91,5 @@ namespace tree {
     // Build mutation matrices by traversing through all parent-child pairs
     void printMutationMatrices(Tree* T, std::ofstream* outfptr=nullptr);
 }
+
+#endif

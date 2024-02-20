@@ -1,3 +1,6 @@
+#ifndef __SEEDING_HPP
+#define __SEEDING_HPP
+
 #pragma once
 #include <iostream>
 #include <cstdlib>
