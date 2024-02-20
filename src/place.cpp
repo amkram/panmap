@@ -11,6 +11,7 @@ using namespace seeding;
 using namespace util;
 
 void mutateSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, std::string nid, seedmerIndex_t &index) {
+    // std::cout << "Forward => " << nid << "\n";
     for (const auto &op : index[nid]) {
         std::string seedmer = op.second;
         if (seedmer == "" || seedmer == "@") {
@@ -18,22 +19,27 @@ void mutateSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, std::s
         }
         int32_t pos = op.first;
         if (seedmer[0] == '@') { // deletion
+       //     std::cout << "-" << pos << " " << seedmer.substr(1) << "\n";
             if (seedmers.find(pos) != seedmers.end()) {
                 seedmers.erase(seedmers.find(pos));
             }
         } else {
+        //    std::cout << "+" << pos << " " << seedmer << "\n";
             seedmers[pos] = seedmer;
         }
     }
 }
 void revertSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, std::string nid, seedmerIndex_t &index) {
+ //   std::cout << "Revert => " << nid << "\n";
     for (auto it = index[nid].rbegin(); it != index[nid].rend(); it++) {
         std::string seedmer = it->second;
         int32_t pos = it->first;
         if (seedmer[0] == '@') { // deletion
+//            std::cout << "+" << pos << " " << seedmer.substr(1) << "\n";
             seedmers[pos] = seedmer.substr(1);
         } else {
             if (seedmers.find(pos) != seedmers.end()) {
+   //             std::cout << "-" << pos << " " << seedmer.substr(1) << "\n";
                 seedmers.erase(seedmers.find(pos));
             }
         }
@@ -46,11 +52,10 @@ void getPhyloCounts(seedmerIndex_t &index, std::unordered_map<std::string, int32
         if (seed.second == "") {
             continue;
         }
-        if (seen.find(seed.second) == seen.end()) {
-            seen[seed.second] = true;
-        } else {
+        if (seen.find(seed.second) != seen.end()) {
             continue;
         }
+        seen[seed.second] = true;
         counts[seed.second] += 1;
     }
     for (Node *child : node->children) {
@@ -69,22 +74,38 @@ void placeDFS(std::ofstream *out, std::unordered_map<std::string, std::set<std::
     float score = 0;
     std::unordered_map<std::string, int32_t> nodeSeedmerCounts;
     for (const auto &seed : seedmers) {
+        if (seed.second == "") {
+            continue;
+        }
         if (nodeSeedmerCounts.find(seed.second) == nodeSeedmerCounts.end()) {
             nodeSeedmerCounts[seed.second] = 1;
         } else {
             nodeSeedmerCounts[seed.second] += 1;
         }
     }
+  //  std::cout << node->identifier << "\t" << seedmers.size() << std::endl;
+      int32_t covered = 0;
+      std::unordered_map<std::string, bool> seen;
     for (const auto &seed : seedmers) {
+         if (seed.second == "") {
+            continue;
+        }
+        if (seen.find(seed.second) != seen.end()) {
+            continue;
+        }
         if (seedmerCounts.find(seed.second) != seedmerCounts.end()) {
-            int32_t den = phyloCounts[seed.second] * nodeSeedmerCounts[seed.second];
-            score += std::min(5.0, (double) seedmerCounts[seed.second]) / (double) den;
+          //  std::cout << seed.second << "\t" << seedmerCounts[seed.second] << "\t" << nodeSeedmerCounts[seed.second] << "\t" << seed.second.size() << "\t" << phyloCounts[seed.second] << std::endl;
+            covered += 1;
         }
     }
-
+    if (seedmers.size() > 10) {
+        score = (double) covered / seedmers.size();
+    } else {
+        score = 0;
+    }
     scores[node->identifier] = score;
     if (out != nullptr) {
-        *out << node->identifier << " " << score << "\n";
+        *out << node->identifier << "," << score << "\n";
     }
     for (Node *child : node->children) {
         placeDFS(out, index, seedmers, scores, seedmerCounts, phyloCounts, child, T, optionalTarget, optionalOutputSeedmers);
@@ -109,16 +130,11 @@ std::string reverseComplement(std::string dna_sequence) {
 void placeHelper(std::unordered_map<std::string, std::set<std::pair<int32_t, std::string>, decltype(cmp)>> &index, std::unordered_map<int32_t, std::string> &seedmers, std::map<std::string, float> &scores, std::unordered_map<std::string, int32_t> &seedmerCounts, std::unordered_map<std::string, int32_t> &phyloCounts, const Node *node, Tree *T, const std::string optionalTarget) {
     util::scopedTimer();
     std::ofstream out("placement.out");
-
     placeDFS(&out, index, seedmers, scores, seedmerCounts, phyloCounts, T->root, T, "", nullptr);
 }
 
 seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, int32_t *j, std::unordered_map<std::string, int32_t> &seedmerCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, const std::string &fastqPath) {
     util::scopedTimer();
-    FILE *fp;
-    kseq_t *seq;
-    fp = fopen(fastqPath.c_str(), "r");
-    seq = kseq_init(fileno(fp));
     seedmerIndex_t seedmerIndex;
     std::string line0;
     std::getline(indexFile, line0);
@@ -127,6 +143,11 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
     int32_t tempK = std::stoi(spltTop[0]);
     int32_t tempS = std::stoi(spltTop[1]);
     int32_t tempJ = std::stoi(spltTop[2]);
+
+    FILE *fp;
+    kseq_t *seq;
+    fp = fopen(fastqPath.c_str(), "r");
+    seq = kseq_init(fileno(fp));
     
     int line;
     while ((line = kseq_read(seq)) >= 0) {
@@ -134,21 +155,15 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
         readNames.push_back(seq->name.s);
         readQuals.push_back(seq->qual.s);
     }
-    for (int i = 0; i < readSequences.size(); i++) {        
+    for (int i = 0; i < readSequences.size(); i++) {
         std::string seq = readSequences[i];
         std::string name = readNames[i];
         std::string rc = reverseComplement(seq);
         std::vector<seed> syncmers = syncmerize(seq, tempK, tempS, false, true, 0);
         std::vector<seed> syncmersReverse = syncmerize(rc, tempK, tempS, false, true, 0);
         std::vector<seedmer> seedmers = seedmerize(syncmers, tempJ);
-        std::vector<seedmer> seedmersReverse = seedmerize(syncmersReverse, tempJ);  
-        std::unordered_map<std::string, bool> seen;
+        std::vector<seedmer> seedmersReverse = seedmerize(syncmersReverse, tempJ);
         for (const auto &m : seedmers) {
-            if (seen.find(m.seq) == seen.end()) {
-                seen[m.seq] = true;
-            } else {
-                continue;
-            }
             if (seedmerCounts.find(m.seq) == seedmerCounts.end()) {
                 seedmerCounts[m.seq] = 1;
             } else {
@@ -156,11 +171,6 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
             }
         }
         for (const auto &m : seedmersReverse) {
-            if (seen.find(m.seq) == seen.end()) {
-                seen[m.seq] = true;
-            } else {
-                continue;
-            }
             if (seedmerCounts.find(m.seq) == seedmerCounts.end()) {
                 seedmerCounts[m.seq] = 1;
             } else {
@@ -245,7 +255,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
     std::cout << "\n\nBest match: " << bestMatch << " (" << targetNodes[0].second << ")\n";
-
     /* Alignment to target */
 
     /*  @nico: at this point,
