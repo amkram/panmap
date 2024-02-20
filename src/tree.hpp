@@ -12,7 +12,7 @@
 
 using namespace seeding;
 
-auto cmp = [](const std::pair<int32_t, std::string> &a, const std::pair<int32_t, std::string> &b) {
+inline auto cmp = [](const std::pair<int32_t, std::string> &a, const std::pair<int32_t, std::string> &b) {
     if(a.second != b.second) {
         return a.second < b.second;
     }

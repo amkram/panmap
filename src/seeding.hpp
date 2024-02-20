@@ -104,9 +104,7 @@ inline std::string getNextSyncmer(std::string &seq, const int32_t currPos, const
 inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k, const int32_t s, const bool open, const bool aligned, const int32_t pad) {
     std::mutex mtx;
     std::vector<seed> ret;
-    mtx.lock();
     int32_t seqLen = seq.size();
-    mtx.unlock();
     if (seqLen < k) {
         return ret;
     }
@@ -126,7 +124,6 @@ inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k, con
         if (ungapped.size() < k + 1) {
             return ret;
         }
-        
         for(int32_t i = 0; i < ungapped.size() - k + 1; i++) {
             std::string kmer = ungapped.substr(i, k);
             if (is_syncmer(kmer, s, open)) {
@@ -146,77 +143,3 @@ inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k, con
     return ret;
 }
 }
-
-// std::set<seed> PangenomeMAT::syncmersFromFastq(std::string fastqPath,  std::vector<read_t> &reads, size_t k, size_t s) {
-//     FILE *fp;
-//     kseq_t *seq;
-//     fp = fopen(fastqPath.c_str(), "r");
-//     seq = kseq_init(fileno(fp));
-//     std::vector<std::string> input;
-//     std::vector<std::string> input_names;
-    
-//     int line;
-//     while ((line = kseq_read(seq)) >= 0) {
-//         std::string this_seq  = seq->seq.s;
-//         std::string this_name = seq->name.s;
-
-//         input.push_back(this_seq);
-//         input_names.push_back(this_name);
-//     }
-//     float est_coverage = 1; //TODO change this to 1
-//     bool open = false;
-    
-//     std::set<seed> syncmers;
-//     std::unordered_map<std::string, int> counts;
-//     std::unordered_map<std::string, int> counts_rc;
-
-//     std::cerr << "length: " << input.size() << "\n";
-//     reads.resize(input.size());
-
-//     for (int i = 0; i < input.size(); i++) {        
-//         read_t this_read;
-//         std::string seq = input[i];
-//         std::string name = input_names[i];
-        
-//         this_read.seq = seq;
-//         this_read.name = name;
-
-
-//         std::string rc = reverse_complement(seq);
-//         std::vector<seed> these = syncmerize(seq, k, s, false, false, 0);
-//         std::vector<seed> these_rc = syncmerize(rc, k, s, false, false, 0);
-        
-        
-//         for (const auto &m : these) {
-//             if (counts.find(m.seq) == counts.end()) {
-//                 counts[m.seq] = 1;
-//             } else {
-//                 counts[m.seq] += 1;
-//             }
-//             if (counts[m.seq] > est_coverage) {
-//                 syncmers.insert(m);
-
-//  //               m.pos = m.pos + k - 1;
-// //                m.reversed = false;
-//                 this_read.kmers.push_back(seed{m.seq, m.pos + (int32_t) k - 1, -1, 0, false, -1});
-//                 //this_read.read_coord.push_back(m.pos + k - 1);
-//                 //this_read.reversed.push_back(false);
-//             }
-//         }
-        
-//         for (const auto &m : these_rc) {
-//             if (counts_rc.find(m.seq) == counts_rc.end()) {
-//                 counts_rc[m.seq] = 1;
-//             } else {
-//                 counts_rc[m.seq] += 1;
-//             }
-//             if (counts_rc[m.seq] > est_coverage) {
-//                 syncmers.insert(m);
-//                 this_read.kmers.push_back(seed{m.seq, m.pos + (int32_t) k - 1, -1, 0, true, -1});
-//             }
-//         }
-//         reads[i] = this_read;
-//     }
-   
-//     return syncmers;
-// }
