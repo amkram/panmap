@@ -204,7 +204,7 @@ void align_read_given_seeds(const mm_idx_t *mi,const int read_length,const char 
 
 
 
-void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments) {
+void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k) {
     mm_idxopt_t iopt;
 	mm_mapopt_t mopt;
 	int n_threads = 1;
@@ -214,7 +214,7 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 	mopt.flag |= MM_F_CIGAR;    // perform alignment
 
 	
-	iopt.k = 15; //setting seed length
+	iopt.k = syncmer_k; //setting seed length
 
 	mm_idx_t *mi = mm_idx_str(10, iopt.k, 0, 14, 1, &reference, NULL); //Read reference into structure
 
@@ -224,13 +224,11 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 
 	
 	for(int k = 0; k < n_reads; k++) {
-		fprintf(stderr, "reached %d\n", k);
 		
 		mm_reg1_t *reg;
 		int j, i, n_reg;
 
 		align_read_given_seeds(mi,r_lens[k],reads[k], &n_reg, &reg, tbuf, &mopt, iopt.k, seed_counts[k], ref_positions[k], qry_positions[k], reversed[k]);
-
 		
 		kstring_t sam = {0,0,0};
 		mm_bseq1_t t;
@@ -238,23 +236,19 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 		t.seq = reads[k];
 		t.name = read_names[k];
 		t.qual = quality[k];
-		const int n_regss[1] = {1};
+		const int n_regss[1] = {n_reg};
 		const mm_reg1_t *regss = {reg};
 		mi->seq[0].name = "*";
 
-		
-		if(reg->score <= 0 || reg->score > r_lens[k]) {
+		if(n_reg == 0 || reg->score <= 0 || reg->score > r_lens[k]) { //Maybe remove n_reg==0 check
 			sam_alignments[k] = NULL;
+			r_lens[k] = 0;
 		} else {
 			mm_write_sam3( &sam, mi, &t, 0, 0, 1, n_regss, &regss, NULL, 0, 0);
-			r_lens[k] = sam.l; //TODO, is this needed
+			r_lens[k] = sam.l; //Length of sam line string
 			sam_alignments[k] = sam.s;
 		}
 		
-		
-		
-		
-
 
 
 		for (j = 0; j < n_reg; ++j) {
