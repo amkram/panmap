@@ -323,8 +323,10 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             return lhs.seq < rhs.seq;
         });
     }
+
+    /* Debug Print statements
     std::cerr << bestMatchSequence << "\n\n\n\n\n";
-    
+
     std::cerr << "READSEEDS\n";
     for(int j = 0; j < refSeeds.size() ; j++){
         std::cerr << "B\n";
@@ -348,7 +350,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
 
-    /*
+    
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n\n" << i << "\n";
         for(int j = 0; j < readSeeds[i].size() ; j++){
@@ -451,20 +453,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     //std::cout << "\n@SQ	SN:reference	LN:" << ref_seq.length() << std::endl;  // sam header
 
     char *sam_alignments[n_reads]; //constituants must be freed
-
-
-    /*
-    for(int i = 0; i < n_reads; i++) {
-        std::cerr << "\n" << i <<"\n";
-        std::cerr << readSequences[i] << "\n";
-        std::cerr << readQuals[i] << "\n";
-        std::cerr << readSeeds[i].size() << "\n";
-        for(int j = 0; j < readSeeds[i].size() ; j++){
-            std::cerr << readSeeds[i][j].pos << "\n";
-            std::cerr << readSeeds[i][j].reversed << "\n";
-        }
-    }
-    */
 
     align_reads(reference, n_reads, read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k);
     
