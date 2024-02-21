@@ -318,11 +318,19 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             return lhs.seq < rhs.seq;
         });
     }
-
-
-    /*
+    std::cerr << bestMatchSequence << "\n\n\n\n\n";
+    
+    std::cerr << "READSEEDS\n";
+    for(int j = 0; j < refSeeds.size() ; j++){
+        std::cerr << "B\n";
+        std::cerr << refSeeds[j].seq.size() << "\n";
+        std::cerr << refSeeds[j].seq << "\n";
+        std::cerr << refSeeds[j].pos << "\n";
+        std::cerr << refSeeds[j].reversed << "\n";
+    }
+    
     for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n" << i <<"\n";
+        std::cerr << "\n\n" << i <<"\n";
         std::cerr << readSequences[i] << "\n";
         std::cerr << readQuals[i] << "\n";
         std::cerr << readSeeds[i].size() << "\n";
@@ -334,8 +342,8 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             std::cerr << readSeeds[i][j].reversed << "\n";
         }
     }
-    
 
+    /*
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n\n" << i << "\n";
         for(int j = 0; j < readSeeds[i].size() ; j++){
