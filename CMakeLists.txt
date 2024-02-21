@@ -9,7 +9,7 @@ option(OPTION_BUILD_TESTS "Build tests." ON)
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20 ") 
 if(OPTION_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wno-unused-function -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -Wall -Wno-unused-function -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
 else(OPTION_DEBUG)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3") 
 endif(OPTION_DEBUG)
@@ -39,7 +39,7 @@ include_directories(${Boost_INCLUDE_DIRS})
 
 # Dependency: minimap2
 add_custom_target(libminimap2.a
-   COMMAND make libminimap2.a
+   COMMAND make arm_neon=1 aarch64=1 libminimap2.a
    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/minimap2_src/
 )
 add_custom_target(clean-minimap
