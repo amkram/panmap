@@ -402,12 +402,10 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
     */
-    
 
 
 
     //TODO SPLIT THIS FUNCTION APART
-
     
     //C++ to C interface will have to be cleaned up
     const char *reference = bestMatchSequence.c_str();
@@ -451,18 +449,29 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     }
     
     //std::cout << "\n@SQ	SN:reference	LN:" << ref_seq.length() << std::endl;  // sam header
-
     char *sam_alignments[n_reads]; //constituants must be freed
+
 
     align_reads(reference, n_reads, read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k);
     
     
+    /* Sorting the alignments by their reference position */
+    std::pair<int, char*> sam_lines[n_reads];
     for(int i = 0; i < n_reads; i++) {
-        if (sam_alignments[i]) {
-        std::cout << sam_alignments[i] << std::endl;
+        sam_lines[i] = std::make_pair(r_lens[i],sam_alignments[i]);
+    }
+    sort(sam_lines, sam_lines + n_reads, [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
+        return a.first < b.first;
+    });
+
+    
+    for(int i = 0; i < n_reads; i++) {
+        if(sam_lines[i].second){
+            std::cout << sam_lines[i].second << std::endl;
         }
-        
-        free(sam_alignments[i]);
+    }
+
+    for(int i = 0; i < n_reads; i++) {
         free(reversed[i]);
         free(ref_positions[i]);
         free(qry_positions[i]);
@@ -471,8 +480,16 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     free(ref_positions);
     free(reversed);
     free(seed_counts);
-    free(r_lens);
     free(read_strings);
     free(qual_strings);
     free(read_names);
+
+
+    //Convert to BAM and beyond
+
+
+    for(int i = 0; i < n_reads; i++) {
+        free(sam_alignments[i]);
+    }
+    free(r_lens);
 }

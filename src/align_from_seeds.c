@@ -21,17 +21,6 @@ mm_reg1_t *align_regs(const mm_mapopt_t *opt, const mm_idx_t *mi, void *km, int 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
 // mi: holds reference info and alignment flags and options
 // read_length
 // read_seq: sequence of read, as a C string of A C G T or U
@@ -203,7 +192,7 @@ void align_read_given_seeds(const mm_idx_t *mi,const int read_length,const char 
 
 
 
-
+//Stores sam strings in sam_alignments, and stores reference positions of alignments in r_lens
 void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k) {
     mm_idxopt_t iopt;
 	mm_mapopt_t mopt;
@@ -242,10 +231,10 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 
 		if(n_reg == 0 || reg->score <= 0 || reg->score > r_lens[k]) { //Maybe remove n_reg==0 check
 			sam_alignments[k] = NULL;
-			r_lens[k] = 0;
+			r_lens[k] = -1;
 		} else {
 			mm_write_sam3( &sam, mi, &t, 0, 0, 1, n_regss, &regss, NULL, 0, 0);
-			r_lens[k] = sam.l; //Length of sam line string
+			r_lens[k] = reg->rs+1; //Length of sam line string
 			sam_alignments[k] = sam.s;
 		}
 		
