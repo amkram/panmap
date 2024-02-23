@@ -254,7 +254,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::map<std::string, float> scores;
     std::unordered_map<std::string, int32_t> phyloCounts;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
-//    getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
+    //getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
 
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
     placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
@@ -264,6 +264,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
     std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
     // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
+
     std::string bestMatch = targetNodes[0].first;
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestMatch, true);
@@ -279,12 +280,14 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::unordered_map<int32_t, std::string> targetSeedmers;
     std::unordered_map<int32_t, std::string> dynamicSeedmersTarget;
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
+    
     for (const auto &seedmer : targetSeedmers) {
         if (seedmer.second == "" ) {
             continue;
         }
         int32_t refPos = seedmer.first;
         std::string seed = seedmer.second.substr(0, k);
+        //std::cerr << seed << " R\n";
         if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
             seedToRefPositions[seed] = {};
         }
@@ -307,34 +310,39 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         seed thisSeed;
         thisSeed.seq = kv.first;
         thisSeed.pos = kv.second[0];
+
         refSeeds.push_back(thisSeed);
     }
 
+    //std::cerr << "\n\n\n\n\n";
+
     //Sorting ref seeds
-    sort(refSeeds.begin(), refSeeds.end(), [ ]( const seed& lhs, const seed& rhs )
+    sort(refSeeds.begin(), refSeeds.end(), []( const seed& lhs, const seed& rhs )
     {
         return lhs.seq < rhs.seq ;
     });
 
     //Sorting read seeds
     for(int i = 0; i < readSeeds.size(); i++){
-        sort(readSeeds[i].begin(), readSeeds[i].end(), [ ]( const seed& lhs, const seed& rhs )
+        sort(readSeeds[i].begin(), readSeeds[i].end(), []( const seed& lhs, const seed& rhs )
         {
             return lhs.seq < rhs.seq;
         });
     }
 
-    /* Debug Print statements
+    /* Debug Print statements */
+    /*
     std::cerr << bestMatchSequence << "\n\n\n\n\n";
 
     std::cerr << "READSEEDS\n";
     for(int j = 0; j < refSeeds.size() ; j++){
         std::cerr << "B\n";
-        std::cerr << refSeeds[j].seq.size() << "\n";
-        std::cerr << refSeeds[j].seq << "\n";
-        std::cerr << refSeeds[j].pos << "\n";
+        std::cerr << refSeeds[j].seq << " ";
         std::cerr << refSeeds[j].reversed << "\n";
     }
+    */
+
+    /*
     
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n\n" << i <<"\n";
@@ -350,14 +358,19 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
 
-    
+    */
+
+    /*
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n\n" << i << "\n";
         for(int j = 0; j < readSeeds[i].size() ; j++){
-            std::cerr << readSeeds[i][j].seq << "\n";
+            if(!readSeeds[i][j].reversed){
+                std::cerr << readSeeds[i][j].seq << "\n";
+            }
         }
     }
     */
+    
 
 
     //Finding syncmer matches
@@ -387,6 +400,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     
     /*
     std::cerr << "MATCHED--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
+    
 
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n" << i <<"\n";
@@ -402,6 +416,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
     */
+    
 
 
 
@@ -448,7 +463,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         qry_positions[i] = qry_pos_array;
     }
     
-    //std::cout << "\n@SQ	SN:reference	LN:" << ref_seq.length() << std::endl;  // sam header
+    std::cout << "\n@SQ	SN:reference	LN:" << bestMatchSequence.length() << std::endl;  // sam header
     char *sam_alignments[n_reads]; //constituants must be freed
 
 
@@ -464,7 +479,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         return a.first < b.first;
     });
 
-    
+
     for(int i = 0; i < n_reads; i++) {
         if(sam_lines[i].second){
             std::cout << sam_lines[i].second << std::endl;

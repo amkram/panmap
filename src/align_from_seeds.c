@@ -34,7 +34,6 @@ mm_reg1_t *align_regs(const mm_mapopt_t *opt, const mm_idx_t *mi, void *km, int 
 // q_poss: position of seeds in query(read) coords (the ends of the seed, the last index included in the seed)
 void align_read_given_seeds(const mm_idx_t *mi,const int read_length,const char *read_seq, int *n_regs, mm_reg1_t **regs, mm_tbuf_t *b, const mm_mapopt_t *opt, int seed_l, int n_seeds, int *r_poss, int *q_poss, uint8_t *reversed) 
 {
-	
 	int i, j, rep_len = 0, qlen_sum = 0, n_regs0, n_mini_pos = 0;
 	int max_chain_gap_qry, max_chain_gap_ref, is_splice = !!(opt->flag & MM_F_SPLICE), is_sr = !!(opt->flag & MM_F_SR);
 	uint32_t hash;
@@ -70,12 +69,11 @@ void align_read_given_seeds(const mm_idx_t *mi,const int read_length,const char 
 		uint32_t qpos = (uint32_t)q_poss[i];            //query position, position on read coordinates, position of the END of the seed, including it. so if this is 6 and read[6] is A then A is the last character of the seed
 		uint32_t rpos = (uint32_t)r_poss[i];            //reference position of the END of the seed
 		uint32_t span = (uint32_t)seed_l;               //seed length
-			
+		
 		uint64_t x, y;
 		
 		x = ((uint64_t)reversed[i]<<63) | rpos;
 		y = (uint64_t)span << 32 | qpos;
-
 
 		a[i].x = x;
 		a[i].y = y;
@@ -227,7 +225,7 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 		t.qual = quality[k];
 		const int n_regss[1] = {n_reg};
 		const mm_reg1_t *regss = {reg};
-		mi->seq[0].name = "*";
+		mi->seq[0].name = "reference";
 
 		if(n_reg == 0 || reg->score <= 0 || reg->score > r_lens[k]) { //Maybe remove n_reg==0 check
 			sam_alignments[k] = NULL;
