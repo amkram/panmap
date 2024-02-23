@@ -9,7 +9,7 @@ option(OPTION_BUILD_TESTS "Build tests." ON)
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20 ") 
 if(OPTION_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -Wall -Wno-unused-function -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wno-unused-function -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
 else(OPTION_DEBUG)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3") 
 endif(OPTION_DEBUG)
