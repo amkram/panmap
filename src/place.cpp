@@ -88,18 +88,18 @@ void placeDFS(std::ofstream *out, std::unordered_map<std::string, std::set<std::
         }
     }
   //  std::cout << node->identifier << "\t" << seedmers.size() << std::endl;
-      int32_t covered = 0;
+      double covered = 0;
       std::unordered_map<std::string, bool> seen;
     for (const auto &seed : seedmers) {
-         if (seed.second == "") {
+         if (seed.second == "" || seed.first < 100 || seed.first >  T->getStringFromReference(node->identifier, true).size() - 100) {
             continue;
         }
         if (seen.find(seed.second) != seen.end()) {
             continue;
         }
-        if (seedmerCounts.find(seed.second) != seedmerCounts.end()) {
+        if (seedmerCounts.find(seed.second) != seedmerCounts.end() && seedmerCounts[seed.second] > 1 && seedmers.size() > 10) {
           //  std::cout << seed.second << "\t" << seedmerCounts[seed.second] << "\t" << nodeSeedmerCounts[seed.second] << "\t" << seed.second.size() << "\t" << phyloCounts[seed.second] << std::endl;
-            covered += 1;
+            covered +=  1 / (double) nodeSeedmerCounts[seed.second];
         }
     }
     if (seedmers.size() > 10) {
@@ -225,7 +225,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::vector<std::vector<seed>> readSeedsBwd;
     std::unordered_map<std::string, int32_t> seedmerCounts;
     int32_t k, s, j;
-
     seedmerIndex_t seedmerIndex = seedsFromFastq(indexFile, &k, &s, &j, seedmerCounts, readSequences, readQuals, readNames, readSeedsFwd, readSeedsBwd, reads1Path);
     
     /* Collecting forward and backward seeds into one vector */
@@ -254,7 +253,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::map<std::string, float> scores;
     std::unordered_map<std::string, int32_t> phyloCounts;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
-    //getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
+    getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
 
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
     placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
@@ -276,9 +275,13 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             bestMatchSequence += c;
         }
     }
+    // path format {target}.*.fastq
+    std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
+    std::cerr << "\n" << targetId << "\t" << bestMatch << std::endl;
     std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
     std::unordered_map<int32_t, std::string> targetSeedmers;
     std::unordered_map<int32_t, std::string> dynamicSeedmersTarget;
+    
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
     
     for (const auto &seedmer : targetSeedmers) {
@@ -463,7 +466,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         qry_positions[i] = qry_pos_array;
     }
     
-    std::cout << "\n@SQ	SN:reference	LN:" << bestMatchSequence.length() << std::endl;  // sam header
+//    std::cout << "\n@SQ	SN:reference	LN:" << bestMatchSequence.length() << std::endl;  // sam header
     char *sam_alignments[n_reads]; //constituants must be freed
 
 
@@ -482,7 +485,8 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
     for(int i = 0; i < n_reads; i++) {
         if(sam_lines[i].second){
-            std::cout << sam_lines[i].second << std::endl;
+            ;
+     //       std::cout << sam_lines[i].second << std::endl;
         }
     }
 
