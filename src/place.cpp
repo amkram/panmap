@@ -3,6 +3,7 @@
 #include "pmi.hpp"
 #include "util.hpp"
 #include <cmath>
+#include <htslib/sam.h>
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -211,6 +212,37 @@ extern "C" {
     void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k);
 }
 
+
+//TODO FIXME DELETE
+void findSyncmers(const std::string& sequence, int k, int s, std::unordered_map<std::string, std::vector<int32_t>> &refSeeds) {
+        std::unordered_set<std::string> syncmers;
+        int len = sequence.length();
+
+        for (int i = 0; i <= len - k; ++i) {
+            std::string kmer = sequence.substr(i, k);
+            std::string start_smer = kmer.substr(0, s);
+            std::string end_smer = kmer.substr(k - s, s);
+
+            bool start_is_min = true, end_is_min = true;
+
+            for (int j = 1; j < k - 1; ++j) {
+                std::string smer = kmer.substr(j, s);
+                if (start_smer > smer) {
+                    start_is_min = false;
+                }
+                if (end_smer > smer) {
+                    end_is_min = false;
+                }
+            }
+
+            if (start_is_min || end_is_min) {
+                refSeeds[kmer] = {i};
+            }
+        }
+}
+
+
+
 void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, Tree *T) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
@@ -231,7 +263,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     /* Collecting forward and backward seeds into one vector */
     std::vector<std::vector<seed>> readSeeds;
     readSeeds.reserve(readSeedsFwd.size());
-    for(int i = 0; i < readSeedsFwd.size(); i++){
+    for(int i = 0; i < readSeedsFwd.size(); i++) {
         std::vector<seed> thisReadsSeeds;
         thisReadsSeeds.reserve(readSeedsFwd[i].size() + readSeedsBwd[i].size());
 
@@ -280,6 +312,8 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::unordered_map<int32_t, std::string> targetSeedmers;
     std::unordered_map<int32_t, std::string> dynamicSeedmersTarget;
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
+
+    //std::cerr << "BEST MATCH ID:\n" << bestMatch << "\n\n";
     
     for (const auto &seedmer : targetSeedmers) {
         if (seedmer.second == "" ) {
@@ -305,6 +339,10 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     */
 
 
+    //TODO FIXME quickhacks                                        //
+    seedToRefPositions = {};                                       //
+    findSyncmers(bestMatchSequence, k, s, seedToRefPositions);     //
+    
     std::vector<seed> refSeeds;
     for(auto kv : seedToRefPositions) {
         seed thisSeed;
@@ -313,6 +351,8 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
         refSeeds.push_back(thisSeed);
     }
+    
+
 
     //std::cerr << "\n\n\n\n\n";
 
@@ -321,6 +361,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     {
         return lhs.seq < rhs.seq ;
     });
+
 
     //Sorting read seeds
     for(int i = 0; i < readSeeds.size(); i++){
@@ -331,16 +372,19 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     }
 
     /* Debug Print statements */
+    
+    //std::cerr << bestMatchSequence << "\n\n\n\n\n";
+    
+
     /*
-    std::cerr << bestMatchSequence << "\n\n\n\n\n";
 
     std::cerr << "READSEEDS\n";
     for(int j = 0; j < refSeeds.size() ; j++){
         std::cerr << "B\n";
         std::cerr << refSeeds[j].seq << " ";
-        std::cerr << refSeeds[j].reversed << "\n";
+        std::cerr << refSeeds[j].pos << "\n";
     }
-    */
+    /*
 
     /*
     
@@ -358,9 +402,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
 
-    */
-
-    /*
+    
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n\n" << i << "\n";
         for(int j = 0; j < readSeeds[i].size() ; j++){
@@ -500,7 +542,26 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     free(read_names);
 
 
+
+
+
+
+
+
+
+
+
     //Convert to BAM and beyond
+
+    bam1_t *record = bam_init1();
+    bam_destroy1(record);
+
+
+
+
+
+
+
 
 
     for(int i = 0; i < n_reads; i++) {
