@@ -35,6 +35,9 @@ void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string
         cout << "[Second FASTQ path]: ";
         getline(cin, reads2File);
     }
+    if (reads1File == "q" || reads2File == "q") {
+        exit(0);
+    }
     std::ifstream ifs(indexFile);
     place::placeIsolate(ifs, reads1File, reads2File, T);
 }
