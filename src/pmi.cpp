@@ -223,6 +223,10 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tre
     std::sort(extended.begin(), extended.end(), [](const auto &a, const auto &b) {
         return std::get<5>(a) > std::get<5>(b);
     });
+    if (node->identifier == "node_1888") {
+        std::cout << ">" << node->identifier << "\n";
+        std::cout << data.ungappedConsensus << "\n";
+    }
     std::unordered_map<int32_t, bool> seen;
     for (const auto &nucMut : extended) {
         int32_t globalCoord = std::get<5>(nucMut);
