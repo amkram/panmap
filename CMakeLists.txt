@@ -51,7 +51,7 @@ add_custom_target(clean-minimap
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/include)
 
 
-file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a" "${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.a")
+file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a")
 add_executable(panmap ${PANMAP_SRCS})
 add_dependencies(panmap libminimap2.a)
 
@@ -60,10 +60,11 @@ if(OPTION_BUILD_TESTS)
     list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
     add_executable(tests ${PANMAP_SRCS} "src/test/main.test.cpp" "src/test/pmi.test.cpp" "src/test/seed.test.cpp" "src/test/tree.test.cpp") 
     add_dependencies(tests libminimap2.a)
+    
 endif(OPTION_BUILD_TESTS)
 
-target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z hts)
-target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z hts)
+target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a  ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib z)
+target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib z)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES ${CMAKE_BINARY_DIR}/clean-minimap)
