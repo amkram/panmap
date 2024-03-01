@@ -352,16 +352,12 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         refSeeds.push_back(thisSeed);
     }
     
-
-
-    //std::cerr << "\n\n\n\n\n";
-
+    
     //Sorting ref seeds
     sort(refSeeds.begin(), refSeeds.end(), []( const seed& lhs, const seed& rhs )
     {
         return lhs.seq < rhs.seq ;
     });
-
 
     //Sorting read seeds
     for(int i = 0; i < readSeeds.size(); i++){
@@ -505,7 +501,11 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         qry_positions[i] = qry_pos_array;
     }
     
-    std::cout << "\n@SQ	SN:reference	LN:" << bestMatchSequence.length() << std::endl;  // sam header
+    std::string sam_header = "@SQ\tSN:reference\tLN:";
+    sam_header += std::to_string(bestMatchSequence.length());
+
+    std::cout << "\n" << sam_header << "\n";
+
     char *sam_alignments[n_reads]; //constituants must be freed
 
 
@@ -523,8 +523,12 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
 
     for(int i = 0; i < n_reads; i++) {
-        if(sam_lines[i].second){
-            std::cout << sam_lines[i].second << std::endl;
+        sam_alignments[i] = sam_lines[i].second;
+    }
+
+    for(int i = 0; i < n_reads; i++) {
+        if(sam_alignments[i]) {
+            std::cout << sam_alignments[i] << std::endl;
         }
     }
 
@@ -552,11 +556,91 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
 
     //Convert to BAM and beyond
-
+    
+    sam_hdr_t *header = NULL;
     bam1_t *record = bam_init1();
+    
+    // Parse SAM header
+    header = sam_hdr_parse(sam_header.length(), sam_header.c_str());
+
+    htsFile *bam_file = hts_open("output.bam", "wb");
+    if (!bam_file) {
+        fprintf(stderr, "Error: Failed to open output BAM file.\n");
+        bam_hdr_destroy(header);
+        bam_destroy1(record);
+        return;
+    }
+
+
+    // Write BAM header
+    if (sam_hdr_write(bam_file, header) < 0) {
+        fprintf(stderr, "Error: Failed to write BAM header.\n");
+        bam_hdr_destroy(header);
+        bam_destroy1(record);
+        hts_close(bam_file);
+        return;
+    }
+
+
+    for (int i = 0; i < n_reads; i++) {
+        if(sam_alignments[i]){
+
+            kstring_t line = KS_INITIALIZE;
+            kputs(sam_alignments[i], &line);
+            
+            sam_parse1(&line, header, record);
+
+            //free line
+            if (bam_write1(bam_file->fp.bgzf, record) < 0) {
+                fprintf(stderr, "Error: Failed to write BAM record.\n");
+                bam_hdr_destroy(header);
+                bam_destroy1(record);
+                hts_close(bam_file);
+                return;
+            }
+        }
+    }
+
+
+
+
+    bam_hdr_destroy(header);
     bam_destroy1(record);
+    hts_close(bam_file);
+
+    /*
 
 
+    // Write BAM header
+    if (sam_hdr_write(bam_file, header) < 0) {
+        fprintf(stderr, "Error: Failed to write BAM header.\n");
+        return 1;
+    }
+    
+
+    // Process SAM records and write to BAM file
+    int i;
+    for (i = 1; i < sizeof(sam_data) / sizeof(sam_data[0]); i++) {
+
+        kstring_t line = KS_INITIALIZE;
+        kputs(sam_data[i], &line);
+        
+        sam_parse1(&line, header, record);
+
+        //free line
+        if (bam_write1(bam_file->fp.bgzf, record) < 0) {
+            fprintf(stderr, "Error: Failed to write BAM record.\n");
+            return 1;
+        }
+    }
+
+    // Cleanup
+    bam_hdr_destroy(header);
+    bam_destroy1(record);
+    hts_close(bam_file);
+    */
+
+    
 
 
 
