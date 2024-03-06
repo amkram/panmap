@@ -286,17 +286,15 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::map<std::string, float> scores;
     std::unordered_map<std::string, int32_t> phyloCounts;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
-    getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
-
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
     placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
-
+    
     /* Setup target sequence and seeds */
     std::vector<std::pair<std::string, float>> targetNodes;
     std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
     std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
     // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
-
+    
     std::string bestMatch = targetNodes[0].first;
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestMatch, true);
@@ -308,6 +306,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             bestMatchSequence += c;
         }
     }
+    
     // path format {target}.*.fastq
     std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
     std::cerr << "\n" << targetId << "\t" << bestMatch << std::endl;
@@ -317,8 +316,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
 
-    //std::cerr << "BEST MATCH ID:\n" << bestMatch << "\n\n";
-    
     for (const auto &seedmer : targetSeedmers) {
         if (seedmer.second == "" ) {
             continue;
@@ -341,7 +338,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     **    - readSequences, readQuals, readNames contain the relevant info
     **    - seedToRefPositions maps a seed sequence (just seeds not seed-mers) to all matching positions in bestMatchSequence
     */
-
+    std::cerr << "\n" << bestMatchSequence << std::endl;
 
     //TODO FIXME quickhacks                                        //
     seedToRefPositions = {};                                       //
@@ -356,7 +353,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         refSeeds.push_back(thisSeed);
     }
     
-    
     //Sorting ref seeds
     sort(refSeeds.begin(), refSeeds.end(), []( const seed& lhs, const seed& rhs )
     {
@@ -370,7 +366,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             return lhs.seq < rhs.seq;
         });
     }
-
     /* Debug Print statements */
     
     //std::cerr << bestMatchSequence << "\n\n\n\n\n";
@@ -505,7 +500,11 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         qry_positions[i] = qry_pos_array;
     }
     
-//    std::cout << "\n@SQ	SN:reference	LN:" << bestMatchSequence.length() << std::endl;  // sam header
+    std::string sam_header = "@SQ\tSN:reference\tLN:";
+    sam_header += std::to_string(bestMatchSequence.length());
+
+    std::cout << "\n" << sam_header << "\n";
+
     char *sam_alignments[n_reads]; //constituants must be freed
 
 
@@ -523,9 +522,12 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
 
     for(int i = 0; i < n_reads; i++) {
-        if(sam_lines[i].second){
-            ;
-     //       std::cout << sam_lines[i].second << std::endl;
+        sam_alignments[i] = sam_lines[i].second;
+    }
+
+    for(int i = 0; i < n_reads; i++) {
+        if(sam_alignments[i]) {
+            std::cout << sam_alignments[i] << std::endl;
         }
     }
 
@@ -551,11 +553,10 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
 
 
-
     //Convert to BAM and beyond
-    
     sam_hdr_t *header = NULL;
     bam1_t *record = bam_init1();
+
     
     // Parse SAM header
     header = sam_hdr_parse(sam_header.length(), sam_header.c_str());
@@ -604,37 +605,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     bam_hdr_destroy(header);
     bam_destroy1(record);
     hts_close(bam_file);
-
     /*
-
-
-    // Write BAM header
-    if (sam_hdr_write(bam_file, header) < 0) {
-        fprintf(stderr, "Error: Failed to write BAM header.\n");
-        return 1;
-    }
-    
-
-    // Process SAM records and write to BAM file
-    int i;
-    for (i = 1; i < sizeof(sam_data) / sizeof(sam_data[0]); i++) {
-
-        kstring_t line = KS_INITIALIZE;
-        kputs(sam_data[i], &line);
-        
-        sam_parse1(&line, header, record);
-
-        //free line
-        if (bam_write1(bam_file->fp.bgzf, record) < 0) {
-            fprintf(stderr, "Error: Failed to write BAM record.\n");
-            return 1;
-        }
-    }
-
-    // Cleanup
-    bam_hdr_destroy(header);
-    bam_destroy1(record);
-    hts_close(bam_file);
     */
 
     
