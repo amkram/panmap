@@ -90,27 +90,28 @@ void placeDFS(std::ofstream *out, std::unordered_map<std::string, std::set<std::
     }
   //  std::cout << node->identifier << "\t" << seedmers.size() << std::endl;
       double covered = 0;
+      int32_t occ = 0;
       std::unordered_map<std::string, bool> seen;
+    int32_t max = 0;
     for (const auto &seed : seedmers) {
-         if (seed.second == "" || seed.first < 100 || seed.first >  T->getStringFromReference(node->identifier, true).size() - 100) {
+         if (seed.second == "" || seed.first < 100) {
             continue;
         }
         if (seen.find(seed.second) != seen.end()) {
             continue;
         }
-        if (seedmerCounts.find(seed.second) != seedmerCounts.end() && seedmerCounts[seed.second] > 1 && seedmers.size() > 10) {
-          //  std::cout << seed.second << "\t" << seedmerCounts[seed.second] << "\t" << nodeSeedmerCounts[seed.second] << "\t" << seed.second.size() << "\t" << phyloCounts[seed.second] << std::endl;
-            covered +=  1 / (double) nodeSeedmerCounts[seed.second];
+        if (seedmerCounts.find(seed.second) != seedmerCounts.end() && seedmers.size() > 10) {
+            int32_t num = seedmerCounts[seed.second]; 
+            if (num > max) {
+                max = num;
+            }
+            occ += std::min(1.0, std::log(seedmerCounts[seed.second])) / (double) nodeSeedmerCounts[seed.second];
         }
     }
-    if (seedmers.size() > 10) {
-        score = (double) covered / seedmers.size();
-    } else {
-        score = 0;
-    }
+    score = occ / (double) seedmers.size();
     scores[node->identifier] = score;
     if (out != nullptr) {
-        *out << node->identifier << "," << score << "\n";
+        *out << node->identifier << "\t" << score << "\n";
     }
     for (Node *child : node->children) {
         placeDFS(out, index, seedmers, scores, seedmerCounts, phyloCounts, child, T, optionalTarget, optionalOutputSeedmers);
