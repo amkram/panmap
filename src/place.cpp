@@ -316,7 +316,27 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
 
+    /* Debug Print statements */
+    
+
+    
+    for(int i = 0; i < readSequences.size(); i++) {
+        std::cerr << "\n" << i <<"\n";
+        std::cerr << readSequences[i] << "\n";
+        std::cerr << readQuals[i] << "\n";
+        std::cerr << readSeeds[i].size() << "\n";
+        for(int j = 0; j < readSeeds[i].size() ; j++){
+            std::cerr << " -> read_seed: \n";
+            std::cerr << readSeeds[i][j].seq.size() << "\n";
+            std::cerr << readSeeds[i][j].seq << "\n";
+            std::cerr << readSeeds[i][j].pos << "\n";
+            std::cerr << readSeeds[i][j].reversed << "\n";
+        }
+    }
+    std::cerr << "target seedmers:\n";
+
     for (const auto &seedmer : targetSeedmers) {
+        std::cerr << "target_seed: " << seedmer.first << " " << seedmer.second << "\n";
         if (seedmer.second == "" ) {
             continue;
         }
@@ -329,6 +349,10 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
     
+    std::cerr << "seed to ref positions:\n";
+    for (const auto &seed : seedToRefPositions) {
+        std::cerr << seed.first << " " << seed.second.size() << "\n";
+    }
 
     /* Alignment to target */
 
@@ -366,48 +390,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             return lhs.seq < rhs.seq;
         });
     }
-    /* Debug Print statements */
-    
-    //std::cerr << bestMatchSequence << "\n\n\n\n\n";
-    
-
-    /*
-
-    std::cerr << "READSEEDS\n";
-    for(int j = 0; j < refSeeds.size() ; j++){
-        std::cerr << "B\n";
-        std::cerr << refSeeds[j].seq << " ";
-        std::cerr << refSeeds[j].pos << "\n";
-    }
-    /*
-
-    /*
-    
-    for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n\n" << i <<"\n";
-        std::cerr << readSequences[i] << "\n";
-        std::cerr << readQuals[i] << "\n";
-        std::cerr << readSeeds[i].size() << "\n";
-        for(int j = 0; j < readSeeds[i].size() ; j++){
-            std::cerr << "X\n";
-            std::cerr << readSeeds[i][j].seq.size() << "\n";
-            std::cerr << readSeeds[i][j].seq << "\n";
-            std::cerr << readSeeds[i][j].pos << "\n";
-            std::cerr << readSeeds[i][j].reversed << "\n";
-        }
-    }
-
-    
-    for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n\n" << i << "\n";
-        for(int j = 0; j < readSeeds[i].size() ; j++){
-            if(!readSeeds[i][j].reversed){
-                std::cerr << readSeeds[i][j].seq << "\n";
-            }
-        }
-    }
-    */
-    
 
 
     //Finding syncmer matches
