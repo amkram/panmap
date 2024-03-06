@@ -341,15 +341,20 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::cerr << "\n" << bestMatchSequence << std::endl;
 
     //TODO FIXME quickhacks                                        //
-    seedToRefPositions = {};                                       //
-    findSyncmers(bestMatchSequence, k, s, seedToRefPositions);     //
+    std::unordered_map<std::string, std::vector<int32_t>> NseedToRefPositions;
+    ///NseedToRefPositions = {};                                       //
+    //findSyncmers(bestMatchSequence, k, s, NseedToRefPositions);     //
+    //
+
+
+
+
     
     std::vector<seed> refSeeds;
     for(auto kv : seedToRefPositions) {
         seed thisSeed;
         thisSeed.seq = kv.first;
         thisSeed.pos = kv.second[0];
-
         refSeeds.push_back(thisSeed);
     }
     
@@ -369,17 +374,11 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     /* Debug Print statements */
     
     //std::cerr << bestMatchSequence << "\n\n\n\n\n";
-    
 
-    /*
 
-    std::cerr << "READSEEDS\n";
-    for(int j = 0; j < refSeeds.size() ; j++){
-        std::cerr << "B\n";
-        std::cerr << refSeeds[j].seq << " ";
-        std::cerr << refSeeds[j].pos << "\n";
-    }
-    /*
+
+
+
 
     /*
     
@@ -397,7 +396,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
 
-    
+    */
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n\n" << i << "\n";
         for(int j = 0; j < readSeeds[i].size() ; j++){
@@ -406,7 +405,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             }
         }
     }
-    */
+    
     
 
 
