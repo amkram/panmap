@@ -505,15 +505,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         qry_positions[i] = qry_pos_array;
     }
     
-<<<<<<< HEAD
-    std::string sam_header = "@SQ\tSN:reference\tLN:";
-    sam_header += std::to_string(bestMatchSequence.length());
-
-    std::cout << "\n" << sam_header << "\n";
-
-=======
 //    std::cout << "\n@SQ	SN:reference	LN:" << bestMatchSequence.length() << std::endl;  // sam header
->>>>>>> 199da42dba8e239059c05658483046db6b51668c
     char *sam_alignments[n_reads]; //constituants must be freed
 
 
@@ -531,18 +523,9 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
 
     for(int i = 0; i < n_reads; i++) {
-<<<<<<< HEAD
-        sam_alignments[i] = sam_lines[i].second;
-    }
-
-    for(int i = 0; i < n_reads; i++) {
-        if(sam_alignments[i]) {
-            std::cout << sam_alignments[i] << std::endl;
-=======
         if(sam_lines[i].second){
             ;
      //       std::cout << sam_lines[i].second << std::endl;
->>>>>>> 199da42dba8e239059c05658483046db6b51668c
         }
     }
 
