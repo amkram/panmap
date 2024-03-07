@@ -226,7 +226,7 @@ void findSyncmers(const std::string& sequence, int k, int s, std::unordered_map<
 
             bool start_is_min = true, end_is_min = true;
 
-            for (int j = 1; j < k - 1; ++j) {
+            for (int j = 1; j < k - s; ++j) {
                 std::string smer = kmer.substr(j, s);
                 if (start_smer > smer) {
                     start_is_min = false;
@@ -316,6 +316,8 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
 
+    /* Debug Print statements */
+    
     for (const auto &seedmer : targetSeedmers) {
         if (seedmer.second == "" ) {
             continue;
@@ -328,7 +330,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
-    
 
     /* Alignment to target */
 
@@ -342,13 +343,17 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
     //TODO FIXME quickhacks                                        //
     std::unordered_map<std::string, std::vector<int32_t>> NseedToRefPositions;
-    ///NseedToRefPositions = {};                                       //
-    //findSyncmers(bestMatchSequence, k, s, NseedToRefPositions);     //
+    NseedToRefPositions = {};                                       //
+    findSyncmers(bestMatchSequence, k, s, NseedToRefPositions);     //
     //
 
-
-
-
+    std::vector<seed> NrefSeeds;
+    for(auto kv : NseedToRefPositions) {
+        seed thisSeed;
+        thisSeed.seq = kv.first;
+        thisSeed.pos = kv.second[0];
+        NrefSeeds.push_back(thisSeed);
+    }
     
     std::vector<seed> refSeeds;
     for(auto kv : seedToRefPositions) {
@@ -357,6 +362,54 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         thisSeed.pos = kv.second[0];
         refSeeds.push_back(thisSeed);
     }
+
+    sort(refSeeds.begin(), refSeeds.end());
+    sort(NrefSeeds.begin(), NrefSeeds.end());
+
+    int last = 0;
+    for(int i = 1; i < refSeeds.size(); i++){
+        //std::cerr << "B\n";
+        //std::cerr << refSeeds[i].seq << " " << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos;
+        if (refSeeds[i].pos - refSeeds[i-1].pos > 15){
+            std::cerr << "B " << refSeeds[i-1].pos << "\t" << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos << "\n";
+        }
+    }
+    std::cerr << "\n\n";
+    for(int i = 1; i < NrefSeeds.size(); i++){
+        if (NrefSeeds[i].pos - NrefSeeds[i-1].pos > 15){
+            std::cerr << "C " << NrefSeeds[i-1].pos << "\t" << NrefSeeds[i].pos << "\t" << NrefSeeds[i].pos - NrefSeeds[i-1].pos << '\n';
+        }
+    }
+
+    //BAD BAD BAD DELTE
+    
+
+    int index_0 = 0;
+    int index_1 = 0;
+
+    std::vector<seed> my_matchingSeeds;
+    while(index_0 < NrefSeeds.size() && index_1 < refSeeds.size()) {
+        if (NrefSeeds[index_0].pos < refSeeds[index_1].pos) {
+            std::cerr << NrefSeeds[index_0].seq << "\t               \t"<< NrefSeeds[index_0].pos <<"\n";
+            index_0++;
+        } else if (NrefSeeds[index_0].pos > refSeeds[index_1].pos) {
+            std::cerr << "               \t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos << "\n";
+            index_1++;
+        } else {
+            std::cerr << NrefSeeds[index_0].seq << "\t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos<<"\n";
+            index_0++;
+            index_1++;
+        }
+    }
+
+
+
+    //Sorting ref seeds
+    sort(NrefSeeds.begin(), NrefSeeds.end(), []( const seed& lhs, const seed& rhs )
+    {
+        return lhs.seq < rhs.seq ;
+    });
+
     
     //Sorting ref seeds
     sort(refSeeds.begin(), refSeeds.end(), []( const seed& lhs, const seed& rhs )
@@ -376,6 +429,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     //std::cerr << bestMatchSequence << "\n\n\n\n\n";
 
 
+    
 
 
 
@@ -398,7 +452,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
     */
     for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n\n" << i << "\n";
+        std::cerr << "\n\n" << i << " " << readSequences[i] << "\n";
         for(int j = 0; j < readSeeds[i].size() ; j++){
             if(!readSeeds[i][j].reversed){
                 std::cerr << readSeeds[i][j].seq << "\n";
