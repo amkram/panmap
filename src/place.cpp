@@ -320,23 +320,22 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     
 
     
-    for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n" << i <<"\n";
-        std::cerr << readSequences[i] << "\n";
-        std::cerr << readQuals[i] << "\n";
-        std::cerr << readSeeds[i].size() << "\n";
-        for(int j = 0; j < readSeeds[i].size() ; j++){
-            std::cerr << " -> read_seed: \n";
-            std::cerr << readSeeds[i][j].seq.size() << "\n";
-            std::cerr << readSeeds[i][j].seq << "\n";
-            std::cerr << readSeeds[i][j].pos << "\n";
-            std::cerr << readSeeds[i][j].reversed << "\n";
-        }
-    }
-    std::cerr << "target seedmers:\n";
+    // for(int i = 0; i < readSequences.size(); i++) {
+    //     std::cerr << "\n" << i <<"\n";
+    //     std::cerr << readSequences[i] << "\n";
+    //     std::cerr << readQuals[i] << "\n";
+    //     std::cerr << readSeeds[i].size() << "\n";
+    //     for(int j = 0; j < readSeeds[i].size() ; j++){
+    //         std::cerr << " -> read_seed: \n";
+    //         std::cerr << readSeeds[i][j].seq.size() << "\n";
+    //         std::cerr << readSeeds[i][j].seq << "\n";
+    //         std::cerr << readSeeds[i][j].pos << "\n";
+    //         std::cerr << readSeeds[i][j].reversed << "\n";
+    //     }
+    // }
+    // std::cerr << "target seedmers:\n";
 
     for (const auto &seedmer : targetSeedmers) {
-        std::cerr << "target_seed: " << seedmer.first << " " << seedmer.second << "\n";
         if (seedmer.second == "" ) {
             continue;
         }
@@ -348,11 +347,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
-    
-    std::cerr << "seed to ref positions:\n";
-    for (const auto &seed : seedToRefPositions) {
-        std::cerr << seed.first << " " << seed.second.size() << "\n";
-    }
 
     /* Alignment to target */
 
@@ -362,7 +356,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     **    - readSequences, readQuals, readNames contain the relevant info
     **    - seedToRefPositions maps a seed sequence (just seeds not seed-mers) to all matching positions in bestMatchSequence
     */
-    std::cerr << "\n" << bestMatchSequence << std::endl;
 
     //TODO FIXME quickhacks                                        //
     seedToRefPositions = {};                                       //
