@@ -341,7 +341,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     */
     std::cerr << "\n" << bestMatchSequence << std::endl;
 
-    //TODO FIXME quickhacks                                        //
+    //TODO FIXME quickhacks                                         //
     std::unordered_map<std::string, std::vector<int32_t>> NseedToRefPositions;
     NseedToRefPositions = {};                                       //
     findSyncmers(bestMatchSequence, k, s, NseedToRefPositions);     //
@@ -375,8 +375,8 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
     std::cerr << "\n\n";
-    for(int i = 1; i < NrefSeeds.size(); i++){
-        if (NrefSeeds[i].pos - NrefSeeds[i-1].pos > 15){
+    for(int i = 1; i < NrefSeeds.size(); i++) {
+        if (NrefSeeds[i].pos - NrefSeeds[i-1].pos > 15) {
             std::cerr << "C " << NrefSeeds[i-1].pos << "\t" << NrefSeeds[i].pos << "\t" << NrefSeeds[i].pos - NrefSeeds[i-1].pos << '\n';
         }
     }
