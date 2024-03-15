@@ -167,6 +167,9 @@ void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T, const Node 
 
     for(auto it = blockMutData.rbegin(); it != blockMutData.rend(); it++) {
         auto mutation = *it;
+
+
+
         blockExists[std::get<0>(mutation)].first = std::get<1>(mutation);
         blockStrand[std::get<0>(mutation)].first = std::get<2>(mutation);
     }
@@ -207,10 +210,12 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tre
             blockStart--;
         }
 
-        int32_t stop = blockStart + data.sequence[blockId].first.size() + k;
+        int32_t blockStop = getGlobalCoordinate(blockId, globalCoords[blockId].first.size()-1, -1, globalCoords);
         bool newStrand = std::get<4>(blockMut);
+
+//        std::cout << "blockMut: " << blockId << "  start: " << blockStart << "  stop: " << blockStop << "  newStrand: " << newStrand << std::endl;
         if (newStrand) {
-            extended.push_back(std::make_tuple(-1, -1, -1, -1, -1, blockStart, data.sequence[blockId].first.size()+k));
+            extended.push_back(std::make_tuple(-1, -1, -1, -1, -1, blockStart, blockStop - blockStart));
         }
     }
     std::sort(extended.begin(), extended.end(), [](const auto &a, const auto &b) {
@@ -223,6 +228,9 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tre
         int32_t len = std::get<6>(nucMut);
         int32_t lastSeed = -1;
         for (int32_t c = globalCoord + len; c >= globalCoord; c--) {
+            if (data.gappedConsensus[c] == '-') {
+                continue;
+            }
             std::string kmer = data.ungappedConsensus.substr(data.degap[c], k);
             if (seen.find(c) != seen.end()) {
                 continue;
