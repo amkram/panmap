@@ -28,11 +28,13 @@ cmake_print_variables(docopt_BINARY_DIR)
 
 add_library(remote-deps ${docopt_SOURCE_DIR}/docopt.cpp)
 
+find_package(Protobuf REQUIRED CONFIG) 
+
 # Dependency: panmat-utils
 find_package(libpanmat REQUIRED)
 include_directories(${libpanmat_DIR}/include ${libpanmat_DIR}/oneTBB-2019_U9/include)
 
-
+find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview HINTS ${libpanmat_DIR}/oneTBB-2019_U9/cmake)
 # Dependency: Boost
 find_package(Boost COMPONENTS system filesystem program_options unit_test_framework iostreams date_time REQUIRED)
 include_directories(${Boost_INCLUDE_DIRS})
