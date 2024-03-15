@@ -10,25 +10,22 @@ using namespace tree;
 using namespace seeding;
 using namespace util;
 
-void mutateSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, std::string nid, seedmerIndex_t &index, std::vector<std::pair<int32_t, std::string>> &seedmersToRevert) {
+void mutateSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, const std::string &nid, seedmerIndex_t &index, std::vector<std::pair<int32_t, std::string>> &seedmersToRevert) {
     // std::cout << "Forward => " << nid << "\n";
     for (const auto &op : index[nid]) {
         std::string seedmer = op.second;
-        if (seedmer == "" || seedmer == "@") {
-            continue;
-        }
         int32_t pos = op.first;
         if (seedmer[0] == '@') { // deletion
             if (seedmers.find(pos) != seedmers.end()) {
                 seedmers.erase(seedmers.find(pos));
             }
-        } else {
+        } else { // insertion
             seedmersToRevert.push_back({pos, seedmers[pos]});
             seedmers[pos] = seedmer;
         }
     }
 }
-void revertSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, std::string nid, seedmerIndex_t &index, std::vector<std::pair<int32_t, std::string>> &seedmersToRevert) {
+void revertSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, const std::string &nid, seedmerIndex_t &index, std::vector<std::pair<int32_t, std::string>> &seedmersToRevert) {
     for (auto it = index[nid].rbegin(); it != index[nid].rend(); it++) {
         std::string seedmer = it->second;
         int32_t pos = it->first;
@@ -52,9 +49,6 @@ void getPhyloCounts(seedmerIndex_t &index, std::unordered_map<std::string, int32
     mutateSeedmerMap(seedmers, node->identifier, index, seedmersToRevert);
     std::unordered_map<std::string, bool> seen;
     for (const auto &seed : seedmers) {
-        if (seed.second == "") {
-            continue;
-        }
         if (seen.find(seed.second) != seen.end()) {
             continue;
         }
@@ -67,7 +61,7 @@ void getPhyloCounts(seedmerIndex_t &index, std::unordered_map<std::string, int32
     revertSeedmerMap(seedmers, node->identifier, index, seedmersToRevert);
 }
 
-void placeDFS(std::ofstream *out, std::unordered_map<std::string, std::set<std::pair<int32_t, std::string>, decltype(seed_cmp)>> &index, std::unordered_map<int32_t, std::string> &seedmers, std::map<std::string, float> &scores, std::unordered_map<std::string, int32_t> &seedmerCounts, std::unordered_map<std::string, int32_t> &phyloCounts, const Node *node, Tree *T, const std::string optionalTarget, std::unordered_map<int32_t, std::string> *optionalOutputSeedmers) {
+void placeDFS(std::ofstream *out, std::unordered_map<std::string, std::set<std::pair<int32_t, std::string>, decltype(seed_cmp)>> &index, std::unordered_map<int32_t, std::string> &seedmers, std::map<std::string, float> &scores, std::unordered_map<std::string, int32_t> &seedmerCounts, std::unordered_map<std::string, int32_t> &phyloCounts, const Node *node, Tree *T, const std::string &optionalTarget, std::unordered_map<int32_t, std::string> *optionalOutputSeedmers) {
     std::vector<std::pair<int32_t, std::string>> seedmersToRevert;
 
     mutateSeedmerMap(seedmers, node->identifier, index, seedmersToRevert);
@@ -76,48 +70,56 @@ void placeDFS(std::ofstream *out, std::unordered_map<std::string, std::set<std::
         *optionalOutputSeedmers = seedmers;
         return;
     }
-    float score = 0;
-    std::unordered_map<std::string, int32_t> nodeSeedmerCounts;
-    for (const auto &seed : seedmers) {
-        if (seed.second == "") {
-            continue;
-        }
-        if (nodeSeedmerCounts.find(seed.second) == nodeSeedmerCounts.end()) {
-            nodeSeedmerCounts[seed.second] = 1;
-        } else {
-            nodeSeedmerCounts[seed.second] += 1;
-        }
-    }
-  //  std::cout << node->identifier << "\t" << seedmers.size() << std::endl;
-      double covered = 0;
-      int32_t occ = 0;
-      std::unordered_map<std::string, bool> seen;
-    int32_t max = 0;
-    for (const auto &seed : seedmers) {
-         if (seed.second == "" || seed.first < 100) {
-            continue;
-        }
-        if (seen.find(seed.second) != seen.end()) {
-            continue;
-        }
-        if (seedmerCounts.find(seed.second) != seedmerCounts.end() && seedmers.size() > 10) {
-            int32_t num = seedmerCounts[seed.second]; 
-            if (num > max) {
-                max = num;
+    double score = 0;
+    double score_inf = 0;
+    double score_count = 0;
+    double score_other = 0;
+ //   if (node->identifier != T->root->identifier) {
+    if(1) {
+        std::unordered_map<std::string, int32_t> nodeSeedmerCounts;
+        for (const auto &seed : seedmers) {
+            if (seed.second == "") {
+                continue;
             }
-            occ += std::min(1.0, std::log(seedmerCounts[seed.second])) / (double) nodeSeedmerCounts[seed.second];
+            if (nodeSeedmerCounts.find(seed.second) == nodeSeedmerCounts.end()) {
+                nodeSeedmerCounts[seed.second] = 1;
+            } else {
+                nodeSeedmerCounts[seed.second] += 1;
+            }
         }
-    }
-    score = occ / (double) seedmers.size();
-    scores[node->identifier] = score;
+        int32_t max = 0;
+        for (const auto &seed : seedmers) {
+            double informativity = 1.0 - phyloCounts[seed.second] / T->allNodes.size(); 
+            if (seedmerCounts.find(seed.second) != seedmerCounts.end() && seedmers.size() > 10) {
+                if (seedmerCounts[seed.second] < 2) {
+                    continue;
+                }
+                // it's in the reads
+                int32_t num = seedmerCounts[seed.second]; 
+                if (num > max) {
+                    max = num;
+                }
+                score += informativity * std::min(1.0, std::log(num)) / (double) nodeSeedmerCounts[seed.second];
+                score_inf += informativity;
+                score_count += 1;
+                score_other += std::min(1.0, std::log(num)) / (double) nodeSeedmerCounts[seed.second];
+            }
+        }
+        score /= (double) seedmers.size();
+        score_other /= (double) seedmers.size();
+        score_count /= (double) seedmers.size();
+        score_inf /= (double) seedmers.size();
+        scores[node->identifier] = score_inf;
+    } 
     if (out != nullptr) {
-        *out << node->identifier << "\t" << score << "\n";
+        *out << node->identifier << "\t" << score << "\t" << score_inf << "\t" << score_count << "\t" << score_other << "\n";
     }
     for (Node *child : node->children) {
         placeDFS(out, index, seedmers, scores, seedmerCounts, phyloCounts, child, T, optionalTarget, optionalOutputSeedmers);
     }
     revertSeedmerMap(seedmers, node->identifier, index, seedmersToRevert);
 }
+
 
 std::string reverseComplement(std::string dna_sequence) {
     std::string complement = "";
@@ -134,7 +136,6 @@ std::string reverseComplement(std::string dna_sequence) {
     return complement;
 }
 void placeHelper(std::unordered_map<std::string, std::set<std::pair<int32_t, std::string>, decltype(seed_cmp)>> &index, std::unordered_map<int32_t, std::string> &seedmers, std::map<std::string, float> &scores, std::unordered_map<std::string, int32_t> &seedmerCounts, std::unordered_map<std::string, int32_t> &phyloCounts, const Node *node, Tree *T, const std::string optionalTarget) {
-    util::scopedTimer();
     std::ofstream out("placement.out");
     placeDFS(&out, index, seedmers, scores, seedmerCounts, phyloCounts, T->root, T, "", nullptr);
 }
@@ -219,7 +220,7 @@ void findSyncmers(const std::string& sequence, int k, int s, std::unordered_map<
         std::unordered_set<std::string> syncmers;
         int len = sequence.length();
 
-        for (int i = 0; i <= len - k; ++i) {
+        for (int i = 0; i <= len - k ; ++i) {
             std::string kmer = sequence.substr(i, k);
             std::string start_smer = kmer.substr(0, s);
             std::string end_smer = kmer.substr(k - s, s);
@@ -237,7 +238,10 @@ void findSyncmers(const std::string& sequence, int k, int s, std::unordered_map<
             }
 
             if (start_is_min || end_is_min) {
-                refSeeds[kmer] = {i};
+                if (refSeeds.find(kmer) == refSeeds.end()) {
+                    refSeeds[kmer] = {};
+                }
+                refSeeds[kmer].push_back(i);
             }
         }
 }
@@ -280,13 +284,15 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         readSeeds.push_back(thisReadsSeeds);
     }
 
-
     /* Sample placement */
     std::cout << "⋌⋋ Placing sample ... " << std::flush;
     std::map<std::string, float> scores;
     std::unordered_map<std::string, int32_t> phyloCounts;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
+
+    getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
+
     placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
     
     /* Setup target sequence and seeds */
@@ -294,7 +300,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
     std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
     // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
-    
+
     std::string bestMatch = targetNodes[0].first;
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestMatch, true);
@@ -341,73 +347,87 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     */
 
     //TODO FIXME quickhacks                                        //
-    std::unordered_map<std::string, std::vector<int32_t>> NseedToRefPositions;
-    NseedToRefPositions = {};                                       //
-    findSyncmers(bestMatchSequence, k, s, NseedToRefPositions);     //
+    // std::unordered_map<std::string, std::vector<int32_t>> NseedToRefPositions;
+    // NseedToRefPositions = {};                                       //
+    // findSyncmers(bestMatchSequence, k, s, NseedToRefPositions);     //
     //
-
-    std::vector<seed> NrefSeeds;
-    for(auto kv : NseedToRefPositions) {
-        seed thisSeed;
-        thisSeed.seq = kv.first;
-        thisSeed.pos = kv.second[0];
-        NrefSeeds.push_back(thisSeed);
-    }
+    // std::vector<seed> NrefSeeds;
+    // for(auto kv : NseedToRefPositions) {
+    //     std::cout << "\n\nNICO " << kv.first;
+    //     for (int32_t pos : kv.second) {
+    //         std::cout << " " << pos;
+    //     }
+    //     // min s-mer
+    //     std::string minSmer = kv.first.substr(0, s);
+    //     for (int32_t i = 1; i < kv.first.size() - s + 1; i++) {
+    //         std::string smer = kv.first.substr(i, s);
+    //         if (smer < minSmer) {
+    //             minSmer = smer;
+    //         }
+    //     }
+    //     if (seedToRefPositions.find(kv.first) != seedToRefPositions.end()) {
+    //         std::cout << "\nME   " << kv.first;
+    //         for (int32_t pos : seedToRefPositions[kv.first]) {
+    //             std::cout << " " << pos;
+    //         }
+    //     }
+    //     std::cout << std::endl << std::endl;
+    // }
+    // std::cout << "____ now other way ____\n" << std::endl;
+    // for(auto kv : seedToRefPositions) {
+    //     std::cout << "ME   " << kv.first;
+    //     for (int32_t pos : kv.second) {
+    //         std::cout << " " << pos;
+    //     }
+    //     if (NseedToRefPositions.find(kv.first) != NseedToRefPositions.end()) {
+    //         std::cout << "\nNICO " << kv.first;
+    //         for (int32_t pos : NseedToRefPositions[kv.first]) {
+    //             std::cout << " " << pos;
+    //         }
+    //     }
+    //     std::cout << std::endl << std::endl;
+    // }
     
     std::vector<seed> refSeeds;
     for(auto kv : seedToRefPositions) {
-        seed thisSeed;
-        thisSeed.seq = kv.first;
-        thisSeed.pos = kv.second[0];
-        refSeeds.push_back(thisSeed);
+        for (int32_t pos : kv.second) {
+            seed thisSeed;
+            thisSeed.seq = kv.first;
+            thisSeed.pos = pos;
+            refSeeds.push_back(thisSeed);
+        }
     }
 
     sort(refSeeds.begin(), refSeeds.end());
-    sort(NrefSeeds.begin(), NrefSeeds.end());
 
-    int last = 0;
-    for(int i = 1; i < refSeeds.size(); i++){
-        //std::cerr << "B\n";
-        //std::cerr << refSeeds[i].seq << " " << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos;
-        if (refSeeds[i].pos - refSeeds[i-1].pos > 15){
-            std::cerr << "B " << refSeeds[i-1].pos << "\t" << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos << "\n";
-        }
-    }
-    std::cerr << "\n\n";
-    for(int i = 1; i < NrefSeeds.size(); i++){
-        if (NrefSeeds[i].pos - NrefSeeds[i-1].pos > 15){
-            std::cerr << "C " << NrefSeeds[i-1].pos << "\t" << NrefSeeds[i].pos << "\t" << NrefSeeds[i].pos - NrefSeeds[i-1].pos << '\n';
-        }
-    }
+    // int last = 0;
+    // for(int i = 1; i < refSeeds.size(); i++){
+    //     //std::cerr << "B\n";
+    //     //std::cerr << refSeeds[i].seq << " " << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos;
+    //     if (refSeeds[i].pos - refSeeds[i-1].pos > 15){
+    //         std::cerr << "B " << refSeeds[i-1].pos << "\t" << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos << "\n";
+    //     }
+    // }
 
     //BAD BAD BAD DELTE
-    
 
     int index_0 = 0;
     int index_1 = 0;
 
-    std::vector<seed> my_matchingSeeds;
-    while(index_0 < NrefSeeds.size() && index_1 < refSeeds.size()) {
-        if (NrefSeeds[index_0].pos < refSeeds[index_1].pos) {
-            std::cerr << NrefSeeds[index_0].seq << "\t               \t"<< NrefSeeds[index_0].pos <<"\n";
-            index_0++;
-        } else if (NrefSeeds[index_0].pos > refSeeds[index_1].pos) {
-            std::cerr << "               \t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos << "\n";
-            index_1++;
-        } else {
-            std::cerr << NrefSeeds[index_0].seq << "\t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos<<"\n";
-            index_0++;
-            index_1++;
-        }
-    }
-
-
-
-    //Sorting ref seeds
-    sort(NrefSeeds.begin(), NrefSeeds.end(), []( const seed& lhs, const seed& rhs )
-    {
-        return lhs.seq < rhs.seq ;
-    });
+    // std::vector<seed> my_matchingSeeds;
+    // while(index_0 < NrefSeeds.size() && index_1 < refSeeds.size()) {
+    //     if (NrefSeeds[index_0].pos < refSeeds[index_1].pos) {
+    //         std::cerr << NrefSeeds[index_0].seq << "\t               \t"<< NrefSeeds[index_0].pos <<"\n";
+    //         index_0++;
+    //     } else if (NrefSeeds[index_0].pos > refSeeds[index_1].pos) {
+    //         std::cerr << "               \t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos << "\n";
+    //         index_1++;
+    //     } else {
+    //         std::cerr << NrefSeeds[index_0].seq << "\t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos<<"\n";
+    //         index_0++;
+    //         index_1++;
+    //     }
+    // }
 
     
     //Sorting ref seeds
@@ -427,12 +447,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     
     //std::cerr << bestMatchSequence << "\n\n\n\n\n";
 
-
-    
-
-
-
-
     /*
     
     for(int i = 0; i < readSequences.size(); i++) {
@@ -449,18 +463,16 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
 
-    */
-    for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n\n" << i << " " << readSequences[i] << "\n";
-        for(int j = 0; j < readSeeds[i].size() ; j++){
-            if(!readSeeds[i][j].reversed){
-                std::cerr << readSeeds[i][j].seq << "\n";
-            }
-        }
-    }
+    // */
+    // for(int i = 0; i < readSequences.size(); i++) {
+    //     std::cerr << "\n\n" << i << " " << readSequences[i] << "\n";
+    //     for(int j = 0; j < readSeeds[i].size() ; j++){
+    //         if(!readSeeds[i][j].reversed){
+    //             std::cerr << readSeeds[i][j].seq << "\n";
+    //         }
+    //     }
+    // }
     
-    
-
 
     //Finding syncmer matches
     for(int r = 0; r < readSequences.size() ; r++){
@@ -490,7 +502,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     /*
     std::cerr << "MATCHED--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
     
-
     for(int i = 0; i < readSequences.size(); i++) {
         std::cerr << "\n" << i <<"\n";
         std::cerr << readSequences[i] << "\n";
@@ -506,9 +517,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     }
     */
     
-
-
-
     //TODO SPLIT THIS FUNCTION APART
     
     //C++ to C interface will have to be cleaned up
@@ -595,15 +603,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     free(read_strings);
     free(qual_strings);
     free(read_names);
-
-
-
-
-
-
-
-
-
 
     //Convert to BAM and beyond
     sam_hdr_t *header = NULL;
