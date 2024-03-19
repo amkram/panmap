@@ -313,7 +313,7 @@ int parse_readbases(
     return variation_types;
 }
 
-pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(std::ifstream& fin, const mutationMatrices& mutMat) {
+pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(std::istream& fin, const mutationMatrices& mutMat) {
     regex variant_pattern("[ACGTacgt\\*]+");
     vector<VariationSite> candidateVariants;
     pair<size_t, size_t> maskRange(numeric_limits<size_t>::max(), 0);
@@ -467,7 +467,7 @@ static void printVCFLine(const VariationSite& site) {
     cout << pl[pl.size() - 1] << endl;
 }
 
-void genotype::printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize) {
+void genotype::printSamplePlacementVCF(std::istream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize) {
     pair< vector<VariationSite>, pair<size_t, size_t> > variantSites = getVariantSites(fin, mutMat);
     const vector<VariationSite> candidateVariants = variantSites.first;
     if (candidateVariants.empty()) {
