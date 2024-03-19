@@ -38,8 +38,8 @@ namespace genotype {
         vector<size_t> read_depth;
     };
 
-    pair< vector<VariationSite>, pair<size_t, size_t> > getVariantSites(std::ifstream& fin, const mutationMatrices& mutMat);
-    void printSamplePlacementVCF(std::ifstream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize);
+    pair< vector<VariationSite>, pair<size_t, size_t> > getVariantSites(std::istream& fin, const mutationMatrices& mutMat);
+    void printSamplePlacementVCF(std::istream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize);
 }
 
 #endif

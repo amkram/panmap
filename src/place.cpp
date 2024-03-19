@@ -2,13 +2,18 @@
 #include "place.hpp"
 #include "pmi.hpp"
 #include "util.hpp"
+#include "tree.hpp"
+#include "genotype.hpp"
 #include <cmath>
 #include <htslib/sam.h>
+
+
 
 using namespace PangenomeMAT;
 using namespace tree;
 using namespace seeding;
 using namespace util;
+using namespace genotype; //Remove
 
 void mutateSeedmerMap(std::unordered_map<int32_t, std::string> &seedmers, const std::string &nid, seedmerIndex_t &index, std::vector<std::pair<int32_t, std::string>> &seedmersToRevert) {
     // std::cout << "Forward => " << nid << "\n";
@@ -212,38 +217,7 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
 
 extern "C" {
     void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k);
-}
-
-
-//TODO FIXME DELETE
-void findSyncmers(const std::string& sequence, int k, int s, std::unordered_map<std::string, std::vector<int32_t>> &refSeeds) {
-        std::unordered_set<std::string> syncmers;
-        int len = sequence.length();
-
-        for (int i = 0; i <= len - k ; ++i) {
-            std::string kmer = sequence.substr(i, k);
-            std::string start_smer = kmer.substr(0, s);
-            std::string end_smer = kmer.substr(k - s, s);
-
-            bool start_is_min = true, end_is_min = true;
-
-            for (int j = 1; j < k - s; ++j) {
-                std::string smer = kmer.substr(j, s);
-                if (start_smer > smer) {
-                    start_is_min = false;
-                }
-                if (end_smer > smer) {
-                    end_is_min = false;
-                }
-            }
-
-            if (start_is_min || end_is_min) {
-                if (refSeeds.find(kmer) == refSeeds.end()) {
-                    refSeeds[kmer] = {};
-                }
-                refSeeds[kmer].push_back(i);
-            }
-        }
+    void bam_and_ref_to_mplp(sam_hdr_t *header, bam1_t **bam_lines, int nbams, char *ref_string, int lref, kstring_t *mplp_string);
 }
 
 
@@ -345,48 +319,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     **    - readSequences, readQuals, readNames contain the relevant info
     **    - seedToRefPositions maps a seed sequence (just seeds not seed-mers) to all matching positions in bestMatchSequence
     */
-
-    //TODO FIXME quickhacks                                        //
-    // std::unordered_map<std::string, std::vector<int32_t>> NseedToRefPositions;
-    // NseedToRefPositions = {};                                       //
-    // findSyncmers(bestMatchSequence, k, s, NseedToRefPositions);     //
-    //
-    // std::vector<seed> NrefSeeds;
-    // for(auto kv : NseedToRefPositions) {
-    //     std::cout << "\n\nNICO " << kv.first;
-    //     for (int32_t pos : kv.second) {
-    //         std::cout << " " << pos;
-    //     }
-    //     // min s-mer
-    //     std::string minSmer = kv.first.substr(0, s);
-    //     for (int32_t i = 1; i < kv.first.size() - s + 1; i++) {
-    //         std::string smer = kv.first.substr(i, s);
-    //         if (smer < minSmer) {
-    //             minSmer = smer;
-    //         }
-    //     }
-    //     if (seedToRefPositions.find(kv.first) != seedToRefPositions.end()) {
-    //         std::cout << "\nME   " << kv.first;
-    //         for (int32_t pos : seedToRefPositions[kv.first]) {
-    //             std::cout << " " << pos;
-    //         }
-    //     }
-    //     std::cout << std::endl << std::endl;
-    // }
-    // std::cout << "____ now other way ____\n" << std::endl;
-    // for(auto kv : seedToRefPositions) {
-    //     std::cout << "ME   " << kv.first;
-    //     for (int32_t pos : kv.second) {
-    //         std::cout << " " << pos;
-    //     }
-    //     if (NseedToRefPositions.find(kv.first) != NseedToRefPositions.end()) {
-    //         std::cout << "\nNICO " << kv.first;
-    //         for (int32_t pos : NseedToRefPositions[kv.first]) {
-    //             std::cout << " " << pos;
-    //         }
-    //     }
-    //     std::cout << std::endl << std::endl;
-    // }
     
     std::vector<seed> refSeeds;
     for(auto kv : seedToRefPositions) {
@@ -397,37 +329,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             refSeeds.push_back(thisSeed);
         }
     }
-
-    sort(refSeeds.begin(), refSeeds.end());
-
-    // int last = 0;
-    // for(int i = 1; i < refSeeds.size(); i++){
-    //     //std::cerr << "B\n";
-    //     //std::cerr << refSeeds[i].seq << " " << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos;
-    //     if (refSeeds[i].pos - refSeeds[i-1].pos > 15){
-    //         std::cerr << "B " << refSeeds[i-1].pos << "\t" << refSeeds[i].pos << "\t" << refSeeds[i].pos - refSeeds[i-1].pos << "\n";
-    //     }
-    // }
-
-    //BAD BAD BAD DELTE
-
-    int index_0 = 0;
-    int index_1 = 0;
-
-    // std::vector<seed> my_matchingSeeds;
-    // while(index_0 < NrefSeeds.size() && index_1 < refSeeds.size()) {
-    //     if (NrefSeeds[index_0].pos < refSeeds[index_1].pos) {
-    //         std::cerr << NrefSeeds[index_0].seq << "\t               \t"<< NrefSeeds[index_0].pos <<"\n";
-    //         index_0++;
-    //     } else if (NrefSeeds[index_0].pos > refSeeds[index_1].pos) {
-    //         std::cerr << "               \t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos << "\n";
-    //         index_1++;
-    //     } else {
-    //         std::cerr << NrefSeeds[index_0].seq << "\t" << refSeeds[index_1].seq << "\t" << refSeeds[index_1].pos<<"\n";
-    //         index_0++;
-    //         index_1++;
-    //     }
-    // }
 
     
     //Sorting ref seeds
@@ -443,35 +344,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             return lhs.seq < rhs.seq;
         });
     }
-    /* Debug Print statements */
-    
-    //std::cerr << bestMatchSequence << "\n\n\n\n\n";
-
-    /*
-    
-    for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n\n" << i <<"\n";
-        std::cerr << readSequences[i] << "\n";
-        std::cerr << readQuals[i] << "\n";
-        std::cerr << readSeeds[i].size() << "\n";
-        for(int j = 0; j < readSeeds[i].size() ; j++){
-            std::cerr << "X\n";
-            std::cerr << readSeeds[i][j].seq.size() << "\n";
-            std::cerr << readSeeds[i][j].seq << "\n";
-            std::cerr << readSeeds[i][j].pos << "\n";
-            std::cerr << readSeeds[i][j].reversed << "\n";
-        }
-    }
-
-    // */
-    // for(int i = 0; i < readSequences.size(); i++) {
-    //     std::cerr << "\n\n" << i << " " << readSequences[i] << "\n";
-    //     for(int j = 0; j < readSeeds[i].size() ; j++){
-    //         if(!readSeeds[i][j].reversed){
-    //             std::cerr << readSeeds[i][j].seq << "\n";
-    //         }
-    //     }
-    // }
     
 
     //Finding syncmer matches
@@ -499,27 +371,9 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         readSeeds[r] = matchingSeeds;
     }
     
-    /*
-    std::cerr << "MATCHED--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\n";
     
-    for(int i = 0; i < readSequences.size(); i++) {
-        std::cerr << "\n" << i <<"\n";
-        std::cerr << readSequences[i] << "\n";
-        std::cerr << readQuals[i] << "\n";
-        std::cerr << readSeeds[i].size() << "\n";
-        for(int j = 0; j < readSeeds[i].size() ; j++){
-            std::cerr << "XXXXXXXXXXXXXXXXXXXXXXXX\n";
-            std::cerr << readSeeds[i][j].seq.size() << "\n";
-            std::cerr << readSeeds[i][j].seq << "\n";
-            std::cerr << readSeeds[i][j].pos << "\n";
-            std::cerr << readSeeds[i][j].reversed << "\n";
-        }
-    }
-    */
     
-    //TODO SPLIT THIS FUNCTION APART
-    
-    //C++ to C interface will have to be cleaned up
+
     const char *reference = bestMatchSequence.c_str();
     int n_reads = readSequences.size();
     const char **read_strings = (const char **)malloc(n_reads*sizeof(char *));
@@ -583,6 +437,9 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
     for(int i = 0; i < n_reads; i++) {
         sam_alignments[i] = sam_lines[i].second;
+        if(!sam_alignments[i]){
+            n_reads = i;         //Some reads failed
+        }
     }
 
     for(int i = 0; i < n_reads; i++) {
@@ -603,10 +460,16 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     free(read_strings);
     free(qual_strings);
     free(read_names);
+    free(r_lens);
 
-    //Convert to BAM and beyond
+
+
+
+    
+
+    //Convert to BAM                                                  ///
     sam_hdr_t *header = NULL;
-    bam1_t *record = bam_init1();
+    //bam1_t *record = bam_init1();
 
     
     // Parse SAM header
@@ -616,7 +479,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     if (!bam_file) {
         fprintf(stderr, "Error: Failed to open output BAM file.\n");
         bam_hdr_destroy(header);
-        bam_destroy1(record);
+
         return;
     }
 
@@ -625,50 +488,75 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     if (sam_hdr_write(bam_file, header) < 0) {
         fprintf(stderr, "Error: Failed to write BAM header.\n");
         bam_hdr_destroy(header);
-        bam_destroy1(record);
+
         hts_close(bam_file);
         return;
     }
+
+    //Prepare list of bam1_t
+
+    bam1_t **bam_records = (bam1_t **)malloc(sizeof(bam1_t *) * n_reads);
 
 
     for (int i = 0; i < n_reads; i++) {
         if(sam_alignments[i]){
 
+            bam_records[i] = bam_init1();
+
             kstring_t line = KS_INITIALIZE;
             kputs(sam_alignments[i], &line);
             
-            sam_parse1(&line, header, record);
+            sam_parse1(&line, header, bam_records[i]);
 
-            //free line
-            if (bam_write1(bam_file->fp.bgzf, record) < 0) {
+            //Write to bam file
+            if (bam_write1(bam_file->fp.bgzf, bam_records[i]) < 0) {
                 fprintf(stderr, "Error: Failed to write BAM record.\n");
                 bam_hdr_destroy(header);
-                bam_destroy1(record);
+
                 hts_close(bam_file);
                 return;
             }
         }
     }
+    /// Converted to Bam
 
 
 
+    //Convert to mpileup
+    //Need to copy reference string because we need a char* rather than const char*
+    char* ref_string = new char[bestMatchSequence.length() + 1];
+    std::strcpy(ref_string, bestMatchSequence.c_str());
 
-    bam_hdr_destroy(header);
-    bam_destroy1(record);
-    hts_close(bam_file);
-    /*
-    */
+    kstring_t mplp_string = KS_INITIALIZE;
+    bam_and_ref_to_mplp(header, bam_records, n_reads, ref_string, bestMatchSequence.size(), &mplp_string);
+    std::cerr<< "\n\n" << mplp_string.s << "\n";
 
     
 
 
+    //Convert to VCF
+    //Get mutation matrix.
+    mutationMatrices mutMat = mutationMatrices();
+    fillMutationMatrices(mutMat, T);
+    // Convert c string of mpileup to ifstream
+    std::istringstream mpileipStream(mplp_string.s);
+    printSamplePlacementVCF(mpileipStream, mutMat, true, 0);
 
 
+   
 
 
+    free(mplp_string.s);
+
+    for(int i = 0; i < n_reads; i++){
+        bam_destroy1(bam_records[i]);
+    }
+
+    free(bam_records);
+    
+    hts_close(bam_file);
 
     for(int i = 0; i < n_reads; i++) {
         free(sam_alignments[i]);
     }
-    free(r_lens);
 }
