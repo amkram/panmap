@@ -68,6 +68,7 @@ void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings, 
     pmi::seedIndex blank;
     undoMutations(data, blank, T, node, blockMutData, nucMutData);
 }
+
 std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
     std::unordered_map<std::string, std::string> strings;
     tree::mutableTreeData data;
