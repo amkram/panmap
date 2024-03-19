@@ -222,7 +222,7 @@ extern "C" {
 
 
 
-void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, Tree *T) {
+void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
     tree::setup(data, globalCoords, T);
@@ -311,15 +311,26 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
 
+
+    //Print out reference
+    if(refFileName.size() > 0){
+        std::ofstream outFile{refFileName};
+
+        if (outFile.is_open()) {
+            
+            outFile << ">reference\n";
+            outFile << bestMatchSequence << "\n";
+
+            std::cout << "Wrote reference fasta to " << refFileName << std::endl;
+        } else {
+            std::cerr << "Error: failed to write to file " << refFileName << std::endl;
+        }
+    }
+
+
     /* Alignment to target */
 
-    /*  @nico: at this point,
-    **    - bestMatch should contain the target node id
-    **    - bestMatchSequence has the target node's sequence without gaps
-    **    - readSequences, readQuals, readNames contain the relevant info
-    **    - seedToRefPositions maps a seed sequence (just seeds not seed-mers) to all matching positions in bestMatchSequence
-    */
-    
+    //Collecting reference Seeds
     std::vector<seed> refSeeds;
     for(auto kv : seedToRefPositions) {
         for (int32_t pos : kv.second) {
@@ -373,7 +384,7 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     
     
     
-
+    //Preparing C structures for minimap
     const char *reference = bestMatchSequence.c_str();
     int n_reads = readSequences.size();
     const char **read_strings = (const char **)malloc(n_reads*sizeof(char *));
@@ -417,7 +428,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     std::string sam_header = "@SQ\tSN:reference\tLN:";
     sam_header += std::to_string(bestMatchSequence.length());
 
-    std::cout << "\n" << sam_header << "\n";
 
     char *sam_alignments[n_reads]; //constituants must be freed
 
@@ -442,11 +452,26 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
 
-    for(int i = 0; i < n_reads; i++) {
-        if(sam_alignments[i]) {
-            std::cout << sam_alignments[i] << std::endl;
+    //Print out sam
+    if(samFileName.size() > 0){
+        std::ofstream outFile{samFileName};
+
+        if (outFile.is_open()) {
+
+            outFile << sam_header << std::endl;
+            
+            for(int i = 0; i < n_reads; i++) {
+                if(sam_alignments[i]) {
+                    outFile << sam_alignments[i] << std::endl;
+                }
+            }
+
+            std::cout << "Wrote sam data to " << samFileName << std::endl;
+        } else {
+            std::cerr << "Error: failed to write to file " << samFileName << std::endl;
         }
     }
+
 
     for(int i = 0; i < n_reads; i++) {
         free(reversed[i]);
@@ -475,28 +500,22 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     // Parse SAM header
     header = sam_hdr_parse(sam_header.length(), sam_header.c_str());
 
-    htsFile *bam_file = hts_open("output.bam", "wb");
-    if (!bam_file) {
-        fprintf(stderr, "Error: Failed to open output BAM file.\n");
-        bam_hdr_destroy(header);
+    htsFile *bam_file = NULL;
 
-        return;
-    }
-
-
-    // Write BAM header
-    if (sam_hdr_write(bam_file, header) < 0) {
-        fprintf(stderr, "Error: Failed to write BAM header.\n");
-        bam_hdr_destroy(header);
-
-        hts_close(bam_file);
-        return;
+    if (bamFileName.size() > 0) {
+        bam_file = hts_open(bamFileName.c_str(), "wb");
+        if (!bam_file) {
+            fprintf(stderr, "Error: Failed to open output BAM file.\n");
+            hts_close(bam_file);
+        }
+        // Write BAM header
+        else if (sam_hdr_write(bam_file, header) < 0) {
+            fprintf(stderr, "Error: Failed to write BAM header.\n");
+        }
     }
 
     //Prepare list of bam1_t
-
     bam1_t **bam_records = (bam1_t **)malloc(sizeof(bam1_t *) * n_reads);
-
 
     for (int i = 0; i < n_reads; i++) {
         if(sam_alignments[i]){
@@ -509,16 +528,23 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
             sam_parse1(&line, header, bam_records[i]);
 
             //Write to bam file
-            if (bam_write1(bam_file->fp.bgzf, bam_records[i]) < 0) {
+            if (bam_file && bam_write1(bam_file->fp.bgzf, bam_records[i]) < 0) {
                 fprintf(stderr, "Error: Failed to write BAM record.\n");
                 bam_hdr_destroy(header);
-
                 hts_close(bam_file);
-                return;
             }
         }
     }
+    if(bam_file){
+        std::cerr << "Wrote bam files to " << bamFileName << "\n";
+    }
     /// Converted to Bam
+    hts_close(bam_file);
+    for(int i = 0; i < n_reads; i++) {
+        free(sam_alignments[i]);
+    }
+
+
 
 
 
@@ -529,7 +555,20 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
 
     kstring_t mplp_string = KS_INITIALIZE;
     bam_and_ref_to_mplp(header, bam_records, n_reads, ref_string, bestMatchSequence.size(), &mplp_string);
-    std::cerr<< "\n\n" << mplp_string.s << "\n";
+    
+    //Print out mpileup
+    if(mpileupFileName.size() > 0){
+        std::ofstream outFile{mpileupFileName};
+
+        if (outFile.is_open()) {
+            
+            outFile << mplp_string.s;
+
+            std::cout << "Wrote mpileup data to " << mpileupFileName << std::endl;
+        } else {
+            std::cerr << "Error: failed to write to file " << mpileupFileName << std::endl;
+        }
+    }
 
     
 
@@ -538,9 +577,25 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     //Get mutation matrix.
     mutationMatrices mutMat = mutationMatrices();
     fillMutationMatrices(mutMat, T);
+
     // Convert c string of mpileup to ifstream
     std::istringstream mpileipStream(mplp_string.s);
-    printSamplePlacementVCF(mpileipStream, mutMat, true, 0);
+
+    std::ofstream vcfOutFile;
+    if(vcfFileName.size() > 0) {
+        vcfOutFile.open(vcfFileName);
+        if (vcfOutFile.is_open()) {
+
+            printSamplePlacementVCF(mpileipStream, mutMat, true, 0, vcfOutFile);
+
+            std::cout << "Wrote vcf data to " << vcfFileName << std::endl;
+        }else{
+
+            std::cerr << "Error: failed to write to file " << vcfFileName << std::endl;
+        }
+    }
+
+    
 
 
    
@@ -553,10 +608,6 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
     }
 
     free(bam_records);
-    
-    hts_close(bam_file);
 
-    for(int i = 0; i < n_reads; i++) {
-        free(sam_alignments[i]);
-    }
+    
 }

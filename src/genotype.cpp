@@ -347,7 +347,7 @@ pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(st
     return make_pair(candidateVariants, maskRange);
 }
 
-static void printVCFLine(const VariationSite& site) {
+static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     size_t position  = site.ref_position + 1;
     int ref_nuc_idx  = site.site_info >> 3;
     size_t readDepth = 0;
@@ -440,41 +440,43 @@ static void printVCFLine(const VariationSite& site) {
         indelIdx += 1;
     }
 
-    cout << "ref" << "\t"                              // #CHROM
+    fout << "ref" << "\t"                              // #CHROM
          << position << "\t"                           // POS
          << "." << "\t"                                // ID
          << refAllele << "\t";                         // REF
     for (size_t i = 0; i < altAlleles.size() - 1; i++) {
-        cout << altAlleles[i] << ",";
+        fout << altAlleles[i] << ",";
     }                                    
-    cout << altAlleles[altAlleles.size() - 1] << "\t"; // ALT
-    cout << quality << "\t"                            // QUAL
+    fout << altAlleles[altAlleles.size() - 1] << "\t"; // ALT
+    fout << quality << "\t"                            // QUAL
          << "." << "\t"                                // FILTER
          << "DP=" << readDepth << "\t"                 // INFO
          << "GT:AD:GP" << "\t"                         // FORMAT
          << gt << ":";                                 // SAMPLE
     for (size_t i = 0; i < ad.size() - 1; i++) {
-        cout << ad[i] << ",";
+        fout << ad[i] << ",";
     }
-    cout << ad[ad.size() - 1] << ":";
+    fout << ad[ad.size() - 1] << ":";
     for (size_t i = 0; i < pl.size() - 1; i++) {
         if (pl[i] == -1) {
-            cout << ".,";
+            fout << ".,";
             continue;
         }
-        cout << pl[i] << ",";
+        fout << pl[i] << ",";
     }
-    cout << pl[pl.size() - 1] << endl;
+    fout << pl[pl.size() - 1] << endl;
 }
 
-void genotype::printSamplePlacementVCF(std::istream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize) {
+void genotype::printSamplePlacementVCF(std::istream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize, std::ofstream& fout) {
     pair< vector<VariationSite>, pair<size_t, size_t> > variantSites = getVariantSites(fin, mutMat);
     const vector<VariationSite> candidateVariants = variantSites.first;
     if (candidateVariants.empty()) {
         return;
     }
     
-    cout << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE" << endl;
+    
+    fout << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE" << endl;
+    
     vector<VariationSite> groupSites;
 
     for (const auto& curSite : candidateVariants) {
@@ -494,7 +496,7 @@ void genotype::printSamplePlacementVCF(std::istream& fin, mutationMatrices& mutM
         }
 
         if (curSite.ref_position >= variantSites.second.first + maskSize && curSite.ref_position <= variantSites.second.second - maskSize) {
-            printVCFLine(curSite);
+            printVCFLine(curSite, fout);
         }
     }
 }

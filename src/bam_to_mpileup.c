@@ -887,7 +887,7 @@ fail:
 //  a pointer to an empty kstring_t for output (this will be populated with the mpileup string)
 //
 //destroys the header and nothing else
-int bam_and_ref_to_mplp(sam_hdr_t *header, bam1_t **bam_lines, int nbams, char *ref_string, int lref, kstring_t *mplp_string) {
+void bam_and_ref_to_mplp(sam_hdr_t *header, bam1_t **bam_lines, int nbams, char *ref_string, int lref, kstring_t *mplp_string) {
 
     mplp_conf_t mplp;
     memset(&mplp, 0, sizeof(mplp_conf_t));
@@ -915,6 +915,5 @@ int bam_and_ref_to_mplp(sam_hdr_t *header, bam1_t **bam_lines, int nbams, char *
 
     mpileup(&mplp, header , mplp_string);
 
-    return 0;
 }
 
