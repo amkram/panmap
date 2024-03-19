@@ -76,7 +76,7 @@ int main(int argc, char *argv[]) {
             ("b", po::value<std::string>(), "Path to bam output")
             ("m", po::value<std::string>(), "Path to mpileup output")
             ("v", po::value<std::string>(), "Path to vcf output")
-            ("r", po::value<std::string>(), "Path to vcf output")
+            ("r", po::value<std::string>(), "Path to reference fasta output")
         ;
 
         po::positional_options_description p;
