@@ -81,8 +81,8 @@ int main(int argc, char *argv[]) {
 
         po::positional_options_description p;
         p.add("panmat", 1);
-        //p.add("reads1", 1);
-        //p.add("reads2", 1);
+        p.add("reads1", 1);
+        p.add("reads2", 1);
         po::variables_map vm;
         po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
         po::notify(vm);
