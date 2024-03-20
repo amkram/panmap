@@ -11,12 +11,15 @@
 
 extern "C" {
     void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k);
+    void bam_and_ref_to_mplp(sam_hdr_t *header, bam1_t **bam_lines, int nbams, char *ref_string, int lref, kstring_t *mplp_string);
 }
 
 
 //We assume refSeeds and readSeeds are sorted.
 
 //samAlignment is sorted at the end
+
+//Elements of samAlignments must be freed
 void createSam(
     std::vector<seeding::seed> &refSeeds,
     std::vector<std::vector<seeding::seed>> &readSeeds,
@@ -58,8 +61,6 @@ void createSam(
         readSeeds[r] = matchingSeeds;
     }
     
-    
-    
     //Preparing C structures for minimap
     const char *reference = bestMatchSequence.c_str();
     int n_reads = readSequences.size();
@@ -73,7 +74,6 @@ void createSam(
     uint8_t **reversed  = (uint8_t **)malloc(n_reads*sizeof(uint8_t *));
     int **ref_positions = (int **)malloc(n_reads*sizeof(int *));
     int **qry_positions = (int **)malloc(n_reads*sizeof(int *));
-    
 
     for(int i = 0; i < n_reads; i++) {
         int n_seeds = readSeeds[i].size();
@@ -103,10 +103,10 @@ void createSam(
     
     samHeader = "@SQ\tSN:reference\tLN:";
     samHeader += std::to_string(bestMatchSequence.length());
-
+    
     char *sam_alignments[n_reads];
 
-
+    
     align_reads(reference, n_reads, read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k);
     
     
@@ -118,8 +118,8 @@ void createSam(
     sort(sam_lines, sam_lines + n_reads, [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
         return a.first < b.first;
     });
-
-    int numAlignedReads = 0;
+    
+    int numAlignedReads = n_reads;
     
     for(int i = 0; i < n_reads; i++) {
         sam_alignments[i] = sam_lines[i].second;
@@ -148,7 +148,6 @@ void createSam(
         }
     }
 
-
     samAlignments.resize(numAlignedReads);
     for(int i = 0; i < numAlignedReads; i++){
         samAlignments[i] = sam_alignments[i];
@@ -169,6 +168,152 @@ void createSam(
     free(read_names);
     free(r_lens);
 
+}
+
+
+
+
+
+
+
+
+//samAlignments elements are freed
+//
+//bam_records must be freed and elements must be freed. 
+void createBam(
+    std::vector<char *> &samAlignments,
+    std::string &samHeader,
+    std::string &bamFileName,
+
+    sam_hdr_t * &header,
+    bam1_t ** &bamRecords
+)   {
+
+    
+    // Parse SAM header
+    header = sam_hdr_parse(samHeader.length(), samHeader.c_str());
+
+    htsFile *bam_file = NULL;
+
+    if (bamFileName.size() > 0) {
+        bam_file = hts_open(bamFileName.c_str(), "wb");
+        if (!bam_file) {
+            fprintf(stderr, "Error: Failed to open output BAM file.\n");
+            hts_close(bam_file);
+        }
+        // Write BAM header
+        else if (sam_hdr_write(bam_file, header) < 0) {
+            fprintf(stderr, "Error: Failed to write BAM header.\n");
+        }
+    }
+    
+    //Prepare list of bam1_t
+    bamRecords = (bam1_t **)malloc(sizeof(bam1_t *) * samAlignments.size());
+
+    for (int i = 0; i < samAlignments.size(); i++) {
+        if(samAlignments[i]){
+            
+            bamRecords[i] = bam_init1();
+
+            kstring_t line = KS_INITIALIZE;
+            kputs(samAlignments[i], &line);
+            
+            sam_parse1(&line, header, bamRecords[i]);
+
+            //Write to bam file
+            if (bam_file && bam_write1(bam_file->fp.bgzf, bamRecords[i]) < 0) {
+                fprintf(stderr, "Error: Failed to write BAM record.\n");
+                bam_hdr_destroy(header);
+                hts_close(bam_file);
+            }
+        }
+    }
+    
+    if(bam_file){
+        std::cerr << "Wrote bam files to " << bamFileName << "\n";
+    }
+    /// Converted to Bam
+    hts_close(bam_file);
+    for(int i = 0; i < samAlignments.size(); i++) {
+        free(samAlignments[i]);
+    }
 
     return;
+}
+
+
+
+
+
+//Destroys header and bamRecords
+// 
+//mplpString must be freed
+void createMplp(
+    std::string &bestMatchSequence,
+    sam_hdr_t *header,
+    bam1_t **bamRecords,
+    int numBams,
+    std::string &mpileupFileName,
+
+    char * &mplpString
+){
+    char* ref_string = new char[bestMatchSequence.length() + 1];
+    std::strcpy(ref_string, bestMatchSequence.c_str());
+
+    kstring_t mplp_string = KS_INITIALIZE;
+    bam_and_ref_to_mplp(header, bamRecords, numBams, ref_string, bestMatchSequence.size(), &mplp_string);
+
+    //Print out mpileup
+    if(mpileupFileName.size() > 0){
+        std::ofstream outFile{mpileupFileName};
+
+        if (outFile.is_open()) {
+            
+            outFile << mplp_string.s;
+
+            std::cout << "Wrote mpileup data to " << mpileupFileName << std::endl;
+        } else {
+            std::cerr << "Error: failed to write to file " << mpileupFileName << std::endl;
+        }
+    }
+
+    mplpString = mplp_string.s;
+    
+    for(int i = 0; i < numBams; i++){
+        bam_destroy1(bamRecords[i]);
+    }
+    
+    free(bamRecords);
+}
+
+
+//destroys mplpString
+void createVcf(
+    char *mplpString,
+    std::ifstream &mmFile,
+    std::string &vcfFileName
+)   {
+
+    mutationMatrices mutMat = mutationMatrices();
+    
+    fillMutationMatricesFromFile(mutMat, mmFile);
+
+    // Convert c string of mpileup to ifstream
+    std::istringstream mpileipStream(mplpString);
+
+    std::ofstream vcfOutFile;
+    if(vcfFileName.size() > 0) {
+        vcfOutFile.open(vcfFileName);
+        if (vcfOutFile.is_open()) {
+
+            genotype::printSamplePlacementVCF(mpileipStream, mutMat, true, 0, vcfOutFile);
+
+            std::cout << "Wrote vcf data to " << vcfFileName << std::endl;
+        }else{
+
+            std::cerr << "Error: failed to write to file " << vcfFileName << std::endl;
+        }
+    }
+
+    free(mplpString);
 }

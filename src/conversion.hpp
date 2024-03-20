@@ -15,3 +15,31 @@ void createSam(
     std::vector<char *> &samAlignments,
     std::string &samHeader
 );
+
+
+
+void createBam(
+    std::vector<char *> &samAlignments,
+    std::string &samHeader,
+    std::string &bamFileName,
+
+    sam_hdr_t * &header,
+    bam1_t ** &bamRecords
+);
+
+
+void createMplp(
+    std::string &bestMatchSequence,
+    sam_hdr_t *header,
+    bam1_t **bamRecords,
+    int numBams,
+    std::string &mpileupFileName,
+
+    char * &mplpString
+);
+
+void createVcf(
+    char *mplpString,
+    std::ifstream &mmFile,
+    std::string &vcfFileName
+);
