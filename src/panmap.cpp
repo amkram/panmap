@@ -3,6 +3,7 @@
 #include "pmi.hpp"
 #include "genotype.hpp"
 #include "place.hpp"
+#include "tree.hpp"
 #include <iostream>
 #include <string>
 #include <cstdio>
@@ -16,7 +17,7 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
 /* Helpers */
-void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt) {
+void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &mutmatFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt) {
     std::cin.clear();
     std::fflush(stdin);
     using namespace std;
@@ -39,8 +40,9 @@ void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string
         exit(0);
     }
     std::ifstream ifs(indexFile);
+    std::ifstream mfs(mutmatFile);
 
-    place::placeIsolate(ifs, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, T);
+    place::placeIsolate(ifs, mfs, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, T);
 
 }
 void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
@@ -70,6 +72,7 @@ int main(int argc, char *argv[]) {
             ("reads1", po::value<std::string>(), "Path to first (or single-end) fastq file (optional)")
             ("reads2", po::value<std::string>(), "Path to second paired-end fastq file (optional)")
             ("index,i", po::value<std::string>(), "Path to index file")
+            ("mutmat,u", po::value<std::string>(), "Path to mutation matrix file")
             ("params,p", po::value<std::vector<int32_t>>()->multitoken(), "Specify syncmer parameters k,s for indexing (e.g. for k=13, s=8 use -p 13,8)")
             ("f", "Proceed without prompting for confirmation. Applies to index construction if -p is specified or no index is found at ( /path/to/pmat.pmi ). Applies to sample placement if reads are provided.")
             ("s", po::value<std::string>(), "Path to sam output")
@@ -86,7 +89,9 @@ int main(int argc, char *argv[]) {
         po::variables_map vm;
         po::store(po::command_line_parser(argc, argv).options(desc).positional(p).run(), vm);
         po::notify(vm);
-        std::string pmatFile = vm["panmat"].as<std::string>();
+
+        fs::path pmatFilePathObject = fs::path(vm["panmat"].as<std::string>());
+        std::string pmatFile = fs::canonical(pmatFilePathObject).string();
         
         std::cout << "   ┏━┳━●\033[36;1m\033[1m pan \033[0m" << std::endl;
         std::cout << "  ━┫ ┗━━━●\033[36;1m\033[1m map\033[0m\033[32;1m\033[0m" << std::endl;
@@ -102,7 +107,8 @@ int main(int argc, char *argv[]) {
 
         std::cout << "\nUsing tree: \e[3;1m" << pmatFile << "\e[0m  (" << T->allNodes.size() << " nodes)" << std::endl;
 
-        std::string indexFile = "";
+        std::string indexFile  = "";
+        std::string mutmatFile = "";
         std::string reads1File = "";
         std::string reads2File = "";
         if (vm.count("reads1")) {
@@ -147,8 +153,41 @@ int main(int argc, char *argv[]) {
             indexFile = defaultIndexPath;
         }
 
-
-        //TODO, add some sort of error if all of these are empty, cus then why are we placing
+        // Mutation matrix (mm) file
+        std::string defaultMutmatPath = pmatFile + ".mm";
+        if (vm.count("mutmat")) {
+            mutmatFile = fs::canonical(fs::path(vm["mutmat"].as<std::string>())).string();
+            std::cout << "Using mutation matrix file: " << mutmatFile << std::endl;
+        } else if (fs::exists(defaultMutmatPath)) {
+            mutmatFile = defaultMutmatPath;
+            std::cout << "Mutation matrix file detected, using mutation matrix file: " << defaultMutmatPath << std::endl;
+        } else {
+            std::cout << "No mutation matrix file detected, building mutation matrix ..." << std::endl; 
+            // build mutation matrix
+            tree::mutationMatrices mutMat = tree::mutationMatrices();
+            tree::fillMutationMatricesFromTree(mutMat, T);
+            
+            // write to file
+            std::cout << "Writing to " << defaultMutmatPath << " ...";
+            std::ofstream mmfout(defaultMutmatPath);
+            for (const std::vector<double>& row : mutMat.submat) {
+                for (const double& prob : row) {
+                    mmfout << prob << " ";
+                }
+                mmfout << "\n";
+            }
+            for (const double& prob : mutMat.insmat) {
+                mmfout << prob << " ";
+            }
+            mmfout << "\n";
+            for (const double& prob : mutMat.delmat) {
+                mmfout << prob << " ";
+            }
+            mmfout.close();
+            mutmatFile = defaultMutmatPath;
+        }
+        
+        // TODO, add some sort of error if all of these are empty, cus then why are we placing
         std::string samFileName = "";
         std::string bamFileName = "";
         std::string mpileupFileName = "";
@@ -170,7 +209,7 @@ int main(int argc, char *argv[]) {
             refFileName = vm["r"].as<std::string>();
         }
 
-        promptAndPlace(T, k, s, indexFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt);
+        promptAndPlace(T, k, s, indexFile, mutmatFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
