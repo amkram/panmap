@@ -222,7 +222,7 @@ extern "C" {
 
 
 
-void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T) {
+void place::placeIsolate(std::ifstream &indexFile, std::ifstream &mmFile, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
     tree::setup(data, globalCoords, T);
@@ -570,13 +570,11 @@ void place::placeIsolate(std::ifstream &indexFile, const std::string &reads1Path
         }
     }
 
-    
-
 
     //Convert to VCF
     //Get mutation matrix.
     mutationMatrices mutMat = mutationMatrices();
-    fillMutationMatrices(mutMat, T);
+    fillMutationMatricesFromFile(mutMat, mmFile);
 
     // Convert c string of mpileup to ifstream
     std::istringstream mpileipStream(mplp_string.s);
