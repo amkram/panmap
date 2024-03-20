@@ -7,7 +7,7 @@
 #include <cmath>
 #include <htslib/sam.h>
 
-
+#include "conversion.hpp"
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -297,19 +297,45 @@ void place::placeIsolate(std::ifstream &indexFile, std::ifstream &mmFile, const 
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
 
     /* Debug Print statements */
-    
     for (const auto &seedmer : targetSeedmers) {
         if (seedmer.second == "" ) {
             continue;
         }
         int32_t refPos = seedmer.first;
         std::string seed = seedmer.second.substr(0, k);
-        //std::cerr << seed << " R\n";
         if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
             seedToRefPositions[seed] = {};
         }
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
+
+
+    // Collecting reference Seeds
+    std::vector<seed> refSeeds;
+    for(auto kv : seedToRefPositions) {
+        for (int32_t pos : kv.second) {
+            seed thisSeed;
+            thisSeed.seq = kv.first;
+            thisSeed.pos = pos;
+            refSeeds.push_back(thisSeed);
+        }
+    }
+
+    
+    // Sorting ref seeds
+    sort(refSeeds.begin(), refSeeds.end(), []( const seed& lhs, const seed& rhs )
+    {
+        return lhs.seq < rhs.seq ;
+    });
+
+    // Sorting read seeds
+    for(int i = 0; i < readSeeds.size(); i++){
+        sort(readSeeds[i].begin(), readSeeds[i].end(), []( const seed& lhs, const seed& rhs )
+        {
+            return lhs.seq < rhs.seq;
+        });
+    }
+
 
 
     //Print out reference
@@ -327,35 +353,7 @@ void place::placeIsolate(std::ifstream &indexFile, std::ifstream &mmFile, const 
         }
     }
 
-
     /* Alignment to target */
-
-    //Collecting reference Seeds
-    std::vector<seed> refSeeds;
-    for(auto kv : seedToRefPositions) {
-        for (int32_t pos : kv.second) {
-            seed thisSeed;
-            thisSeed.seq = kv.first;
-            thisSeed.pos = pos;
-            refSeeds.push_back(thisSeed);
-        }
-    }
-
-    
-    //Sorting ref seeds
-    sort(refSeeds.begin(), refSeeds.end(), []( const seed& lhs, const seed& rhs )
-    {
-        return lhs.seq < rhs.seq ;
-    });
-
-    //Sorting read seeds
-    for(int i = 0; i < readSeeds.size(); i++){
-        sort(readSeeds[i].begin(), readSeeds[i].end(), []( const seed& lhs, const seed& rhs )
-        {
-            return lhs.seq < rhs.seq;
-        });
-    }
-    
 
     //Finding syncmer matches
     for(int r = 0; r < readSequences.size() ; r++){
@@ -429,7 +427,7 @@ void place::placeIsolate(std::ifstream &indexFile, std::ifstream &mmFile, const 
     sam_header += std::to_string(bestMatchSequence.length());
 
 
-    char *sam_alignments[n_reads]; //constituants must be freed
+    char *sam_alignments[n_reads]; //constituants must be freed // wait why does the compiler allow this???
 
 
     align_reads(reference, n_reads, read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k);
