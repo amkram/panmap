@@ -57,7 +57,7 @@ add_custom_target(sample.o
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/include)
 
 
-file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a" "src/samtools_src/sample.c" "src/samtools_src/bedidx.c" "src/samtools_src/sam_opts.c" "src/samtools_src/bam_plbuf.c" "src/samtools_src/sam_utils.c" "${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.a" )
+file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a" "src/samtools_src/sample.c" "src/samtools_src/bedidx.c" "src/samtools_src/sam_opts.c" "src/samtools_src/bam_plbuf.c" "src/samtools_src/sam_utils.c" "${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.a")
 add_executable(panmap ${PANMAP_SRCS})
 add_dependencies(panmap libminimap2.a)
 add_dependencies(panmap sample.o)
@@ -67,7 +67,7 @@ add_dependencies(panmap sample.o)
 if(OPTION_BUILD_TESTS)
     get_filename_component(main_src src/panmap.cpp ABSOLUTE)
     list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
-    add_executable(tests ${PANMAP_SRCS} "src/test/main.test.cpp" "src/test/pmi.test.cpp" "src/test/seed.test.cpp" "src/test/tree.test.cpp") 
+    add_executable(tests ${PANMAP_SRCS} "src/test/main.test.cpp" "src/test/pmi.test.cpp" "src/test/seed.test.cpp" "src/test/tree.test.cpp" "src/test/genotype.test.cpp") 
     add_dependencies(tests libminimap2.a)
     add_dependencies(tests sample.o)
 endif(OPTION_BUILD_TESTS)
