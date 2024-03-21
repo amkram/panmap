@@ -1,0 +1,4 @@
+
+minimap2 -ax sr ref.fa fastqs/test$1.fastq > ../bam_input/test$1.sam
+
+samtools view -bS --no-PG ../bam_input/test$1.sam > ../bam_ex_output/test$1.bam
