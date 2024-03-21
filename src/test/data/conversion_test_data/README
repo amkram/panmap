@@ -1,0 +1,2 @@
+The test for the conversion '*' uses inputs '*_input' and should produce outputs '*_ex_output'
+    The test actually produces '*_output'
