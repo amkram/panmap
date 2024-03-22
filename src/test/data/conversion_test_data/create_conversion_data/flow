@@ -1,4 +1,10 @@
 
 minimap2 -ax sr ref.fa fastqs/test$1.fastq > ../bam_input/test$1.sam
 
+python3 sort_sam.py ../bam_input/test$1.sam
+
 samtools view -bS --no-PG ../bam_input/test$1.sam > ../bam_ex_output/test$1.bam
+
+samtools index generated_files/test$1.bam
+
+samtools mpileup -f ref.fa generated_files/test$1.bam > ../mplp_ex_output/test$1.mpileup
