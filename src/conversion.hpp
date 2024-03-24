@@ -1,4 +1,5 @@
 #include "util.hpp"
+#include "tree.hpp"
 
 
 void createSam(
@@ -40,6 +41,6 @@ void createMplp(
 
 void createVcf(
     char *mplpString,
-    std::ifstream &mmFile,
+    const tree::mutationMatrices& mutMat,
     std::string &vcfFileName
 );

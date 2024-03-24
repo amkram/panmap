@@ -290,14 +290,9 @@ void createMplp(
 //destroys mplpString
 void createVcf(
     char *mplpString,
-    std::ifstream &mmFile,
+    const tree::mutationMatrices& mutMat,
     std::string &vcfFileName
 )   {
-
-    mutationMatrices mutMat = mutationMatrices();
-    
-    fillMutationMatricesFromFile(mutMat, mmFile);
-
     // Convert c string of mpileup to ifstream
     std::istringstream mpileipStream(mplpString);
 
