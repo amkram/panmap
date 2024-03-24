@@ -13,24 +13,27 @@ namespace fs = boost::filesystem;
 
 BOOST_AUTO_TEST_CASE(genotyping) {
 
+    cout << "\n\nCreate vcf tests (using ../src/test/data/test.pileup)" << endl;
     ifstream puif("../src/test/data/test.pileup");
-
     /*############################
     # genotype likelihoods alone #
     ############################*/
+    cout << "Testing pileup to vcf without prior (using ../src/test/data/test_empty.mm)" << endl;
     ifstream emif("../src/test/data/test_empty.mm");
     mutationMatrices emptyMutMat = mutationMatrices();
     fillMutationMatricesFromFile(emptyMutMat, emif);
     emif.close();
 
-    ofstream vcfof("../src/test/data/vcf.out.tmp");
+    ofstream vcfof("../src/test/data/vcf_np.out.tmp");
     genotype::printSamplePlacementVCF(puif, emptyMutMat, false, 0, vcfof);
     vcfof.close();
     puif.clear();
     puif.seekg(0, ios::beg);
 
+    cout << "Wrote vcf file to ../src/test/data/vcf_np.out.tmp" << endl;
+
     unordered_map<int, vector<string> > vcfOut;
-    ifstream vcfif("../src/test/data/vcf.out.tmp");
+    ifstream vcfif("../src/test/data/vcf_np.out.tmp");
     string line;
     while (getline(vcfif, line)) {
         if (line.substr(0, 3) != "ref") {continue;}
@@ -39,7 +42,6 @@ BOOST_AUTO_TEST_CASE(genotyping) {
         vcfOut[stoi(fields[1])] = {fields[4], fields.back()};
     }
     vcfif.close();
-    fs::remove("../src/test/data/vcf.out.tmp");
 
     unordered_map<int, vector<string> > expOut;
     expOut[1] = {"C", "0:3,1:0,81"};
@@ -54,22 +56,27 @@ BOOST_AUTO_TEST_CASE(genotyping) {
         BOOST_TEST(expOut[pos][1] == vcfOut[pos][1]);
     }
 
+    cout << "Finished subtest.. Deleting ../src/test/data/vcf_np.out.tmp\n" << endl;
+    fs::remove("../src/test/data/vcf_np.out.tmp");
 
     /*##############################
     # genotype likelihoods + Prior #
     ##############################*/
+    cout << "Testing pileup to vcf with prior (using ../src/test/data/test.mm)" << endl;
     emif.open("../src/test/data/test.mm");
     mutationMatrices mutmat = mutationMatrices();
     fillMutationMatricesFromFile(mutmat, emif);
     emif.close();
 
-    vcfof.open("../src/test/data/vcf.out.tmp");
+    vcfof.open("../src/test/data/vcf_wp.out.tmp");
     genotype::printSamplePlacementVCF(puif, mutmat, false, 0, vcfof);
     vcfof.close();
     puif.close();
+
+    cout << "Wrote vcf file to ../src/test/data/vcf_wp.out.tmp" << endl;
     
     vcfOut.clear();
-    vcfif.open("../src/test/data/vcf.out.tmp");
+    vcfif.open("../src/test/data/vcf_wp.out.tmp");
     line.clear();
     while (getline(vcfif, line)) {
         if (line.substr(0, 3) != "ref") {continue;}
@@ -78,7 +85,6 @@ BOOST_AUTO_TEST_CASE(genotyping) {
         vcfOut[stoi(fields[1])] = {fields[4], fields.back()};
     }
     vcfif.close();
-    fs::remove("../src/test/data/vcf.out.tmp");
 
     expOut.clear();
     expOut[1] = {"C", "0:3,1:0,101"};
@@ -93,4 +99,7 @@ BOOST_AUTO_TEST_CASE(genotyping) {
         BOOST_TEST(expOut[pos][0] == vcfOut[pos][0]);
         BOOST_TEST(expOut[pos][1] == vcfOut[pos][1]);
     }
+
+    cout << "Finished subtest.. Deleting ../src/test/data/vcf_wp.out.tmp\n" << endl;
+    fs::remove("../src/test/data/vcf_wp.out.tmp");
 }
