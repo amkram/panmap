@@ -17,7 +17,7 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
 /* Helpers */
-void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &mutmatFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt) {
+void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt) {
     std::cin.clear();
     std::fflush(stdin);
     using namespace std;
@@ -40,9 +40,8 @@ void promptAndPlace(Tree *T, const int32_t k, const int32_t s, const std::string
         exit(0);
     }
     std::ifstream ifs(indexFile);
-    std::ifstream mfs(mutmatFile);
 
-    place::placeIsolate(ifs, mfs, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, T);
+    place::placeIsolate(ifs, mutMat, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, T);
 
 }
 void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
@@ -154,19 +153,23 @@ int main(int argc, char *argv[]) {
         }
 
         // Mutation matrix (mm) file
+        tree::mutationMatrices mutMat = tree::mutationMatrices();
         std::string defaultMutmatPath = pmatFile + ".mm";
         if (vm.count("mutmat")) {
             mutmatFile = fs::canonical(fs::path(vm["mutmat"].as<std::string>())).string();
+            std::ifstream mminf(mutmatFile);
+            tree::fillMutationMatricesFromFile(mutMat, mminf);
+            mminf.close();
             std::cout << "Using mutation matrix file: " << mutmatFile << std::endl;
         } else if (fs::exists(defaultMutmatPath)) {
-            mutmatFile = defaultMutmatPath;
+            std::ifstream mminf(defaultMutmatPath);
+            tree::fillMutationMatricesFromFile(mutMat, mminf);
+            mminf.close();
             std::cout << "Mutation matrix file detected, using mutation matrix file: " << defaultMutmatPath << std::endl;
         } else {
             std::cout << "No mutation matrix file detected, building mutation matrix ..." << std::endl; 
             // build mutation matrix
-            tree::mutationMatrices mutMat = tree::mutationMatrices();
             tree::fillMutationMatricesFromTree(mutMat, T);
-            
             // write to file
             std::cout << "Writing to " << defaultMutmatPath << " ...";
             std::ofstream mmfout(defaultMutmatPath);
@@ -209,7 +212,7 @@ int main(int argc, char *argv[]) {
             refFileName = vm["r"].as<std::string>();
         }
 
-        promptAndPlace(T, k, s, indexFile, mutmatFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt);
+        promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;

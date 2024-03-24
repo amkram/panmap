@@ -467,7 +467,7 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     fout << pl[pl.size() - 1] << endl;
 }
 
-void genotype::printSamplePlacementVCF(std::istream& fin, mutationMatrices& mutMat, bool variantOnly, size_t maskSize, std::ofstream& fout) {
+void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices& mutMat, bool variantOnly, size_t maskSize, std::ofstream& fout) {
     pair< vector<VariationSite>, pair<size_t, size_t> > variantSites = getVariantSites(fin, mutMat);
     const vector<VariationSite> candidateVariants = variantSites.first;
     if (candidateVariants.empty()) {
