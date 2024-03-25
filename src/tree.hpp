@@ -86,7 +86,7 @@ namespace tree {
     void fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf);
 
     // Build mutation matrices by traversing through all parent-child pairs
-    void printMutationMatrices(Tree* T, std::ofstream* outfptr=nullptr);
+    void writeMutationMatrices(const mutationMatrices& mutMat, std::ofstream& mmfout);
 }
 
 #endif

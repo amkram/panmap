@@ -173,19 +173,7 @@ int main(int argc, char *argv[]) {
             // write to file
             std::cout << "Writing to " << defaultMutmatPath << " ...";
             std::ofstream mmfout(defaultMutmatPath);
-            for (const std::vector<double>& row : mutMat.submat) {
-                for (const double& prob : row) {
-                    mmfout << prob << " ";
-                }
-                mmfout << "\n";
-            }
-            for (const double& prob : mutMat.insmat) {
-                mmfout << prob << " ";
-            }
-            mmfout << "\n";
-            for (const double& prob : mutMat.delmat) {
-                mmfout << prob << " ";
-            }
+            tree::writeMutationMatrices(mutMat, mmfout);
             mmfout.close();
             mutmatFile = defaultMutmatPath;
         }

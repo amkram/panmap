@@ -409,41 +409,20 @@ void buildMutationMatrices(mutationMatrices& mutMat, Tree* T) {
     }
 }
 
-void tree::printMutationMatrices(Tree* T, std::ofstream* ofptr) {
-    mutationMatrices mutMat = mutationMatrices();
-
-    buildMutationMatrices(mutMat, T);
-
-    if (ofptr == nullptr) {
-        for (const auto& row : mutMat.submat) {
-            for (const auto& prob : row) {
-                std::cout << prob << " ";
-            }
-            std::cout << std::endl;
+void tree::writeMutationMatrices(const mutationMatrices& mutMat, std::ofstream& mmfout) {
+    for (const std::vector<double>& row : mutMat.submat) {
+        for (const double& prob : row) {
+            mmfout << prob << " ";
         }
-        for (const auto& prob : mutMat.insmat) {
-            std::cout << prob << " ";
-        }
-        std::cout << std::endl;
-        for (const auto& prob : mutMat.delmat) {
-            std::cout << prob << " ";
-        }
-    } else {
-        for (const auto& row : mutMat.submat) {
-            for (const auto& prob : row) {
-                *ofptr << prob << " ";
-            }
-            *ofptr << "\n";
-        }
-        for (const auto& prob : mutMat.insmat) {
-            *ofptr << prob << " ";
-        }
-        *ofptr << "\n";
-        for (const auto& prob : mutMat.delmat) {
-            *ofptr << prob << " ";
-        }
+        mmfout << "\n";
     }
-    
+    for (const double& prob : mutMat.insmat) {
+        mmfout << prob << " ";
+    }
+    mmfout << "\n";
+    for (const double& prob : mutMat.delmat) {
+        mmfout << prob << " ";
+    }
 }
 
 void tree::fillMutationMatricesFromTree(mutationMatrices& mutMat, Tree* T) {
@@ -461,11 +440,11 @@ void tree::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream&
             probs.push_back(std::stod(f));
         }
         if (idx < 4) {
-            mutMat.submat[idx] = move(probs);
+            mutMat.submat[idx] = std::move(probs);
         } else if (idx == 4) {
-            mutMat.insmat = move(probs);
+            mutMat.insmat = std::move(probs);
         } else {
-            mutMat.delmat = move(probs);
+            mutMat.delmat = std::move(probs);
         }
         idx++;
     }
