@@ -1,0 +1,9 @@
+echo "TEST $1" >> TIME_LOG
+echo "TEST $1" >> STDERR_LOG
+echo "TEST $1" >> STDOUT_LOG
+
+(time ../../../build/panmap origin_data/sars2k.pmat reads/node_3_variant_$1_reads_R1.fastq reads/node_3_variant_$1_reads_R2.fastq  --v panmap_vcf/ex_$1.vcf --f 2>> STDERR_LOG 1>> STDOUT_LOG;) 2>> TIME_LOG
+
+./normalize $1
+
+#python3 vcf2rf.py panmap_vcf/ex_$1.vcf panmap_rf/ex_$1.rf
