@@ -1,0 +1,16 @@
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE
+ref	1070	.	G	T	.	.	.	GT	1
+ref	1865	.	C	T	.	.	.	GT	1
+ref	1887	.	TAGATG	T	.	.	.	GT	1
+ref	2595	.	T	C	.	.	.	GT	1
+ref	2763	.	T	C	.	.	.	GT	1
+ref	3264	.	G	GCCAACATAG	.	.	.	GT	1
+ref	4643	.	T	G	.	.	.	GT	1
+ref	5308	.	T	A	.	.	.	GT	1
+ref	8651	.	A	G	.	.	.	GT	1
+ref	8855	.	G	T	.	.	.	GT	1
+ref	9676	.	C	T	.	.	.	GT	1
+ref	17198	.	C	T	.	.	.	GT	1
+ref	19917	.	T	A	.	.	.	GT	1
+ref	22852	.	C	A	.	.	.	GT	1
+ref	27295	.	A	C	.	.	.	GT	1
