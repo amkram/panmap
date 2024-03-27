@@ -439,13 +439,29 @@ void tree::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream&
         for (const auto& f : fields) {
             probs.push_back(std::stod(f));
         }
+        if (probs.size() == 0) {
+            break;
+        }
         if (idx < 4) {
+            if (probs.size() != 4) {
+                throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
+            }
             mutMat.submat[idx] = std::move(probs);
         } else if (idx == 4) {
+            if (probs.size() < 1) {
+                throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
+            }
             mutMat.insmat = std::move(probs);
-        } else {
+        } else if (idx == 5) {
+            if (probs.size() < 1) {
+                throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
+            }
             mutMat.delmat = std::move(probs);
         }
         idx++;
+    }
+
+    if (idx != 6) {
+        throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
     }
 }
