@@ -427,6 +427,7 @@ void tree::writeMutationMatrices(const mutationMatrices& mutMat, std::ofstream& 
 
 void tree::fillMutationMatricesFromTree(mutationMatrices& mutMat, Tree* T) {
     buildMutationMatrices(mutMat, T);
+    mutMat.filled = true;
 }
 
 void tree::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf) {
@@ -464,4 +465,5 @@ void tree::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream&
     if (idx != 6) {
         throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
     }
+    mutMat.filled = true;
 }
