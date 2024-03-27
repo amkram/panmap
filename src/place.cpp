@@ -159,6 +159,11 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
     FILE *fp;
     kseq_t *seq;
     fp = fopen(fastqPath.c_str(), "r");
+    if(!fp){
+        std::cerr << "Error: File " << fastqPath << " not found" << std::endl;
+        exit(0);
+    }
+
     seq = kseq_init(fileno(fp));
     
     int line;
