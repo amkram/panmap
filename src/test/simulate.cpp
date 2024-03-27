@@ -303,6 +303,10 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
         }
     );
 
+    vros << "##fileformat=VCFv4.3\n"
+        //  << "##contig=<ID=" + curNode + ">\n"
+         << "##contig=<ID=ref>\n"
+         << "##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>\n";
     vros << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + fastaOut.stem().string() + "\n";
     int offset = 0;
     for (int i = 0; i < sumnum; i++) {
@@ -312,7 +316,8 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
         switch (var) {
             case 1:
                 {
-                    vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
+                    vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
+                    // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                     char ref  = seq[pos];
                     char mut  = subNuc(ref, mutMat);
                     nseq[pos + offset] = mut;
@@ -321,7 +326,8 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
                 }
             case 2:
                 {
-                    vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
+                    vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
+                    // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                     char ref = seq[pos];
                     std::string inss;
                     for (size_t j = 0; j < get<2>(muts[i]); j++) {
@@ -334,7 +340,8 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
                 }
             case 4:
                 {
-                    vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
+                    vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
+                    // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                     std::string ref = seq.substr(pos, get<2>(muts[i]) + 1);
                     char   del = seq[pos];
                     nseq = nseq.substr(0, pos + offset + 1) + nseq.substr(pos + offset + get<2>(muts[i]) + 1, nseq.size() - (pos + offset + get<2>(muts[i]) + 1));
