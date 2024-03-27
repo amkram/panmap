@@ -1,0 +1,22 @@
+##fileformat=VCFv4.3
+##FILTER=<ID=PASS,Description="All filters passed">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##contig=<ID=ref>
+##bcftools_normVersion=1.19+htslib-1.19.1
+##bcftools_normCommand=norm -f ../origin_data/node_3.fasta -o out vcf_0_0; Date=Tue Mar 26 15:17:17 2024
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE
+ref	1844	.	C	G	.	.	.	GT	1
+ref	2733	.	TACTTA	T	.	.	.	GT	1
+ref	6290	.	A	G	.	.	.	GT	1
+ref	7838	.	G	T	.	.	.	GT	1
+ref	10097	.	T	A	.	.	.	GT	1
+ref	11531	.	T	C	.	.	.	GT	1
+ref	13210	.	C	A	.	.	.	GT	1
+ref	14129	.	C	T	.	.	.	GT	1
+ref	19875	.	G	A	.	.	.	GT	1
+ref	21008	.	A	G	.	.	.	GT	1
+ref	21622	.	T	G	.	.	.	GT	1
+ref	23869	.	T	A	.	.	.	GT	1
+ref	26986	.	G	GA	.	.	.	GT	1
+ref	27914	.	T	A	.	.	.	GT	1
+ref	29004	.	T	A	.	.	.	GT	1

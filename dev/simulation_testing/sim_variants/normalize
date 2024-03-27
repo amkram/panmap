@@ -1,0 +1,10 @@
+echo "##fileformat=VCFv4.3\n##contig=<ID=ref>\n##INFO=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n##FORMAT=<ID=AD,Number=1,Type=String,Description="idk">\n##FORMAT=<ID=GP,Number=1,Type=String,Description="idk">" > norm_true_vcf/non_$1.vcf
+cat vcftrue/node_3_variant_$1.vcf >> norm_true_vcf/non_$1.vcf
+bcftools norm -f origin_data/node_3.fasta norm_true_vcf/non_$1.vcf -o norm_true_vcf/norm_$1.vcf
+rm norm_true_vcf/non_$1.vcf
+
+#TODO we should output reference that we use and use it!
+echo "##fileformat=VCFv4.3\n##contig=<ID=ref>\n##INFO=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n##FORMAT=<ID=AD,Number=1,Type=String,Description="idk">\n##FORMAT=<ID=GP,Number=1,Type=String,Description="idk">" > norm_panmap_vcf/non_$1.vcf
+cat panmap_vcf/ex_$1.vcf >> norm_panmap_vcf/non_$1.vcf
+bcftools norm -f origin_data/node_3.fasta norm_panmap_vcf/non_$1.vcf -o norm_panmap_vcf/norm_$1.vcf
+rm norm_panmap_vcf/non_$1.vcf
