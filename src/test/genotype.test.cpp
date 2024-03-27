@@ -12,7 +12,6 @@ using namespace std;
 using namespace tree;
 namespace fs = boost::filesystem;
 
-
 BOOST_AUTO_TEST_CASE(readMutationMatrices) {
     string testDataDir = "../src/test/data/genotype_test_data/";
     

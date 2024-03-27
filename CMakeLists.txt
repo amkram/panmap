@@ -5,6 +5,7 @@ project(panmap)
 # Project options
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." ON)
 option(OPTION_BUILD_TESTS "Build tests." ON)
+option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20 ") 
@@ -63,7 +64,6 @@ add_dependencies(panmap libminimap2.a)
 add_dependencies(panmap sample.o)
 
 
-
 if(OPTION_BUILD_TESTS)
     get_filename_component(main_src src/panmap.cpp ABSOLUTE)
     list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
@@ -72,10 +72,21 @@ if(OPTION_BUILD_TESTS)
     add_dependencies(tests sample.o)
 endif(OPTION_BUILD_TESTS)
 
+if(OPTION_BUILD_SIMULATE)
+    get_filename_component(main_src src/panmap.cpp ABSOLUTE)
+    list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
+    add_executable(simulate ${PANMAP_SRCS} "src/test/simulate.cpp")
+    add_dependencies(simulate libminimap2.a)
+    add_dependencies(simulate sample.o)
+endif(OPTION_BUILD_SIMULATE)
 
-target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z hts)
-target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z hts)
+
+
+target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
+target_link_libraries(simulate PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
+target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+target_compile_options(simulate PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES ${CMAKE_BINARY_DIR}/clean-minimap)
 
