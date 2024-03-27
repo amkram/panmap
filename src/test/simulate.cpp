@@ -7,6 +7,7 @@
 #include <vector>
 #include <random>
 #include "PangenomeMAT.hpp"
+#include "../tree.hpp"
 
 
 namespace po = boost::program_options;
@@ -16,7 +17,7 @@ void makeFasta(const std::string& name, const std::string& seq, const std::strin
 void makeDir(const std::string& path);
 void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
     const std::vector<int>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep);
+    int n_reads, int rep, const tree::mutationMatrices& mutMat);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -30,6 +31,7 @@ int main(int argc, char *argv[]) {
             ("prefix",    po::value<std::string>()->default_value("prefix"), "Output prefix")
             ("num",       po::value<std::vector<int>>()->multitoken(), "Number of mutations for snp, insertion, and deletion [10 0 0].")
             ("indel_len", po::value<std::vector<int>>()->multitoken(), "Min and max indel length [1 9]. Uniform distribution.")
+            ("mut_spec",  po::value<std::string>()->default_value(""), "Use input mutation matrix file to model mutations")
             ("rep",       po::value<int>()->default_value(1), "Number of replicates to simulate [1].")
             ("n_reads",   po::value<int>()->default_value(2000), "Number of reads to simulate [2000].")
             ("model",     po::value<std::string>()->default_value("NovaSeq"), "InSilicoSeq error model [HiSeq]. Options: HiSeq, NextSeq, NovaSeq, MiSeq. For detail, visit InSilicoSeq github (https://github.com/HadrienG/InSilicoSeq).")
@@ -49,6 +51,7 @@ int main(int argc, char *argv[]) {
         
         // input variables
         std::string panmatPath = vm["panmat"].as<std::string>();
+        std::string mut_spec   = vm["mut_spec"].as<std::string>();
         std::string out_dir    = vm["out_dir"].as<std::string>();
         std::string refNode    = vm["ref"].as<std::string>();
         std::string prefix     = vm["prefix"].as<std::string>();
@@ -56,6 +59,18 @@ int main(int argc, char *argv[]) {
         int n_reads            = vm["n_reads"].as<int>();
         int rep                = vm["rep"].as<int>();
         
+        // Check mut_spec
+        tree::mutationMatrices mutMat = tree::mutationMatrices();
+        if (out_dir != "") {
+            if (fs::exists(mut_spec)) {
+                std::ifstream mminf(mut_spec);
+                tree::fillMutationMatricesFromFile(mutMat, mminf);
+            } else {
+                throw std::invalid_argument("--mut_sepc input file doesn't exist");
+            }
+        }
+
+
         // Check out_dir input
         if (!fs::is_directory(fs::path(out_dir))) {
             throw std::invalid_argument("--out_dir input s not a valid directory");
@@ -113,7 +128,7 @@ int main(int argc, char *argv[]) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
         // GO time
-        sim(T, refNode, out_dir, prefix, num, indel_len, model, n_reads, rep);
+        sim(T, refNode, out_dir, prefix, num, indel_len, model, n_reads, rep, mutMat);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
@@ -167,19 +182,64 @@ static int getIndexFromNucleotide(char nuc) {
     return 5;
 }
 
-char subNuc(char ref) {
+double getMinDouble(const std::vector<double>& doubles) {
+    if (doubles.empty()) {
+        return -1.0;
+    }
+
+    double minDouble = doubles[0];
+    for (size_t i = 1; i < doubles.size(); i++) {
+        minDouble = std::min(minDouble, doubles[i]);
+    }
+
+    return minDouble;
+
+}
+
+char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<int>& weights) {
+    // Create a random device and generator
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    // Create a discrete distribution with the given weights
+    std::discrete_distribution<> distr(weights.begin(), weights.end());
+
+    // Get a random index based on the weights
+    int index = distr(gen);
+
+    // Return the character at the random index
+    return chars[index];
+}
+
+char subNuc(char ref, const tree::mutationMatrices& mutMat) {
     std::vector<char> bases = {'A', 'C', 'G', 'T'};
     int refIdx = getIndexFromNucleotide(ref);
     if (refIdx > 3) {
         return getRandomChar(bases);
     }
 
+    if (!mutMat.filled) {
+        bases.erase(bases.begin() + refIdx);
+        return getRandomChar(bases);
+    }
+
+    std::vector<double> probs = mutMat.submat[refIdx];
     bases.erase(bases.begin() + refIdx);
-    return getRandomChar(bases);
+    probs.erase(probs.begin() + refIdx);
+    
+    std::vector<int> wgts;
+    double minProb = getMinDouble(probs);
+    for (const auto& prob : probs) {
+        double deci = pow(10, (minProb - prob) / 10);
+        wgts.push_back(deci * 1000);
+    }
+
+    return getRandomCharWithWeights(bases, wgts);
 }
 
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
-    const std::vector<int> num, const std::pair<int, int> indel_len, size_t beg, size_t end)
+    const tree::mutationMatrices& mutMat, const std::vector<int> num, const std::pair<int, int> indel_len,
+    size_t beg, size_t end)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
         return;
@@ -254,7 +314,7 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
                 {
                     vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                     char ref  = seq[pos];
-                    char mut  = subNuc(ref);
+                    char mut  = subNuc(ref, mutMat);
                     nseq[pos + offset] = mut;
                     vros << ref << "\t" << mut << "\t.\t.\t.\tGT\t1\n";
                     break;
@@ -306,7 +366,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::vector<int>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep)
+    int n_reads, int rep, const tree::mutationMatrices& mutMat)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
@@ -349,7 +409,7 @@ void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& o
             fastaOut = outVarFastaObj / fs::path(curNode + ".var." + std::to_string(i) + ".fa");
             vcfOut  = outVCFTrueObj  / fs::path(curNode + ".var." + std::to_string(i) + ".vcf");
         }
-        genMut(curNode, T->getStringFromReference(curNode, false), fastaOut, vcfOut, num, indel_len, 500, 500);
+        genMut(curNode, T->getStringFromReference(curNode, false), fastaOut, vcfOut, mutMat, num, indel_len, 500, 500);
 
         // Make reads using InSilicoSeq
         simReads(fastaOut, outReadsObj, model, n_reads);

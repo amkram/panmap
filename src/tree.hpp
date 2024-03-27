@@ -55,6 +55,7 @@ namespace tree {
         std::vector<double> delmat = {0}; // 1 x N deletion rate by length matrix
         
         // Stores total number of mutations
+        bool filled = false;
         std::vector<double> total_submuts;
         double total_insmut = 0;
         double total_delmut = 0;
