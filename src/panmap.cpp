@@ -138,9 +138,13 @@ int main(int argc, char *argv[]) {
             std::string defaultIndexPath = pmatFile + ".pmi";
             std::string inp;
             if (boost::filesystem::exists(defaultIndexPath)) {
-                std::cout << "Use existing index? [Y/n]";
-                getline(std::cin, inp);
-                if (inp == "Y" || inp == "y" || inp == "") {
+                if (prompt){
+                    std::cout << "Use existing index? [Y/n]";
+                    getline(std::cin, inp);
+                    if (inp == "Y" || inp == "y" || inp == "") {
+                        keep = true;
+                    }
+                }else{
                     keep = true;
                 }
             } else {
@@ -171,7 +175,7 @@ int main(int argc, char *argv[]) {
             // build mutation matrix
             tree::fillMutationMatricesFromTree(mutMat, T);
             // write to file
-            std::cout << "Writing to " << defaultMutmatPath << " ...";
+            std::cout << "Writing to " << defaultMutmatPath << " ..." << std::endl;
             std::ofstream mmfout(defaultMutmatPath);
             tree::writeMutationMatrices(mutMat, mmfout);
             mmfout.close();

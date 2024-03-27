@@ -1,0 +1,1 @@
+bcftools norm -f ../origin_data/node_3.fasta vcf_0_1 -o out2
