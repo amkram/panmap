@@ -225,7 +225,7 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 		t.qual = quality[k];
 		const int n_regss[1] = {n_reg};
 		const mm_reg1_t *regss = {reg};
-		mi->seq[0].name = "reference";
+		mi->seq[0].name = "ref";
 
 		if(n_reg == 0 || reg->score <= 0 || reg->score > r_lens[k]) { //Maybe remove n_reg==0 check
 			sam_alignments[k] = NULL;

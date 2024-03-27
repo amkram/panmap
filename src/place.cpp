@@ -343,7 +343,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
 
         if (outFile.is_open()) {
             
-            outFile << ">reference\n";
+            outFile << ">ref\n";
             outFile << bestMatchSequence << "\n";
 
             std::cout << "Wrote reference fasta to " << refFileName << std::endl;
