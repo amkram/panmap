@@ -101,7 +101,7 @@ void createSam(
         qry_positions[i] = qry_pos_array;
     }
     
-    samHeader = "@SQ\tSN:reference\tLN:";
+    samHeader = "@SQ\tSN:ref\tLN:";
     samHeader += std::to_string(bestMatchSequence.length());
     
     char *sam_alignments[n_reads];
