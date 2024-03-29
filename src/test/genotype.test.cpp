@@ -5,6 +5,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <fstream>
+#include <random>
 #include "PangenomeMAT.hpp"
 #include "../genotype.hpp"
 #include "../tree.hpp"
@@ -17,6 +18,28 @@ size_t getStart_brute(const std::string& s1, const std::string& s2, size_t windo
 size_t getEnd_brute(const std::string& s1, const std::string& s2, size_t window, double threshold);
 size_t getBeg_perfectMatch(const std::string& s1, const std::string& s2, size_t matchLen);
 size_t getEnd_perfectMatch(const std::string& s1, const std::string& s2, size_t matchLen);
+
+
+bool close_to_int(double num_double) {
+    int num_int = int(num_double + 0.5);
+    double num_int_double = double(num_int);
+    if (abs(num_int_double - num_double) < 0.0001) {
+        return true;
+    }
+    return false;
+}
+
+BOOST_AUTO_TEST_CASE(tmp) {
+    BOOST_TEST(close_to_int(4.0000000002) == true);
+    BOOST_TEST(close_to_int(3.9999999983) == true);
+    BOOST_TEST(close_to_int(0.99999999983) == true);
+    BOOST_TEST(close_to_int(0.0000000000054) == true);
+    BOOST_TEST(close_to_int(2.5) == false);
+    BOOST_TEST(close_to_int(3.4) == false);
+    BOOST_TEST(close_to_int(0.25) == false);
+    BOOST_TEST(close_to_int(0.57) == false);
+
+}
 
 BOOST_AUTO_TEST_CASE(edgeMaskingForBuildingMutMat) {
     std::ifstream ifs("../dev/examples/sars2k.pmat");
