@@ -474,8 +474,14 @@ void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices
         return;
     }
     
-    
-    fout << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE" << endl;
+    fout << "##fileformat=VCFv4.3\n"
+         << "##contig=<ID=ref>\n"
+         << "##INFO=<ID=DP,Number=1,Type=Integer,Description=Read Depth>\n"
+         << "##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>\n"
+         << "##FORMAT=<ID=AD,Number=1,Type=String,Description=Read depth for each allele>\n"
+         << "##FORMAT=<ID=GP,Number=1,Type=String,Description=Genotype posterior probabilities in phred scale>\n";
+
+    fout << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n";
     
     vector<VariationSite> groupSites;
 

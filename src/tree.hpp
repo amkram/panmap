@@ -83,7 +83,8 @@ namespace tree {
     void setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T);
 
     // Fill mutation matrices from tree or file
-    void fillMutationMatricesFromTree(mutationMatrices& mutMat, Tree* T);
+    std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string& s1, const std::string& s2, size_t window, double threshold);
+    void fillMutationMatricesFromTree(mutationMatrices& mutMat, Tree* T, size_t window, double threshold);
     void fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf);
 
     // Build mutation matrices by traversing through all parent-child pairs
