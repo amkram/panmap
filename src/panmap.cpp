@@ -18,6 +18,7 @@ namespace fs = boost::filesystem;
 
 /* Helpers */
 void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt) {
+
     std::cin.clear();
     std::fflush(stdin);
     using namespace std;
