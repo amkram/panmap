@@ -229,7 +229,7 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 
 		if(n_reg == 0 || reg->score <= 0 || reg->score > r_lens[k]) { //Maybe remove n_reg==0 check
 			sam_alignments[k] = NULL;
-			r_lens[k] = -1;
+			r_lens[k] = INT_MAX;
 		} else {
 			mm_write_sam3( &sam, mi, &t, 0, 0, 1, n_regss, &regss, NULL, 0, 0);
 			r_lens[k] = reg->rs+1; //Length of sam line string
