@@ -386,9 +386,11 @@ static size_t getEnd(const std::string& s1, const std::string& s2, size_t window
     size_t idx = s1.size() - 1;
     std::queue<size_t> ends;
 
-    while (idx < s1.size()) {
+    while (true) {
         if (s1[idx] == '-' && s2[idx] == '-') {
-            if (idx == 0) break;
+            if (idx == 0) {
+                break;
+            }
             --idx;
             continue;
         }
@@ -402,7 +404,9 @@ static size_t getEnd(const std::string& s1, const std::string& s2, size_t window
         }
         ++numAlign;
 
-        if (idx == 0) break;
+        if (idx == 0){
+            break;
+        }
         --idx;
 
         if (numAlign == window) {
