@@ -15,8 +15,9 @@ namespace fs = boost::filesystem;
 
 void makeFasta(const std::string& name, const std::string& seq, const std::string& path);
 void makeDir(const std::string& path);
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double);
 void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
-    const std::vector<int>& num, const std::pair<int, int>& indel_len, const std::string& model,
+    const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
     int n_reads, int rep, const tree::mutationMatrices& mutMat);
 
 int main(int argc, char *argv[]) {
@@ -29,7 +30,7 @@ int main(int argc, char *argv[]) {
             ("ref",       po::value<std::string>()->required(), "Reference node name (required). Enter RANDOM to use a random node on the tree, and a new random node is selected without replacement for each replicate.")
             ("out_dir",   po::value<std::string>()->required(), "Output directory (required)")
             ("prefix",    po::value<std::string>()->default_value("prefix"), "Output prefix")
-            ("num",       po::value<std::vector<int>>()->multitoken(), "Number of mutations for snp, insertion, and deletion [10 0 0].")
+            ("mutnum",    po::value<std::vector<double>>()->multitoken(), "Number of mutations for snp, insertion, and deletion [10 0 0].")
             ("indel_len", po::value<std::vector<int>>()->multitoken(), "Min and max indel length [1 9]. Uniform distribution.")
             ("mut_spec",  po::value<std::string>()->default_value(""), "Use input mutation matrix file to model mutations")
             ("rep",       po::value<int>()->default_value(1), "Number of replicates to simulate [1].")
@@ -79,7 +80,7 @@ int main(int argc, char *argv[]) {
 
         // Check multitoken inputs
         std::pair<int, int> indel_len;
-        std::vector<int> num;
+        std::vector<double> mutnum_double;
         if (!vm.count("indel_len")) {
             indel_len = {1, 9};
         } else {
@@ -89,12 +90,15 @@ int main(int argc, char *argv[]) {
             }
             indel_len.first  = indel_len_vec[0];
             indel_len.second = indel_len_vec[1];
+            if (indel_len.first < 1) {
+                throw std::invalid_argument("--indel_len must be greater than or equal to 1");
+            }
         }
-        if (!vm.count("num")) {
-            num = {10, 0, 0};
+        if (!vm.count("mutnum")) {
+            mutnum_double = {10.0, 0.0, 0.0};
         } else {
-            num = vm["num"].as<std::vector<int>>();
-            if (num.size() != 3) {
+            mutnum_double = vm["mutnum"].as<std::vector<double>>();
+            if (mutnum_double.size() != 3) {
                 throw std::invalid_argument("--num must have 3 inputs");
             }
         }
@@ -105,16 +109,6 @@ int main(int argc, char *argv[]) {
             throw std::invalid_argument("Unknown --model input, please double check");
         }
 
-
-        std::cout << panmatPath << std::endl;
-        std::cout << refNode << std::endl;
-        std::cout << out_dir << std::endl;
-        std::cout << prefix << std::endl;
-        std::cout << num.size() << std::endl;
-        std::cout << indel_len.first << " " << indel_len.second << std::endl;
-        std::cout << model << std::endl;
-        std::cout << n_reads << std::endl;
-        std::cout << rep << std::endl;
 
         // read treeeee
         std::ifstream ifs(panmatPath);
@@ -129,7 +123,7 @@ int main(int argc, char *argv[]) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
         // GO time
-        sim(T, refNode, out_dir, prefix, num, indel_len, model, n_reads, rep, mutMat);
+        sim(T, refNode, out_dir, prefix, mutnum_double, indel_len, model, n_reads, rep, mutMat);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
@@ -238,8 +232,42 @@ char subNuc(char ref, const tree::mutationMatrices& mutMat) {
     return getRandomCharWithWeights(bases, wgts);
 }
 
+size_t genLen(const std::pair<int, int>& indel_len, const tree::mutationMatrices& mutMat, int type) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    if (!mutMat.filled) {
+        std::uniform_int_distribution<> distribLen(indel_len.first, indel_len.second);
+        return distribLen(gen);
+    }
+
+    std::vector<double> probs;
+    switch (type) {
+        case 2:
+            probs = mutMat.insmat;
+            break;
+        case 4:
+            probs = mutMat.delmat;
+            break;
+        default:
+            break;
+    }
+    probs.erase(probs.begin());
+    std::vector<int> wgts;
+    std::vector<size_t> lens;
+    double minProb = getMinDouble(probs);
+    for (size_t i = indel_len.first; i < indel_len.second+1; i++) {
+        lens.push_back(i);
+        wgts.push_back(pow(10, (minProb - probs[i-1]) / 10) * 1000);
+    }
+    std::discrete_distribution<> distr(wgts.begin(), wgts.end());
+    int index = distr(gen);
+    return lens[index];
+
+}
+
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
-    const tree::mutationMatrices& mutMat, const std::vector<int> num, const std::pair<int, int> indel_len,
+    const tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
     size_t beg, size_t end)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
@@ -254,6 +282,7 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
     std::vector< std::tuple<int, int, int> > muts;
     std::vector<std::string> vref;
     std::vector<int> vtp;
+    std::vector<int> num = genMutNum(mutnum_double);
     for (int i = 0; i < num.size(); i++) {
         for (int j = 0; j < num[i]; j++) {
             switch (i) {
@@ -272,13 +301,20 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> distribPos(beg, seq.size() - end);
-    std::uniform_int_distribution<> distribLen(indel_len.first, indel_len.second);
+
     int c = 0;
     int sumnum = num[0] + num[1] + num[2];
     while (muts.size() < sumnum) {
         int curPos  = distribPos(gen);
         int varType = vtp[c % vtp.size()];
-        int length = (varType == 1) ? 1 : distribLen(gen);
+        int length;
+        if (varType == 1) {
+            length = 1;
+        } else if (varType == 2) {
+            length = genLen(indel_len, mutMat, 2);
+        } else {
+            length = genLen(indel_len, mutMat, 4);
+        }
         
         bool posConflict = false;
         for (const auto& mut : muts) {
@@ -373,7 +409,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 }
 
 void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
-    const std::vector<int>& num, const std::pair<int, int>& indel_len, const std::string& model,
+    const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
     int n_reads, int rep, const tree::mutationMatrices& mutMat)
 {
     fs::path outDirObj = outDir;
@@ -424,4 +460,35 @@ void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& o
     }
 }
 
+bool close_to_int(double num_double) {
+    int num_int = int(num_double + 0.5);
+    double num_int_double = double(num_int);
+    if (abs(num_int_double - num_double) < 0.0001) {
+        return true;
+    }
+    return false;
+}
 
+int genInt(double num_double) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<> dist(0, 1);
+    int i = int(num_double);
+    double prob_to_add = num_double - double(i);
+    if (dist(gen) < prob_to_add) {
+        ++i;
+    }
+    return i;
+}
+
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double) {
+    std::vector<int> mutNum_int;
+    for (double num : mutNum_double) {
+        if (close_to_int(num)) {
+            mutNum_int.push_back(num + 0.5);
+        } else {
+            mutNum_int.push_back(genInt(num));
+        }
+    }
+    return mutNum_int;
+}
