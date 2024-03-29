@@ -65,6 +65,7 @@ int main(int argc, char *argv[]) {
             if (fs::exists(mut_spec)) {
                 std::ifstream mminf(mut_spec);
                 tree::fillMutationMatricesFromFile(mutMat, mminf);
+                mminf.close();
             } else {
                 throw std::invalid_argument("--mut_sepc input file doesn't exist");
             }

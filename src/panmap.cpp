@@ -74,6 +74,8 @@ int main(int argc, char *argv[]) {
             ("mutmat,u", po::value<std::string>(), "Path to mutation matrix file")
             ("params,p", po::value<std::vector<int32_t>>()->multitoken(), "Specify syncmer parameters k,s for indexing (e.g. for k=13, s=8 use -p 13,8)")
             ("f", "Proceed without prompting for confirmation. Applies to index construction if -p is specified or no index is found at ( /path/to/pmat.pmi ). Applies to sample placement if reads are provided.")
+            ("window,w", po::value<size_t>()->default_value(20), "Mutation Matrix Build Specific: window size for selecting starting and end sequence positions for building mutation spectrum")
+            ("percent_identity", po::value<double>()->default_value(0.80), "Mutation Matrix Build Specific: percent identity threshold for selecting starting and end sequence positions for building mutation spectrum")
             ("s", po::value<std::string>(), "Path to sam output")
             ("b", po::value<std::string>(), "Path to bam output")
             ("m", po::value<std::string>(), "Path to mpileup output")
@@ -173,7 +175,7 @@ int main(int argc, char *argv[]) {
         } else {
             std::cout << "No mutation matrix file detected, building mutation matrix ..." << std::endl; 
             // build mutation matrix
-            tree::fillMutationMatricesFromTree(mutMat, T);
+            tree::fillMutationMatricesFromTree(mutMat, T, vm["window"].as<size_t>(), vm["percent_identity"].as<double>());
             // write to file
             std::cout << "Writing to " << defaultMutmatPath << " ..." << std::endl;
             std::ofstream mmfout(defaultMutmatPath);
