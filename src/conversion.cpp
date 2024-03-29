@@ -119,14 +119,17 @@ void createSam(
         return a.first < b.first;
     });
     
-    int numAlignedReads = n_reads;
+    int numAlignedReads = 0;
     
     for(int i = 0; i < n_reads; i++) {
         sam_alignments[i] = sam_lines[i].second;
         if(!sam_alignments[i]){
             numAlignedReads = i;         //Some reads failed
+            break;
         }
     }
+
+    std::cerr << numAlignedReads << "\n";
 
     //Print out sam
     if(samFileName.size() > 0){
@@ -206,7 +209,7 @@ void createBam(
             fprintf(stderr, "Error: Failed to write BAM header.\n");
         }
     }
-    
+    std::cerr << "SIZE: " << samAlignments.size() << "\n";
     //Prepare list of bam1_t
     bamRecords = (bam1_t **)malloc(sizeof(bam1_t *) * samAlignments.size());
 
@@ -257,6 +260,7 @@ void createMplp(
 
     char * &mplpString
 ){
+
     char* ref_string = new char[bestMatchSequence.length() + 1];
     std::strcpy(ref_string, bestMatchSequence.c_str());
 
@@ -278,7 +282,7 @@ void createMplp(
     }
 
     mplpString = mplp_string.s;
-    
+
     for(int i = 0; i < numBams; i++){
         bam_destroy1(bamRecords[i]);
     }
