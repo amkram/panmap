@@ -119,7 +119,7 @@ void createSam(
         return a.first < b.first;
     });
     
-    int numAlignedReads = 0;
+    int numAlignedReads = n_reads;
     
     for(int i = 0; i < n_reads; i++) {
         sam_alignments[i] = sam_lines[i].second;
@@ -128,8 +128,6 @@ void createSam(
             break;
         }
     }
-
-    std::cerr << numAlignedReads << "\n";
 
     //Print out sam
     if(samFileName.size() > 0){
@@ -209,7 +207,7 @@ void createBam(
             fprintf(stderr, "Error: Failed to write BAM header.\n");
         }
     }
-    std::cerr << "SIZE: " << samAlignments.size() << "\n";
+    
     //Prepare list of bam1_t
     bamRecords = (bam1_t **)malloc(sizeof(bam1_t *) * samAlignments.size());
 
