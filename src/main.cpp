@@ -1,11 +1,11 @@
 #include "kseq.h"
-#include "PangenomeMAT.hpp"
 #include "pmi.hpp"
 #include "genotype.hpp"
 #include "place.hpp"
 #include <iostream>
 #include <string>
 #include <cstdio>
+#include <panmat/PangenomeMAT.hpp>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/iostreams/filtering_stream.hpp>

@@ -7,8 +7,6 @@
 #include <cmath>
 #include <htslib/sam.h>
 
-
-
 using namespace PangenomeMAT;
 using namespace tree;
 using namespace seeding;
