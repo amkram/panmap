@@ -168,8 +168,6 @@ void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T, const Node 
     for(auto it = blockMutData.rbegin(); it != blockMutData.rend(); it++) {
         auto mutation = *it;
 
-
-
         blockExists[std::get<0>(mutation)].first = std::get<1>(mutation);
         blockStrand[std::get<0>(mutation)].first = std::get<2>(mutation);
     }

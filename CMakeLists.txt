@@ -1,83 +1,80 @@
-cmake_minimum_required (VERSION 3.26 FATAL_ERROR) 
+cmake_minimum_required (VERSION 3.28) 
 
 project(panmap)
 
-# Project options
-option(OPTION_DEBUG "Compile with debug symbols and no optimizations." ON)
-option(OPTION_BUILD_TESTS "Build tests." ON)
-
-# Compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20 ") 
-if(OPTION_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wno-unused-function -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
-else(OPTION_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3") 
-endif(OPTION_DEBUG)
-
-# Cmake options
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CXX_STANDARD 20)
 
 include(FetchContent)
-FetchContent_Declare(docopt
-    GIT_REPOSITORY https://github.com/docopt/docopt.cpp.git
-    GIT_TAG v0.6.3)
-FetchContent_Populate(docopt)
-include(CMakePrintHelpers)
-cmake_print_variables(docopt_SOURCE_DIR)
-cmake_print_variables(docopt_BINARY_DIR)
 
-add_library(remote-deps ${docopt_SOURCE_DIR}/docopt.cpp)
+add_executable(panmap
+    src/main.cpp
+    src/place.cpp
+    src/place.hpp
+    src/genotype.cpp
+    src/genotype.hpp
+    src/pmi.cpp
+    src/pmi.hpp
+    src/tree.cpp
+    src/tree.hpp
+    src/util.hpp
+    src/seed.hpp
+    src/align_from_seeds.c
+    src/bam_to_mpileup.c
+    src/kseq.h)
 
-# Dependency: panmat-utils
-find_package(libpanmat REQUIRED)
-include_directories(${libpanmat_DIR}/include ${libpanmat_DIR}/oneTBB-2019_U9/include)
+# panmat
+FetchContent_Declare(
+    panmat
+    GIT_REPOSITORY https://github.com/TurakhiaLab/pangenome-mat
+    GIT_TAG aef68be76d7a2b6f4cb26a69fca337f260906a9c # testing-cmake branch
+    GIT_SHALLOW TRUE
+    FIND_PACKAGE_ARGS CONFIG
+    )
 
+FetchContent_MakeAvailable(panmat)
+include_directories(${protobuf_INCLUDE_DIRS})
 
-# Dependency: Boost
-find_package(Boost COMPONENTS system filesystem program_options unit_test_framework iostreams date_time REQUIRED)
-include_directories(${Boost_INCLUDE_DIRS})
-
-# Dependency: minimap2
-add_custom_target(libminimap2.a
-   COMMAND make arm_neon=1 aarch64=1 libminimap2.a
-   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/minimap2_src/
-)
-add_custom_target(clean-minimap
-    COMMAND make clean
-	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/minimap2_src/
-)
-
-# Dependency: samtools
-add_custom_target(sample.o
-   COMMAND make arm_neon=1 aarch64=1 sample.o bedidx.o sam_opts.o bam_plbuf.o sam_utils.o version.h
-   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/samtools_src/
-)
-
-# Dependency: htslib
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/include)
-
-
-file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a" "src/samtools_src/sample.c" "src/samtools_src/bedidx.c" "src/samtools_src/sam_opts.c" "src/samtools_src/bam_plbuf.c" "src/samtools_src/sam_utils.c" "${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.a" )
-add_executable(panmap ${PANMAP_SRCS})
-add_dependencies(panmap libminimap2.a)
-add_dependencies(panmap sample.o)
+include(ExternalProject)
 
 
 
-if(OPTION_BUILD_TESTS)
-    get_filename_component(main_src src/panmap.cpp ABSOLUTE)
-    list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
-    add_executable(tests ${PANMAP_SRCS} "src/test/main.test.cpp" "src/test/pmi.test.cpp" "src/test/seed.test.cpp" "src/test/tree.test.cpp") 
-    add_dependencies(tests libminimap2.a)
-    add_dependencies(tests sample.o)
-endif(OPTION_BUILD_TESTS)
+# minimap2
+
+cmake_host_system_information(RESULT has_sse2 QUERY HAS_SSE2)
+
+if (APPLE AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64")
+    set(APPLE_ARM_FLAGS "aarch64=1 arm_neon=1")
+endif()
+
+ExternalProject_Add(
+    minimap2-remote
+    GIT_REPOSITORY https://github.com/lh3/minimap2
+    GIT_TAG b6762503a9c9af34ae02f56784035ff852ed04a5
+    GIT_SHALLOW TRUE
+    CONFIGURE_COMMAND ""
+    BUILD_COMMAND cd ../minimap2-remote && make ${APPLE_ARM_FLAGS} -j4
+    INSTALL_COMMAND "")
 
 
-target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z hts)
-target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z hts)
+add_library(minimap2 STATIC IMPORTED)
+set_property(TARGET minimap2
+    PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/minimap2-remote-prefix/src/minimap2-remote/libminimap2.a)
+
+# samtools + htslib
+ExternalProject_Add(
+    samtools-remote
+    URL https://github.com/samtools/samtools/releases/download/1.19.2/samtools-1.19.2.tar.bz2
+    URL_HASH SHA256=71f60499668e4c08e7d745fbff24c15cc8a0977abab1acd5d2bb419bdb065e96
+    CONFIGURE_COMMAND ../samtools-remote/configure
+    BUILD_COMMAND cd ../samtools-remote && make -j4
+    INSTALL_COMMAND "")
+
+add_library(samtools STATIC IMPORTED)
+set_property(TARGET samtools
+    PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/samtools-remote-prefix/src/samtools-remote/libst.a)
+
+target_link_libraries(panmap PUBLIC minimap2 samtools panmat z)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES ${CMAKE_BINARY_DIR}/clean-minimap)
 
 # Unit testing data
 configure_file(src/test/data/test.aligned.fa test.aligned.fa COPYONLY)
