@@ -3,7 +3,6 @@
 
 
 void createSam(
-    std::vector<seeding::seed> &refSeeds,
     std::vector<std::vector<seeding::seed>> &readSeeds,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals,

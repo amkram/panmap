@@ -309,33 +309,6 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     }
 
 
-    // Collecting reference Seeds
-    std::vector<seed> refSeeds;
-    for(auto kv : seedToRefPositions) {
-        for (int32_t pos : kv.second) {
-            seed thisSeed;
-            thisSeed.seq = kv.first;
-            thisSeed.pos = pos;
-            refSeeds.push_back(thisSeed);
-        }
-    }
-
-    
-    // Sorting ref seeds
-    sort(refSeeds.begin(), refSeeds.end(), []( const seed& lhs, const seed& rhs )
-    {
-        return lhs.seq < rhs.seq ;
-    });
-
-    // Sorting read seeds
-    for(int i = 0; i < readSeeds.size(); i++){
-        sort(readSeeds[i].begin(), readSeeds[i].end(), []( const seed& lhs, const seed& rhs )
-        {
-            return lhs.seq < rhs.seq;
-        });
-    }
-
-
 
     //Print out reference
     if(refFileName.size() > 0){
@@ -354,13 +327,11 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
 
 
 
-
     //Create SAM
     std::vector<char *> samAlignments;
     std::string samHeader;
 
     createSam(
-        refSeeds,
         readSeeds,
         readSequences,
         readQuals,

@@ -15,13 +15,11 @@ extern "C" {
 }
 
 
-//We assume refSeeds and readSeeds are sorted.
 
 //samAlignment is sorted at the end
 
 //Elements of samAlignments must be freed
 void createSam(
-    std::vector<seeding::seed> &refSeeds,
     std::vector<std::vector<seeding::seed>> &readSeeds,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals,
@@ -34,32 +32,24 @@ void createSam(
     std::vector<char *> &samAlignments,
     std::string &samHeader
 )   {
-
-    /* Finding syncmer matches between reads and ref */
-    // replaces readSeeds elements with only matching syncmers
+    
     for(int r = 0; r < readSequences.size() ; r++){
 
-        int refSeedIndex = 0;
-        int readSeedIndex = 0;
-
         std::vector<seed> matchingSeeds;
-        while(readSeedIndex < readSeeds[r].size() && refSeedIndex < refSeeds.size()) {
+        for(int i = 0; i < readSeeds[r].size(); i++){
 
-            if (readSeeds[r][readSeedIndex].seq < refSeeds[refSeedIndex].seq) {
-                
-                readSeedIndex++;
-            } else if (readSeeds[r][readSeedIndex].seq > refSeeds[refSeedIndex].seq) {
-                
-                refSeedIndex++;
-            } else {
-
-                matchingSeeds.push_back(readSeeds[r][readSeedIndex]);
-                readSeedIndex++;
-                refSeedIndex++;
+            for (int32_t rpos : seedToRefPositions[readSeeds[r][i].seq]) {
+                seed thisSeed;
+                thisSeed.seq = readSeeds[r][i].seq;
+                thisSeed.pos = readSeeds[r][i].pos;
+                thisSeed.rpos = rpos;
+                matchingSeeds.push_back(thisSeed);
             }
         }
+
         readSeeds[r] = matchingSeeds;
     }
+
     
     //Preparing C structures for minimap
     const char *reference = bestMatchSequence.c_str();
@@ -93,7 +83,7 @@ void createSam(
         for(int j = 0; j < n_seeds; j++){
             reversed_array[j] = readSeeds[i][j].reversed;
             qry_pos_array[j] = readSeeds[i][j].pos;
-            ref_pos_array[j] = seedToRefPositions[readSeeds[i][j].seq][0] + k - 1;
+            ref_pos_array[j] = readSeeds[i][j].rpos + k - 1;
         }
 
         reversed[i]      = reversed_array;
