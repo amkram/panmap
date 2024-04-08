@@ -1,0 +1,99 @@
+@@ -30,7 +30,7 @@
+ 	return b->km;
+ }
+ 
+-static int mm_dust_minier(void *km, int n, mm128_t *a, int l_seq, const char *seq, int sdust_thres)
++int mm_dust_minier(void *km, int n, mm128_t *a, int l_seq, const char *seq, int sdust_thres)
+ {
+ 	int n_dreg, j, k, u = 0;
+ 	const uint64_t *dreg;
+@@ -56,7 +56,7 @@
+ 	return k; // the new size
+ }
+ 
+-static void collect_minimizers(void *km, const mm_mapopt_t *opt, const mm_idx_t *mi, int n_segs, const int *qlens, const char **seqs, mm128_v *mv)
++void collect_minimizers(void *km, const mm_mapopt_t *opt, const mm_idx_t *mi, int n_segs, const int *qlens, const char **seqs, mm128_v *mv)
+ {
+ 	int i, n, sum = 0;
+ 	mv->n = 0;
+@@ -75,7 +75,7 @@
+ #define heap_lt(a, b) ((a).x > (b).x)
+ KSORT_INIT(heap, mm128_t, heap_lt)
+ 
+-static inline int skip_seed(int flag, uint64_t r, const mm_seed_t *q, const char *qname, int qlen, const mm_idx_t *mi, int *is_self)
++inline int skip_seed(int flag, uint64_t r, const mm_seed_t *q, const char *qname, int qlen, const mm_idx_t *mi, int *is_self)
+ {
+ 	*is_self = 0;
+ 	if (qname && (flag & (MM_F_NO_DIAG|MM_F_NO_DUAL))) {
+@@ -99,7 +99,7 @@
+ 	return 0;
+ }
+ 
+-static mm128_t *collect_seed_hits_heap(void *km, const mm_mapopt_t *opt, int max_occ, const mm_idx_t *mi, const char *qname, const mm128_v *mv, int qlen, int64_t *n_a, int *rep_len,
++mm128_t *collect_seed_hits_heap(void *km, const mm_mapopt_t *opt, int max_occ, const mm_idx_t *mi, const char *qname, const mm128_v *mv, int qlen, int64_t *n_a, int *rep_len,
+ 								  int *n_mini_pos, uint64_t **mini_pos)
+ {
+ 	int i, n_m, heap_size = 0;
+@@ -165,7 +165,7 @@
+ 	return a;
+ }
+ 
+-static mm128_t *collect_seed_hits(void *km, const mm_mapopt_t *opt, int max_occ, const mm_idx_t *mi, const char *qname, const mm128_v *mv, int qlen, int64_t *n_a, int *rep_len,
++mm128_t *collect_seed_hits(void *km, const mm_mapopt_t *opt, int max_occ, const mm_idx_t *mi, const char *qname, const mm128_v *mv, int qlen, int64_t *n_a, int *rep_len,
+ 								  int *n_mini_pos, uint64_t **mini_pos)
+ {
+ 	int i, n_m;
+@@ -203,7 +203,7 @@
+ 	return a;
+ }
+ 
+-static void chain_post(const mm_mapopt_t *opt, int max_chain_gap_ref, const mm_idx_t *mi, void *km, int qlen, int n_segs, const int *qlens, int *n_regs, mm_reg1_t *regs, mm128_t *a)
++void chain_post(const mm_mapopt_t *opt, int max_chain_gap_ref, const mm_idx_t *mi, void *km, int qlen, int n_segs, const int *qlens, int *n_regs, mm_reg1_t *regs, mm128_t *a)
+ {
+ 	if (!(opt->flag & MM_F_ALL_CHAINS)) { // don't choose primary mapping(s)
+ 		mm_set_parent(km, opt->mask_level, opt->mask_len, *n_regs, regs, opt->a * 2 + opt->b, opt->flag&MM_F_HARD_MLEVEL, opt->alt_drop);
+@@ -212,7 +212,7 @@
+ 	}
+ }
+ 
+-static mm_reg1_t *align_regs(const mm_mapopt_t *opt, const mm_idx_t *mi, void *km, int qlen, const char *seq, int *n_regs, mm_reg1_t *regs, mm128_t *a)
++mm_reg1_t *align_regs(const mm_mapopt_t *opt, const mm_idx_t *mi, void *km, int qlen, const char *seq, int *n_regs, mm_reg1_t *regs, mm128_t *a)
+ {
+ 	if (!(opt->flag & MM_F_CIGAR)) return regs;
+ 	regs = mm_align_skeleton(km, opt, mi, qlen, seq, n_regs, regs, a); // this calls mm_filter_regs()
+@@ -406,7 +406,7 @@
+ 	mm_tbuf_t **buf;
+ } step_t;
+ 
+-static void worker_for(void *_data, long i, int tid) // kt_for() callback
++void worker_for(void *_data, long i, int tid) // kt_for() callback
+ {
+     step_t *s = (step_t*)_data;
+ 	int qlens[MM_MAX_SEG], j, off = s->seg_off[i], pe_ori = s->p->opt->pe_ori;
+@@ -453,7 +453,7 @@
+ 		fprintf(stderr, "QT\t%s\t%d\t%.6f\n", s->seq[off].name, tid, realtime() - t);
+ }
+ 
+-static void merge_hits(step_t *s)
++void merge_hits(step_t *s)
+ {
+ 	int f, i, k0, k, max_seg = 0, *n_reg_part, *rep_len_part, *frag_gap_part, *qlens;
+ 	void *km;
+@@ -518,7 +518,7 @@
+ 	km_destroy(km);
+ }
+ 
+-static void *worker_pipeline(void *shared, int step, void *in)
++void *worker_pipeline(void *shared, int step, void *in)
+ {
+ 	int i, j, k;
+     pipeline_t *p = (pipeline_t*)shared;
+@@ -615,7 +615,7 @@
+     return 0;
+ }
+ 
+-static mm_bseq_file_t **open_bseqs(int n, const char **fn)
++mm_bseq_file_t **open_bseqs(int n, const char **fn)
+ {
+ 	mm_bseq_file_t **fp;
+ 	int i, j;
