@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.26) 
+cmake_minimum_required (VERSION 3.20) 
 
 project(panmap)
 
@@ -26,7 +26,7 @@ add_executable(panmap
 FetchContent_Declare(
     panmat
     GIT_REPOSITORY https://github.com/TurakhiaLab/pangenome-mat
-    GIT_TAG aef68be76d7a2b6f4cb26a69fca337f260906a9c # testing-cmake branch
+    GIT_TAG e5f88fd839d6134404d78d315563b0a43c9a7266 # testing-cmake branch
     GIT_SHALLOW TRUE
     FIND_PACKAGE_ARGS CONFIG
     )
