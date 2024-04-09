@@ -1,17 +1,15 @@
 #ifndef __TREE_HPP
 #define __TREE_HPP
 
-#pragma once
 #include "PangenomeMAT.hpp"
 #include "seeding.hpp"
 #include <iostream>
 #include <vector>
-#include "minimap2_src/mmpriv.h"
-#include "minimap2_src/minimap.h"
-#include "minimap2_src/kseq.h"
-#include "minimap2_src/kalloc.h"
-#include "minimap2_src/khash.h"
-#include "minimap2_src/kvec.h"
+#include "minimap.h"
+#include "kseq.h"
+#include "kalloc.h"
+#include "khash.h"
+#include "kvec.h"
 
 using namespace seeding;
 
