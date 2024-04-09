@@ -8,7 +8,10 @@
 #include <iostream>
 #include <vector>
 #include <mutex>
+#include <zlib.h>  
+#include <stdio.h>  
 #include "kseq.h"
+
 
 KSEQ_INIT(int, read)
 
