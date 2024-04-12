@@ -221,7 +221,7 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
 }
 
 
-void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T) {
+void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T, bool use_root) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
     tree::setup(data, globalCoords, T);
@@ -264,17 +264,25 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
 
-    getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
+    std::string bestMatch;
+    if ( !use_root ) {
 
-    placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
+        getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
+
+        placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
     
-    /* Setup target sequence and seeds */
-    std::vector<std::pair<std::string, float>> targetNodes;
-    std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
-    std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
-    // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
+        /* Setup target sequence and seeds */
+        std::vector<std::pair<std::string, float>> targetNodes;
+        std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
+        std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
+        // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
 
-    std::string bestMatch = targetNodes[0].first;
+        bestMatch = targetNodes[0].first;
+    }else{
+        bestMatch = T->root->identifier;
+    }
+    
+
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestMatch, true);
     std::vector<int32_t> degap;
@@ -285,6 +293,8 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
             bestMatchSequence += c;
         }
     }
+
+
     
     // path format {target}.*.fastq
     std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
