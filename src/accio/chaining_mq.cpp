@@ -3,7 +3,7 @@
 #include <unordered_map>
 
 
-typedef std::tuple<std::string, int, bool> minimizer_t;
+typedef std::tuple<size_t, int, bool> minimizer_t;
 typedef std::tuple<size_t, int, int, bool, int> kminmer_t;
 typedef std::tuple<int, int, int, int, bool, int> match_t;
 
@@ -205,18 +205,10 @@ std::vector<kminmer_t> extractKminmers(const std::vector<minimizer_t>& minimizer
     
     // first kminmer
     size_t cacheForwardH = 0;
-    for (int i = 0; i < l; ++i) {
-        for (const auto& c : std::get<0>(minimizers[i])) {
-            cacheForwardH = (cacheForwardH << 2) + btn(c);
-        }
-    }
+    for (int i = 0; i < l; ++i) cacheForwardH = (cacheForwardH << (2 * k)) + std::get<0>(minimizers[i]);
 
     size_t cacheReversedH = 0;
-    for (int i = l - 1; i > -1; --i) {
-        for (auto baseptr = std::get<0>(minimizers[i]).rbegin(); baseptr != std::get<0>(minimizers[i]).rend(); ++baseptr) {
-            cacheReversedH = (cacheReversedH << 2) + btn(*baseptr);
-        }
-    }
+    for (int i = l - 1; i > -1; --i) cacheReversedH = (cacheReversedH << (2 * k)) + std::get<0>(minimizers[i]);
 
     int iorder = 0;
     // Skip if strand ambiguous
@@ -232,17 +224,9 @@ std::vector<kminmer_t> extractKminmers(const std::vector<minimizer_t>& minimizer
     for (int i = 0; i < 2 * k * (l - 1); i++) mask = (mask << 1) + 1;
 
     for (int i = 1; i < minimizers.size() - l + 1; ++i) {
-        cacheForwardH = cacheForwardH & mask;
-        for (const auto& c : std::get<0>(minimizers[i+l-1])) {
-            cacheForwardH = (cacheForwardH << 2) + btn(c);
-        }
+        cacheForwardH = ((cacheForwardH & mask) << (k * 2)) + std::get<0>(minimizers[i+l-1]);
 
-        cacheReversedH = cacheReversedH >> (2 * k);
-        size_t newKmerH = 0;
-        for (auto baseptr = std::get<0>(minimizers[i+l-1]).rbegin(); baseptr != std::get<0>(minimizers[i+l-1]).rend(); ++baseptr) {
-            newKmerH = (newKmerH << 2) + btn(*baseptr);
-        }
-        cacheReversedH = cacheReversedH + (newKmerH << (2 * k * (l - 1)));
+        cacheReversedH = (cacheReversedH >> (2 * k)) + (std::get<0>(minimizers[i+l-1]) << (2 * k * (l - 1)));
 
         // Skip if strand ambiguous
         if (cacheForwardH < cacheReversedH) {
@@ -331,12 +315,12 @@ std::vector<minimizer_t> minimizerSketch(const std::string s, int w, int k) {
             size_t u = hash(kmer);
             size_t v = hash(revcomp(kmer));
             if (u == m && u < v) {
-                std::tuple minCand(kmer , i+j, false);
+                std::tuple minCand(u , i+j, false);
                 if (minimizers.size() == 0) minimizers.push_back(minCand);
                 // else if (minimizers.back() != minCand) minimizers.push_back(minCand);
                 else if (std::find(minimizers.begin(), minimizers.end(), minCand) == minimizers.end()) minimizers.push_back(minCand);
             } else if (v == m && v < u) {
-                std::tuple minCand(kmer , i+j, true);
+                std::tuple minCand(v , i+j, true);
                 if (minimizers.size() == 0) minimizers.push_back(minCand);
                 // if (minimizers.back() != minCand) minimizers.push_back(minCand);
                 else if (std::find(minimizers.begin(), minimizers.end(), minCand) == minimizers.end()) minimizers.push_back(minCand);

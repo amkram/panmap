@@ -34,16 +34,21 @@ BOOST_AUTO_TEST_CASE(tmp) {
     istream is(&b);
     auto T = new PangenomeMAT::Tree(is);
 
-    string indexFilePath = "../dev/examples/sars2k.pmat.kmi";
+    string indexFilePath = "../dev/examples/sars2k.pmat.spmi";
+    string seedmersIndexPath = "../dev/examples/sars2k.pmat.kmi";
     size_t k = 10;
     size_t s = 5;
     size_t l = 2;
 
     pmi::seedIndex index;
-    mgsr::buildSeedmer(index, T, l, k, s);
+    std::stringstream seedmersOutStream;
+
+    mgsr::buildSeedmer(index, T, l, k, s, seedmersOutStream);
     std::cout << "Writing to " << indexFilePath << "..." << std::endl;
     std::ofstream fout(indexFilePath);
+    std::ofstream smfout(seedmersIndexPath);
     fout << index.outStream.str();
+    smfout << seedmersOutStream.str();
     std::cout << "Done." << std::endl;
 
     ifstream indexFile(indexFilePath);

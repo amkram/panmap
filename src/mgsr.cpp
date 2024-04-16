@@ -45,9 +45,74 @@ void resolveSeedmerIndexConflict(mgsr::seedmers& seedmerIndex, hash_t h, mgsr::s
     }
 }
 
+void buildLocalSeedmers(mgsr::seedmers& localSeedmerIndex, const std::pair<std::pair<size_t, size_t>,std::vector<size_t>>& group, const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges, const std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds, const int32_t l, const int32_t k) {
+    // build chain from left unaffected to right unaffected...  
+    for (const size_t idx : group) {
+        const std::tuple<size_t, int32_t, int32_t, bool>& syncmer = syncmerChanges[idx];
+        if (std::get<3>(syncmer)) continue;
+
+    }
+}
+
+std::vector<std::pair<std::pair<size_t, size_t>,std::vector<size_t>>> getGroups(const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges, const std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds, const int32_t l) {
+    std::vector<std::pair<std::pair<size_t, size_t>,std::vector<size_t>>> groupsIndex;
+    if (syncmerChanges.empty()) return groupsIndex;
+
+    std::pair<std::pair<size_t, size_t>,std::vector<size_t>> curGroup;
+    auto prevlb = curSeeds.begin();
+    auto curlb  = curSeeds.begin();
+
+    for (size_t i = 0; i < syncmerChanges.size(); ++i) {
+        const auto& syncmer = syncmerChanges[i];
+        if (curGroup.second.empty()) {
+            curGroup.second.push_back(i);
+            prevlb = curSeeds.lower_bound(std::get<1>(syncmer));
+            auto leftUnaffected = prevlb;
+            for (int i = 0; i < l && leftUnaffected != curSeeds.begin(); ++i) --leftUnaffected;
+            curGroup.first.first = leftUnaffected->first;
+            continue;
+        }
+
+        curlb = curSeeds.lower_bound(std::get<1>(syncmer));
+        if (prevlb == curlb) {
+            curGroup.second.push_back(i);
+        } else {
+            size_t numSteps = 0;
+            auto prevlbtmp = prevlb;
+            while (prevlbtmp != curlb) {
+                if (numSteps > l) break;
+                ++prevlbtmp;
+                ++numSteps;
+            }
+            if (numSteps <= l) {
+                curGroup.second.push_back(i);
+            } else {
+                auto rightUnaffected = prevlb;
+                if (prevlb->first == std::get<1>(syncmerChanges[curGroup.second.back()])) ++rightUnaffected;
+                curGroup.first.second = rightUnaffected->first;
+                
+                groupsIndex.push_back(curGroup);
+                curGroup.second.clear();
+                curGroup.second.push_back(i);
+                prevlb = curSeeds.lower_bound(std::get<1>(syncmer));
+
+                auto leftUnaffected = prevlb;
+                for (int i = 0; i < l && leftUnaffected != curSeeds.begin(); ++i) --leftUnaffected;
+                curGroup.first.first = leftUnaffected->first;
+            }
+        }
+        prevlb = curlb;
+    }
+    groupsIndex.push_back(curGroup);
+    return groupsIndex;
+}
+
 /*testing*/
-void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<hash_t, int32_t, int32_t>>& syncmers, const int32_t l, const int32_t k) {
+void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<hash_t, int32_t, int32_t, bool>>& syncmers, std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds, const int32_t l, const int32_t k) {
     // first seedmer
+    assert(std::get<3>(syncmers[0]) == false);
+    curSeeds[std::get<1>(syncmers[0])] = std::make_pair(std::get<0>(syncmers[0]),std::get<2>(syncmers[0]));
+
     size_t cacheForwardH = 0;
     for (int i = 0; i < l; ++i) cacheForwardH = (cacheForwardH << (2 * k)) + std::get<0>(syncmers[i]);
 
@@ -57,13 +122,13 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
     // Skip if strand ambiguous
     if (cacheForwardH < cacheReversedH) {
         seedmersIndex.seedmerMap[cacheForwardH] = {
-            cacheForwardH,                      // hash
-            std::get<1>(syncmers[0]),           // start position
+            cacheForwardH,              // hash
+            std::get<1>(syncmers[0]),   // start position
             std::get<2>(syncmers[l-1]), // end position
-            1,                                  // num of identical hash
-            false,                              // reversed
-            nullptr,                            // ptr to previous
-            nullptr                             // ptr to next
+            1,                          // num of identical hash
+            false,                      // reversed
+            nullptr,                    // ptr to previous
+            nullptr                     // ptr to next
         };
         seedmersIndex.firstSeedmer = &seedmersIndex.seedmerMap[cacheForwardH];
     } else if (cacheReversedH < cacheForwardH) {
@@ -85,6 +150,10 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
     mgsr::seedmer* previousSeedmer = seedmersIndex.firstSeedmer;
 
     for (int i = 1; i < syncmers.size() - l + 1; ++i) {
+        assert(std::get<3>(syncmers[i]) == false);
+
+        curSeeds[std::get<1>(syncmers[i])] = std::make_pair(std::get<0>(syncmers[i]),std::get<2>(syncmers[i]));
+
         cacheForwardH = ((cacheForwardH & mask) << (k * 2)) + std::get<0>(syncmers[i+l-1]);
         cacheReversedH = (cacheReversedH >> (2 * k)) + (std::get<0>(syncmers[i+l-1]) << (2 * k * (l - 1)));
         
@@ -122,6 +191,12 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
             }
             previousSeedmer = &seedmersIndex.seedmerMap[curHash];
         }
+    }
+
+    /*rest of syncmers*/
+    for (int i = syncmers.size() - l + 1; i < syncmers.size(); i++) {
+        assert(std::get<3>(syncmers[i]) == false);
+        curSeeds[std::get<1>(syncmers[i])] = std::make_pair(std::get<0>(syncmers[i]),std::get<2>(syncmers[i]));
     }
 
 }
@@ -196,15 +271,20 @@ std::string revcomp(const std::string& s) {
 }
 
 std::pair<size_t, bool> getHash(const std::string& s) {
-    size_t u = hash(s);
-    size_t v = hash(revcomp(s));
-    if (u < v) return std::make_pair(u, true);
-    else if (v < u) return std::make_pair(v, true);
-    return std::make_pair(0, false); // skip strand ambiguous
+    try {
+        size_t u = hash(s);
+        size_t v = hash(revcomp(s));
+        if (u < v) return std::make_pair(u, true);
+        else if (v < u) return std::make_pair(v, true);
+        return std::make_pair(0, false);
+    } catch (std::invalid_argument) {
+        return std::make_pair(0, false); // skip strand ambiguous
+    }
+    return std::make_pair(0, false);
 }
 /*testing*/
 
-void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pmi::seedIndex &index, mgsr::seedmers seedmersIndex, PangenomeMAT::Tree *T, const PangenomeMAT::Node *node, const int32_t l, const int32_t k, const int32_t s, const tree::globalCoords_t &globalCoords) {
+void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pmi::seedIndex &index, mgsr::seedmers seedmersIndex, std::map<int32_t, std::pair<size_t, int32_t>> curSeeds, PangenomeMAT::Tree *T, const PangenomeMAT::Node *node, const int32_t l, const int32_t k, const int32_t s, const tree::globalCoords_t &globalCoords, std::stringstream& seedmersOutStream) {
     tree::blockMutData_t blockMutData;
     tree::nucMutData_t nucMutData;
 
@@ -217,8 +297,8 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     std::set<std::string> outInsertions;
 
     /*testing*/
-    std::vector<std::tuple<size_t, int32_t, int32_t>> deletions;
-    std::vector<std::tuple<size_t, int32_t, int32_t>> insertions;
+    // hash, beg, end, del
+    std::vector<std::tuple<size_t, int32_t, int32_t, bool>> syncmerChanges;
     /*testing*/
 
     tree::nucMutData_t extended = nucMutData;
@@ -282,7 +362,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                         str += seedMap[c].second;
                         outInsertions.insert(str);
                         /*testing*/
-                        insertions.emplace_back(std::make_tuple(curHash, c, data.regap[data.degap[c] + k - 1]));
+                        syncmerChanges.emplace_back(std::make_tuple(curHash, c, data.regap[data.degap[c] + k - 1], false));
                         /*testing*/
                     }
                 } else {
@@ -293,7 +373,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     if (seedMap[c].second.size() == k) {
                         outDeletions.insert(str);
                         /*testing*/
-                        deletions.emplace_back(std::make_tuple((getHash(seedMap[c].second)).first, c, data.regap[data.degap[c] + k - 1]));
+                        syncmerChanges.emplace_back(std::make_tuple((getHash(seedMap[c].second)).first, c, data.regap[data.degap[c] + k - 1], true));
                         /*testing*/
                     }
                     seedMap[c].first = -1;
@@ -310,7 +390,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                         str += newseedmer;
                         outInsertions.insert(str);
                         /*testing*/
-                        insertions.emplace_back(std::make_tuple(curHash, c, data.regap[data.degap[c] + k - 1]));
+                        syncmerChanges.emplace_back(std::make_tuple(curHash, c, data.regap[data.degap[c] + k - 1], false));
                         /*testing*/
                     }
                     seedMap[c] = std::make_pair(lastSeed, newseedmer);
@@ -322,42 +402,73 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
     /*testing--*/
 
-    /*build seedmer for root*/
     if (seedmersIndex.seedmerMap.size() == 0) {
-        std::sort(insertions.begin(), insertions.end(), [](const auto &a, const auto &b) {
+        /*build seedmer for root*/
+        std::sort(syncmerChanges.begin(), syncmerChanges.end(), [](const auto &a, const auto &b) {
             return std::get<1>(a) < std::get<1>(b);
         });
 
-        for (const auto& ins: insertions) {
-            std::cout << std::get<0>(ins) << "\t"
-                    << std::get<1>(ins) << "\t"
-                    << std::get<2>(ins) << std::endl;
-        }
-        std::cout << "----" << std::endl;
-        initializeMap(seedmersIndex, insertions, l, k);
+        initializeMap(seedmersIndex, syncmerChanges, curSeeds, l, k);
 
-        for (const auto& seedmer : seedmersIndex.seedmerMap) {
-            std::cout << seedmer.first       << "\t"
-                      << seedmer.second.hash << "\t"
-                      << seedmer.second.beg  << "\t"
-                      << seedmer.second.end  << "\t"
-                      << seedmer.second.num  << "\t"
-                      << seedmer.second.rev  << "\t"
-                      << seedmer.second.prev << "\t"
-                      << seedmer.second.next << std::endl;
-        }
-        std::cout << "----" << std::endl;
-
+        seedmersOutStream << node->identifier << " ";
         mgsr::seedmer* curSeedmer = seedmersIndex.firstSeedmer;
         while (curSeedmer != nullptr) {
-            std::cout << curSeedmer->hash << "\t"
-                      << curSeedmer->beg  << "\t"
-                      << curSeedmer->end  << "\t"
-                      << curSeedmer->num  << "\t"
-                      << curSeedmer->rev  << "\t"
-                      << curSeedmer->prev << "\t"
-                      << curSeedmer->next << std::endl;
+            std::string s = std::to_string(curSeedmer->hash) + ","
+                          + std::to_string(curSeedmer->beg) + ","
+                          + std::to_string(curSeedmer->end) + ","
+                          + std::to_string(curSeedmer->rev);
+
+            seedmersOutStream << s << " ";
             curSeedmer = curSeedmer->next;
+        }
+        seedmersOutStream << "\n";
+    } 
+    else {
+        if (node->identifier == "node_2") {
+        /*update seedmer and curSeeds*/
+    
+        std::sort(syncmerChanges.begin(), syncmerChanges.end(), [](const auto &a, const auto &b) {
+            return std::get<1>(a) < std::get<1>(b);
+        });
+
+        // group changes in syncmers
+            // changes within each group has syncmer distance < l-1
+            // each group separated by l-1 or more syncmers
+
+        //vector< pair< pair<leftUnaffect, rightUnaffcted>, vector<index> > >
+        std::cout << syncmerChanges.size() << std::endl;         
+        std::vector<std::pair<std::pair<size_t, size_t>,std::vector<size_t>>> groupsIndex = getGroups(syncmerChanges, curSeeds, l);
+        std::cout << node->identifier << std::endl;
+        for (const auto& group : groupsIndex) {
+            std::cout << group.first.first << ":" << group.first.second << "\t";
+            for (const auto& idx : group.second) {
+                std::cout << idx << " ";
+            }
+            std::cout << std::endl;
+        }
+
+        // for each group
+        for (const std::pair<std::pair<size_t, size_t>,std::vector<size_t>>& group : groupsIndex) {
+            // apply changes to seedmerIndex
+                // make new local seedmer chain in group
+                    // resolve conflicts if ensued
+            mgsr::seedmers localSeedmerIndex;
+            buildLocalSeedmers(localSeedmerIndex, group, syncermerChanges, curSeeds, l, k); // To speed things up: maybe instead of making localSeedmerIndex just update the curSeeds and record the range that's changed 
+                // identify first unaffected seedmer on the left
+                // identify first unaffected ssedmer on the right
+                // remove old local seedmer chain that will be replaced
+                    // if a removed seedmer has same hash elsewhere and becomes unique after removal
+                        // restore hash that's elsewhere and record change in stringstream
+                    // else
+                        // erase
+                // merge local seedmer chain to the main chain and record change in stringstream
+                    // resolve conflicts if ensued and record change in stringstream
+            // apply changes to  curSeeds
+            // outstream changes to seedmerOutStream
+        }
+
+
+        seedmersOutStream << node->identifier << " ";
         }
     }
     /*--testing*/
@@ -371,15 +482,15 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     }
     index.outStream << "\n";
 
-    // /* Recursive step */
-    // for (Node* child: node->children){
-    //     buildHelper(data, seedMap, index, T, child, l, k, s, globalCoords);
-    // }
-    // /* Undo seed and sequence mutations when backtracking */
-    // undoMutations(data, index, T, node, blockMutData, nucMutData);
+    /* Recursive step */
+    for (Node* child: node->children){
+        mgsr::buildSeedmerHelper(data, seedMap, index, seedmersIndex, curSeeds, T, child, l, k, s, globalCoords, seedmersOutStream);
+    }
+    /* Undo seed and sequence mutations when backtracking */
+    undoMutations(data, index, T, node, blockMutData, nucMutData);
 }
 
-void mgsr::buildSeedmer(pmi::seedIndex &index, PangenomeMAT::Tree *T, const size_t l, const size_t k, const size_t s) {
+void mgsr::buildSeedmer(pmi::seedIndex &index, PangenomeMAT::Tree *T, const size_t l, const size_t k, const size_t s, std::stringstream& seedmersOutStream) {
     /* Setup for seed indexing */
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
@@ -388,9 +499,9 @@ void mgsr::buildSeedmer(pmi::seedIndex &index, PangenomeMAT::Tree *T, const size
 
     seedMap_t seedMap;
     mgsr::seedmers seedmersIndex;
+    std::map<int32_t, std::pair<size_t, int32_t>> curSeeds; // map[beg] = {hash, end}
     index.outStream << k << " " << s << " " << l << "\n";
- 
+    seedmersOutStream << k << " " << s << " " << l << "\n";
     /* Recursive traversal of tree to build the index */
-    mgsr::buildSeedmerHelper(data, seedMap, index, seedmersIndex, T, T->root, l, k, s, globalCoords);
-    std::cout << index.consensusSeeds.size() << std::endl;
+    mgsr::buildSeedmerHelper(data, seedMap, index, seedmersIndex, curSeeds, T, T->root, l, k, s, globalCoords, seedmersOutStream);
 }
