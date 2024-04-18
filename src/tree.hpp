@@ -49,6 +49,7 @@ namespace tree {
         std::vector<double> delmat = {0}; // 1 x N deletion rate by length matrix
         
         // Stores total number of mutations
+        bool filled = false;
         std::vector<double> total_submuts;
         double total_insmut = 0;
         double total_delmut = 0;
@@ -76,10 +77,12 @@ namespace tree {
     void setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T);
 
     // Fill mutation matrices from tree or file
-    void fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream* infptr=nullptr);
+    std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string& s1, const std::string& s2, size_t window, double threshold);
+    void fillMutationMatricesFromTree(mutationMatrices& mutMat, Tree* T, size_t window, double threshold);
+    void fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf);
 
     // Build mutation matrices by traversing through all parent-child pairs
-    void printMutationMatrices(Tree* T, std::ofstream* outfptr=nullptr);
+    void writeMutationMatrices(const mutationMatrices& mutMat, std::ofstream& mmfout);
 }
 
 #endif
