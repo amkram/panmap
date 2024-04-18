@@ -1,0 +1,300 @@
+TEST 0
+
+reads/node_3_variant_0_reads_R1.1	node_3
+TEST 1
+
+reads/node_3_variant_1_reads_R1.1	node_253
+TEST 2
+
+reads/node_3_variant_2_reads_R1.1	node_93
+TEST 3
+
+reads/node_3_variant_3_reads_R1.1	node_293
+TEST 4
+
+reads/node_3_variant_4_reads_R1.1	node_253
+TEST 5
+
+reads/node_3_variant_5_reads_R1.1	node_3
+TEST 6
+
+reads/node_3_variant_6_reads_R1.1	node_93
+TEST 7
+
+reads/node_3_variant_7_reads_R1.1	node_3
+TEST 8
+
+reads/node_3_variant_8_reads_R1.1	node_94
+TEST 9
+
+reads/node_3_variant_9_reads_R1.1	node_92
+TEST 10
+
+reads/node_3_variant_10_reads_R1.1	node_3
+TEST 11
+
+reads/node_3_variant_11_reads_R1.1	node_253
+TEST 12
+
+reads/node_3_variant_12_reads_R1.1	node_253
+TEST 13
+
+reads/node_3_variant_13_reads_R1.1	node_92
+TEST 14
+
+reads/node_3_variant_14_reads_R1.1	node_3
+TEST 15
+
+reads/node_3_variant_15_reads_R1.1	OL733711.1
+TEST 16
+
+reads/node_3_variant_16_reads_R1.1	node_292
+TEST 17
+
+reads/node_3_variant_17_reads_R1.1	node_253
+TEST 18
+
+reads/node_3_variant_18_reads_R1.1	node_92
+TEST 19
+
+reads/node_3_variant_19_reads_R1.1	node_253
+TEST 20
+
+reads/node_3_variant_20_reads_R1.1	node_292
+TEST 21
+
+reads/node_3_variant_21_reads_R1.1	node_3
+TEST 22
+
+reads/node_3_variant_22_reads_R1.1	node_3
+TEST 23
+
+reads/node_3_variant_23_reads_R1.1	node_293
+TEST 24
+
+reads/node_3_variant_24_reads_R1.1	node_92
+TEST 25
+
+reads/node_3_variant_25_reads_R1.1	node_94
+TEST 26
+
+reads/node_3_variant_26_reads_R1.1	node_293
+TEST 27
+
+reads/node_3_variant_27_reads_R1.1	node_288
+TEST 28
+
+reads/node_3_variant_28_reads_R1.1	node_93
+TEST 29
+
+reads/node_3_variant_29_reads_R1.1	node_94
+TEST 30
+
+reads/node_3_variant_30_reads_R1.1	node_3
+TEST 31
+
+reads/node_3_variant_31_reads_R1.1	node_253
+TEST 32
+
+reads/node_3_variant_32_reads_R1.1	node_92
+TEST 33
+
+reads/node_3_variant_33_reads_R1.1	OL733711.1
+TEST 34
+
+reads/node_3_variant_34_reads_R1.1	node_3
+TEST 35
+
+reads/node_3_variant_35_reads_R1.1	node_92
+TEST 36
+
+reads/node_3_variant_36_reads_R1.1	node_92
+TEST 37
+
+reads/node_3_variant_37_reads_R1.1	node_253
+TEST 38
+
+reads/node_3_variant_38_reads_R1.1	node_94
+TEST 39
+
+reads/node_3_variant_39_reads_R1.1	node_253
+TEST 40
+
+reads/node_3_variant_40_reads_R1.1	OL733711.1
+TEST 41
+
+reads/node_3_variant_41_reads_R1.1	node_3
+TEST 42
+
+reads/node_3_variant_42_reads_R1.1	node_3
+TEST 43
+
+reads/node_3_variant_43_reads_R1.1	node_293
+TEST 44
+
+reads/node_3_variant_44_reads_R1.1	node_3
+TEST 45
+
+reads/node_3_variant_45_reads_R1.1	node_93
+TEST 46
+
+reads/node_3_variant_46_reads_R1.1	node_92
+TEST 47
+
+reads/node_3_variant_47_reads_R1.1	node_92
+TEST 48
+
+reads/node_3_variant_48_reads_R1.1	node_293
+TEST 49
+
+reads/node_3_variant_49_reads_R1.1	node_3
+TEST 50
+
+reads/node_3_variant_50_reads_R1.1	node_3
+TEST 51
+
+reads/node_3_variant_51_reads_R1.1	node_94
+TEST 52
+
+reads/node_3_variant_52_reads_R1.1	node_3
+TEST 53
+
+reads/node_3_variant_53_reads_R1.1	node_253
+TEST 54
+
+reads/node_3_variant_54_reads_R1.1	node_92
+TEST 55
+
+reads/node_3_variant_55_reads_R1.1	node_92
+TEST 56
+
+reads/node_3_variant_56_reads_R1.1	node_253
+TEST 57
+
+reads/node_3_variant_57_reads_R1.1	node_3
+TEST 58
+
+reads/node_3_variant_58_reads_R1.1	node_3
+TEST 59
+
+reads/node_3_variant_59_reads_R1.1	node_93
+TEST 60
+
+reads/node_3_variant_60_reads_R1.1	node_94
+TEST 61
+
+reads/node_3_variant_61_reads_R1.1	node_291
+TEST 62
+
+reads/node_3_variant_62_reads_R1.1	node_3
+TEST 63
+
+reads/node_3_variant_63_reads_R1.1	node_92
+TEST 64
+
+reads/node_3_variant_64_reads_R1.1	node_93
+TEST 65
+
+reads/node_3_variant_65_reads_R1.1	node_253
+TEST 66
+
+reads/node_3_variant_66_reads_R1.1	node_253
+TEST 67
+
+reads/node_3_variant_67_reads_R1.1	node_92
+TEST 68
+
+reads/node_3_variant_68_reads_R1.1	node_3
+TEST 69
+
+reads/node_3_variant_69_reads_R1.1	node_92
+TEST 70
+
+reads/node_3_variant_70_reads_R1.1	node_92
+TEST 71
+
+reads/node_3_variant_71_reads_R1.1	node_94
+TEST 72
+
+reads/node_3_variant_72_reads_R1.1	node_93
+TEST 73
+
+reads/node_3_variant_73_reads_R1.1	node_92
+TEST 74
+
+reads/node_3_variant_74_reads_R1.1	node_93
+TEST 75
+
+reads/node_3_variant_75_reads_R1.1	node_288
+TEST 76
+
+reads/node_3_variant_76_reads_R1.1	node_253
+TEST 77
+
+reads/node_3_variant_77_reads_R1.1	node_94
+TEST 78
+
+reads/node_3_variant_78_reads_R1.1	node_94
+TEST 79
+
+reads/node_3_variant_79_reads_R1.1	node_3
+TEST 80
+
+reads/node_3_variant_80_reads_R1.1	node_288
+TEST 81
+
+reads/node_3_variant_81_reads_R1.1	node_93
+TEST 82
+
+reads/node_3_variant_82_reads_R1.1	node_3
+TEST 83
+
+reads/node_3_variant_83_reads_R1.1	node_3
+TEST 84
+
+reads/node_3_variant_84_reads_R1.1	node_3
+TEST 85
+
+reads/node_3_variant_85_reads_R1.1	node_3
+TEST 86
+
+reads/node_3_variant_86_reads_R1.1	node_93
+TEST 87
+
+reads/node_3_variant_87_reads_R1.1	node_94
+TEST 88
+
+reads/node_3_variant_88_reads_R1.1	node_288
+TEST 89
+
+reads/node_3_variant_89_reads_R1.1	node_3
+TEST 90
+
+reads/node_3_variant_90_reads_R1.1	OL733711.1
+TEST 91
+
+reads/node_3_variant_91_reads_R1.1	node_253
+TEST 92
+
+reads/node_3_variant_92_reads_R1.1	node_253
+TEST 93
+
+reads/node_3_variant_93_reads_R1.1	OL733711.1
+TEST 94
+
+reads/node_3_variant_94_reads_R1.1	node_253
+TEST 95
+
+reads/node_3_variant_95_reads_R1.1	node_291
+TEST 96
+
+reads/node_3_variant_96_reads_R1.1	node_288
+TEST 97
+
+reads/node_3_variant_97_reads_R1.1	node_253
+TEST 98
+
+reads/node_3_variant_98_reads_R1.1	node_92
+TEST 99
+
+reads/node_3_variant_99_reads_R1.1	node_3
