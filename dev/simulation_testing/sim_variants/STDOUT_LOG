@@ -1,0 +1,1000 @@
+TEST 0
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.011042 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_0.vcf
+TEST 1
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_1.vcf
+TEST 2
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000834 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_2.vcf
+TEST 3
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_3.vcf
+TEST 4
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_4.vcf
+TEST 5
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_5.vcf
+TEST 6
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_6.vcf
+TEST 7
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_7.vcf
+TEST 8
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_8.vcf
+TEST 9
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_9.vcf
+TEST 10
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_10.vcf
+TEST 11
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_11.vcf
+TEST 12
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_12.vcf
+TEST 13
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.001041 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_13.vcf
+TEST 14
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000834 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_14.vcf
+TEST 15
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_15.vcf
+TEST 16
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_16.vcf
+TEST 17
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000709 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_17.vcf
+TEST 18
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_18.vcf
+TEST 19
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_19.vcf
+TEST 20
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_20.vcf
+TEST 21
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_21.vcf
+TEST 22
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_22.vcf
+TEST 23
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000917 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_23.vcf
+TEST 24
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_24.vcf
+TEST 25
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_25.vcf
+TEST 26
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_26.vcf
+TEST 27
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_27.vcf
+TEST 28
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000916 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_28.vcf
+TEST 29
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_29.vcf
+TEST 30
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_30.vcf
+TEST 31
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_31.vcf
+TEST 32
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000917 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_32.vcf
+TEST 33
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_33.vcf
+TEST 34
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_34.vcf
+TEST 35
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_35.vcf
+TEST 36
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_36.vcf
+TEST 37
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_37.vcf
+TEST 38
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_38.vcf
+TEST 39
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_39.vcf
+TEST 40
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_40.vcf
+TEST 41
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000667 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_41.vcf
+TEST 42
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_42.vcf
+TEST 43
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_43.vcf
+TEST 44
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000666 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_44.vcf
+TEST 45
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_45.vcf
+TEST 46
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_46.vcf
+TEST 47
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_47.vcf
+TEST 48
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_48.vcf
+TEST 49
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_49.vcf
+TEST 50
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_50.vcf
+TEST 51
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000667 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_51.vcf
+TEST 52
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000667 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_52.vcf
+TEST 53
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_53.vcf
+TEST 54
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_54.vcf
+TEST 55
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000834 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_55.vcf
+TEST 56
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000709 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_56.vcf
+TEST 57
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_57.vcf
+TEST 58
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_58.vcf
+TEST 59
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_59.vcf
+TEST 60
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_60.vcf
+TEST 61
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000709 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_61.vcf
+TEST 62
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_62.vcf
+TEST 63
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_63.vcf
+TEST 64
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_64.vcf
+TEST 65
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000667 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_65.vcf
+TEST 66
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000667 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_66.vcf
+TEST 67
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_67.vcf
+TEST 68
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000708 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_68.vcf
+TEST 69
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_69.vcf
+TEST 70
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000625 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_70.vcf
+TEST 71
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.00075 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_71.vcf
+TEST 72
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_72.vcf
+TEST 73
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000959 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_73.vcf
+TEST 74
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000916 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_74.vcf
+TEST 75
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_75.vcf
+TEST 76
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_76.vcf
+TEST 77
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000834 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_77.vcf
+TEST 78
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_78.vcf
+TEST 79
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_79.vcf
+TEST 80
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_80.vcf
+TEST 81
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_81.vcf
+TEST 82
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_82.vcf
+TEST 83
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000917 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_83.vcf
+TEST 84
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.001 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_84.vcf
+TEST 85
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_85.vcf
+TEST 86
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_86.vcf
+TEST 87
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_87.vcf
+TEST 88
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_88.vcf
+TEST 89
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000791 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_89.vcf
+TEST 90
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000916 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_90.vcf
+TEST 91
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000834 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_91.vcf
+TEST 92
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_92.vcf
+TEST 93
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_93.vcf
+TEST 94
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000917 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_94.vcf
+TEST 95
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_95.vcf
+TEST 96
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000833 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_96.vcf
+TEST 97
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_97.vcf
+TEST 98
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000792 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_98.vcf
+TEST 99
+   ┏━┳━●[36;1m[1m pan [0m
+  ━┫ ┗━━━●[36;1m[1m map[0m[32;1m[0m
+   ┗━[36;1m v0.0[0m ━●[32;1m[0m
+
+Using tree: [3;1m/Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat[0m  (3999 nodes)
+Mutation matrix file detected, using mutation matrix file: /Users/nico/dev/minimap_application/new_branches/panmap/dev/simulation_testing/sim_variants/origin_data/sars2k.pmat.mm
+
+◠◡ Processing reads ... done.  ✔︎ 0.000875 ms
+⋌⋋ Placing sample ... Wrote vcf data to panmap_vcf/ex_99.vcf
