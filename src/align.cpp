@@ -1,10 +1,15 @@
 #include "align.hpp"
 #include "genotype.hpp"
-#include <htslib/faidx.h>
-#include <htslib/sam.h>
-#include "mmpriv.h"
-#include "minimap.h"
-#include "sample.h"
+// #include <src/3rdparty/htslib/faidx.h>
+// #include <src/3rdparty/htslib/sam.h>
+// #include <src/3rdparty/samtools/sample.h>
+#include "src/3rdparty/minimap2/mmpriv.h"
+
+/*
+    minimap.h
+    bseq.c .h
+    kvec.h
+*/
 
 using namespace seeding;
 using namespace tree;
