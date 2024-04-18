@@ -5,11 +5,7 @@
 #include "seeding.hpp"
 #include <iostream>
 #include <vector>
-#include "minimap.h"
 #include "kseq.h"
-#include "kalloc.h"
-#include "khash.h"
-#include "kvec.h"
 
 using namespace seeding;
 
