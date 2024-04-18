@@ -1,3 +1,4 @@
+#pragma once
 #include "tree.hpp"
 #include "pmi.hpp"
 #include "seeding.hpp"
@@ -6,6 +7,13 @@
 using namespace PangenomeMAT;
 using namespace tree;
 
+std::chrono::time_point<std::chrono::high_resolution_clock> global_timer = std::chrono::high_resolution_clock::now();
+void time_stamp(){
+    std::chrono::time_point<std::chrono::high_resolution_clock> newtime = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float> duration = newtime - global_timer;
+    std::cerr << "timing " << duration.count() << "\n\n";
+    global_timer = newtime;
+}
 
 
 std::string tree::getConsensus(Tree *T) {
@@ -29,14 +37,18 @@ std::string tree::getConsensus(Tree *T) {
     }
     return consensus;
 }
-void tree::updateConsensus(mutableTreeData &data, Tree *T) {
+void tree::updateConsensus(mutableTreeData &data, Tree *T) { //TODO use mutation data
+
     std::string consensus = tree::getStringFromCurrData(data, T, T->root, true);
+
     data.gappedConsensus = consensus;
     std::string ungapped = "";
     data.degap.clear();
     data.regap.clear();
+
     int32_t ct = 0;
     for (int32_t i = 0; i < consensus.size(); i ++) {
+
         char &c = consensus[i];
         data.degap.push_back(ungapped.size());
         data.regap.push_back(i + ct);
@@ -46,6 +58,9 @@ void tree::updateConsensus(mutableTreeData &data, Tree *T) {
             ct++;
         }
     }
+
+    time_stamp();
+    
     data.ungappedConsensus = ungapped;
 }
 void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings, mutableTreeData &data, Tree *T, const Node *node, globalCoords_t &globalCoords) {
@@ -79,9 +94,13 @@ std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
 
     return strings;
 }
-// pass by value bc we need to modify sequence object (and not persist changes) before getting nt string
-std::string tree::getStringFromCurrData(mutableTreeData data, Tree *T, const Node *node, const bool aligned) {
+
+
+// TODO make an update string function (that takes it by reference) that uses block mutations
+std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T, const Node *node, const bool aligned) {
     // T should be const but [] operator on T->sequenceInverted is non-const
+    
+
     std::string line;
     if (node == nullptr) { // consensus sequence (all blocks on) rather than a node in the tree
        for (size_t i = 0; i < T->blocks.size(); i++) {
@@ -119,9 +138,10 @@ std::string tree::getStringFromCurrData(mutableTreeData data, Tree *T, const Nod
        }
         return line;
     }
+    
 
-    for(size_t i = 0; i < data.blockExists.size(); i++) {
-        if(data.blockExists[i].first) {
+    for(size_t i = 0; i < data.blockExists.size(); i++) {         // TODO use block mutations rather than loop through all
+        if(data.blockExists[i].first) {        
             if(data.blockStrand[i].first) {
                 for(size_t j = 0; j < data.sequence[i].first.size(); j++) {
                     for(size_t k = 0; k < data.sequence[i].first[j].second.size(); k++) {
@@ -162,6 +182,7 @@ std::string tree::getStringFromCurrData(mutableTreeData data, Tree *T, const Nod
             }
         }
     }
+    
     return line;
 }
 void setupGlobalCoordinates(globalCoords_t &globalCoords, const BlockGapList &blockGaps, const std::vector<Block> &blocks, const std::vector<GapList> &gaps) {
