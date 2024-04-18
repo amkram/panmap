@@ -1,0 +1,25 @@
+##fileformat=VCFv4.3
+##FILTER=<ID=PASS,Description="All filters passed">
+##contig=<ID=ref>
+##INFO=<ID=DP,Number=1,Type=Integer,Description=Read Depth>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>
+##FORMAT=<ID=AD,Number=1,Type=String,Description=idk>
+##FORMAT=<ID=GP,Number=1,Type=String,Description=idk>
+##bcftools_normVersion=1.19+htslib-1.19.1
+##bcftools_normCommand=norm -f origin_data/node_3.fasta -o norm_true_vcf/norm_11.vcf norm_true_vcf/non_11.vcf; Date=Tue Mar 26 15:42:59 2024
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE
+ref	753	.	G	T	.	.	.	GT	1
+ref	2361	.	G	A	.	.	.	GT	1
+ref	6372	.	A	G	.	.	.	GT	1
+ref	9285	.	A	AGACC	.	.	.	GT	1
+ref	11696	.	C	T	.	.	.	GT	1
+ref	14502	.	T	C	.	.	.	GT	1
+ref	14762	.	T	C	.	.	.	GT	1
+ref	15677	.	T	C	.	.	.	GT	1
+ref	18148	.	G	T	.	.	.	GT	1
+ref	20268	.	A	T	.	.	.	GT	1
+ref	20540	.	GC	G	.	.	.	GT	1
+ref	20711	.	A	T	.	.	.	GT	1
+ref	22254	.	C	T	.	.	.	GT	1
+ref	25248	.	A	G	.	.	.	GT	1
+ref	29611	.	G	A	.	.	.	GT	1

@@ -331,7 +331,111 @@ static int getIndexFromNucleotide(char nuc) {
     return 5;
 }
 
-void buildMutationMatrices(mutationMatrices& mutMat, Tree* T) {
+static size_t getBeg(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+    if (s1.empty()) {
+        return 0;
+    }
+
+    size_t numAlign = 0;
+    size_t numMatch = 0;
+    size_t beg = 0;
+    size_t idx = 0;
+    std::queue<size_t> begs;
+    while (idx < s1.size()) {
+        if (s1[idx] == '-' && s2[idx] == '-') {
+            ++idx;
+            continue;
+        } 
+        if (beg == 0) {
+            beg = idx;
+        } else {
+            begs.push(idx);
+        }
+        if (s1[idx] == s2[idx]) {
+            ++numMatch;
+        }
+        ++numAlign;
+        ++idx;
+
+        if (numAlign == window) {
+            double pcid = static_cast<double>(numMatch) / static_cast<double>(window);
+            if (pcid >= threshold && s1[beg] == s2[beg]) {
+                return beg;
+            }
+            
+            if (s1[beg] == s2[beg]) {
+                --numMatch;
+            }
+            --numAlign;
+            beg = begs.front();
+            begs.pop();
+        }
+    }
+
+    return s1.size() - 1;
+}
+
+static size_t getEnd(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+    if (s1.empty()) {
+        return 0;
+    }
+
+    size_t numAlign = 0;
+    size_t numMatch = 0;
+    size_t end = s1.size();
+    size_t idx = s1.size() - 1;
+    std::queue<size_t> ends;
+
+    while (true) {
+        if (s1[idx] == '-' && s2[idx] == '-') {
+            if (idx == 0) {
+                break;
+            }
+            --idx;
+            continue;
+        }
+        if (end == s1.size()) {
+            end = idx;
+        } else {
+            ends.push(idx);
+        }
+        if (s1[idx] == s2[idx]) {
+            ++numMatch;
+        }
+        ++numAlign;
+
+        if (idx == 0){
+            break;
+        }
+        --idx;
+
+        if (numAlign == window) {
+            double pcid = static_cast<double>(numMatch) / static_cast<double>(window);
+            if (pcid >= threshold && s1[end] == s2[end]) {
+                return end;
+            }
+
+            if (s1[end] == s2[end]) {
+                --numMatch;
+            }
+            --numAlign;
+            end = ends.front();
+            ends.pop();
+        }
+    }
+
+    return 0;
+}
+
+std::pair<size_t, size_t> tree::getMaskCoorsForMutmat(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+    assert(s1.size() == s2.size());
+    if (window == 0 || threshold == 0.0) {
+        return std::make_pair<size_t, size_t>(0, s1.size()-1);
+    }
+    return std::make_pair<size_t, size_t>(getBeg(s1, s2, window, threshold), getEnd(s1, s2, window, threshold));
+}
+
+void buildMutationMatrices(mutationMatrices& mutMat, Tree* T, size_t window, double threshold) {
     std::unordered_map<std::string, std::string> alignedSequences = getAllNodeStrings(T);
     for (const auto& sequence : alignedSequences) {
         std::string parentId;
@@ -345,8 +449,9 @@ void buildMutationMatrices(mutationMatrices& mutMat, Tree* T) {
         const std::string& parSeq = alignedSequences[parentId];
         size_t insLen = 0;
         size_t delLen = 0;
-
-        for (size_t i = 0; i < parSeq.size(); i++) {
+        std::pair<size_t, size_t> edgeCoor = tree::getMaskCoorsForMutmat(curSeq, parSeq, window, threshold);
+        assert(edgeCoor.second >= edgeCoor.first);
+        for (size_t i = edgeCoor.first; i < edgeCoor.second + 1; i++) {
             if (parSeq[i] == '-' && curSeq[i] == '-') {
                 continue;
             } else if (parSeq[i] != '-' && curSeq[i] == '-') {
@@ -409,67 +514,62 @@ void buildMutationMatrices(mutationMatrices& mutMat, Tree* T) {
     }
 }
 
-void tree::printMutationMatrices(Tree* T, std::ofstream* ofptr) {
-    mutationMatrices mutMat = mutationMatrices();
-
-    buildMutationMatrices(mutMat, T);
-
-    if (ofptr == nullptr) {
-        for (const auto& row : mutMat.submat) {
-            for (const auto& prob : row) {
-                std::cout << prob << " ";
-            }
-            std::cout << std::endl;
+void tree::writeMutationMatrices(const mutationMatrices& mutMat, std::ofstream& mmfout) {
+    for (const std::vector<double>& row : mutMat.submat) {
+        for (const double& prob : row) {
+            mmfout << prob << " ";
         }
-        for (const auto& prob : mutMat.insmat) {
-            std::cout << prob << " ";
-        }
-        std::cout << std::endl;
-        for (const auto& prob : mutMat.delmat) {
-            std::cout << prob << " ";
-        }
-    } else {
-        for (const auto& row : mutMat.submat) {
-            for (const auto& prob : row) {
-                *ofptr << prob << " ";
-            }
-            *ofptr << "\n";
-        }
-        for (const auto& prob : mutMat.insmat) {
-            *ofptr << prob << " ";
-        }
-        *ofptr << "\n";
-        for (const auto& prob : mutMat.delmat) {
-            *ofptr << prob << " ";
-        }
+        mmfout << "\n";
     }
-    
+    for (const double& prob : mutMat.insmat) {
+        mmfout << prob << " ";
+    }
+    mmfout << "\n";
+    for (const double& prob : mutMat.delmat) {
+        mmfout << prob << " ";
+    }
+    mmfout << "\n";
 }
 
-void tree::fillMutationMatrices(mutationMatrices& mutMat, Tree* T, std::ifstream* infptr) {
-    if (infptr != nullptr) {
-        // read mutation matrix from file if provided
-        std::string line;
-        int idx = 0;
-        while(getline(*infptr, line)) {
-            std::vector<double> probs;
-            std::vector<std::string> fields;
-            stringSplit(line, ' ', fields);
-            for (const auto& f : fields) {
-                probs.push_back(std::stod(f));
-            }
-            if (idx < 4) {
-                mutMat.submat[idx] = move(probs);
-            } else if (idx == 4) {
-                mutMat.insmat = move(probs);
-            } else {
-                mutMat.delmat = move(probs);
-            }
-            idx++;
+void tree::fillMutationMatricesFromTree(mutationMatrices& mutMat, Tree* T, size_t window, double threshold) {
+    buildMutationMatrices(mutMat, T, window, threshold);
+    mutMat.filled = true;
+}
+
+void tree::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf) {
+    std::string line;
+    int idx = 0;
+    while(getline(inf, line)) {
+        std::vector<double> probs;
+        std::vector<std::string> fields;
+        stringSplit(line, ' ', fields);
+        for (const auto& f : fields) {
+            probs.push_back(std::stod(f));
         }
-        return;
-    } else {
-        buildMutationMatrices(mutMat, T);
+        if (probs.size() == 0) {
+            break;
+        }
+        if (idx < 4) {
+            if (probs.size() != 4) {
+                throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
+            }
+            mutMat.submat[idx] = std::move(probs);
+        } else if (idx == 4) {
+            if (probs.size() < 1) {
+                throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
+            }
+            mutMat.insmat = std::move(probs);
+        } else if (idx == 5) {
+            if (probs.size() < 1) {
+                throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
+            }
+            mutMat.delmat = std::move(probs);
+        }
+        idx++;
     }
 
+    if (idx != 6) {
+        throw std::invalid_argument("Received invalid mutamtion matrix (.mm) file");
+    }
+    mutMat.filled = true;
 }

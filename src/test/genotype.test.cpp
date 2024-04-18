@@ -1,76 +1,129 @@
 #include <boost/test/unit_test.hpp>
+#include <boost/filesystem.hpp>
+#include <algorithm>
 #include <stack>
-#include <boost/program_options.hpp>
-#include <boost/iostreams/filtering_stream.hpp>
-#include <boost/iostreams/filter/gzip.hpp>
 #include <iostream>
 #include <unordered_map>
 #include <fstream>
-#include <json/json.h>
-#include <filesystem>
-#include <tbb/concurrent_unordered_map.h>
+#include <random>
 #include "PangenomeMAT.hpp"
-#include "../pmi.hpp"
 #include "../genotype.hpp"
+#include "../tree.hpp"
 
 using namespace std;
 using namespace tree;
-using namespace PangenomeMAT;
+namespace fs = boost::filesystem;
+
+size_t getStart_brute(const std::string& s1, const std::string& s2, size_t window, double threshold);
+size_t getEnd_brute(const std::string& s1, const std::string& s2, size_t window, double threshold);
+size_t getBeg_perfectMatch(const std::string& s1, const std::string& s2, size_t matchLen);
+size_t getEnd_perfectMatch(const std::string& s1, const std::string& s2, size_t matchLen);
+
+
+bool close_to_int(double num_double) {
+    int num_int = int(num_double + 0.5);
+    double num_int_double = double(num_int);
+    if (abs(num_int_double - num_double) < 0.0001) {
+        return true;
+    }
+    return false;
+}
+
+BOOST_AUTO_TEST_CASE(tmp) {
+    BOOST_TEST(close_to_int(4.0000000002) == true);
+    BOOST_TEST(close_to_int(3.9999999983) == true);
+    BOOST_TEST(close_to_int(0.99999999983) == true);
+    BOOST_TEST(close_to_int(0.0000000000054) == true);
+    BOOST_TEST(close_to_int(2.5) == false);
+    BOOST_TEST(close_to_int(3.4) == false);
+    BOOST_TEST(close_to_int(0.25) == false);
+    BOOST_TEST(close_to_int(0.57) == false);
+
+}
+
+BOOST_AUTO_TEST_CASE(edgeMaskingForBuildingMutMat) {
+    std::ifstream ifs("../dev/examples/sars2k.pmat");
+    boost::iostreams::filtering_streambuf< boost::iostreams::input> b;
+    b.push(boost::iostreams::gzip_decompressor());
+    b.push(ifs);
+    std::istream is(&b);
+
+    auto T = new PangenomeMAT::Tree(is);
+
+    std::unordered_map<std::string, std::string> alignedSequences = getAllNodeStrings(T);
+    for (const auto& sequence : alignedSequences) {
+        std::string parentId;
+        if (T->allNodes[sequence.first]->parent == nullptr) {
+            continue;
+        } else {
+            parentId = T->allNodes[sequence.first]->parent->identifier;
+        }
+        const std::string& curSeq = sequence.second;
+        const std::string& parSeq = alignedSequences[parentId];
+        size_t bruteBeg = getStart_brute(curSeq, parSeq, 20, 0.8);
+        size_t bruteEnd = getEnd_brute(curSeq, parSeq, 20, 0.8);
+        std::pair<size_t, size_t> maskCoors = tree::getMaskCoorsForMutmat(curSeq, parSeq, 20, 0.8);
+        BOOST_TEST(bruteBeg == maskCoors.first);
+        BOOST_TEST(bruteEnd == maskCoors.second);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(readMutationMatrices) {
+    string testDataDir = "../src/test/data/genotype_test_data/";
+    
+    // case 1: full mutation matrix + new lines
+    for (const string& mmPath : {testDataDir + "test.mm", testDataDir + "test2.mm"}) {
+        mutationMatrices mutMat = mutationMatrices();
+        ifstream mminf(mmPath);
+        fillMutationMatricesFromFile(mutMat, mminf);
+        
+        BOOST_TEST(mutMat.submat.size() == 4);
+        for (const vector<double>& row : mutMat.submat) {
+            BOOST_TEST(row.size() == 4);
+        }
+        BOOST_TEST(mutMat.insmat.size() == 10);
+        BOOST_TEST(mutMat.delmat.size() == 10);
+    }
+
+    // case 2: missing elements
+    for (const string& mmPath : {testDataDir + "test3.mm", testDataDir + "test4.mm"}) {
+        mutationMatrices mutMat = mutationMatrices();
+        ifstream mminf(mmPath);
+        BOOST_CHECK_THROW(fillMutationMatricesFromFile(mutMat, mminf), invalid_argument);
+    }
+    
+}
 
 BOOST_AUTO_TEST_CASE(genotyping) {
-
-    /* Panmat loading */
-    std::ifstream is("../dev/examples/sars_20000.pmat");
-    boost::iostreams::filtering_streambuf<boost::iostreams::input> inPMATBuffer;
-    inPMATBuffer.push(boost::iostreams::gzip_decompressor());
-    inPMATBuffer.push(is);
-    std::istream inputStream(&inPMATBuffer);
-    PangenomeMAT::Tree *T = new PangenomeMAT::Tree(inputStream);
-
-    // make tmp pileup data
-    ofstream pileup("../src/test/data/tmp.pileup");
-    pileup << "ref\t1\tT\t4\t.C.^3,\tE>FF\n"
-            << "ref\t2\tC\t3\tTt,\tFFF\n"
-            << "ref\t3\tG\t4\t..,,\tFFFF\n"
-            << "ref\t4\tA\t7\tGGgggGG\t:::::FF\n"
-            << "ref\t5\tA\t4\t.+2CC.+2CC,+2CC.+2CC\tCCFE\n"
-            << "ref\t6\tT\t6\t.,,.,,\tFFFFFF\n"
-            << "ref\t7\tG\t4\t.-3TTA.-3TTA,-3TTA.\t:::,\n";
-    pileup.close();
-    ifstream inPileup("../src/test/data/tmp.pileup");
-
-
-    // genotype likelihoods alone
-    ofstream ofEmptyMutMat("../src/test/data/empty.tmp.mutmat");
-    ofEmptyMutMat << "0.0 0.0 0.0 0.0\n"
-                    << "0.0 0.0 0.0 0.0\n"
-                    << "0.0 0.0 0.0 0.0\n"
-                    << "0.0 0.0 0.0 0.0\n"
-                    << "0.0 0.0 0.0 0.0 0.0 0.0\n"
-                    << "0.0 0.0 0.0 0.0 0.0 0.0\n";
-    ofEmptyMutMat.close();
-
-    ifstream inEmptyMutMat("../src/test/data/empty.tmp.mutmat");
+    cout << "\n\nCreate vcf tests (using ../src/test/data/genotype_test_data/test.pileup)" << endl;
+    ifstream puif("../src/test/data/genotype_test_data/test.pileup");
+    /*############################
+    # genotype likelihoods alone #
+    ############################*/
+    cout << "Testing pileup to vcf without prior (using ../src/test/data/genotype_test_data/test_empty.mm)" << endl;
+    ifstream emif("../src/test/data/genotype_test_data/test_empty.mm");
     mutationMatrices emptyMutMat = mutationMatrices();
-    fillMutationMatrices(emptyMutMat, T, &inEmptyMutMat);
-    inEmptyMutMat.close();
+    fillMutationMatricesFromFile(emptyMutMat, emif);
+    emif.close();
 
-    streambuf* originalCoutBuffer = std::cout.rdbuf();
-    stringstream buffer;
-    cout.rdbuf(buffer.rdbuf());
-    genotype::printSamplePlacementVCF(inPileup, emptyMutMat, false, 0);
-    cout.rdbuf(originalCoutBuffer);
-    string capturedVCF = buffer.str();
+    ofstream vcfof("../src/test/data/genotype_test_data/vcf_np.out.tmp");
+    genotype::printSamplePlacementVCF(puif, emptyMutMat, false, 0, vcfof);
+    vcfof.close();
+    puif.clear();
+    puif.seekg(0, ios::beg);
+
+    cout << "Wrote vcf file to ../src/test/data/genotype_test_data/vcf_np.out.tmp" << endl;
 
     unordered_map<int, vector<string> > vcfOut;
-    vector<string> lines;
-    stringSplit(capturedVCF, '\n', lines);
-    for (const auto& line : lines) {
-        if (line.substr(0, 3) != "ref") {continue; }
+    ifstream vcfif("../src/test/data/genotype_test_data/vcf_np.out.tmp");
+    string line;
+    while (getline(vcfif, line)) {
+        if (line.substr(0, 3) != "ref") {continue;}
         vector<string> fields;
         stringSplit(line, '\t', fields);
         vcfOut[stoi(fields[1])] = {fields[4], fields.back()};
     }
+    vcfif.close();
 
     unordered_map<int, vector<string> > expOut;
     expOut[1] = {"C", "0:3,1:0,81"};
@@ -79,8 +132,49 @@ BOOST_AUTO_TEST_CASE(genotyping) {
     expOut[5] = {"ACC", "1:0,4:140,0"};
     expOut[7] = {"G", "1:1,3:64,0"};
 
-    inPileup.clear();
-    inPileup.seekg(0, ios::beg);
+    for (const auto& var : expOut) {
+        int pos = var.first;
+        BOOST_TEST(expOut[pos][0] == vcfOut[pos][0]);
+        BOOST_TEST(expOut[pos][1] == vcfOut[pos][1]);
+    }
+
+    cout << "Finished subtest.. Deleting ../src/test/data/genotype_test_data/vcf_np.out.tmp\n" << endl;
+    fs::remove("../src/test/data/genotype_test_data/vcf_np.out.tmp");
+
+    /*##############################
+    # genotype likelihoods + Prior #
+    ##############################*/
+    cout << "Testing pileup to vcf with prior (using ../src/test/data/genotype_test_data/test.mm)" << endl;
+    emif.open("../src/test/data/genotype_test_data/test.mm");
+    mutationMatrices mutmat = mutationMatrices();
+    fillMutationMatricesFromFile(mutmat, emif);
+    emif.close();
+
+    vcfof.open("../src/test/data/genotype_test_data/vcf_wp.out.tmp");
+    genotype::printSamplePlacementVCF(puif, mutmat, false, 0, vcfof);
+    vcfof.close();
+    puif.close();
+
+    cout << "Wrote vcf file to ../src/test/data/genotype_test_data/vcf_wp.out.tmp" << endl;
+    
+    vcfOut.clear();
+    vcfif.open("../src/test/data/genotype_test_data/vcf_wp.out.tmp");
+    line.clear();
+    while (getline(vcfif, line)) {
+        if (line.substr(0, 3) != "ref") {continue;}
+        vector<string> fields;
+        stringSplit(line, '\t', fields);
+        vcfOut[stoi(fields[1])] = {fields[4], fields.back()};
+    }
+    vcfif.close();
+
+    expOut.clear();
+    expOut[1] = {"C", "0:3,1:0,101"};
+    expOut[2] = {"T", "1:1,2:25,0"};
+    expOut[4] = {"G", "1:0,7:174,0"};
+    expOut[5] = {"ACC", "1:0,4:91,0"};
+    expOut[7] = {"G", "1:1,3:5,0"};
+
 
     for (const auto& var : expOut) {
         int pos = var.first;
@@ -88,21 +182,169 @@ BOOST_AUTO_TEST_CASE(genotyping) {
         BOOST_TEST(expOut[pos][1] == vcfOut[pos][1]);
     }
 
-    genotype::printSamplePlacementVCF(inPileup, emptyMutMat, true, 0);
-
-    // // genotype with genotype prior
-    // ofstream fullmMutMat("../src/test/data/full.tmp.mutmat");
-    // fullMutMat << "1   20  25  23\n"
-    //        << "21  1   24  12\n"
-    //        << "20  22  1   23\n"
-    //        << "20  21  19  1\n"
-
-    inPileup.close();
-    filesystem::remove("../src/test/data/tmp.pileup");
-    filesystem::remove("../src/test/data/empty.tmp.mutmat");
-
-    // ofstream vcfof("../talk/root.vcf");
-    // printVCF(T, T->root->identifier, vcfof);
-
-
+    cout << "Finished subtest.. Deleting ../src/test/data/genotype_test_data/vcf_wp.out.tmp\n" << endl;
+    fs::remove("../src/test/data/genotype_test_data/vcf_wp.out.tmp");
 }
+
+size_t getStart_brute(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+    assert(s1.size() == s2.size());
+    if (s1 == "") {
+        return 0;
+    }
+
+    for (size_t i = 0; i < s1.size() - window + 1; i++) {
+        std::string sub1 = "";
+        std::string sub2 = "";
+        size_t off = 0;
+        while (sub1.size() < window) {
+            size_t idx = i + off;
+            if (idx >= s1.size()) {
+                break;
+            }
+            if (s1[idx] == '-' && s2[idx] == '-') {
+                off++;
+                continue;
+            } else {
+                sub1 += s1[idx];
+                sub2 += s2[idx];
+            }
+            off++;
+        }
+        if (sub1.size() < window) {
+            continue;
+        }
+
+        double numMatch = 0.0;
+        for (size_t i = 0; i < sub1.size(); i++) {
+            if (sub1[i] == sub2[i]) {
+                numMatch += 1.0;
+            }
+        }
+        double pcid = numMatch / static_cast<double>(window);
+        
+        if (pcid >= threshold && sub1[0] == sub2[0]) {
+            size_t nucOff = 0;
+            for (size_t j = i + nucOff; j < s1.size(); j++) {
+                if (s1[j] != '-' || s2[j] != '-') {
+                    break;
+                }
+                ++nucOff;
+            }
+            return i + nucOff;
+        }
+    }
+
+    return s1.size() - 1;
+}
+
+
+
+size_t getEnd_brute(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+    assert(s1.size() == s2.size());
+    if (s1.empty()) {
+        return 0;
+    }
+
+    for (size_t i = s1.size(); i > window - 1; i--) {
+        std::string sub1 = "";
+        std::string sub2 = "";
+        size_t off = 0;
+        while (sub1.size() < window) {
+            size_t idx = i - 1 - off;
+            if (idx >= s1.size()) {
+                break;
+            }
+            if (s1[idx] == '-' && s2[idx] == '-') {
+                off++;
+                continue;
+            } else {
+                sub1 = s1[idx] + sub1;
+                sub2 = s2[idx] + sub2;
+            }
+            off++;
+        }
+        if (sub1.size() < window) {
+            continue;
+        }
+
+        double numMatch = 0.0;
+        for (size_t j = 0; j < sub1.size(); j++) {
+            if (sub1[j] == sub2[j]) {
+                numMatch += 1.0;
+            }
+        }
+        double pcid = numMatch / static_cast<double>(window);
+        
+        if (pcid >= threshold && sub1[window-1] == sub2[window-1]) {
+            size_t nucOff = 0;
+            for (size_t j = i - 1 - nucOff; j > 0; j--) {
+                if (s1[j] != '-' || s2[j] != '-') {
+                    break;
+                }
+                ++nucOff;
+            }
+            return i - 1 - nucOff;
+        }
+    }
+
+    return 0;
+}
+
+size_t getBeg_perfectMatch(const std::string& s1, const std::string& s2, size_t matchLen) {
+    if (s1 == "" || matchLen == 0) {
+        return 0;
+    }
+    size_t start = 0;
+    size_t numMatch = 0;
+    for (size_t i = 0; i < s1.size(); i++) {
+        if (s1[i] == '-' && s2[i] == '-') {
+            continue;
+        } else if (s1[i] == s2[i]) {
+            numMatch++;
+            if (numMatch == matchLen) {
+                break;
+            }
+        } else {
+            numMatch = 0;
+            start = i + 1;
+        }
+    }
+
+    if (numMatch < matchLen) {
+        return s1.size() - 1;
+    }
+    return start;
+}
+
+size_t getEnd_perfectMatch(const std::string& s1, const std::string& s2, size_t matchLen) {
+    if (s1 == "") {
+        return 0;
+    } else if (matchLen == 0) {
+        return s1.size() - 1;
+    }
+    size_t end = s1.size() - 1;
+    size_t numMatch = 0;
+    size_t i;
+    for (size_t j = 0; j < s1.size(); j++) {
+        i = s1.size() - 1 - j;
+        if (s1[i] == '-' && s2[i] == '-') {
+            continue;
+        } else if (s1[i] == s2[i]) {
+            numMatch++;
+            if (numMatch == matchLen) {
+                break;
+            }
+        } else {
+            numMatch = 0;
+            end = i - 1;
+        }
+    }
+
+    if (numMatch < matchLen) {
+        return 0;
+    }
+    return end;
+}
+
+
+

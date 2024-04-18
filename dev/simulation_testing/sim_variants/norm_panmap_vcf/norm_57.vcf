@@ -1,0 +1,23 @@
+##fileformat=VCFv4.3
+##FILTER=<ID=PASS,Description="All filters passed">
+##contig=<ID=ref>
+##INFO=<ID=DP,Number=1,Type=Integer,Description=Read Depth>
+##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>
+##FORMAT=<ID=AD,Number=1,Type=String,Description=idk>
+##FORMAT=<ID=GP,Number=1,Type=String,Description=idk>
+##bcftools_normVersion=1.19+htslib-1.19.1
+##bcftools_normCommand=norm -f origin_data/node_3.fasta -o norm_panmap_vcf/norm_57.vcf norm_panmap_vcf/non_57.vcf; Date=Tue Mar 26 15:43:00 2024
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE
+ref	3819	.	T	A	181	.	DP=6	GT:AD:GP	1:0,6:181,0
+ref	4820	.	G	A	71	.	DP=3	GT:AD:GP	1:0,3:71,0
+ref	5892	.	C	T	188	.	DP=6	GT:AD:GP	1:0,6:188,0
+ref	9714	.	C	T	40	.	DP=2	GT:AD:GP	1:0,2:40,0
+ref	9777	.	C	A	70	.	DP=3	GT:AD:GP	1:0,3:70,0
+ref	10621	.	G	A	219	.	DP=7	GT:AD:GP	1:0,7:219,0
+ref	13497	.	C	T	26	.	DP=2	GT:AD:GP	1:0,2:26,0
+ref	14758	.	C	T	225	.	DP=7	GT:AD:GP	1:0,7:225,0
+ref	17062	.	G	T	220	.	DP=7	GT:AD:GP	1:0,7:220,0
+ref	18907	.	GC	G	206	.	DP=7	GT:AD:GP	1:0,7:206,0
+ref	19454	.	T	C	71	.	DP=3	GT:AD:GP	1:0,3:71,0
+ref	23112	.	G	C	215	.	DP=7	GT:AD:GP	1:0,7:215,0
+ref	23139	.	A	C	218	.	DP=7	GT:AD:GP	1:0,7:218,0
