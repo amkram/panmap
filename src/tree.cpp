@@ -80,7 +80,7 @@ std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
     return strings;
 }
 // pass by value bc we need to modify sequence object (and not persist changes) before getting nt string
-std::string tree::getStringFromCurrData(mutableTreeData data, Tree *T, const Node *node, const bool aligned) {
+std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T, const Node *node, const bool aligned) {
     // T should be const but [] operator on T->sequenceInverted is non-const
     std::string line;
     if (node == nullptr) { // consensus sequence (all blocks on) rather than a node in the tree
