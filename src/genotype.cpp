@@ -2,6 +2,7 @@
 #include <regex>
 #include <cmath>
 #include <numeric>
+#include <string>
 
 using namespace std;
 using namespace tree;
@@ -258,60 +259,89 @@ int parse_readbases(
 ) {
     int variation_types = 0;
 
-    regex ins_regex("[.,]\\+(\\d+)[ACGTacgt]+");
-    regex del_regex("[.,]-(\\d+)[ACGTacgt]+");
-    regex snp_regex("([.,]|[ACGTacgt*])");
     regex extra_regex("\\^.{1}|\\$");
     readbase_string = regex_replace(readbase_string, extra_regex, "");
 
     string snp_errs, ins_errs, del_errs;
     size_t cur_start = 0, cur_idx = 0;
-    size_t indel_size, indel_size_len, indel_size_idx;
-    size_t readbase_strlen = readbase_string.size();
-    while (cur_start < readbase_string.size()) {
-        string readbase_substr = readbase_string.substr(cur_start, readbase_strlen - cur_start);
-        smatch matches;
-        if (regex_search(readbase_substr, matches, ins_regex) && matches.position(0) == 0) {
-            indel_size = stoul(matches.str(1));
-            indel_size_len = matches.length(1);
-            indel_size_idx = matches.position(1);
-            string seq = readbase_substr.substr(indel_size_idx + indel_size_len, indel_size);
-            to_upper(seq);
-            insertion_seqs.push_back(seq);
-            ins_errs += readbase_errors[cur_idx];
-            cur_start += (indel_size_idx + indel_size_len + indel_size);
-            cur_idx++;
-            variation_types |= variationType::INS;
-        } else if (regex_search(readbase_substr, matches, del_regex) && matches.position(0) == 0) {
-            indel_size = stoul(matches.str(1));
-            indel_size_len = matches.length(1);
-            indel_size_idx = matches.position(1); 
-            string seq = readbase_substr.substr(indel_size_idx + indel_size_len, indel_size);
-            to_upper(seq);
-            deletion_seqs.push_back(seq);
-            del_errs += readbase_errors[cur_idx];
-            cur_start += (indel_size_idx + indel_size_len + indel_size);
-            cur_idx++;
-            variation_types |= variationType::DEL;
-        } else if (regex_search(readbase_substr, matches, snp_regex) && matches.position(0) == 0) {
-            if (readbase_substr[0] == '.' || readbase_substr[0] == ',') {
-                nucs += ref_nuc;
-            } else {
-                nucs += toupper(readbase_substr[0]);
-                variation_types |= variationType::SNP;
-            }
-            snp_errs += readbase_errors[cur_idx];
-            cur_start++;
-            cur_idx++;
-        } else {
-            cur_start++;
-        }
 
+    string basePairs = string("ATCGatcg*");
+
+    while (cur_start < readbase_string.size()){
+
+        bool is_last = (cur_start == readbase_string.size() - 1);
+
+        if(basePairs.find(readbase_string[cur_start]) != std::string::npos){
+            //SNP
+            nucs += toupper(readbase_string[cur_start]);
+            variation_types |= variationType::SNP;
+            snp_errs += readbase_errors[cur_idx];
+            cur_start += 1;
+            cur_idx++;
+        }
+        if(readbase_string[cur_start] == '.' || readbase_string[cur_start] == ',') {
+            if (is_last){
+                //SNP
+                nucs += ref_nuc;
+                snp_errs += readbase_errors[cur_idx];
+                cur_start += 1;
+                cur_idx++;
+            }else{
+                if(readbase_string[cur_start+1] == '-'){
+                    //DEL
+                    variation_types |= variationType::DEL;
+                    del_errs += readbase_errors[cur_idx];
+                    int indel_size = 0;
+                    //std::cerr << "A\n";
+                    cur_start+=2;
+                    while(std::isdigit((int)readbase_string[cur_start])) {
+                        //std::cerr << "A\n";
+                        indel_size *= 10;
+                        indel_size += (int)readbase_string[cur_start] - 48;
+                        cur_start++;
+                    }
+
+                    string seq = readbase_string.substr(cur_start, indel_size);
+                    to_upper(seq);
+                    deletion_seqs.push_back(seq);
+                    cur_start += indel_size;
+                    
+                    cur_idx++;
+                }else if(readbase_string[cur_start+1] == '+'){
+                    //INS
+                    variation_types |= variationType::INS;
+                    ins_errs += readbase_errors[cur_idx];
+                    int indel_size = 0;
+
+                    cur_start+=2;
+                    while(std::isdigit((int)readbase_string[cur_start])) {
+                        indel_size *= 10;
+                        indel_size += (int)readbase_string[cur_start] - 48;
+                        cur_start++;
+                    }
+
+                    string seq = readbase_string.substr(cur_start, indel_size);
+                    to_upper(seq);
+                    insertion_seqs.push_back(seq);
+                    cur_start += indel_size;
+                    
+                    cur_idx++;
+                }else{
+                    //SNP
+                    nucs += ref_nuc;
+                    snp_errs += readbase_errors[cur_idx];
+                    cur_start += 1;
+                    cur_idx++;
+                }
+            }
+            
+        }
     }
 
     errs = snp_errs + ins_errs + del_errs;
     return variation_types;
 }
+
 
 pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(std::istream& fin, const mutationMatrices& mutMat) {
     regex variant_pattern("[ACGTacgt\\*]+");
@@ -319,7 +349,10 @@ pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(st
     pair<size_t, size_t> maskRange(numeric_limits<size_t>::max(), 0);
     size_t site_id = 0;
     string line;
+
     while(getline(fin, line)) {
+        
+
         vector<string> fields;
         stringSplit(line, '\t', fields);
         string readbases_string = fields[4];
@@ -342,6 +375,7 @@ pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(st
             ));
             site_id++;
         }
+
     }
     
     return make_pair(candidateVariants, maskRange);
