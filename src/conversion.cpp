@@ -101,11 +101,12 @@ void createSam(
     
     
     /* Sorting the alignments by their reference position */
-    std::pair<int, char*> sam_lines[n_reads];
+    std::vector<std::pair<int, char*>> sam_lines(n_reads);
+
     for(int i = 0; i < n_reads; i++) {
         sam_lines[i] = std::make_pair(r_lens[i],sam_alignments[i]);
     }
-    sort(sam_lines, sam_lines + n_reads, [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
+    sort(sam_lines.begin(), sam_lines.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
         return a.first < b.first;
     });
     
