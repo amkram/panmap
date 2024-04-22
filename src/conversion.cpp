@@ -40,6 +40,7 @@ void createSam(
 
             for (int32_t rpos : seedToRefPositions[readSeeds[r][i].seq]) {
                 seed thisSeed;
+                thisSeed.reversed = readSeeds[r][i].reversed;
                 thisSeed.seq = readSeeds[r][i].seq;
                 thisSeed.pos = readSeeds[r][i].pos;
                 thisSeed.rpos = rpos;
@@ -90,6 +91,8 @@ void createSam(
         ref_positions[i] = ref_pos_array;
         qry_positions[i] = qry_pos_array;
     }
+
+
     
     samHeader = "@SQ\tSN:ref\tLN:";
     samHeader += std::to_string(bestMatchSequence.length());

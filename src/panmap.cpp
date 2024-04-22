@@ -33,9 +33,10 @@ void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t
             cout << "First FASTQ path: ";
             getline(cin, reads1File);
         }
-        string reads2File = "";
+        reads2File = "";
         cout << "[Second FASTQ path]: ";
         getline(cin, reads2File);
+
     }
     if (reads1File == "q" || reads2File == "q") {
         exit(0);
