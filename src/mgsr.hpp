@@ -2,6 +2,7 @@
 #define __MGSR_HPP
 
 #include <unordered_map>
+#include <unordered_set>
 #include "PangenomeMAT.hpp"
 #include "tree.hpp"
 #include "pmi.hpp"
@@ -18,14 +19,16 @@ namespace mgsr {
         int32_t end; // ending position
         size_t num; // number of seedmers with the same hash
         bool   rev; // reversed
-        seedmer* prev; // ptr to previous seedmer
+        // change to a vector of pairs of pointers
+        std::unordered_set<seedmer*> prev; // ptr to previous seedmer
         seedmer* next; // ptr to next seedmer
         
     };
 
     struct seedmers {
         std::unordered_map<hash_t, seedmer> seedmerMap; // seedmers
-        seedmer* firstSeedmer; // starting kmm
+        seedmer* firstSeedmer = nullptr; // starting kmm
+        seedmer* lastSeedmer = nullptr;
     };
 
     // pmi index file with k = k, s = s, l = 1
