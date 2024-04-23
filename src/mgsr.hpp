@@ -26,6 +26,7 @@ namespace mgsr {
     };
 
     struct seedmers {
+        // need to change to ordered_map????
         std::unordered_map<hash_t, seedmer> seedmerMap; // seedmers
         seedmer* firstSeedmer = nullptr; // starting kmm
         seedmer* lastSeedmer = nullptr;
