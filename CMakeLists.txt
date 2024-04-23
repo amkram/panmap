@@ -2,14 +2,12 @@ cmake_minimum_required (VERSION 3.20)
 
 project(panmap)
 
-<<<<<<< HEAD
 set(CMAKE_CXX_STANDARD 20)
-=======
+
 # Project options
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." ON)
 option(OPTION_BUILD_TESTS "Build tests." ON)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
->>>>>>> be62fc15e57015f876d9a33861fa2b1ea98da3fa
 
 cmake_policy(SET CMP0135 NEW)
 
@@ -18,18 +16,64 @@ include(FetchContent)
 add_executable(panmap
     src/main.cpp
     src/place.cpp
-    src/place.hpp
     src/genotype.cpp
-    src/genotype.hpp
     src/pmi.cpp
-    src/pmi.hpp
     src/tree.cpp
-    src/tree.hpp
-    src/util.hpp
-    src/seed.hpp
-    src/align.cpp
-    src/align.hpp
+    src/conversion.cpp
+    src/mm_align.c
+    src/pileup.c
 )
+
+# system
+include(cmake/detect-arch.cmake)
+detect_host_arch()
+message("neon: ${HAS_NEON}")
+message("Third party dependencies...")
+
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libminimap2.a
+    COMMAND make -C src/3rdparty/minimap2 $<$<BOOL:${HAS_NEON}>:aarch64=1>
+    COMMAND mv src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND rm src/3rdparty/minimap2/*.o
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libst.a
+    COMMAND src/3rdparty/samtools/configure --disable-configure-htslib
+    COMMAND make -C src/3rdparty/samtools libst.a # specific .o files here
+    COMMAND mv src/3rdparty/samtools/libst.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND rm src/3rdparty/samtools/*.o
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
+    COMMAND src/3rdparty/samtools/htslib-1.20/configure --disable-bz2
+        --disable-largefile --disable-lzma --disable-libcurl
+        --disable-gcs --disable-s3 --disable-plugins 
+    COMMAND make -C src/3rdparty/samtools/htslib-1.20 lib-static
+    COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND rm src/3rdparty/samtools/htslib-1.20/*.o
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_custom_target(build-deps DEPENDS
+    libminimap2.a
+    libst.a
+    libhts.a
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+add_library(minimap2 STATIC IMPORTED)
+set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libminimap2.a")
+add_dependencies(minimap2 build-deps)
+
+add_library(samtools STATIC IMPORTED)
+set_target_properties(samtools PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libst.a")
+add_dependencies(samtools build-deps)
+
+add_library(htslib STATIC IMPORTED)
+set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libhts.a")
+add_dependencies(htslib build-deps)
 
 # panmat
 FetchContent_Declare(
@@ -41,43 +85,17 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(panmat)
 
-<<<<<<< HEAD
-target_link_libraries(panmap PUBLIC samtools htslib panmat minimap2)
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+# Lets us do: 
+#    #include <minimap2/kseq.h>
+#    #include <htslib/sam.h>    
+#    ...
+
+target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-=======
-
-file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a" "src/samtools_src/sample.c" "src/samtools_src/bedidx.c" "src/samtools_src/sam_opts.c" "src/samtools_src/bam_plbuf.c" "src/samtools_src/sam_utils.c" "${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.a")
-add_executable(panmap ${PANMAP_SRCS})
-add_dependencies(panmap libminimap2.a)
-add_dependencies(panmap sample.o)
-
-
-if(OPTION_BUILD_TESTS)
-    get_filename_component(main_src src/panmap.cpp ABSOLUTE)
-    list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
-    add_executable(tests ${PANMAP_SRCS} "src/test/main.test.cpp" "src/test/pmi.test.cpp" "src/test/seed.test.cpp" "src/test/tree.test.cpp" "src/test/genotype.test.cpp" "src/test/conversions.test.cpp") 
-    add_dependencies(tests libminimap2.a)
-    add_dependencies(tests sample.o)
-endif(OPTION_BUILD_TESTS)
-
-if(OPTION_BUILD_SIMULATE)
-    get_filename_component(main_src src/panmap.cpp ABSOLUTE)
-    list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
-    add_executable(simulate ${PANMAP_SRCS} "src/test/simulate.cpp")
-    add_dependencies(simulate libminimap2.a)
-    add_dependencies(simulate sample.o)
-endif(OPTION_BUILD_SIMULATE)
-
-
-
-target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
-target_link_libraries(simulate PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
-target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
-target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_compile_options(simulate PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES ${CMAKE_BINARY_DIR}/clean-minimap)
->>>>>>> be62fc15e57015f876d9a33861fa2b1ea98da3fa
+target_link_options(panmap PRIVATE -lm -lz -lpthread)
 
 # Unit testing data
 configure_file(src/test/data/test.aligned.fa test.aligned.fa COPYONLY)

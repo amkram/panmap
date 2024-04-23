@@ -5,7 +5,6 @@
 #include "seeding.hpp"
 #include <iostream>
 #include <vector>
-#include "kseq.h"
 
 using namespace seeding;
 
@@ -71,7 +70,7 @@ namespace tree {
     std::string getConsensus(Tree *T); // ungapped!
 
     std::unordered_map<std::string, std::string> getAllNodeStrings(Tree *T);
-    std::string getStringFromCurrData(mutableTreeData data, Tree *T, const Node *node, const bool aligned);
+    std::string getStringFromCurrData(mutableTreeData &data, Tree *T, const Node *node, const bool aligned);
 
     size_t getGlobalCoordinate(const int blockId, const int nucPosition, const int nucGapPosition, const globalCoords_t &globalCoords);
     void setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T);

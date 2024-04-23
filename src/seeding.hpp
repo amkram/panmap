@@ -10,7 +10,7 @@
 #include <mutex>
 #include <zlib.h>  
 #include <stdio.h>  
-#include "kseq.h"
+#include <minimap2/kseq.h>
 
 
 KSEQ_INIT(int, read)

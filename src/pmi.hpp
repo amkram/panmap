@@ -2,7 +2,6 @@
 #define __PMI_HPP
 
 #pragma once
-#include <panmat/PangenomeMAT.hpp>
 #include "seeding.hpp"
 #include "tree.hpp"
 
