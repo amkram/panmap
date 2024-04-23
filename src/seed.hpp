@@ -8,7 +8,7 @@
 #include <iostream>
 #include <vector>
 #include <mutex>
-#include "kseq.h"
+#include <minimap2/kseq.h>
 
 KSEQ_INIT(int, read)
 
