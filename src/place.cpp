@@ -1,11 +1,11 @@
 #include <algorithm>
+#include <cmath>
+#include <htslib/sam.h>
 #include "place.hpp"
 #include "pmi.hpp"
 #include "util.hpp"
 #include "tree.hpp"
 #include "genotype.hpp"
-#include <cmath>
-#include <htslib/sam.h>
 #include "conversion.hpp"
 
 using namespace PangenomeMAT;
@@ -317,8 +317,6 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
 
-
-
     //Print out reference
     if(refFileName.size() > 0){
         std::ofstream outFile{refFileName};
@@ -349,7 +347,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         seedToRefPositions,
         samFileName,
         k,
-        
+    
         samAlignments,
         samHeader
     );

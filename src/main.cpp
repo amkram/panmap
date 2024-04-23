@@ -1,4 +1,9 @@
-#include "kseq.h"
+#include <PangenomeMAT.hpp>
+#include <boost/program_options.hpp>
+#include <boost/filesystem.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <minimap2/kseq.h>
 #include "pmi.hpp"
 #include "genotype.hpp"
 #include "place.hpp"
@@ -6,11 +11,6 @@
 #include <iostream>
 #include <string>
 #include <cstdio>
-#include <panmat/PangenomeMAT.hpp>
-#include <boost/program_options.hpp>
-#include <boost/filesystem.hpp>
-#include <boost/iostreams/filtering_stream.hpp>
-#include <boost/iostreams/filter/gzip.hpp>
 
 using namespace pmi;
 namespace po = boost::program_options;
