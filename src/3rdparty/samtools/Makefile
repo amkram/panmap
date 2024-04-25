@@ -68,28 +68,13 @@ INSTALL_SCRIPT  = $(INSTALL_PROGRAM)
 
 PROGRAMS = samtools
 
-MISC_PROGRAMS = \
-	misc/ace2sam misc/maq2sam-long misc/maq2sam-short \
-	misc/md5fa misc/md5sum-lite misc/wgsim
+MISC_PROGRAMS = 
 
-MISC_SCRIPTS = \
-	misc/blast2sam.pl misc/bowtie2sam.pl misc/export2sam.pl \
-	misc/fasta-sanitize.pl misc/interpolate_sam.pl misc/novo2sam.pl \
-	misc/plot-ampliconstats misc/plot-bamstats misc/psl2sam.pl \
-	misc/sam2vcf.pl misc/samtools.pl misc/seq_cache_populate.pl \
-	misc/soap2sam.pl misc/wgsim_eval.pl misc/zoom2sam.pl
+MISC_SCRIPTS = 
 
-TEST_PROGRAMS = \
-	test/merge/test_bam_translate \
-	test/merge/test_rtrans_build \
-	test/merge/test_trans_tbl_init \
-	test/split/test_count_rg \
-	test/split/test_expand_format_string \
-	test/split/test_filter_header_rg \
-	test/split/test_parse_args \
-	test/vcf-miniview
+TEST_PROGRAMS = 
 
-all: $(PROGRAMS) $(MISC_PROGRAMS) $(TEST_PROGRAMS)
+all: $(PROGRAMS)
 
 ALL_CPPFLAGS = -I. $(HTSLIB_CPPFLAGS) $(LZ4_CPPFLAGS) $(CPPFLAGS)
 ALL_LDFLAGS  = $(HTSLIB_LDFLAGS) $(LZ4_LDFLAGS) $(LDFLAGS)
@@ -141,11 +126,10 @@ print-version:
 LIBST_OBJS = sam_opts.o sam_utils.o bedidx.o bam.o
 
 
-samtools: $(AOBJS) $(LZ4OBJS) libst.a $(HTSLIB)
+samtools: $(AOBJS) $(LZ4OBJS) libst.a 
 	$(CC) $(ALL_LDFLAGS) -o $@ $(AOBJS) $(LZ4OBJS) libst.a $(HTSLIB_LIB) $(CURSES_LIB) -lm $(ALL_LIBS) -lpthread
 
-# For building samtools and its test suite only: NOT to be installed.
-libst.a: $(LIBST_OBJS)
+libst.a: $(LIBST_OBJS) $(HTSLIB)
 	@-rm -f $@
 	$(AR) -rcs $@ $(LIBST_OBJS)
 
