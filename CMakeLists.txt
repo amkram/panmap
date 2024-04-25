@@ -35,26 +35,22 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libminimap2.a
     COMMAND make -C src/3rdparty/minimap2 $<$<BOOL:${HAS_NEON}>:aarch64=1>
     COMMAND mv src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND mv src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND rm src/3rdparty/minimap2/*.o
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
-    COMMAND src/3rdparty/samtools/htslib-1.20/configure --disable-bz2
-        --disable-largefile --disable-lzma --disable-libcurl
-    COMMAND make -C src/3rdparty/samtools/htslib-1.20 lib-static
-    COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
-    COMMAND rm src/3rdparty/samtools/htslib-1.20/*.o
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
+
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libst.a
-    COMMAND src/3rdparty/samtools/configure
-    COMMAND make -C src/3rdparty/samtools libst.a # specific .o files here
+    COMMAND src/3rdparty/samtools/configure --disable-bz2
+        --disable-largefile --disable-lzma --disable-libcurl
+    COMMAND make -C src/3rdparty/samtools
     COMMAND mv src/3rdparty/samtools/libst.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND rm -f src/3rdparty/samtools/*.o src/3rdparty/samtools/htslib-1.20/libhts.a
+    COMMAND rm -f src/3rdparty/samtools/*/*.o src/3rdparty/samtools/*/*/*.o
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
 )
 
 
