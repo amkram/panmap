@@ -10,35 +10,48 @@ void mgsr::accio(PangenomeMAT::Tree *T, std::ifstream& indexFile, size_t k, size
     std::cout << "What's my purpose\nYou pass butter" << std::endl;
 }
 
-void resolveSeedmerIndexConflict(mgsr::seedmers& seedmerIndex, hash_t h, mgsr::seedmer** previous) {
-    if (seedmerIndex.seedmerMap[h].num > 1) {
+void resolveSeedmersIndexConflict(mgsr::seedmers& seedmersIndex, hash_t h, mgsr::seedmer** previous, mgsr::seedmer** endSeedmer=nullptr) {
+    if (seedmersIndex.seedmerMap[h].num > 1) {
         /* hash already has 2 or more counts, aka already resolved */
-        seedmerIndex.seedmerMap[h].num++;
-        seedmerIndex.seedmerMap[h].prev.insert(*previous);
-    } else if (seedmerIndex.firstSeedmer == *previous) {
+        seedmersIndex.seedmerMap[h].num++;
+        seedmersIndex.seedmerMap[h].prev.insert(*previous);
+    } else if (seedmersIndex.firstSeedmer != nullptr && seedmersIndex.firstSeedmer == *previous) {
         /* previous == start seedmer */
-        assert(seedmerIndex.firstSeedmer->hash == h);
-        seedmerIndex.seedmerMap[h].num++;
-        seedmerIndex.seedmerMap[h].prev.insert(*previous);
-        seedmerIndex.firstSeedmer = nullptr;
+        assert(seedmersIndex.firstSeedmer->hash == h);
+        seedmersIndex.seedmerMap[h].num++;
+        seedmersIndex.seedmerMap[h].prev.insert(*previous);
+        seedmersIndex.firstSeedmer = nullptr;
     } else {
         /* hash has only one count and needs to resolved */
-        if (h == seedmerIndex.firstSeedmer->hash) {
+        if (seedmersIndex.firstSeedmer != nullptr && h == seedmersIndex.firstSeedmer->hash) {
             // conflicts with start seedmer
-            seedmerIndex.firstSeedmer->num++;
-            seedmerIndex.firstSeedmer->prev.insert(*previous);
-            seedmerIndex.firstSeedmer = seedmerIndex.firstSeedmer->next;
-            assert(seedmerIndex.firstSeedmer->num == 1);
-            (*(seedmerIndex.firstSeedmer->prev.begin()))->next = nullptr;
-        } else if (h == (*previous)->hash) {
+            seedmersIndex.firstSeedmer->num++;
+            seedmersIndex.firstSeedmer->prev.insert(*previous);
+            seedmersIndex.firstSeedmer = seedmersIndex.firstSeedmer->next;
+            assert(seedmersIndex.firstSeedmer->num == 1);
+            (*(seedmersIndex.firstSeedmer->prev.begin()))->next = nullptr;
+        } else if (*previous != nullptr && h == (*previous)->hash) {
             // conflicts with previous seedmer
             assert((*previous)->num == 1);
             *previous = *((*previous)->prev.begin());
             (*previous)->next->prev.insert((*previous)->next);
             (*previous)->next = nullptr;
+        } else if (seedmersIndex.lastSeedmer != nullptr && h == seedmersIndex.lastSeedmer->hash) {
+            // conflicts with last seedmer
+            seedmersIndex.lastSeedmer->num++;
+            seedmersIndex.lastSeedmer->prev.insert(*previous);
+            assert(seedmersIndex.lastSeedmer->prev.size() == 1);
+            seedmersIndex.lastSeedmer = *(seedmersIndex.lastSeedmer->prev.begin());
+            seedmersIndex.lastSeedmer->next = nullptr;
+        } else if (endSeedmer != nullptr && h == (*endSeedmer)->hash) {
+            // conflicts with end seedmer
+            (*endSeedmer)->num++;
+            (*endSeedmer)->prev.insert(*previous);
+            (*endSeedmer) = (*endSeedmer)->next;
+            (*endSeedmer)->prev.clear();
         } else {
             // conflicts with intermediate seedmer
-            mgsr::seedmer* tmpptr = &seedmerIndex.seedmerMap[h];
+            mgsr::seedmer* tmpptr = &seedmersIndex.seedmerMap[h];
             tmpptr->num++;
             (*(tmpptr->prev.begin()))->next = tmpptr->next;
             tmpptr->next->prev.clear();
@@ -49,118 +62,304 @@ void resolveSeedmerIndexConflict(mgsr::seedmers& seedmerIndex, hash_t h, mgsr::s
     }
 }
 
-// void mergeSeedmerIndex(const mgsr::seedmers& localSeedmersIndex, const std::pair<std::pair<size_t, bool>, std::pair<size_t, bool>>& locators, mgsr::seedmers& seedmersIndex, std::stringstream& seedmersOutStream, const std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds, const int32_t l, const int32_t k) {
-// /*
-//     - Remove seedmers between locators on seedmersIndex
-//         if seedmer.num == 1: erase
-//         else:
-//             --seedmer.num;
-//             remove prev
-//             if seedmer.num == 1: restore
+void removeSeedmersBetweenLocators(const mgsr::seedmer* begSeedmer, const mgsr::seedmer* endSeedmer, const mgsr::seedmers& localSeedmersIndex, const std::pair<std::pair<size_t, bool>, std::pair<size_t, bool>>& locators, mgsr::seedmers& seedmersIndex, std::stringstream& seedmersOutStream, const std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds, const int32_t l, const int32_t k) {
+    decltype(seedmersIndex.positionMap.begin()) curSeedmerIt;
 
-//     - Add seedmers from local to seedmersIndex
-//         if seemder not in seedmersIndex: add
-//         else:
-//             resolve conflict
-    
-//     - Add rest of localSeedmers to seedmerSindex
-// */
-//     // Remove seedmers between locators on seedmerIndex
-//     if (locators.first.second && locators.second.second) {
-//         auto begSeedmer = &seedmersIndex.seedmerMap[locators.first.first];
-//         auto endSeedmer = &seedmersIndex.seedmerMap[locators.second.first];
-//         assert(begSeedmer->num == 1 && endSeedmer->num == 1);
+    if (endSeedmer == nullptr) curSeedmerIt = seedmersIndex.positionMap.end();
+    else                       curSeedmerIt = seedmersIndex.positionMap.find(*(endSeedmer->begs.begin()));
 
-//         auto curSeedmer = seedmersIndex.positionMap.find(endSeedmer->beg);
-//         --curSeedmer;
-//         while (curSeedmer->second != begSeedmer) {
-//             if (curSeedmer->second->num == 1) {
-//                 std::cout << "1" << std::endl;
-//                 (*(curSeedmer->second->prev.begin()))->next = curSeedmer->second->next;
-//                 curSeedmer->second->next->prev.clear();
-//                 curSeedmer->second->next->prev.insert(*(curSeedmer->second->prev.begin()));
+    --curSeedmerIt;
 
-//                 std::string s = std::to_string((*(curSeedmer->second->prev.begin()))->hash) + ":"
-//                               + std::to_string(curSeedmer->second->next->hash);
-//                 seedmersOutStream << s << " ";
-                
-//                 seedmersIndex.seedmerMap.erase(curSeedmer->second->hash);
-//             } else if (curSeedmer->second->num == 2) {
-//                 assert(curSeedmer->second->prev.size() == 2);
+    // std::cout << "--BBBBB--" << std::endl;
+    while (true) {
+        if (begSeedmer != nullptr && seedmersIndex.seedmerMap[curSeedmerIt->second.second].hash == begSeedmer->hash) break;
+        auto curSeedmer = &seedmersIndex.seedmerMap[curSeedmerIt->second.second];
+        if (curSeedmer->num == 1) {
+            // std::cout << "--CCCCC--" << std::endl;
+            (*(curSeedmer->prev.begin()))->next = curSeedmer->next;
+            curSeedmer->next->prev.clear();
+            curSeedmer->next->prev.insert(*(curSeedmer->prev.begin()));
 
-//                 // erase closest previous ptr
-//                 decltype(begSeedmer) toErase = nullptr;
-//                 {
-//                 auto it = curSeedmer->second->prev.begin();
-//                 while (it != curSeedmer->second->prev.end()) {
-//                     if ((*it)->beg < curSeedmer->first && (toErase == nullptr  || curSeedmer->first - (*it)->beg < curSeedmer->first - toErase->beg)) {
-//                         toErase = *it;
-//                     }
-//                     ++it;
-//                 }
-//                 assert(toErase != nullptr);
-//                 }
-//                 assert(curSeedmer->second->prev.erase(toErase));
-//                 curSeedmer->second->num = 1;
+            std::string s = std::to_string((*(curSeedmer->prev.begin()))->hash) + ":"
+                            + std::to_string(curSeedmer->next->hash);
+            seedmersOutStream << s << " ";
+            
+            assert(seedmersIndex.seedmerMap.erase(curSeedmer->hash));
+        } else if (curSeedmer->num == 2) {
+            // std::cout << "--DDDDD--" << std::endl;
+            assert(curSeedmer->prev.size() == 2);
 
-//                 // Frick.. need to get the beginning, ending, and rev
+            // erase closest previous ptr
+            decltype(curSeedmer) toErase = nullptr;
+            int32_t toEraseBeg = -1;
+            {
+            auto it = curSeedmer->prev.begin();
+            while (it != curSeedmer->prev.end()) {
+                if ((*it)->begs.size() == 1) {
+                    if (*((*it)->begs.begin()) < curSeedmerIt->first && (toErase == nullptr  || curSeedmerIt->first - *((*it)->begs.begin()) < curSeedmerIt->first - toEraseBeg)) {
+                        toErase = *it;
+                        toEraseBeg = *((*it)->begs.begin());
+                    }
+                } else {
+                    int32_t tmpBeg = -1;
+                    for (int32_t b : (*it)->begs) {
+                        if (b < curSeedmerIt->first && (tmpBeg == -1 || curSeedmerIt->first - b < curSeedmerIt->first - tmpBeg)) {
+                            tmpBeg = b;
+                        }
+                    }
+                    assert(tmpBeg != -1);
 
-//                     // reconstruct using curSeedmers? prolly the easiest way -> also need positionMap to store the beg positions
-//                     // OR 
-//                     // Store all begs, ends, and revs in vectors in seedemr struct -> clumsy, waste space and don't really save that much time?
-                
-//                 std::cout << "2" << std::endl;
-//             } else {
-//                 std::cout << ">=3" << std::endl;
-//             }
+                    if (tmpBeg < curSeedmerIt->first && (toErase == nullptr || curSeedmerIt->first - tmpBeg < curSeedmerIt->first - toEraseBeg)) {
+                        toErase = *it;
+                        toEraseBeg = tmpBeg;
+                    }
+                }
+                ++it;
+            }
+            assert(toErase != nullptr);
+            }
 
-//             auto tmpBeg = curSeedmer->first;
-//             --curSeedmer;
-//             seedmersIndex.positionMap.erase(tmpBeg);
-//         }
-//     }
+            assert(curSeedmer->prev.erase(toErase));
+            assert(curSeedmer->begs.erase(curSeedmerIt->first));
+            assert(curSeedmer->begs.size()==1);
+            curSeedmer->num = 1;
 
-//     std::cout << "Great Success! - Borat" << std::endl;
-// }
+            auto curSeed = curSeeds.find(curSeedmerIt->first);
+            int32_t count = 0;
+            while (count < l-1) {
+                ++curSeed;
+                ++count;
+            }
+            curSeedmer->end = curSeed->second.second;
+
+            auto leftSeedmerIt = seedmersIndex.positionMap.find(*(curSeedmer->begs.begin()));
+            --leftSeedmerIt;
+            auto leftSeedmer = &seedmersIndex.seedmerMap[leftSeedmerIt->second.second];
+            while (leftSeedmer->next == nullptr) {
+                --leftSeedmerIt;
+                leftSeedmer = &seedmersIndex.seedmerMap[leftSeedmerIt->second.second];
+            }
+
+            curSeedmer->next = leftSeedmer->next;
+            leftSeedmer->next->prev.clear();
+            leftSeedmer->next->prev.insert(curSeedmer);
+            leftSeedmer->next = curSeedmer;
+            
+            std::string s = std::to_string((*(curSeedmer->prev.begin()))->hash) + ":"
+                            + std::to_string(curSeedmer->hash) + ","
+                            + std::to_string(*(curSeedmer->begs.begin())) + ","
+                            + std::to_string(curSeedmer->end) + ","
+                            + std::to_string(curSeedmer->rev) + ":"
+                            + std::to_string(curSeedmer->next->hash);
+            seedmersOutStream << s << " ";
+        } else {
+            // std::cout << "--EEEEE--" << std::endl;
+            // erase closest previous ptr
+            decltype(curSeedmer) toErase = nullptr;
+            int32_t toEraseBeg = -1;
+            {
+            auto it = curSeedmer->prev.begin();
+            while (it != curSeedmer->prev.end()) {
+                if ((*it)->begs.size() == 1) {
+                    if (*((*it)->begs.begin()) < curSeedmerIt->first && (toErase == nullptr  || curSeedmerIt->first - *((*it)->begs.begin()) < curSeedmerIt->first - toEraseBeg)) {
+                        toErase = *it;
+                        toEraseBeg = *((*it)->begs.begin());
+                    }
+                } else {
+                    int32_t tmpBeg = -1;
+                    for (int32_t b : (*it)->begs) {
+                        if (b < curSeedmerIt->first && (tmpBeg == -1 || curSeedmerIt->first - b < curSeedmerIt->first - tmpBeg)) {
+                            tmpBeg = b;
+                        }
+                    }
+                    assert(tmpBeg != -1);
+
+                    if (tmpBeg < curSeedmerIt->first && (toErase == nullptr || curSeedmerIt->first - tmpBeg < curSeedmerIt->first - toEraseBeg)) {
+                        toErase = *it;
+                        toEraseBeg = tmpBeg;
+                    }
+                }
+                ++it;
+            }
+            assert(toErase != nullptr);
+            }
+
+            assert(curSeedmer->prev.erase(toErase));
+            assert(curSeedmer->begs.erase(curSeedmerIt->first));
+            curSeedmer->num -= 1;
+        }
+
+        auto begToErase = curSeedmerIt->first;
+        --curSeedmerIt;
+        seedmersIndex.positionMap.erase(begToErase);
+        if (begSeedmer == nullptr && curSeedmerIt == seedmersIndex.positionMap.begin()) break;
+    }
+}
 
 /*
-mergeSeedmerIndex
-    begSeedmer = &seedmersIndex[locators.first.first];
-    endSeedmer = &seedmersIndex[locators.second.first];
-
-    // remove seedmers between locators on seedmerIndex
-    // go backwards?
-    curSeedmer = positionMap.find(begSeedmer->beg)
-    ++curSeedmer
-    while (curSeedmer->second.first != endSeedmer) {
-        if (curSeedmer->second.first->num == 1) {
-            erase on seedmersIndex.seedmerMap -> resolve ptrs
-            tmpptr = curSeedmer
-            ++curSeedmer
-            erase on seedmersIndex.positionMap
-        } else if (curSeedmer->second.first->num == 2) {
-            erase curPrev from curSeedmer->second.first->prev
-            assert that there's only one prev left in curSeedmer->second.first->prev
-            restore curSeedmer->second.first -> resolve ptrs
-            ++curSeedmer
-            erase on seedmersIndex.positionMap
+curLocalSeedemrIt = localSedmersIndex.positionMap.begin();
+while (curLocalSeedmerIt != localSeedmersIndex.positionMap.end()) {
+    auto curLocalSeedmer = &localSeedmersIndex.seedmerMap[curLocalSeedmerIt->second];
+ 
+    if num==1 {
+        if exists on seedmersIndex {
+            resolve conflict
         } else {
-            if (curPrev == curSeedmer->second.first && curSeedmer->second.first.num > ...prev.size()) {
-                --..num
-            } else {
-                --..num
-                remove curPrev from curSeedmer->second.first->prev
-            }
-            ++curSeedmer
-            erase on seedmersIndex.positionMap
+            chain
+        }
+    } else {
+        if exists on seedmersIndex {
+            resolve conflict
+        } else {
+            resolve conflict
         }
     }
 
-    // add seedmers
-    chain begSeedmer to first new seedmer
-    add to new chain and resolve conflict
-    also add to positionMap
+    add to seedmersIndex.positionMap
+    ++curLocalSeedmerIt
+}
 */
+
+void mergeSeedmerIndex(const mgsr::seedmers& localSeedmersIndex, const std::pair<std::pair<size_t, bool>, std::pair<size_t, bool>>& locators, mgsr::seedmers& seedmersIndex, std::stringstream& seedmersOutStream, const std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds, const int32_t l, const int32_t k) {
+    if (locators.first.second && locators.second.second) {
+        // std::cout << "--AAAAA--" << std::endl;
+        /* Remove seedmers between locators on seedmerIndex */
+        auto begSeedmer = &seedmersIndex.seedmerMap[locators.first.first];
+        auto endSeedmer = &seedmersIndex.seedmerMap[locators.second.first];
+        endSeedmer->prev.clear();
+        assert(begSeedmer->num == 1 && endSeedmer->num == 1);
+        removeSeedmersBetweenLocators(begSeedmer, endSeedmer, localSeedmersIndex, locators, seedmersIndex, seedmersOutStream, curSeeds, l, k);
+        
+        /* Add new seedmers */
+        auto previousSeedmer = begSeedmer;
+        auto curLocalSeedmerIt = localSeedmersIndex.positionMap.begin();
+        while (curLocalSeedmerIt != localSeedmersIndex.positionMap.end()) {
+            auto curLocalSeedmer = &localSeedmersIndex.seedmerMap.at(curLocalSeedmerIt->second.second);
+
+            if (seedmersIndex.seedmerMap.count(curLocalSeedmer->hash) > 0) {
+                // need to add stringstream
+                resolveSeedmersIndexConflict(seedmersIndex, curLocalSeedmer->hash, &previousSeedmer, &endSeedmer);
+                seedmersIndex.seedmerMap[curLocalSeedmer->hash].begs.insert(curLocalSeedmerIt->first);
+            } else {
+                seedmersIndex.seedmerMap[curLocalSeedmer->hash] = {
+                    curLocalSeedmer->hash,
+                    {curLocalSeedmerIt->first},
+                    curLocalSeedmerIt->second.first,
+                    1,
+                    curLocalSeedmer->rev,
+                    {},
+                    nullptr
+                };
+
+                if (seedmersIndex.firstSeedmer != nullptr) {
+                    assert(previousSeedmer != nullptr && previousSeedmer->num == 1);
+                    previousSeedmer->next = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+                } else {
+                    seedmersIndex.firstSeedmer = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+                }
+                if (previousSeedmer != nullptr) seedmersIndex.seedmerMap[curLocalSeedmer->hash].prev.insert(previousSeedmer);
+                previousSeedmer = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+            }
+
+            seedmersIndex.positionMap[curLocalSeedmerIt->first] = std::make_pair(curLocalSeedmer->hash, curLocalSeedmerIt->second.second);
+            ++curLocalSeedmerIt;
+        }
+        previousSeedmer->next = endSeedmer;
+        assert(endSeedmer->prev.size() == 0);
+        endSeedmer->prev.insert(previousSeedmer);
+        seedmersIndex.seedmerMap[locators.second.first].prev.insert(previousSeedmer);
+    } else if (locators.first.second) {
+        // new seedmers at end
+        auto begSeedmer = &seedmersIndex.seedmerMap[locators.first.first];
+        decltype(begSeedmer) endSeedmer = nullptr;
+        assert(begSeedmer->num == 1);
+        removeSeedmersBetweenLocators(begSeedmer, endSeedmer, localSeedmersIndex, locators, seedmersIndex, seedmersOutStream, curSeeds, l, k);
+        seedmersIndex.lastSeedmer = nullptr;
+
+        /* Add new seedmers */
+        auto previousSeedmer = begSeedmer;
+        auto curLocalSeedmerIt = localSeedmersIndex.positionMap.begin();
+        while (curLocalSeedmerIt != localSeedmersIndex.positionMap.end()) {
+            auto curLocalSeedmer = &localSeedmersIndex.seedmerMap.at(curLocalSeedmerIt->second.second);
+
+            if (seedmersIndex.seedmerMap.count(curLocalSeedmer->hash) > 0) {
+                // need to add stringstream
+                resolveSeedmersIndexConflict(seedmersIndex, curLocalSeedmer->hash, &previousSeedmer, &endSeedmer);
+                seedmersIndex.seedmerMap[curLocalSeedmer->hash].begs.insert(curLocalSeedmerIt->first);
+            } else {
+                seedmersIndex.seedmerMap[curLocalSeedmer->hash] = {
+                    curLocalSeedmer->hash,
+                    {curLocalSeedmerIt->first},
+                    curLocalSeedmerIt->second.first,
+                    1,
+                    curLocalSeedmer->rev,
+                    {},
+                    nullptr
+                };
+
+                if (seedmersIndex.firstSeedmer != nullptr) {
+                    assert(previousSeedmer != nullptr && previousSeedmer->num == 1);
+                    previousSeedmer->next = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+                } else {
+                    seedmersIndex.firstSeedmer = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+                }
+                if (previousSeedmer != nullptr) seedmersIndex.seedmerMap[curLocalSeedmer->hash].prev.insert(previousSeedmer);
+                previousSeedmer = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+            }
+
+            seedmersIndex.positionMap[curLocalSeedmerIt->first] = std::make_pair(curLocalSeedmer->hash, curLocalSeedmerIt->second.second);
+            ++curLocalSeedmerIt;
+        }
+        seedmersIndex.lastSeedmer = previousSeedmer;
+    } else if (locators.second.second) {
+        auto endSeedmer = &seedmersIndex.seedmerMap[locators.second.first];
+        decltype(endSeedmer) begSeedmer = nullptr;
+        assert(endSeedmer->num == 1);
+        removeSeedmersBetweenLocators(begSeedmer, endSeedmer, localSeedmersIndex, locators, seedmersIndex, seedmersOutStream, curSeeds, l, k);
+        seedmersIndex.firstSeedmer = nullptr;
+        
+        /* Add new seedmers */
+        decltype(seedmersIndex.firstSeedmer) previousSeedmer = nullptr;
+        auto curLocalSeedmerIt = localSeedmersIndex.positionMap.begin();
+        while (curLocalSeedmerIt != localSeedmersIndex.positionMap.end()) {
+            auto curLocalSeedmer = &localSeedmersIndex.seedmerMap.at(curLocalSeedmerIt->second.second);
+
+            if (seedmersIndex.seedmerMap.count(curLocalSeedmer->hash) > 0) {
+                // need to add stringstream
+                resolveSeedmersIndexConflict(seedmersIndex, curLocalSeedmer->hash, &previousSeedmer, &endSeedmer);
+                seedmersIndex.seedmerMap[curLocalSeedmer->hash].begs.insert(curLocalSeedmerIt->first);
+            } else {
+                seedmersIndex.seedmerMap[curLocalSeedmer->hash] = {
+                    curLocalSeedmer->hash,
+                    {curLocalSeedmerIt->first},
+                    curLocalSeedmerIt->second.first,
+                    1,
+                    curLocalSeedmer->rev,
+                    {},
+                    nullptr
+                };
+
+                if (seedmersIndex.firstSeedmer != nullptr) {
+                    assert(previousSeedmer != nullptr && previousSeedmer->num == 1);
+                    previousSeedmer->next = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+                } else {
+                    seedmersIndex.firstSeedmer = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+                }
+                if (previousSeedmer != nullptr) seedmersIndex.seedmerMap[curLocalSeedmer->hash].prev.insert(previousSeedmer);
+                previousSeedmer = &seedmersIndex.seedmerMap[curLocalSeedmer->hash];
+            }
+
+            seedmersIndex.positionMap[curLocalSeedmerIt->first] = std::make_pair(curLocalSeedmer->hash, curLocalSeedmerIt->second.second);
+            ++curLocalSeedmerIt;
+        }
+    } else {
+        throw std::runtime_error("Can't find locators to insert new seedmers");
+    }
+
+    std::cout << "Great Success! - Borat" << std::endl;
+    seedmersOutStream << "\n";
+}
+
 
 void buildLocalSeedmers(mgsr::seedmers& localSeedmersIndex, const mgsr::seedmers& seedmersIndex, const std::pair<std::pair<std::pair<size_t, size_t>, size_t>,std::vector<size_t>>& group, const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges, const std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds, std::pair<std::pair<size_t, bool>, std::pair<size_t, bool>>& locators, const int32_t l, const int32_t k) {
     std::deque<decltype(curSeeds.begin())> leftSeeds;
@@ -348,11 +547,12 @@ void buildLocalSeedmers(mgsr::seedmers& localSeedmersIndex, const mgsr::seedmers
         }
 
         if (localSeedmersIndex.seedmerMap.count(cacheMin) > 0) {
-            resolveSeedmerIndexConflict(localSeedmersIndex, cacheMin, &previousSeedmer);
+            resolveSeedmersIndexConflict(localSeedmersIndex, cacheMin, &previousSeedmer);
+            localSeedmersIndex.seedmerMap[cacheMin].begs.insert(begs.front());
         } else {
             localSeedmersIndex.seedmerMap[cacheMin] = {
                 cacheMin,
-                begs.front(),
+                {begs.front()},
                 curSeed->second.second,
                 1,
                 rev,
@@ -371,7 +571,7 @@ void buildLocalSeedmers(mgsr::seedmers& localSeedmersIndex, const mgsr::seedmers
             if (previousSeedmer != nullptr) localSeedmersIndex.seedmerMap[cacheMin].prev.insert(previousSeedmer);
             previousSeedmer = &localSeedmersIndex.seedmerMap[cacheMin];
         }
-        localSeedmersIndex.positionMap[begs.front()] = &localSeedmersIndex.seedmerMap[cacheMin];
+        localSeedmersIndex.positionMap[begs.front()] = std::make_pair(curSeed->second.second, cacheMin);
         begs.pop();
     }
 
@@ -410,11 +610,12 @@ void buildLocalSeedmers(mgsr::seedmers& localSeedmersIndex, const mgsr::seedmers
         }
 
         if (localSeedmersIndex.seedmerMap.count(cacheMin) > 0) {
-            resolveSeedmerIndexConflict(localSeedmersIndex, cacheMin, &previousSeedmer);
+            resolveSeedmersIndexConflict(localSeedmersIndex, cacheMin, &previousSeedmer);
+            localSeedmersIndex.seedmerMap[cacheMin].begs.insert(begs.front());
         } else {
             localSeedmersIndex.seedmerMap[cacheMin] = {
                 cacheMin,
-                begs.front(),
+                {begs.front()},
                 seedEnd,
                 1,
                 rev,
@@ -433,7 +634,7 @@ void buildLocalSeedmers(mgsr::seedmers& localSeedmersIndex, const mgsr::seedmers
             if (previousSeedmer != nullptr) localSeedmersIndex.seedmerMap[cacheMin].prev.insert(previousSeedmer);
             previousSeedmer = &localSeedmersIndex.seedmerMap[cacheMin];
         }
-        localSeedmersIndex.positionMap[begs.front()] = &localSeedmersIndex.seedmerMap[cacheMin];
+        localSeedmersIndex.positionMap[begs.front()] = std::make_pair(seedEnd, cacheMin);
         begs.pop();
     }
 
@@ -470,11 +671,12 @@ void buildLocalSeedmers(mgsr::seedmers& localSeedmersIndex, const mgsr::seedmers
         }
 
         if (localSeedmersIndex.seedmerMap.count(cacheMin) > 0) {
-            resolveSeedmerIndexConflict(localSeedmersIndex, cacheMin, &previousSeedmer);
+            resolveSeedmersIndexConflict(localSeedmersIndex, cacheMin, &previousSeedmer);
+            localSeedmersIndex.seedmerMap[cacheMin].begs.insert(begs.front());
         } else {
             localSeedmersIndex.seedmerMap[cacheMin] = {
                 cacheMin,
-                begs.front(),
+                {begs.front()},
                 curSeed->second.second,
                 1,
                 rev,
@@ -493,7 +695,7 @@ void buildLocalSeedmers(mgsr::seedmers& localSeedmersIndex, const mgsr::seedmers
             if (previousSeedmer != nullptr) localSeedmersIndex.seedmerMap[cacheMin].prev.insert(previousSeedmer);
             previousSeedmer = &localSeedmersIndex.seedmerMap[cacheMin];
         }
-        localSeedmersIndex.positionMap[begs.front()] = &localSeedmersIndex.seedmerMap[cacheMin];
+        localSeedmersIndex.positionMap[begs.front()] = std::make_pair(curSeed->second.second, cacheMin);
         begs.pop();
     }
     localSeedmersIndex.lastSeedmer = previousSeedmer;
@@ -586,7 +788,7 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
     if (cacheForwardH < cacheReversedH) {
         seedmersIndex.seedmerMap[cacheForwardH] = {
             cacheForwardH,              // hash
-            std::get<1>(syncmers[0]),   // start position
+            {std::get<1>(syncmers[0])},   // start position
             std::get<2>(syncmers[l-1]), // end position
             1,                          // num of identical hash
             false,                      // reversed
@@ -594,11 +796,11 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
             nullptr                     // ptr to next
         };
         seedmersIndex.firstSeedmer = &seedmersIndex.seedmerMap[cacheForwardH];
-        seedmersIndex.positionMap[std::get<1>(syncmers[0])] = &seedmersIndex.seedmerMap[cacheForwardH];
+        seedmersIndex.positionMap[std::get<1>(syncmers[0])] = std::make_pair(std::get<2>(syncmers[l-1]), cacheForwardH);
     } else if (cacheReversedH < cacheForwardH) {
         seedmersIndex.seedmerMap[cacheReversedH] = {
             cacheReversedH,
-            std::get<1>(syncmers[0]),
+            {std::get<1>(syncmers[0])},
             std::get<2>(syncmers[l-1]),
             1,
             true,
@@ -606,7 +808,7 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
             nullptr
         };
         seedmersIndex.firstSeedmer = &seedmersIndex.seedmerMap[cacheReversedH];
-        seedmersIndex.positionMap[std::get<1>(syncmers[0])] = &seedmersIndex.seedmerMap[cacheReversedH];
+        seedmersIndex.positionMap[std::get<1>(syncmers[0])] = std::make_pair(std::get<2>(syncmers[l-1]), cacheReversedH);
     }
     
     size_t mask = 0;
@@ -635,11 +837,12 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
         }
 
         if (seedmersIndex.seedmerMap.count(curHash) > 0) {
-            resolveSeedmerIndexConflict(seedmersIndex, curHash, &previousSeedmer);
+            resolveSeedmersIndexConflict(seedmersIndex, curHash, &previousSeedmer);
+            seedmersIndex.seedmerMap[curHash].begs.insert(std::get<1>(syncmers[i]));
         } else {
             seedmersIndex.seedmerMap[curHash] = {
                 curHash,
-                std::get<1>(syncmers[i]),
+                {std::get<1>(syncmers[i])},
                 std::get<2>(syncmers[i+l-1]),
                 1,
                 rev,
@@ -657,7 +860,7 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
             previousSeedmer = &seedmersIndex.seedmerMap[curHash];
         }
 
-        seedmersIndex.positionMap[std::get<1>(syncmers[i])] = &seedmersIndex.seedmerMap[curHash];
+        seedmersIndex.positionMap[std::get<1>(syncmers[i])] = std::make_pair(std::get<2>(syncmers[i+l-1]), curHash);
     }
     seedmersIndex.lastSeedmer = previousSeedmer;
     /*rest of syncmers*/
@@ -666,6 +869,17 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
         curSeeds[std::get<1>(syncmers[i])] = std::make_pair(std::get<0>(syncmers[i]),std::get<2>(syncmers[i]));
     }
 
+}
+
+void updateCurSeeds(const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges, std::map<int32_t, std::pair<size_t, int32_t>>& curSeeds) {
+    for (const std::tuple<size_t, int32_t, int32_t, bool>& change : syncmerChanges) {
+        auto [seedHash, seedBeg, seedEnd, seedDel] = change;
+        if (seedDel) {
+            assert(curSeeds.erase(seedBeg));
+        } else {
+            curSeeds[seedBeg] = std::make_pair(seedHash, seedEnd);
+        }
+    }
 }
 
 size_t btn(char b) {
@@ -880,8 +1094,11 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
         seedmersOutStream << node->identifier << " ";
 
         // for (const auto& seedmer : seedmersIndex.seedmerMap) {
-        //     std::cout << seedmer.second.hash << "\t"
-        //               << seedmer.second.beg << "\t"
+        //     std::cout << seedmer.second.hash << "\t";
+        //     for (auto b : seedmer.second.begs) {
+        //         std::cout << b << ",";
+        //     }
+        //     std::cout << "\t"
         //               << seedmer.second.end << "\t"
         //               << seedmer.second.num << "\t"
         //               << seedmer.second.rev << "\t";
@@ -895,14 +1112,14 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
         mgsr::seedmer* curSeedmer = seedmersIndex.firstSeedmer;
         while (curSeedmer != nullptr) {
             std::string s = std::to_string(curSeedmer->hash) + ","
-                          + std::to_string(curSeedmer->beg) + ","
+                          + std::to_string(*(curSeedmer->begs.begin())) + ","
                           + std::to_string(curSeedmer->end) + ","
                           + std::to_string(curSeedmer->rev);
 
             seedmersOutStream << s << " ";
             
             // std::cout << curSeedmer->hash << "\t"
-            //           << curSeedmer->beg << "\t"
+            //           << *(curSeedmer->begs.begin()) << "\t"
             //           << curSeedmer->end << "\t"
             //           << curSeedmer->num << "\t"
             //           << curSeedmer->rev << "\t";
@@ -913,11 +1130,10 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
             curSeedmer = curSeedmer->next;
         }
         seedmersOutStream << "\n";
-    } 
-    else {
+    } else {
         if (node->identifier == "node_2") {
         /*update seedmer and curSeeds*/
-    
+        std::cout << node->identifier << std::endl;
         std::sort(syncmerChanges.begin(), syncmerChanges.end(), [](const auto &a, const auto &b) {
             return std::get<1>(a) < std::get<1>(b);
         });
@@ -984,13 +1200,11 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
             // }
             // std::cout << "right locator: " << locators.second.first << "\t" << locators.second.second << std::endl;
             // std::cout << "\n--------\n" << std::endl;
-
-            // mergeSeedmerIndex(localSeedmersIndex, locators, seedmersIndex, seedmersOutStream, curSeeds, l, k);
-
-            /*apply changes to curSeeds*/
+            mergeSeedmerIndex(localSeedmersIndex, locators, seedmersIndex, seedmersOutStream, curSeeds, l, k);
         }
-
         }
+        /*apply changes to curSeeds*/
+        updateCurSeeds(syncmerChanges, curSeeds);
     }
     /*--testing*/
 

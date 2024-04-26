@@ -17,7 +17,7 @@ namespace mgsr {
     struct seedmer;
     struct seedmer {
         hash_t hash; // hash
-        int32_t beg; // starting position
+        std::unordered_set<int32_t> begs; // starting position
         int32_t end; // ending position
         size_t num; // number of seedmers with the same hash
         bool   rev; // reversed
@@ -30,7 +30,7 @@ namespace mgsr {
     struct seedmers {
         // need to add an ordered_map
         std::unordered_map<hash_t, seedmer> seedmerMap; // seedmers
-        std::map<int32_t, seedmer*> positionMap; // positions
+        std::map<int32_t, std::pair<int32_t, hash_t>> positionMap; // positions
         seedmer* firstSeedmer = nullptr; // starting kmm
         seedmer* lastSeedmer = nullptr;
     };
