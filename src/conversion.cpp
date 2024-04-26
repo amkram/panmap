@@ -10,7 +10,7 @@
 #include "conversion.hpp"
 
 extern "C" {
-    void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k);
+    void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k, bool pairedEndReads);
     void bam_and_ref_to_mplp(sam_hdr_t *header, bam1_t **bam_lines, int nbams, char *ref_string, int lref, kstring_t *mplp_string);
 }
 
@@ -28,6 +28,7 @@ void createSam(
     std::unordered_map<std::string, std::vector<int32_t>> &seedToRefPositions,
     std::string &samFileName,
     int k,
+    bool pairedEndReads,
     
     std::vector<char *> &samAlignments,
     std::string &samHeader
@@ -51,6 +52,7 @@ void createSam(
         readSeeds[r] = matchingSeeds;
     }
 
+
     
     //Preparing C structures for minimap
     const char *reference = bestMatchSequence.c_str();
@@ -62,10 +64,6 @@ void createSam(
     int *r_lens         = (int *)malloc(n_reads*sizeof(int));
     int *seed_counts    = (int *)malloc(n_reads*sizeof(int));
 
-    uint8_t **reversed  = (uint8_t **)malloc(n_reads*sizeof(uint8_t *));
-    int **ref_positions = (int **)malloc(n_reads*sizeof(int *));
-    int **qry_positions = (int **)malloc(n_reads*sizeof(int *));
-
     for(int i = 0; i < n_reads; i++) {
         int n_seeds = readSeeds[i].size();
 
@@ -73,23 +71,67 @@ void createSam(
         read_strings[i] = readSequences[i].c_str();
         qual_strings[i] = readQuals[i].c_str();
         read_names[i] = readNames[i].c_str();
-
         r_lens[i] = readSequences[i].length();
+        
+    }
 
-        uint8_t *reversed_array = (uint8_t *)malloc(n_seeds*sizeof(uint8_t));
-        int *ref_pos_array = (int *)malloc(n_seeds*sizeof(int));
-        int *qry_pos_array = (int *)malloc(n_seeds*sizeof(int));
+    uint8_t **reversed;
+    int **ref_positions;
+    int **qry_positions;
 
+    if(pairedEndReads){
+        reversed  = (uint8_t **)malloc((n_reads/2)*sizeof(uint8_t *));
+        ref_positions = (int **)malloc((n_reads/2)*sizeof(int *));
+        qry_positions = (int **)malloc((n_reads/2)*sizeof(int *));
 
-        for(int j = 0; j < n_seeds; j++){
-            reversed_array[j] = readSeeds[i][j].reversed;
-            qry_pos_array[j] = readSeeds[i][j].pos;
-            ref_pos_array[j] = readSeeds[i][j].rpos + k - 1;
+        for(int i = 0; i < n_reads/2; i++) {
+            
+            int n_seeds = seed_counts[i*2] + seed_counts[i*2+1];
+
+            uint8_t *reversed_array = (uint8_t *)malloc(n_seeds*sizeof(uint8_t));
+            int *ref_pos_array = (int *)malloc(n_seeds*sizeof(int));
+            int *qry_pos_array = (int *)malloc(n_seeds*sizeof(int));
+
+            for(int j = 0; j < seed_counts[i*2]; j++){
+                reversed_array[j] = readSeeds[i*2][j].reversed;
+                qry_pos_array[j] = readSeeds[i*2][j].pos;
+                ref_pos_array[j] = readSeeds[i*2][j].rpos + k - 1;
+            }
+            for(int j = 0; j < seed_counts[i*2 + 1]; j++){
+                reversed_array[j + seed_counts[i*2]] = readSeeds[i*2 + 1][j].reversed;
+                qry_pos_array[j + seed_counts[i*2]] = readSeeds[i*2 + 1][j].pos;
+                ref_pos_array[j + seed_counts[i*2]] = readSeeds[i*2 + 1][j].rpos + k - 1;
+            }
+
+            reversed[i]      = reversed_array;
+            ref_positions[i] = ref_pos_array;
+            qry_positions[i] = qry_pos_array;
         }
 
-        reversed[i]      = reversed_array;
-        ref_positions[i] = ref_pos_array;
-        qry_positions[i] = qry_pos_array;
+    }else{
+
+        reversed  = (uint8_t **)malloc(n_reads*sizeof(uint8_t *));
+        ref_positions = (int **)malloc(n_reads*sizeof(int *));
+        qry_positions = (int **)malloc(n_reads*sizeof(int *));
+
+        for(int i = 0; i < n_reads; i++) {
+
+            int n_seeds = seed_counts[i];
+
+            uint8_t *reversed_array = (uint8_t *)malloc(n_seeds*sizeof(uint8_t));
+            int *ref_pos_array = (int *)malloc(n_seeds*sizeof(int));
+            int *qry_pos_array = (int *)malloc(n_seeds*sizeof(int));
+
+            for(int j = 0; j < n_seeds; j++){
+                reversed_array[j] = readSeeds[i][j].reversed;
+                qry_pos_array[j] = readSeeds[i][j].pos;
+                ref_pos_array[j] = readSeeds[i][j].rpos + k - 1;
+            }
+
+            reversed[i]      = reversed_array;
+            ref_positions[i] = ref_pos_array;
+            qry_positions[i] = qry_pos_array;
+        }
     }
 
 
@@ -100,28 +142,8 @@ void createSam(
     char *sam_alignments[n_reads];
 
     
-    align_reads(reference, n_reads, read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k);
-    
-    
-    /* Sorting the alignments by their reference position */
-    std::vector<std::pair<int, char*>> sam_lines(n_reads);
+    align_reads(reference,n_reads,read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k, pairedEndReads);
 
-    for(int i = 0; i < n_reads; i++) {
-        sam_lines[i] = std::make_pair(r_lens[i],sam_alignments[i]);
-    }
-    sort(sam_lines.begin(), sam_lines.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
-        return a.first < b.first;
-    });
-    
-    int numAlignedReads = n_reads;
-    
-    for(int i = 0; i < n_reads; i++) {
-        sam_alignments[i] = sam_lines[i].second;
-        if(!sam_alignments[i]){
-            numAlignedReads = i;         //Some reads failed
-            break;
-        }
-    }
 
     //Print out sam
     if(samFileName.size() > 0){
@@ -143,11 +165,37 @@ void createSam(
         }
     }
 
+
+    
+    /* Sorting the alignments by their reference position */
+    std::vector<std::pair<int, char*>> sam_lines(n_reads);
+
+    for(int i = 0; i < n_reads; i++) {
+        sam_lines[i] = std::make_pair(r_lens[i],sam_alignments[i]);
+    }
+    sort(sam_lines.begin(), sam_lines.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
+        return a.first < b.first;
+    });
+    
+    int numAlignedReads = n_reads;
+    
+    for(int i = 0; i < n_reads; i++) {
+        sam_alignments[i] = sam_lines[i].second;
+        if(!sam_alignments[i]){
+            numAlignedReads = i;         //Some reads failed
+            break;
+        }
+    }
+
+    
     samAlignments.resize(numAlignedReads);
     for(int i = 0; i < numAlignedReads; i++){
         samAlignments[i] = sam_alignments[i];
     }
 
+
+    if( pairedEndReads )
+        n_reads /= 2;
 
     for(int i = 0; i < n_reads; i++) {
         free(reversed[i]);
