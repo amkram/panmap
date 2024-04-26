@@ -200,7 +200,7 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
         int forwardReads = readSequences.size();
 
         while ((line = kseq_read(seq)) >= 0) {
-            readSequences.push_back(seq->seq.s);
+            readSequences.push_back(reverseComplement(seq->seq.s));
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
@@ -308,6 +308,10 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         readSeeds.push_back(thisReadsSeeds);
     }
 
+
+    bool pairedEndReads = reads2Path.size();
+
+
     /* Sample placement */
     std::cout << "⋌⋋ Placing sample ... " << std::flush;
     std::map<std::string, float> scores;
@@ -400,6 +404,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         seedToRefPositions,
         samFileName,
         k,
+        pairedEndReads,
         
         samAlignments,
         samHeader
