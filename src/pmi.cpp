@@ -227,7 +227,7 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tre
         int32_t globalCoord = std::get<5>(nucMut);
         int32_t len = std::get<6>(nucMut);
         int32_t lastSeed = -1;
-        for (int32_t c = globalCoord + len; c >= globalCoord; c--) {
+        for (int32_t c = globalCoord + len; c >= std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k * l))]); c--) {
             if (data.gappedConsensus[c] == '-') {
                 continue;
             }
