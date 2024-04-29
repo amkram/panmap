@@ -37,6 +37,11 @@ std::string tree::getConsensus(Tree *T) {
     }
     return consensus;
 }
+
+/*
+- regap not used anywhere previously -> changed how regap is constructed for the purpose
+  of fixing syncmer/seedemr update bug and tracking end positions.
+*/
 void tree::updateConsensus(mutableTreeData &data, Tree *T) { //TODO use mutation data
 
     std::string consensus = tree::getStringFromCurrData(data, T, T->root, true);
@@ -46,16 +51,12 @@ void tree::updateConsensus(mutableTreeData &data, Tree *T) { //TODO use mutation
     data.degap.clear();
     data.regap.clear();
 
-    int32_t ct = 0;
     for (int32_t i = 0; i < consensus.size(); i ++) {
-
         char &c = consensus[i];
         data.degap.push_back(ungapped.size());
-        data.regap.push_back(i + ct);
         if (c != '-') {
             ungapped += c;
-        } else {
-            ct++;
+            data.regap.push_back(i);
         }
     }
 
