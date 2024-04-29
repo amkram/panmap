@@ -58,8 +58,6 @@ void tree::updateConsensus(mutableTreeData &data, Tree *T) { //TODO use mutation
             ct++;
         }
     }
-
-    time_stamp();
     
     data.ungappedConsensus = ungapped;
 }
