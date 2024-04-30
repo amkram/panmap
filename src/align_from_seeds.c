@@ -93,9 +93,11 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 	}
 	n_a = n_seeds;
 
-	for(i = 0; i < n_seeds_0; i++){
-		if(reversed[i]){
-			a[i].y += read_lengths[1];
+	if(num_reads == 2){ //TODO check if this needs to be done non-paired end as well
+		for(i = 0; i < n_seeds_0; i++){
+			if(reversed[i]){
+				a[i].y += read_lengths[1];
+			}
 		}
 	}
 
