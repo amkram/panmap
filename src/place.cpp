@@ -339,10 +339,10 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestMatch, true);
-    std::vector<int32_t> degap;
+    std::vector<int32_t> degapVec;
     for (int32_t i = 0; i < gappedSeq.size(); i ++) {
         char &c = gappedSeq[i];
-        degap.push_back(bestMatchSequence.size());
+        degapVec.push_back(bestMatchSequence.size());
         if (c != '-') {
             bestMatchSequence += c;
         }
@@ -359,6 +359,8 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
 
+
+    
     /* Debug Print statements */
     for (const auto &seedmer : targetSeedmers) {
         if (seedmer.second == "" ) {
@@ -369,7 +371,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
             seedToRefPositions[seed] = {};
         }
-        seedToRefPositions[seed].push_back(degap[refPos]);
+        seedToRefPositions[seed].push_back(degapVec[refPos]);
     }
 
     //Print out reference
@@ -401,7 +403,8 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         seedToRefPositions,
         samFileName,
         k,
-    
+        pairedEndReads,
+
         samAlignments,
         samHeader
     );

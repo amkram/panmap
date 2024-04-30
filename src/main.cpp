@@ -11,6 +11,8 @@
 #include <iostream>
 #include <string>
 #include <cstdio>
+#include <easy/profiler.h>
+
 
 using namespace pmi;
 namespace po = boost::program_options;
@@ -18,8 +20,7 @@ namespace fs = boost::filesystem;
 
 /* Helpers */
 void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt, bool use_root) {
-
-    std::cin.clear();
+        std::cin.clear();
     std::fflush(stdin);
     using namespace std;
     // Check if reads were supplied by user       
@@ -47,7 +48,7 @@ void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t
 }
 
 void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
-    using namespace std;
+        using namespace std;
     int32_t k, s, j;
     cout << "Syncmer parameter k: ";
     cin >> k;
@@ -66,7 +67,8 @@ void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
 
 /* Parse command line input and run logic */
 int main(int argc, char *argv[]) {
-    try {
+    profiler::startListen();
+        try {
         po::options_description desc("Options");
         desc.add_options()
             ("panmat", po::value<std::string>()->required(), "Path to tree.pmat file (required)")
