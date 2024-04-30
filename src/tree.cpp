@@ -17,7 +17,7 @@ void time_stamp(){
 
 
 std::string tree::getConsensus(Tree *T) {
-    std::string consensus = "";
+          std::string consensus = "";
     for (size_t i = 0; i < T->blocks.size(); i++) {
         for (size_t j = 0; j < T->blocks[i].consensusSeq.size(); j++) {
             uint32_t c = T->blocks[i].consensusSeq[j];
@@ -37,33 +37,9 @@ std::string tree::getConsensus(Tree *T) {
     }
     return consensus;
 }
-void tree::updateConsensus(mutableTreeData &data, Tree *T) { //TODO use mutation data
 
-    std::string consensus = tree::getStringFromCurrData(data, T, T->root, true);
-
-    data.gappedConsensus = consensus;
-    std::string ungapped = "";
-    data.degap.clear();
-    data.regap.clear();
-
-    int32_t ct = 0;
-    for (int32_t i = 0; i < consensus.size(); i ++) {
-
-        char &c = consensus[i];
-        data.degap.push_back(ungapped.size());
-        data.regap.push_back(i + ct);
-        if (c != '-') {
-            ungapped += c;
-        } else {
-            ct++;
-        }
-    }
-
-    time_stamp();
-    
-    data.ungappedConsensus = ungapped;
-}
 void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings, mutableTreeData &data, Tree *T, const Node *node, globalCoords_t &globalCoords) {
+  
     /*  Mutate with block and nuc mutations */
     blockMutData_t blockMutData;
     nucMutData_t nucMutData;
@@ -85,6 +61,7 @@ void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings, 
 }
 
 std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
+     
     std::unordered_map<std::string, std::string> strings;
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
@@ -98,7 +75,7 @@ std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
 std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T, const Node *node, const bool aligned) {
     // T should be const but [] operator on T->sequenceInverted is non-const
     
-
+  
     std::string line;
     if (node == nullptr) { // consensus sequence (all blocks on) rather than a node in the tree
        for (size_t i = 0; i < T->blocks.size(); i++) {
@@ -184,6 +161,7 @@ std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T, const No
     return line;
 }
 void setupGlobalCoordinates(globalCoords_t &globalCoords, const BlockGapList &blockGaps, const std::vector<Block> &blocks, const std::vector<GapList> &gaps) {
+  
     globalCoords.resize(blocks.size()+1);    
     // Assigning block gaps
     for(size_t i = 0; i < blockGaps.blockPosition.size(); i++){
@@ -243,6 +221,7 @@ void setupGlobalCoordinates(globalCoords_t &globalCoords, const BlockGapList &bl
     }
 }
 void tree::removeIndices(std::vector<seed> &v, std::stack<int32_t> &rm) {
+      
     if (rm.size() < 1) {
         return;
     }
@@ -269,7 +248,10 @@ void tree::removeIndices(std::vector<seed> &v, std::stack<int32_t> &rm) {
         std::end(v)
     );
 }
+
+
 void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T) {
+    
     const BlockGapList &blockGaps = T->blockGaps;
     const std::vector< GapList > &gaps = T->gaps;
     const std::vector< Block > &blocks = T->blocks;
@@ -323,9 +305,24 @@ void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords, Tree *T) {
     data.blockExists = blockExists;
     data.blockStrand = blockStrand;
     setupGlobalCoordinates(globalCoords, blockGaps, blocks, gaps);
+    data.ungappedConsensus = getConsensus(T);
+    for (GapList gap : T->gaps) {
+        std::cout << "gap: " << gap.primaryBlockId << " " << gap.nucPosition.size() << " " << gap.nucGapLength.size() << std::endl;
+        for (size_t i = 0; i < gap.nucPosition.size(); i++) {
+            std::cout << gap.nucPosition[i] << " " << gap.nucGapLength[i] << std::endl;
+            int32_t nucPos = gap.nucPosition[i];
+            for (size_t j = 0; j < gap.nucGapLength[i]; j++) {
+                std::cout << "gapmap: " << nucPos+j << std::endl;
+                std::cout << "global1 " << tree::getGlobalCoordinate(gap.primaryBlockId, nucPos, j, globalCoords) << std::endl;
+                int32_t global = tree::getGlobalCoordinate(gap.primaryBlockId, nucPos, j, globalCoords);
+                data.gapMap[global] = true;
+            }
+        }
+    }
 }
 
 size_t tree::getGlobalCoordinate(const int blockId, const int nucPosition, const int nucGapPosition, const globalCoords_t &globalCoords) {
+      
     if(nucGapPosition == -1){
         return globalCoords[blockId].first[nucPosition].first;
     }
@@ -333,6 +330,7 @@ size_t tree::getGlobalCoordinate(const int blockId, const int nucPosition, const
 }
 
 static int getIndexFromNucleotide(char nuc) {
+      
     switch(nuc) {
         case 'A':
             return 0;
@@ -351,6 +349,7 @@ static int getIndexFromNucleotide(char nuc) {
 }
 
 static size_t getBeg(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+     
     if (s1.empty()) {
         return 0;
     }
@@ -395,6 +394,7 @@ static size_t getBeg(const std::string& s1, const std::string& s2, size_t window
 }
 
 static size_t getEnd(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+    
     if (s1.empty()) {
         return 0;
     }
@@ -447,6 +447,7 @@ static size_t getEnd(const std::string& s1, const std::string& s2, size_t window
 }
 
 std::pair<size_t, size_t> tree::getMaskCoorsForMutmat(const std::string& s1, const std::string& s2, size_t window, double threshold) {
+    
     assert(s1.size() == s2.size());
     if (window == 0 || threshold == 0.0) {
         return std::make_pair<size_t, size_t>(0, s1.size()-1);
@@ -455,6 +456,7 @@ std::pair<size_t, size_t> tree::getMaskCoorsForMutmat(const std::string& s1, con
 }
 
 void buildMutationMatrices(mutationMatrices& mutMat, Tree* T, size_t window, double threshold) {
+  
     std::unordered_map<std::string, std::string> alignedSequences = getAllNodeStrings(T);
     for (const auto& sequence : alignedSequences) {
         std::string parentId;

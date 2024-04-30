@@ -36,13 +36,11 @@ namespace tree {
     struct mutableTreeData { 
         // These fields are intended to be mutated at each node during a DFS
         sequence_t sequence; // the main object encoding the MSA
-        std::string gappedConsensus;
+        std::unordered_map<int32_t, bool> gapMap; // gaps[i] = (start, length) of gap i
         std::string ungappedConsensus;
-        std::vector<int32_t> degap; // ungapped[degap[i]] => gapped[i]
-        std::vector<int32_t> regap; // gapped[regap[i]] => ungapped[i]
         std::vector<seed> seeds; // dynamic vector of seeds in each node's sequence
         std::vector<seedmer> seedmers;
-        std::unordered_map<int32_t, std::pair<int32_t, std::string>> seedMap;
+        std::unordered_map<int32_t, std::pair<int32_t, std::string> > seedMap;
         std::unordered_map<std::string, bool> variableSeeds; // seeds in the consensus that mutate at least once
         blockExists_t blockExists; // tracks if blocks are "on" at a node
         blockStrand_t blockStrand; // tracks strand of blocks
