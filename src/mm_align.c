@@ -48,7 +48,6 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 		regs[i] = 0;
 		qlen_sum += read_lengths[i];
 	}
-	
 
 	if (opt->max_qlen > 0 && qlen_sum > opt->max_qlen) return;
 
@@ -74,9 +73,19 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 	}
 	n_a = n_seeds;
 
+	if(num_reads == 2){ //TODO check if this needs to be done non-paired end as well
+		for(i = 0; i < n_seeds_0; i++){
+			if(reversed[i]){
+				a[i].y += read_lengths[1];
+			}
+		}
+	}
+
 	for(i = n_seeds_0; i < n_seeds; i++){
 		a[i].y |= 0x1000000000000;
-		a[i].y += read_lengths[0];
+		if(!reversed[i]){
+			a[i].y += read_lengths[0];
+		}
 	}
 
 	if (mm_dbg_flag & MM_DBG_PRINT_SEED) {
@@ -85,7 +94,6 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 			fprintf(stderr, "SD\t%s\t%d\t%c\t%d\t%d\t%d\t%lx\t%lx\n", mi->seq[a[i].x<<1>>33].name, (int32_t)a[i].x, "+-"[a[i].x>>63], (int32_t)a[i].y, (int32_t)(a[i].y>>32&0xff),
 					i == 0? 0 : ((int32_t)a[i].y - (int32_t)a[i-1].y) - ((int32_t)a[i].x - (int32_t)a[i-1].x), a[i].x,a[i].y);
 	}
-
 
 
 
@@ -110,7 +118,6 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 		a = mg_lchain_dp(max_chain_gap_ref, max_chain_gap_qry, opt->bw, opt->max_chain_skip, opt->max_chain_iter, opt->min_cnt, opt->min_chain_score,
 						 chn_pen_gap, chn_pen_skip, is_splice, num_reads, n_seeds, a, &n_regs0, &u, b->km);
 	}
-	
 
 
 	if (opt->bw_long > opt->bw && (opt->flag & (MM_F_SPLICE|MM_F_SR|MM_F_NO_LJOIN)) == 0 && num_reads == 1 && n_regs0 > 1) { // re-chain/long-join for long sequences
@@ -173,6 +180,7 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 	} else { // multi-segment
 		mm_seg_t *seg;
 		seg = mm_seg_gen(b->km, hash, num_reads, read_lengths, n_regs0, regs0, n_regs, regs, a); // split fragment chain to separate segment chains
+
 		free(regs0);
 		for (i = 0; i < num_reads; ++i) {
 			mm_set_parent(b->km, opt->mask_level, opt->mask_len, n_regs[i], regs[i], opt->a * 2 + opt->b, opt->flag&MM_F_HARD_MLEVEL, opt->alt_drop); // update mm_reg1_t::parent
@@ -228,7 +236,8 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 
 //Stores sam strings in sam_alignments, and stores reference positions of alignments in r_lens
 void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k, bool pairedEndReads ) {
-    mm_idxopt_t iopt;
+    
+	mm_idxopt_t iopt;
 	mm_mapopt_t mopt;
 	int n_threads = 1;
 
@@ -248,14 +257,12 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 	mm_mapopt_update(&mopt, mi); // this sets the maximum minimizer occurrence;
 	mm_tbuf_t *tbuf = mm_tbuf_init(); // thread buffer; for multi-threading, allocate one tbuf for each thread
 
-
 	if (pairedEndReads) {
 		for(int k = 0; k < n_reads/2; k++) {
 			
 			mm_reg1_t *reg[2] = {NULL,NULL};
 			int n_reg[2] = {0,0};
 			
-
 			align_read_given_seeds(mi, 2, &(r_lens[k*2]), &(reads[k*2]), n_reg,  reg,  tbuf, &mopt, iopt.k, seed_counts[k*2],  seed_counts[k*2 + 1], ref_positions[k], qry_positions[k], reversed[k]);
 			
 
@@ -274,7 +281,6 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 				t.seq = reads[k*2];
 				t.name = read_names[k*2];
 				t.qual = quality[k*2];
-
 				mm_write_sam3( &sam, mi, &t, 0, 0, 2, n_reg, reg, NULL, 0, 0);
 				r_lens[k*2] = reg[0]->rs+1; //Length of sam line string
 				sam_alignments[k*2] = sam.s;
@@ -285,7 +291,6 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 				t.seq = reads[k*2+1];
 				t.name = read_names[k*2+1];
 				t.qual = quality[k*2+1];
-
 				mm_write_sam3( &sam2, mi, &t, 1, 0, 2, n_reg, reg, NULL, 0, 0);
 				r_lens[k*2+1] = reg[1]->rs+1; //Length of sam line string
 				sam_alignments[k*2+1] = sam2.s;
@@ -308,6 +313,7 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 
 		for(int k = 0; k < n_reads; k++) {
 			
+			
 			mm_reg1_t *reg[1] = {NULL}; //Alignments
 			int n_reg[1] = {0};
 
@@ -315,8 +321,10 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 			
 			mi->seq[0].name = "ref"; //TODO use actual ref name
 
-			//  TODO is reg[0]->score > r_lens[k] necessary?
-			if(n_reg[0] == 0 || reg[0]->score <= 0) {
+			
+			// reg[0]->score is the number of quality aligned bp
+
+			if(n_reg[0] == 0 || reg[0]->score <= 0 || reg[0]->score > r_lens[k]) {
 				sam_alignments[k] = NULL;
 				r_lens[k] = INT_MAX;
 			} else {
