@@ -271,6 +271,7 @@ int parse_readbases(
 
         bool is_last = (cur_start == readbase_string.size() - 1);
 
+
         if(basePairs.find(readbase_string[cur_start]) != std::string::npos){
             //SNP
             nucs += toupper(readbase_string[cur_start]);
@@ -278,8 +279,7 @@ int parse_readbases(
             snp_errs += readbase_errors[cur_idx];
             cur_start += 1;
             cur_idx++;
-        }
-        if(readbase_string[cur_start] == '.' || readbase_string[cur_start] == ',') {
+        }else if(readbase_string[cur_start] == '.' || readbase_string[cur_start] == ',') {
             if (is_last){
                 //SNP
                 nucs += ref_nuc;
@@ -292,10 +292,10 @@ int parse_readbases(
                     variation_types |= variationType::DEL;
                     del_errs += readbase_errors[cur_idx];
                     int indel_size = 0;
-                    //std::cerr << "A\n";
+                    
                     cur_start+=2;
                     while(std::isdigit((int)readbase_string[cur_start])) {
-                        //std::cerr << "A\n";
+                        
                         indel_size *= 10;
                         indel_size += (int)readbase_string[cur_start] - 48;
                         cur_start++;
@@ -308,6 +308,7 @@ int parse_readbases(
                     
                     cur_idx++;
                 }else if(readbase_string[cur_start+1] == '+'){
+
                     //INS
                     variation_types |= variationType::INS;
                     ins_errs += readbase_errors[cur_idx];
@@ -323,6 +324,7 @@ int parse_readbases(
                     string seq = readbase_string.substr(cur_start, indel_size);
                     to_upper(seq);
                     insertion_seqs.push_back(seq);
+
                     cur_start += indel_size;
                     
                     cur_idx++;
@@ -335,6 +337,29 @@ int parse_readbases(
                 }
             }
             
+        }else if(readbase_string[cur_start] == '-'){ //This means the same bp has an insertion and a deletion, for now we ignore the deletion TODO
+            //SUBSTITION
+
+            //variation_types |= variationType::DEL;
+            //del_errs += readbase_errors[cur_idx];
+            int indel_size = 0;
+            
+            cur_start++;
+            while(std::isdigit((int)readbase_string[cur_start])) {
+            
+                indel_size *= 10;
+                indel_size += (int)readbase_string[cur_start] - 48;
+                cur_start++;
+            }
+
+            //string seq = readbase_string.substr(cur_start, indel_size);
+            //to_upper(seq);
+            //deletion_seqs.push_back(seq);
+            cur_start += indel_size;
+                    
+            //cur_idx++;
+        }else{
+            cur_start++;
         }
     }
 
@@ -374,8 +399,9 @@ pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(st
                 insertion_seqs, deletion_seqs, errs, mutMat
             ));
             site_id++;
-        }
 
+        }
+        
     }
     
     return make_pair(candidateVariants, maskRange);

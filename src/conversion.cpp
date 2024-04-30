@@ -136,6 +136,7 @@ void createSam(
     align_reads(reference,n_reads,read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k, pairedEndReads);
 
 
+    
     //Print out sam
     if(samFileName.size() > 0){
         std::ofstream outFile{samFileName};
@@ -155,7 +156,7 @@ void createSam(
             std::cerr << "Error: failed to write to file " << samFileName << std::endl;
         }
     }
-
+    
 
     
     /* Sorting the alignments by their reference position */
@@ -167,6 +168,8 @@ void createSam(
     sort(sam_lines.begin(), sam_lines.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
         return a.first < b.first;
     });
+
+    
     
     int numAlignedReads = n_reads;
     
