@@ -13,6 +13,7 @@ void createSam(
     std::unordered_map<std::string, std::vector<int32_t>> &seedToRefPositions,
     std::string &samFileName,
     int k,
+    bool pairedEndReads,
     
     std::vector<char *> &samAlignments,
     std::string &samHeader
