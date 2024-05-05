@@ -22,8 +22,8 @@ namespace mgsr {
         size_t num; // number of seedmers with the same hash
         bool   rev; // reversed
 
-        std::unordered_set<seedmer*> prev; // ptr to previous seedmer
-        seedmer* next; // ptr to next seedmer
+        std::unordered_set<size_t> prev; // ptr to previous seedmer
+        std::pair<size_t, bool> next; // ptr to next seedmer
         
     };
 
@@ -31,8 +31,8 @@ namespace mgsr {
         // need to add an ordered_map
         std::unordered_map<hash_t, seedmer> seedmerMap; // seedmers
         std::map<int32_t, std::pair<int32_t, hash_t>> positionMap; // positions
-        seedmer* firstSeedmer = nullptr; // starting kmm
-        seedmer* lastSeedmer = nullptr;
+        std::pair<size_t, bool> firstSeedmer = {0, false}; // starting kmm
+        std::pair<size_t, bool> lastSeedmer = {0, false};
     };
 
     // pmi index file with k = k, s = s, l = 1
