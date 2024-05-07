@@ -29,25 +29,50 @@ std::string tree::getConsensus(Tree *T) {
     }
     return consensus;
 }
+
+/*testing*/
+/*
+- regap not used anywhere else
+- change how regap is constructed for tracking the end position of syncmers and seedmers
+*/
 void tree::updateConsensus(mutableTreeData &data, Tree *T) {
     std::string consensus = tree::getStringFromCurrData(data, T, T->root, true);
     data.gappedConsensus = consensus;
     std::string ungapped = "";
     data.degap.clear();
     data.regap.clear();
-    int32_t ct = 0;
     for (int32_t i = 0; i < consensus.size(); i ++) {
         char &c = consensus[i];
         data.degap.push_back(ungapped.size());
-        data.regap.push_back(i + ct);
         if (c != '-') {
             ungapped += c;
-        } else {
-            ct++;
+            data.regap.push_back(i);
         }
     }
     data.ungappedConsensus = ungapped;
 }
+/*testing*/
+// void tree::updateConsensus(mutableTreeData &data, Tree *T) {
+//     std::string consensus = tree::getStringFromCurrData(data, T, T->root, true);
+//     data.gappedConsensus = consensus;
+//     std::string ungapped = "";
+//     data.degap.clear();
+//     data.regap.clear();
+//     int32_t ct = 0;
+//     for (int32_t i = 0; i < consensus.size(); i ++) {
+//         char &c = consensus[i];
+//         data.degap.push_back(ungapped.size());
+//         data.regap.push_back(i + ct);
+//         if (c != '-') {
+//             ungapped += c;
+//         } else {
+//             ct++;
+//         }
+//     }
+//     data.ungappedConsensus = ungapped;
+// }
+
+
 void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings, mutableTreeData &data, Tree *T, const Node *node, globalCoords_t &globalCoords) {
     /*  Mutate with block and nuc mutations */
     blockMutData_t blockMutData;
