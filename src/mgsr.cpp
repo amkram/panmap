@@ -219,12 +219,13 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     std::vector<std::tuple<size_t, int32_t, int32_t, bool>> syncmerChanges;
     /*testing*/
 
+
     tree::nucMutData_t extended = nucMutData;
     for (const auto &blockMut : blockMutData) {
         int32_t blockId = std::get<0>(blockMut);
         int32_t blockStart = tree::getGlobalCoordinate(blockId, 0, -1, globalCoords);
         int32_t seen = 0;
-        while (seen < k && blockStart >= 1) {
+        while (seen < 2 * k && blockStart >= 1) {
             if (data.gappedConsensus[blockStart] != '-') {
                 seen++;
             }
@@ -233,7 +234,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
         int32_t blockStop = tree::getGlobalCoordinate(blockId, globalCoords[blockId].first.size()-1, -1, globalCoords);
         bool newStrand = std::get<4>(blockMut);
-
+        std::cerr << "bloackStart? " << blockStart << std::endl;
 //        std::cout << "blockMut: " << blockId << "  start: " << blockStart << "  stop: " << blockStop << "  newStrand: " << newStrand << std::endl;
         if (newStrand) {
             extended.push_back(std::make_tuple(-1, -1, -1, -1, -1, blockStart, blockStop - blockStart));
@@ -244,14 +245,55 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     });
 
     std::unordered_map<int32_t, bool> seen;
+    std::unordered_map<int32_t, bool> seenNucMut;
     for (const auto &nucMut : extended) {
         int32_t globalCoord = std::get<5>(nucMut);
-        int32_t len = std::get<6>(nucMut) > 0 ? std::get<6>(nucMut) : 6;
-        int32_t lastSeed = -1;
-        if (node->identifier == "node_6") {
-            std::cout << "globalCoord: " << globalCoord << "\tlen: " << len << std::endl; 
+        
+        int32_t len = std::get<6>(nucMut) - 1;
+        // if (std::get<3>(nucMut) != '-' && std::get<4>(nucMut) != '-') {
+        //     std::cerr << "SUBS: alt len? " << data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord << std::endl;
+        // }
+        if (std::get<4>(nucMut) != -1 && data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord > 0) {
+            // insertion
+            len = data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord;
         }
-        for (int32_t c = globalCoord + len; c >= std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k * l))]); c--) {
+        // else if (std::get<4>(nucMut) == '-') {
+        //     // deletion
+        //     std::cerr << "for deletion: len = " << data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord << "?" << std::endl;
+        // } 
+        int32_t lastSeed = -1;
+
+        // if (seenNucMut.find(globalCoord) != seenNucMut.end()) {
+        //     continue;
+        // }
+        // seenNucMut[globalCoord] = true;
+
+        std::cerr << std::get<0>(nucMut) << "\t"
+                  << std::get<1>(nucMut) << "\t"
+                  << std::get<2>(nucMut) << "\t"
+                  << std::get<3>(nucMut) << "\t"
+                  << std::get<4>(nucMut) << "\t"
+                  << std::get<5>(nucMut) << "\t"
+                  << std::get<6>(nucMut) << std::endl;
+        std::cerr << "globalCoord: " << globalCoord << "\tnucMut og: " << std::get<6>(nucMut) << "\tlen: " << len << "\taltlen: " <<  data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord << std::endl;
+        std::cerr << "data.degap[globalCoord] = " << data.degap[globalCoord] << "\tdata.degap[globalCoord] - k = " << data.degap[globalCoord] - static_cast<int32_t>(k) << std::endl;
+        std::cerr << "data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))] = " << data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))] << std::endl;
+        
+        int32_t leftEndCoor = std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))]);
+        if (leftEndCoor > globalCoord) {
+            leftEndCoor = globalCoord;
+            // len = data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord;
+
+        }
+        
+        std::cerr << "old from " << globalCoord + len << " to " << std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))]) << std::endl;
+        std::cerr << "new from " << globalCoord + len << " to " << leftEndCoor << std::endl;
+        for (int32_t c = globalCoord + len; c >= leftEndCoor; c--) {
+            if (seen.find(c) != seen.end()) {
+                continue;
+            }
+            seen[c] = true;
+
             if (data.gappedConsensus[c] == '-') {
                 if (seedMap.find(c) != seedMap.end()) {
                     // no longer a seed -> delete
@@ -274,18 +316,13 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
             /*testing*/
             std::pair<size_t, bool> kmerHash = getHash(kmer);
-            if (!kmerHash.second) continue;
             size_t curHash = kmerHash.first;
             /*testing*/
 
-            if (seen.find(c) != seen.end()) {
-                continue;
-            }
-            seen[c] = true;
             if (seedMap.find(c) != seedMap.end()) {
                 // This kmer is already a seed.
                 std::string prevseedmer = seedMap[c].second;
-                if (seeding::is_syncmer(kmer, s, false)) {
+                if (kmerHash.second && kmer.size() == k && seeding::is_syncmer(kmer, s, false)) {
                     // Is it still a seed?
                     seedMap[c].second = kmer;
                     if (seedMap[c].second == prevseedmer) {
@@ -317,7 +354,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                 }
             } else {
                 // not in seed map, could be a seed now
-                if (seeding::is_syncmer(kmer, s, false)) {
+                if (seeding::is_syncmer(kmer, s, false) && kmerHash.second) {
                     std::string newseedmer = kmer;
                     if (newseedmer.size() == k) {
                         std::string str = "";
@@ -347,8 +384,8 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
         std::string seedsPath = "../src/test/data/mgsr/test/" + node->identifier + ".smi";
         writeCurSeeds(seedsPath, curSeeds, data);
-        std::string seedmersPath = "../src/test/data/mgsr/test/" + node->identifier + ".kmi";
-        writeCurSeedmers(seedmersPath, seedmersIndex, data);
+        // std::string seedmersPath = "../src/test/data/mgsr/test/" + node->identifier + ".kmi";
+        // writeCurSeedmers(seedmersPath, seedmersIndex, data);
     } else {
         std::cerr << node->identifier << std::endl;
         updateCurSeeds(curSeeds, syncmerChanges);
@@ -402,7 +439,17 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     ++count;
                 }
 
-                if (count != l) break;
+                if (count != l) {
+                    auto positionMapIt = seedmersIndex.positionMap.find(curAffectedSeed->first);
+                    if (positionMapIt != seedmersIndex.positionMap.end()) {
+                        auto begToErase  = curAffectedSeed->first;
+                        auto hashToErase = positionMapIt->second.first;
+                        assert(seedmersIndex.seedmersMap[hashToErase].erase(begToErase));
+                        if (seedmersIndex.seedmersMap[hashToErase].empty()) seedmersIndex.seedmersMap.erase(hashToErase);
+                        assert(seedmersIndex.positionMap.erase(begToErase));
+                    }
+                    break;
+                }
 
                 if (cacheForwardH < cacheReversedH) {
                     cacheMin = cacheForwardH;
@@ -411,10 +458,27 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     cacheMin = cacheReversedH;
                     rev = true;
                 } else {
+                    auto positionMapIt = seedmersIndex.positionMap.find(curAffectedSeed->first);
+                    if (positionMapIt != seedmersIndex.positionMap.end()) {
+                        auto begToErase  = curAffectedSeed->first;
+                        auto hashToErase = positionMapIt->second.first;
+                        assert(seedmersIndex.seedmersMap[hashToErase].erase(begToErase));
+                        if (seedmersIndex.seedmersMap[hashToErase].empty()) seedmersIndex.seedmersMap.erase(hashToErase);
+                        assert(seedmersIndex.positionMap.erase(begToErase));
+                    }
                     ++curAffectedSeed;
                     continue;
                 }
 
+                if (node->identifier == "node_2") {
+                    std::cout << cacheMin << "\t" << curAffectedSeed->first << std::endl;
+                }
+                
+                auto potentialDel = seedmersIndex.positionMap.find(curAffectedSeed->first);
+                if (potentialDel != seedmersIndex.positionMap.end()) {
+                    seedmersIndex.seedmersMap.find(potentialDel->second.first)->second.erase(potentialDel->first);
+                    if (seedmersIndex.seedmersMap[potentialDel->second.first].empty()) seedmersIndex.seedmersMap.erase(potentialDel->second.first);
+                }
                 seedmersIndex.positionMap[curAffectedSeed->first] = std::make_pair(cacheMin, rev);
                 seedmersIndex.seedmersMap[cacheMin].insert(curAffectedSeed->first);
                 ++curAffectedSeed;
@@ -422,6 +486,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
             // std::cerr << "checking if delete" << std::endl;
             if (seedDel) {
+                if (node->identifier == "node_2") std::cout << "delete: " << seedHash << "\t" << seedBeg << std::endl;
                 auto positionMapIt = seedmersIndex.positionMap.find(seedBeg);
                 if (positionMapIt != seedmersIndex.positionMap.end()) {
                     auto begToErase  = seedBeg;
