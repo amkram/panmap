@@ -111,7 +111,7 @@ void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutD
                     for(int j = 0; j < len; j++) {
                         char oldVal = data.sequence[blockId].first[nucPosition+j].first;
                         data.sequence[blockId].first[nucPosition+j].first = '-';
-                        nucMutData.push_back(std::make_tuple(blockId, nucPosition + j, nucGapPosition, oldVal, '-', globalCoord, 0));
+                        nucMutData.push_back(std::make_tuple(blockId, nucPosition + j, nucGapPosition, oldVal, '-', globalCoord, len));
                     }
                 }
             }
@@ -203,7 +203,8 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tre
         int32_t blockId = std::get<0>(blockMut);
         int32_t blockStart = getGlobalCoordinate(blockId, 0, -1, globalCoords);
         int32_t seen = 0;
-        while (seen < k && blockStart >= 1) {
+
+        while (seen < 2 * k && blockStart >= 1) {
             if (data.gappedConsensus[blockStart] != '-') {
                 seen++;
             }
@@ -223,23 +224,65 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tre
     });
 
     std::unordered_map<int32_t, bool> seen;
+    std::unordered_map<int32_t, bool> seenNucMut;
     for (const auto &nucMut : extended) {
+        // std::cerr << node->identifier << std::endl;
+        // std::cerr << std::get<0>(nucMut) << "\t"
+        //           << std::get<1>(nucMut) << "\t"
+        //           << std::get<2>(nucMut) << "\t"
+        //           << std::get<3>(nucMut) << "\t"
+        //           << std::get<4>(nucMut) << "\t"
+        //           << std::get<5>(nucMut) << "\t"
+        //           << std::get<6>(nucMut) << std::endl;
+
         int32_t globalCoord = std::get<5>(nucMut);
-        int32_t len = std::get<6>(nucMut);
-        int32_t lastSeed = -1;
-        for (int32_t c = globalCoord + len; c >= std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k * l))]); c--) {
-            if (data.gappedConsensus[c] == '-') {
+        if (std::get<4>(nucMut) != -1) {
+            if (seenNucMut.find(globalCoord) != seenNucMut.end()) {
                 continue;
             }
-            std::string kmer = data.ungappedConsensus.substr(data.degap[c], k);
+            seenNucMut[globalCoord] = true;
+        }
+        int32_t len = std::get<6>(nucMut) - 1;
+
+        if (std::get<4>(nucMut) != -1 && data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord > 0) {
+            len = data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord;
+        }
+
+        int32_t lastSeed = -1;
+
+        int32_t leftEndCoord = std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))]);
+        if (leftEndCoord > globalCoord) {
+            leftEndCoord = globalCoord;
+        }
+
+        for (int32_t c = globalCoord + len; c >= leftEndCoord; c--) {
             if (seen.find(c) != seen.end()) {
                 continue;
             }
             seen[c] = true;
+
+            if (data.gappedConsensus[c] == '-') {
+                if (seedMap.find(c) != seedMap.end()) {
+                    // no longer a seed -> delete
+                    std::string str = "";
+                    str += std::to_string(c);
+                    str += ":@";
+                    str += seedMap[c].second;
+                    if (seedMap[c].second.size() == l*k) {
+                        outDeletions.insert(str);
+                    }
+                    seedMap[c].first = -1;
+                    seedMap[c].second = "";
+                }
+                continue;
+            }
+
+            std::string kmer = data.ungappedConsensus.substr(data.degap[c], k);
+
             if (seedMap.find(c) != seedMap.end()) {
                 // This kmer is already a seed.
                 std::string prevseedmer = seedMap[c].second;
-                if (seeding::is_syncmer(kmer, s, false)) {
+                if (kmer.size() == k && seeding::is_syncmer(kmer, s, false)) {
                     // Is it still a seed?
                     seedMap[c].second = kmer + seedMap[seedMap[c].first].second.substr(0, (l-1)*k);
                     if (seedMap[c].second == prevseedmer) {
