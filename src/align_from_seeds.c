@@ -284,7 +284,6 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 			int n_reg[2] = {0,0};
 			
 			align_read_given_seeds(mi, 2, &(r_lens[k*2]), &(reads[k*2]), n_reg,  reg,  tbuf, &mopt, iopt.k, seed_counts[k*2],  seed_counts[k*2 + 1], ref_positions[k], qry_positions[k], reversed[k]);
-			
 
 			mi->seq[0].name = "ref";
 
