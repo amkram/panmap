@@ -145,7 +145,20 @@ void placeHelper(std::unordered_map<std::string, std::set<std::pair<int32_t, std
     placeDFS(&out, index, seedmers, scores, seedmerCounts, phyloCounts, T->root, T, "", nullptr);
 }
 
-seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, int32_t *j, std::unordered_map<std::string, int32_t> &seedmerCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<std::vector<seed>> &readSeedsFwd, std::vector<std::vector<seed>> &readSeedsBwd,  const std::string &fastqPath) {
+void perfect_shuffle(vector<std::string>& v) {
+    int n = v.size();
+
+    vector<std::string> canvas(n);
+
+    for (int i = 0; i < n / 2; i++) {
+        canvas[i*2] = v[i];
+        canvas[i*2+1] = v[i + n/2];
+    }
+
+    v = canvas;
+}
+
+seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, int32_t *j, std::unordered_map<std::string, int32_t> &seedmerCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<std::vector<seed>> &readSeedsFwd, std::vector<std::vector<seed>> &readSeedsBwd,  const std::string &fastqPath1, const std::string &fastqPath2) {
     util::scopedTimer();
     seedmerIndex_t seedmerIndex;
     std::string line0;
@@ -158,9 +171,9 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
 
     FILE *fp;
     kseq_t *seq;
-    fp = fopen(fastqPath.c_str(), "r");
+    fp = fopen(fastqPath1.c_str(), "r");
     if(!fp){
-        std::cerr << "Error: File " << fastqPath << " not found" << std::endl;
+        std::cerr << "Error: File " << fastqPath1 << " not found" << std::endl;
         exit(0);
     }
 
@@ -172,6 +185,41 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
         readNames.push_back(seq->name.s);
         readQuals.push_back(seq->qual.s);
     }
+
+    
+    if (fastqPath2.size() > 0) {
+        fp = fopen(fastqPath2.c_str(), "r");
+        if(!fp){
+            std::cerr << "Error: File " << fastqPath2 << " not found" << std::endl;
+            exit(0);
+        }
+
+        seq = kseq_init(fileno(fp));
+
+        line = 0;
+        int forwardReads = readSequences.size();
+
+        while ((line = kseq_read(seq)) >= 0) {
+            readSequences.push_back(reverseComplement(seq->seq.s));
+            readNames.push_back(seq->name.s);
+            readQuals.push_back(seq->qual.s);
+        }
+
+        if (readSequences.size() != forwardReads*2){
+            std::cerr << "Error: File " << fastqPath2 << " does not contain the same number of reads as " << fastqPath1 << std::endl;
+            exit(0);
+        }
+        
+        //Shuffle reads together, so that pairs are next to eatch other
+        perfect_shuffle(readSequences);
+        perfect_shuffle(readNames);
+        perfect_shuffle(readQuals);
+    }
+
+
+    
+
+
     for (int i = 0; i < readSequences.size(); i++) {
         std::string seq = readSequences[i];
         std::string name = readNames[i];
@@ -201,6 +249,7 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
         }
     }
 
+
     while (std::getline(indexFile, line0)) {
         std::vector<std::string> splt;
         stringSplit(line0, ' ', splt);
@@ -221,7 +270,7 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
 }
 
 
-void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T) {
+void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T, bool use_root) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
     tree::setup(data, globalCoords, T);
@@ -235,11 +284,13 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     std::vector<std::vector<seed>> readSeedsBwd;
     std::unordered_map<std::string, int32_t> seedmerCounts;
     int32_t k, s, j;
-    seedmerIndex_t seedmerIndex = seedsFromFastq(indexFile, &k, &s, &j, seedmerCounts, readSequences, readQuals, readNames, readSeedsFwd, readSeedsBwd, reads1Path);
+    
+
+    seedmerIndex_t seedmerIndex = seedsFromFastq(indexFile, &k, &s, &j, seedmerCounts, readSequences, readQuals, readNames, readSeedsFwd, readSeedsBwd, reads1Path, reads2Path);
     
     /* Collecting forward and backward seeds into one vector */
     std::vector<std::vector<seed>> readSeeds;
-    readSeeds.reserve(readSeedsFwd.size());
+    readSeeds.reserve( readSeedsFwd.size());
     for(int i = 0; i < readSeedsFwd.size(); i++) {
         std::vector<seed> thisReadsSeeds;
         thisReadsSeeds.reserve(readSeedsFwd[i].size() + readSeedsBwd[i].size());
@@ -257,24 +308,36 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         readSeeds.push_back(thisReadsSeeds);
     }
 
+
+    bool pairedEndReads = reads2Path.size();
+
+
     /* Sample placement */
     std::cout << "⋌⋋ Placing sample ... " << std::flush;
     std::map<std::string, float> scores;
     std::unordered_map<std::string, int32_t> phyloCounts;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
-
-    getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
-
-    placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
     
-    /* Setup target sequence and seeds */
-    std::vector<std::pair<std::string, float>> targetNodes;
-    std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
-    std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
-    // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
-
-    std::string bestMatch = targetNodes[0].first;
+    std::string bestMatch;
+    if ( !use_root ) {
+        
+        getPhyloCounts(seedmerIndex, phyloCounts, dynamicSeedmersPhylo, T, T->root);
+        
+        placeHelper(seedmerIndex, dynamicSeedmersPlace, scores, seedmerCounts, phyloCounts, T->root, T, "");
+        
+        /* Setup target sequence and seeds */
+        std::vector<std::pair<std::string, float>> targetNodes;
+        std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
+        std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
+        // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
+        
+        bestMatch = targetNodes[0].first;
+    }else{
+        bestMatch = T->root->identifier;
+    }
+    
+    
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestMatch, true);
     std::vector<int32_t> degap;
@@ -285,6 +348,8 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
             bestMatchSequence += c;
         }
     }
+
+
     
     // path format {target}.*.fastq
     std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
@@ -324,8 +389,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
             std::cerr << "Error: failed to write to file " << refFileName << std::endl;
         }
     }
-
-
+    
 
     //Create SAM
     std::vector<char *> samAlignments;
@@ -340,11 +404,11 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         seedToRefPositions,
         samFileName,
         k,
+        pairedEndReads,
         
         samAlignments,
         samHeader
     );
-
 
 
     //Convert to BAM
@@ -361,7 +425,6 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     );
 
 
-
     //Convert to Mplp
     char *mplpString;
 
@@ -374,7 +437,6 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
 
         mplpString
     );
-
 
 
     //Convert to VCF

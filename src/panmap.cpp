@@ -17,7 +17,7 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
 /* Helpers */
-void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt) {
+void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t k, const int32_t s, const std::string &indexFile, const std::string &pmatFile, std::string &reads1File, std::string &reads2File, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, const bool prompt, bool use_root) {
 
     std::cin.clear();
     std::fflush(stdin);
@@ -33,18 +33,19 @@ void promptAndPlace(Tree *T, const tree::mutationMatrices& mutMat, const int32_t
             cout << "First FASTQ path: ";
             getline(cin, reads1File);
         }
-        string reads2File = "";
+        reads2File = "";
         cout << "[Second FASTQ path]: ";
         getline(cin, reads2File);
+
     }
     if (reads1File == "q" || reads2File == "q") {
         exit(0);
     }
     std::ifstream ifs(indexFile);
 
-    place::placeIsolate(ifs, mutMat, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, T);
-
+    place::placeIsolate(ifs, mutMat, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, T, use_root);
 }
+
 void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
     using namespace std;
     int32_t k, s, j;
@@ -82,6 +83,7 @@ int main(int argc, char *argv[]) {
             ("m", po::value<std::string>(), "Path to mpileup output")
             ("v", po::value<std::string>(), "Path to vcf output")
             ("r", po::value<std::string>(), "Path to reference fasta output")
+            ("g", "Use root as reference, do not place") //FIXME for debugging purposes, remove for release
         ;
 
         po::positional_options_description p;
@@ -123,6 +125,7 @@ int main(int argc, char *argv[]) {
         int32_t k = -1;
         int32_t s = -1;
         bool prompt = !vm.count("f");
+        bool use_root = vm.count("g");
 
         if (vm.count("params")) {
             auto k_s_values = vm["params"].as<std::vector<int32_t>>();
@@ -207,7 +210,7 @@ int main(int argc, char *argv[]) {
             refFileName = vm["r"].as<std::string>();
         }
 
-        promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt);
+        promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt, use_root);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
