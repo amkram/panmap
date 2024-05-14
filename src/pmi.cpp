@@ -148,117 +148,66 @@ void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData,
             } else {
               data.gapMap[globalCoord + j] = false;
             }
-          }
+            else if(type == PangenomeMAT::NucMutationType::ND) {
+                // Deletion
+                if(nucGapPosition != -1) {
+                    for(int j = 0; j < len; j++) {
+                        char oldVal = data.sequence[blockId].first[nucPosition].second[nucGapPosition+j];
+                        data.sequence[blockId].first[nucPosition].second[nucGapPosition+j] = '-';
+                        nucMutData.push_back(std::make_tuple(blockId, nucPosition, nucGapPosition+j, oldVal, '-', globalCoord, len));
+                    }
+                } else {
+                    for(int j = 0; j < len; j++) {
+                        char oldVal = data.sequence[blockId].first[nucPosition+j].first;
+                        data.sequence[blockId].first[nucPosition+j].first = '-';
+                        nucMutData.push_back(std::make_tuple(blockId, nucPosition + j, nucGapPosition, oldVal, '-', globalCoord, len));
+                    }
+                }
+            }
+        } 
+        else {
+            int len = 0;
+            if(type == PangenomeMAT::NucMutationType::NSNPS) {
+                // SNP Substitution                
+                newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
+                if(nucGapPosition != -1) {
+                    char oldVal = data.sequence[blockId].first[nucPosition].second[nucGapPosition];
+                    data.sequence[blockId].first[nucPosition].second[nucGapPosition] = newVal;
+                    nucMutData.push_back(std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal, newVal, globalCoord, len));
+                } else {
+                    char oldVal = data.sequence[blockId].first[nucPosition].first;
+                    data.sequence[blockId].first[nucPosition].first = newVal;
+                    nucMutData.push_back(std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal, newVal, globalCoord, len));   
+                }
+            }
+            else if(type == PangenomeMAT::NucMutationType::NSNPI) {
+                // SNP Insertion
+                len = 1;
+                newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
+                if(nucGapPosition != -1) {
+                    char oldVal = data.sequence[blockId].first[nucPosition].second[nucGapPosition];
+                    data.sequence[blockId].first[nucPosition].second[nucGapPosition] = newVal;
+                    nucMutData.push_back(std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal, newVal, globalCoord, len));   
+                } else {
+                    char oldVal = data.sequence[blockId].first[nucPosition].first;
+                    data.sequence[blockId].first[nucPosition].first = newVal;
+                    nucMutData.push_back(std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal, newVal, globalCoord, len));   
+                }
+            }
+            else if(type == PangenomeMAT::NucMutationType::NSNPD) {
+                // SNP Deletion
+                if(nucGapPosition != -1) {
+                    char oldVal = data.sequence[blockId].first[nucPosition].second[nucGapPosition];
+                    data.sequence[blockId].first[nucPosition].second[nucGapPosition] = '-';
+                    nucMutData.push_back(std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal, '-', globalCoord, len));
+                } else {
+                    char oldVal = data.sequence[blockId].first[nucPosition].first;
+                    data.sequence[blockId].first[nucPosition].first = '-';
+                    nucMutData.push_back(std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal, '-', globalCoord, len));
+                 }
+            }
         }
-      } else if (type == PangenomeMAT::NucMutationType::ND) {
-        // Deletion
-        if (nucGapPosition != -1) {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId]
-                              .first[nucPosition]
-                              .second[nucGapPosition + j];
-            data.sequence[blockId]
-                .first[nucPosition]
-                .second[nucGapPosition + j] = '-';
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                                 nucGapPosition + j, oldVal,
-                                                 '-', globalCoord, len));
-            data.gapMap[globalCoord + j] = true;
-          }
-        } else {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId].first[nucPosition + j].first;
-            data.sequence[blockId].first[nucPosition + j].first = '-';
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition + j,
-                                                 nucGapPosition, oldVal, '-',
-                                                 globalCoord, 0));
-            data.gapMap[globalCoord + j] = true;
-          }
-        }
-      }
-    } else {
-      int len = 0;
-      if (type == PangenomeMAT::NucMutationType::NSNPS) {
-        // SNP Substitution
-        newVal = PangenomeMAT::getNucleotideFromCode(
-            ((node->nucMutation[i].nucs) >> 20) & 0xF);
-        if (nucGapPosition != -1) {
-          char oldVal =
-              data.sequence[blockId].first[nucPosition].second[nucGapPosition];
-          data.sequence[blockId].first[nucPosition].second[nucGapPosition] =
-              newVal;
-          nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                               nucGapPosition, oldVal, newVal,
-                                               globalCoord, len));
-          if (newVal == '-') {
-            data.gapMap[globalCoord] = true;
-          } else {
-            data.gapMap[globalCoord] = false;
-          }
-        } else {
-          char oldVal = data.sequence[blockId].first[nucPosition].first;
-          data.sequence[blockId].first[nucPosition].first = newVal;
-          nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                               nucGapPosition, oldVal, newVal,
-                                               globalCoord, len));
-          if (newVal == '-') {
-            data.gapMap[globalCoord] = true;
-          } else {
-            data.gapMap[globalCoord] = false;
-          }
-        }
-      } else if (type == PangenomeMAT::NucMutationType::NSNPI) {
-        // SNP Insertion
-        len = 1;
-        newVal = PangenomeMAT::getNucleotideFromCode(
-            ((node->nucMutation[i].nucs) >> 20) & 0xF);
-        if (nucGapPosition != -1) {
-          char oldVal =
-              data.sequence[blockId].first[nucPosition].second[nucGapPosition];
-          data.sequence[blockId].first[nucPosition].second[nucGapPosition] =
-              newVal;
-          nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                               nucGapPosition, oldVal, newVal,
-                                               globalCoord, len));
-          if (newVal == '-') {
-            data.gapMap[globalCoord] = true;
-          } else {
-            data.gapMap[globalCoord] = false;
-          }
-        } else {
-          char oldVal = data.sequence[blockId].first[nucPosition].first;
-          data.sequence[blockId].first[nucPosition].first = newVal;
-          nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                               nucGapPosition, oldVal, newVal,
-                                               globalCoord, len));
-          if (newVal == '-') {
-            data.gapMap[globalCoord] = true;
-          } else {
-            data.gapMap[globalCoord] = false;
-          }
-        }
-      } else if (type == PangenomeMAT::NucMutationType::NSNPD) {
-        // SNP Deletion
-        if (nucGapPosition != -1) {
-          char oldVal =
-              data.sequence[blockId].first[nucPosition].second[nucGapPosition];
-          data.sequence[blockId].first[nucPosition].second[nucGapPosition] =
-              '-';
-          nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                               nucGapPosition, oldVal, '-',
-                                               globalCoord, len));
-        } else {
-          char oldVal = data.sequence[blockId].first[nucPosition].first;
-          data.sequence[blockId].first[nucPosition].first = '-';
-          nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                               nucGapPosition, oldVal, '-',
-                                               globalCoord, len));
-        }
-        data.gapMap[globalCoord] = true;
-      }
     }
-  }
-  EASY_END_BLOCK;
 }
 
 void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T,
@@ -352,17 +301,18 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index,
   std::set<std::string> outDeletions;
   std::set<std::string> outInsertions;
 
-  nucMutData_t extended = nucMutData;
-  for (const auto &blockMut : blockMutData) {
-    int32_t blockId = std::get<0>(blockMut);
-    int32_t blockStart = getGlobalCoordinate(blockId, 0, -1, globalCoords);
-    int32_t seen = 0;
-    while (seen < k && blockStart >= 1) {
-      if (!is_gap(data, blockStart)) {
-        seen++;
-      }
-      blockStart--;
-    }
+    nucMutData_t extended = nucMutData;
+    for (const auto &blockMut : blockMutData) {
+        int32_t blockId = std::get<0>(blockMut);
+        int32_t blockStart = getGlobalCoordinate(blockId, 0, -1, globalCoords);
+        int32_t seen = 0;
+
+        while (seen < 2 * k && blockStart >= 1) {
+            if (data.gappedConsensus[blockStart] != '-') {
+                seen++;
+            }
+            blockStart--;
+        }
 
     int32_t blockStop = getGlobalCoordinate(
         blockId, globalCoords[blockId].first.size() - 1, -1, globalCoords);
@@ -378,85 +328,124 @@ void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index,
     return std::get<5>(a) < std::get<5>(b);
   });
 
-  std::unordered_map<int32_t, bool> seen;
-  for (const auto &nucMut : extended) {
-    int32_t gc = std::get<5>(nucMut);
-    int32_t len = std::get<6>(nucMut);
-    int32_t lastSeed = -1;
-    int32_t ungappedCoord = degap(gc, data.sequence, data, T);
-    if (ungappedCoord > data.ungappedConsensus.size()) {
-      continue;
-    }
-    std::string kmer = data.ungappedConsensus
-      .substr(ungappedCoord, std::min((int)std::max(0,(int)data.ungappedConsensus.size() - ungappedCoord), (int) k));
-    if (seen.find(gc) != seen.end()) {
-      continue;
-    }
-    seen[gc] = true;
-    if (seedMap.find(gc) != seedMap.end()) {
-      // This kmer is already a seed.
-      std::string prevseedmer = seedMap[gc].second;
-      if (seeding::is_syncmer(kmer, s, false)) {
-        // Is it still a seed?
-        seedMap[gc].second =
-            kmer + seedMap[seedMap[gc].first].second.substr(0, (l - 1) * k);
-        if (seedMap[gc].second == prevseedmer) {
-          continue;
-        }
-        if (seedMap[gc].second.size() == l * k) {
-          std::string str = "";
-          str = std::to_string(gc);
-          str += ":";
-          str += seedMap[gc].second;
-          outInsertions.insert(str);
-        }
-      } else {
-        std::string str = "";
-        str += std::to_string(gc);
-        str += ":@";
-        str += seedMap[gc].second;
-        if (seedMap[gc].second.size() == l * k) {
-          outDeletions.insert(str);
-        }
-        seedMap[gc].first = -1;
-        seedMap[gc].second = "";
-      }
-    } else {
-      // not in seed map, could be a seed now
-      if (seeding::is_syncmer(kmer, s, false)) {
-        std::string newseedmer = kmer;
-        if (lastSeed != -1) {
-          newseedmer += seedMap[lastSeed].second.substr(0, (l - 1) * k);
-        }
-        if (newseedmer.size() == l * k) {
-          std::string str = "";
-          str += std::to_string(gc);
-          str += ":";
-          str += newseedmer;
-          outInsertions.insert(str);
-        }
-        seedMap[gc] = std::make_pair(lastSeed, newseedmer);
-        lastSeed = gc;
-      }
-    }
-  }
+    std::unordered_map<int32_t, bool> seen;
+    std::unordered_map<int32_t, bool> seenNucMut;
+    for (const auto &nucMut : extended) {
+        // std::cerr << node->identifier << std::endl;
+        // std::cerr << std::get<0>(nucMut) << "\t"
+        //           << std::get<1>(nucMut) << "\t"
+        //           << std::get<2>(nucMut) << "\t"
+        //           << std::get<3>(nucMut) << "\t"
+        //           << std::get<4>(nucMut) << "\t"
+        //           << std::get<5>(nucMut) << "\t"
+        //           << std::get<6>(nucMut) << std::endl;
 
-  index.outStream << node->identifier << " ";
-  for (const std::string &s : outDeletions) {
-    index.outStream << s << " ";
-  }
-  for (const std::string &s : outInsertions) {
-    index.outStream << s << " ";
-  }
-  index.outStream << "\n";
-  EASY_END_BLOCK;
-  /* Recursive step */
-  for (Node *child : node->children) {
-    buildHelper(data, seedMap, index, T, child, l, k, s, globalCoords);
-  }
+        int32_t globalCoord = std::get<5>(nucMut);
+        if (std::get<4>(nucMut) != -1) {
+            if (seenNucMut.find(globalCoord) != seenNucMut.end()) {
+                continue;
+            }
+            seenNucMut[globalCoord] = true;
+        }
+        int32_t len = std::get<6>(nucMut) - 1;
 
-  /* Undo seed and sequence mutations when backtracking */
-  undoMutations(data, index, T, node, blockMutData, nucMutData);
+        if (std::get<4>(nucMut) != -1 && data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord > 0) {
+            len = data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord;
+        }
+
+        int32_t lastSeed = -1;
+
+        int32_t leftEndCoord = std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))]);
+        if (leftEndCoord > globalCoord) {
+            leftEndCoord = globalCoord;
+        }
+
+        for (int32_t c = globalCoord + len; c >= leftEndCoord; c--) {
+            if (seen.find(c) != seen.end()) {
+                continue;
+            }
+            seen[c] = true;
+
+            if (data.gappedConsensus[c] == '-') {
+                if (seedMap.find(c) != seedMap.end()) {
+                    // no longer a seed -> delete
+                    std::string str = "";
+                    str += std::to_string(c);
+                    str += ":@";
+                    str += seedMap[c].second;
+                    if (seedMap[c].second.size() == l*k) {
+                        outDeletions.insert(str);
+                    }
+                    seedMap[c].first = -1;
+                    seedMap[c].second = "";
+                }
+                continue;
+            }
+
+            std::string kmer = data.ungappedConsensus.substr(data.degap[c], k);
+
+            if (seedMap.find(c) != seedMap.end()) {
+                // This kmer is already a seed.
+                std::string prevseedmer = seedMap[c].second;
+                if (kmer.size() == k && seeding::is_syncmer(kmer, s, false)) {
+                    // Is it still a seed?
+                    seedMap[c].second = kmer + seedMap[seedMap[c].first].second.substr(0, (l-1)*k);
+                    if (seedMap[c].second == prevseedmer) {
+                        continue;
+                    }
+                    if (seedMap[c].second.size() == l*k) {
+                        std::string str = "";
+                        str = std::to_string(c);
+                        str += ":";
+                        str += seedMap[c].second;
+                        outInsertions.insert(str);
+                    }
+                } else {
+                    std::string str = "";
+                    str += std::to_string(c);
+                    str += ":@";
+                    str += seedMap[c].second;
+                    if (seedMap[c].second.size() == l*k) {
+                        outDeletions.insert(str);
+                    }
+                    seedMap[c].first = -1;
+                    seedMap[c].second = "";
+                }
+            } else {
+                // not in seed map, could be a seed now
+                if (seeding::is_syncmer(kmer, s, false)) {
+                    std::string newseedmer = kmer;
+                    if (lastSeed != -1) {
+                        newseedmer += seedMap[lastSeed].second.substr(0, (l-1)*k);
+                    }
+                    if (newseedmer.size() == l*k) {
+                        std::string str = "";
+                        str += std::to_string(c);
+                        str += ":";
+                        str += newseedmer;
+                        outInsertions.insert(str);
+                    }
+                    seedMap[c] = std::make_pair(lastSeed, newseedmer);
+                    lastSeed = c;
+                }
+            }
+        }
+    }
+    index.outStream << node->identifier << " ";
+    for (const std::string &s : outDeletions) {
+        index.outStream << s << " ";
+    }
+    for (const std::string &s : outInsertions) {
+        index.outStream << s << " ";
+    }
+    index.outStream << "\n";
+
+    /* Recursive step */
+    for (Node* child: node->children){
+        buildHelper(data, seedMap, index, T, child, l, k, s, globalCoords);
+    }
+    /* Undo seed and sequence mutations when backtracking */
+    undoMutations(data, index, T, node, blockMutData, nucMutData);
 }
 
 /* Interface implementation */
