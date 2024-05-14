@@ -2,6 +2,7 @@
 #include <cassert>
 #include <deque>
 #include <queue>
+#include <boost/functional/hash.hpp>
 #include "PangenomeMAT.hpp"
 #include "seeding.hpp"
 #include "mgsr.hpp"
@@ -13,7 +14,7 @@ void mgsr::accio(PangenomeMAT::Tree *T, std::ifstream& indexFile, size_t k, size
 
 
 /*testing*/
-void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<hash_t, int32_t, int32_t, bool>>& syncmers, std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, const int32_t l, const int32_t k) {
+void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<hash_t, int32_t, int32_t, bool>>& syncmers, std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, const int32_t l, const int32_t k, std::stringstream& seedmersOutStream) {
     // first seedmer
     int startIdx = 0;
     size_t cacheForwardH  = 0;
@@ -41,8 +42,13 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
             continue;
         }
 
-        seedmersIndex.positionMap[std::get<1>(syncmers[startIdx])] = std::make_pair(cacheMin, rev);
+        // seedmersIndex.positionMap[std::get<1>(syncmers[startIdx])] = std::make_pair(cacheMin, rev);
+        seedmersIndex.positionMap[std::get<1>(syncmers[startIdx])] = std::make_tuple(std::get<2>(syncmers[startIdx+l-1]), cacheMin, rev);
         seedmersIndex.seedmersMap[cacheMin].insert(std::get<1>(syncmers[startIdx]));
+        seedmersOutStream << std::get<1>(syncmers[startIdx]) << ":+:"
+                          << std::get<2>(syncmers[startIdx+l-1]) << ","
+                          << cacheMin << ","
+                          << rev << " ";
         ++startIdx;
     }
 
@@ -69,8 +75,13 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
             continue;
         }
 
-        seedmersIndex.positionMap[std::get<1>(syncmers[i])] = std::make_pair(cacheMin, rev);
+        // seedmersIndex.positionMap[std::get<1>(syncmers[i])] = std::make_pair(cacheMin, rev);
+        seedmersIndex.positionMap[std::get<1>(syncmers[i])] = std::make_tuple(std::get<2>(syncmers[i+l-1]), cacheMin, rev);
         seedmersIndex.seedmersMap[cacheMin].insert(std::get<1>(syncmers[i]));
+        seedmersOutStream << std::get<1>(syncmers[i]) << ":+:"
+                          << std::get<2>(syncmers[i+l-1]) << ","
+                          << cacheMin << ","
+                          << rev << " ";
     }
 
     // rest of seeds
@@ -80,7 +91,7 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
     }
 }
 
-void updateCurSeeds(std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges) {
+void updateCurSeeds(std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges, const std::unordered_map<int32_t, int32_t>& syncmerGlobalEndCoorChanges) {
     for (const auto& change : syncmerChanges) {
         auto [seedHash, seedBeg, seedEnd, seedDel] = change;
         if (seedDel) {
@@ -88,6 +99,10 @@ void updateCurSeeds(std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, con
         } else {
             curSeeds[seedBeg] = std::make_pair(seedEnd, seedHash);
         }
+    }
+
+    for (const auto& endCoorChange : syncmerGlobalEndCoorChanges) {
+        curSeeds[endCoorChange.first].first = endCoorChange.second;
     }
 }
 
@@ -190,12 +205,30 @@ void writeCurSeedmers(const std::string& path, const mgsr::seedmers& seedmersInd
     std::ofstream ofSeedmers(path);
     for (const auto& position : seedmersIndex.positionMap) {
         auto beg = position.first;
-        auto hash = position.second.first;
-        auto rev = position.second.second;
+        auto [end, hash, rev] = position.second;
+
         ofSeedmers << hash << "\t"
                    << seedmersIndex.seedmersMap.find(hash)->second.size() << "\t"
                    << data.degap[beg] << "\t"
+                   << data.degap[end] << "\t"
                    << beg << "\t"
+                   << end << "\t"
+                   << rev << std::endl;
+
+    }
+    ofSeedmers.close();
+}
+
+void writeCurSeedmers(const std::string& path, const mgsr::seedmers& seedmersIndex) {
+    std::ofstream ofSeedmers(path);
+    for (const auto& position : seedmersIndex.positionMap) {
+        auto beg = position.first;
+        auto [end, hash, rev] = position.second;
+
+        ofSeedmers << hash << "\t"
+                   << seedmersIndex.seedmersMap.find(hash)->second.size() << "\t"
+                   << beg << "\t"
+                   << end << "\t"
                    << rev << std::endl;
 
     }
@@ -209,7 +242,8 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     /* Mutate with block and nuc mutations. */
     applyMutations(data, blockMutData, nucMutData, T, node, globalCoords);
 
-    tree::updateConsensus(data, T);
+    std::map<int32_t, int32_t> coordsIndex;
+    tree::updateConsensus(data, T, &coordsIndex);
 
     std::set<std::string> outDeletions;
     std::set<std::string> outInsertions;
@@ -217,6 +251,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     /*testing*/
     // hash, beg, end, del
     std::vector<std::tuple<size_t, int32_t, int32_t, bool>> syncmerChanges;
+    std::unordered_map<int32_t, int32_t> syncmerGlobalEndCoorChanges;
     /*testing*/
 
 
@@ -234,8 +269,6 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
         int32_t blockStop = tree::getGlobalCoordinate(blockId, globalCoords[blockId].first.size()-1, -1, globalCoords);
         bool newStrand = std::get<4>(blockMut);
-        std::cerr << "bloackStart? " << blockStart << std::endl;
-//        std::cout << "blockMut: " << blockId << "  start: " << blockStart << "  stop: " << blockStop << "  newStrand: " << newStrand << std::endl;
         if (newStrand) {
             extended.push_back(std::make_tuple(-1, -1, -1, -1, -1, blockStart, blockStop - blockStart));
         }
@@ -247,47 +280,33 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     std::unordered_map<int32_t, bool> seen;
     std::unordered_map<int32_t, bool> seenNucMut;
     for (const auto &nucMut : extended) {
+        // std::cerr << std::get<0>(nucMut) << "\t"
+        //           << std::get<1>(nucMut) << "\t"
+        //           << std::get<2>(nucMut) << "\t"
+        //           << std::get<3>(nucMut) << "\t"
+        //           << std::get<4>(nucMut) << "\t"
+        //           << std::get<5>(nucMut) << "\t"
+        //           << std::get<6>(nucMut) << std::endl;
+
         int32_t globalCoord = std::get<5>(nucMut);
-        
-        int32_t len = std::get<6>(nucMut) - 1;
-        // if (std::get<3>(nucMut) != '-' && std::get<4>(nucMut) != '-') {
-        //     std::cerr << "SUBS: alt len? " << data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord << std::endl;
-        // }
-        if (std::get<4>(nucMut) != -1 && data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord > 0) {
-            // insertion
-            len = data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord;
+
+        if (std::get<4>(nucMut) != -1) {
+            if (seenNucMut.find(globalCoord) != seenNucMut.end()) {
+                continue;
+            }
+            seenNucMut[globalCoord] = true;
         }
-        // else if (std::get<4>(nucMut) == '-') {
-        //     // deletion
-        //     std::cerr << "for deletion: len = " << data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord << "?" << std::endl;
-        // } 
-        int32_t lastSeed = -1;
 
-        // if (seenNucMut.find(globalCoord) != seenNucMut.end()) {
-        //     continue;
-        // }
-        // seenNucMut[globalCoord] = true;
+        int32_t len;
 
-        std::cerr << std::get<0>(nucMut) << "\t"
-                  << std::get<1>(nucMut) << "\t"
-                  << std::get<2>(nucMut) << "\t"
-                  << std::get<3>(nucMut) << "\t"
-                  << std::get<4>(nucMut) << "\t"
-                  << std::get<5>(nucMut) << "\t"
-                  << std::get<6>(nucMut) << std::endl;
-        std::cerr << "globalCoord: " << globalCoord << "\tnucMut og: " << std::get<6>(nucMut) << "\tlen: " << len << "\taltlen: " <<  data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord << std::endl;
-        std::cerr << "data.degap[globalCoord] = " << data.degap[globalCoord] << "\tdata.degap[globalCoord] - k = " << data.degap[globalCoord] - static_cast<int32_t>(k) << std::endl;
-        std::cerr << "data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))] = " << data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))] << std::endl;
-        
+        if (std::get<4>(nucMut) != -1 && data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord > 0) len = data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord;
+        else len = std::get<6>(nucMut) - 1;
+
         int32_t leftEndCoor = std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))]);
-        if (leftEndCoor > globalCoord) {
-            leftEndCoor = globalCoord;
-            // len = data.regap[data.degap[globalCoord] + std::get<6>(nucMut) - 1] - globalCoord;
+        if (leftEndCoor > globalCoord) leftEndCoor = globalCoord;
 
-        }
+        int32_t lastSeed = -1;    
         
-        std::cerr << "old from " << globalCoord + len << " to " << std::max(0, data.regap[std::max(0, data.degap[globalCoord] - static_cast<int32_t>(k))]) << std::endl;
-        std::cerr << "new from " << globalCoord + len << " to " << leftEndCoor << std::endl;
         for (int32_t c = globalCoord + len; c >= leftEndCoor; c--) {
             if (seen.find(c) != seen.end()) {
                 continue;
@@ -326,7 +345,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     // Is it still a seed?
                     seedMap[c].second = kmer;
                     if (seedMap[c].second == prevseedmer) {
-                        continue;
+                        syncmerGlobalEndCoorChanges[c] = data.regap[data.degap[c] + k - 1];
                     }
                     if (seedMap[c].second.size() == k) {
                         std::string str = "";
@@ -377,24 +396,29 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     std::sort(syncmerChanges.begin(), syncmerChanges.end(), [](const auto &a, const auto &b) {
         return std::get<1>(a) < std::get<1>(b);
     });
+
     if (seedmersIndex.seedmersMap.size() == 0) {
         /*build seedmer for root*/
-        std::cerr << node->identifier << std::endl;
-        initializeMap(seedmersIndex, syncmerChanges, curSeeds, l, k);
-
-        std::string seedsPath = "../src/test/data/mgsr/test/" + node->identifier + ".smi";
-        writeCurSeeds(seedsPath, curSeeds, data);
+        // std::cerr << node->identifier << std::endl;
+        seedmersOutStream << node->identifier << " ";
+        initializeMap(seedmersIndex, syncmerChanges, curSeeds, l, k, seedmersOutStream);
+        
+        seedmersOutStream << "c:";
+        for (const auto& coord : coordsIndex) {
+            seedmersOutStream << coord.first << "," << coord.second << ",";
+        }
+        seedmersOutStream << "\n";
+        // std::string seedsPath = "../src/test/data/mgsr/test/" + node->identifier + ".smi";
+        // writeCurSeeds(seedsPath, curSeeds, data);
         // std::string seedmersPath = "../src/test/data/mgsr/test/" + node->identifier + ".kmi";
         // writeCurSeedmers(seedmersPath, seedmersIndex, data);
     } else {
-        std::cerr << node->identifier << std::endl;
-        updateCurSeeds(curSeeds, syncmerChanges);
+        // std::cerr << node->identifier << std::endl;
+        updateCurSeeds(curSeeds, syncmerChanges, syncmerGlobalEndCoorChanges);
 
-        std::string seedsPath = "../src/test/data/mgsr/test/" + node->identifier + ".smi";
-        writeCurSeeds(seedsPath, curSeeds, data);
-        
+        seedmersOutStream << node->identifier << " ";
+
         std::unordered_set<int32_t> seenBegs;
-
         size_t  cacheReversedH;
         size_t  cacheForwardH;
         size_t  cacheMin;
@@ -402,7 +426,6 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
         int     count;
         for (const auto& change : syncmerChanges) {
             auto [seedHash, seedBeg, seedEnd, seedDel] = change;
-            // std::cerr << "cur syncmer change: " << seedHash << "\t" << seedBeg << "\t" << seedDel << std::endl;
         
             decltype(curSeeds.begin()) curSeedIt;
             if (seedDel) curSeedIt = curSeeds.lower_bound(seedBeg);
@@ -418,9 +441,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
             auto curAffectedSeed = localStartSeed;
             if (!seedDel) ++localEndSeed; 
-            // std::cerr << "localStartSeed: " << localStartSeed->first << "\tlocalEndSeed: " << localEndSeed->first << std::endl;
             while (curAffectedSeed != localEndSeed) {
-                // std::cerr << "Inside while loop curAffectedSeed: " << curAffectedSeed->first << "\tlocalEndSeed: " << localEndSeed->first << std::endl;
                 if (seenBegs.find(curAffectedSeed->first) != seenBegs.end()) {
                     ++curAffectedSeed;
                     continue;
@@ -438,15 +459,17 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     ++curLocalSeed;
                     ++count;
                 }
-
+                --curLocalSeed;
+                
                 if (count != l) {
                     auto positionMapIt = seedmersIndex.positionMap.find(curAffectedSeed->first);
                     if (positionMapIt != seedmersIndex.positionMap.end()) {
                         auto begToErase  = curAffectedSeed->first;
-                        auto hashToErase = positionMapIt->second.first;
+                        auto hashToErase = std::get<1>(positionMapIt->second);
                         assert(seedmersIndex.seedmersMap[hashToErase].erase(begToErase));
                         if (seedmersIndex.seedmersMap[hashToErase].empty()) seedmersIndex.seedmersMap.erase(hashToErase);
                         assert(seedmersIndex.positionMap.erase(begToErase));
+                        seedmersOutStream << begToErase << ":-:" << hashToErase << " ";
                     }
                     break;
                 }
@@ -461,44 +484,71 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     auto positionMapIt = seedmersIndex.positionMap.find(curAffectedSeed->first);
                     if (positionMapIt != seedmersIndex.positionMap.end()) {
                         auto begToErase  = curAffectedSeed->first;
-                        auto hashToErase = positionMapIt->second.first;
+                        auto hashToErase = std::get<1>(positionMapIt->second);
                         assert(seedmersIndex.seedmersMap[hashToErase].erase(begToErase));
                         if (seedmersIndex.seedmersMap[hashToErase].empty()) seedmersIndex.seedmersMap.erase(hashToErase);
                         assert(seedmersIndex.positionMap.erase(begToErase));
+                        seedmersOutStream << begToErase << ":-:" << hashToErase << " ";
                     }
                     ++curAffectedSeed;
                     continue;
                 }
-
-                if (node->identifier == "node_2") {
-                    std::cout << cacheMin << "\t" << curAffectedSeed->first << std::endl;
-                }
                 
                 auto potentialDel = seedmersIndex.positionMap.find(curAffectedSeed->first);
                 if (potentialDel != seedmersIndex.positionMap.end()) {
-                    seedmersIndex.seedmersMap.find(potentialDel->second.first)->second.erase(potentialDel->first);
-                    if (seedmersIndex.seedmersMap[potentialDel->second.first].empty()) seedmersIndex.seedmersMap.erase(potentialDel->second.first);
+                    seedmersIndex.seedmersMap.find(std::get<1>(potentialDel->second))->second.erase(potentialDel->first);
+                    if (seedmersIndex.seedmersMap[std::get<1>(potentialDel->second)].empty()) seedmersIndex.seedmersMap.erase(std::get<1>(potentialDel->second));
                 }
-                seedmersIndex.positionMap[curAffectedSeed->first] = std::make_pair(cacheMin, rev);
+                
+                seedmersIndex.positionMap[curAffectedSeed->first] = std::make_tuple(curLocalSeed->second.first, cacheMin, rev);
                 seedmersIndex.seedmersMap[cacheMin].insert(curAffectedSeed->first);
+                seedmersOutStream << curAffectedSeed->first << ":+:"
+                                  << curLocalSeed->second.first << ","
+                                  << cacheMin << ","
+                                  << rev << " ";
                 ++curAffectedSeed;
             }
 
-            // std::cerr << "checking if delete" << std::endl;
             if (seedDel) {
-                if (node->identifier == "node_2") std::cout << "delete: " << seedHash << "\t" << seedBeg << std::endl;
                 auto positionMapIt = seedmersIndex.positionMap.find(seedBeg);
                 if (positionMapIt != seedmersIndex.positionMap.end()) {
                     auto begToErase  = seedBeg;
-                    auto hashToErase = positionMapIt->second.first;
+                    auto hashToErase = std::get<1>(positionMapIt->second);
                     assert(seedmersIndex.seedmersMap[hashToErase].erase(begToErase));
                     if (seedmersIndex.seedmersMap[hashToErase].empty()) seedmersIndex.seedmersMap.erase(hashToErase);
                     assert(seedmersIndex.positionMap.erase(begToErase));
+                    seedmersOutStream << begToErase << ":-:" << hashToErase << " ";
                 }
             }
         }
-        std::string seedmersPath = "../src/test/data/mgsr/test/" + node->identifier + ".kmi";
-        writeCurSeedmers(seedmersPath, seedmersIndex, data);
+
+        for (const auto& endCoorChange : syncmerGlobalEndCoorChanges) {
+            auto curPositionIt = seedmersIndex.positionMap.find(endCoorChange.first);
+            if (curPositionIt == seedmersIndex.positionMap.end()) continue;
+            int count = 0;
+            while (count < l - 1) {
+                if (curPositionIt == seedmersIndex.positionMap.begin()) break;
+                --curPositionIt;
+                ++count;
+            }
+            if (count != l - 1) continue;
+
+            if (std::get<0>(curPositionIt->second) != endCoorChange.second) {
+                curPositionIt->second = std::make_tuple(endCoorChange.second, std::get<1>(curPositionIt->second), std::get<2>(curPositionIt->second));
+                seedmersOutStream << endCoorChange.first << ":e:" << endCoorChange.second << " ";
+            }
+        }
+
+        seedmersOutStream << "c:";
+        for (const auto& coord : coordsIndex) {
+            seedmersOutStream << coord.first << "," << coord.second << ",";
+        }
+        seedmersOutStream << "\n";
+
+        // std::string seedsPath = "../src/test/data/mgsr/test/" + node->identifier + ".smi";
+        // writeCurSeeds(seedsPath, curSeeds, data);
+        // std::string seedmersPath = "../src/test/data/mgsr/test/" + node->identifier + ".kmi";
+        // writeCurSeedmers(seedmersPath, seedmersIndex, data);
     }
 
     /*--testing*/
@@ -534,4 +584,431 @@ void mgsr::buildSeedmer(pmi::seedIndex &index, PangenomeMAT::Tree *T, const size
     seedmersOutStream << k << " " << s << " " << l << "\n";
     /* Recursive traversal of tree to build the index */
     mgsr::buildSeedmerHelper(data, seedMap, index, seedmersIndex, curSeeds, T, T->root, l, k, s, globalCoords, seedmersOutStream);
+}
+
+std::vector<std::tuple<size_t, int32_t, int32_t>> syncmersSketch(const std::string& seq, const int k, const int s, const bool open) {
+    std::vector<std::tuple<size_t, int32_t, int32_t>> syncmers;
+    for (size_t i = 0; i < seq.size() - k + 1; ++i) {
+        std::string kmer = seq.substr(i, k);
+        if (!seeding::is_syncmer(kmer, s, open)) continue;
+
+        std::pair<size_t, bool> kmerHash = getHash(kmer);
+        if (!kmerHash.second) continue;
+
+        syncmers.emplace_back(std::make_tuple(kmerHash.first, i, i + k - 1));
+    }
+    return syncmers;
+}
+readSeedmers_t extractKminmers(const std::vector<std::tuple<size_t, int32_t, int32_t>>& syncmers, const int k, const int l) {
+    std::vector<std::tuple<size_t, int32_t, int32_t, bool, int>> kminmers;
+    std::unordered_set<size_t> hashes;
+
+    // first kminmer
+    size_t cacheForwardH = 0;
+    for (int i = 0; i < l; ++i) cacheForwardH = (cacheForwardH << (2 * k)) + std::get<0>(syncmers[i]);
+
+    size_t cacheReversedH = 0;
+    for (int i = l - 1; i > -1; --i) cacheReversedH = (cacheReversedH << (2 * k)) + std::get<0>(syncmers[i]);
+
+    int iorder = 0;
+    // Skip if strand ambiguous
+    if (cacheForwardH < cacheReversedH) {
+        kminmers.emplace_back(cacheForwardH,  std::get<1>(syncmers[0]), std::get<2>(syncmers[l-1]), false, iorder);
+        hashes.insert(cacheForwardH);
+        ++iorder;
+    } else if (cacheReversedH < cacheForwardH) {
+        kminmers.emplace_back(cacheReversedH, std::get<1>(syncmers[0]), std::get<2>(syncmers[l-1]), true, iorder);
+        hashes.insert(cacheReversedH);
+        ++iorder;
+    }
+    
+    size_t mask = 0;
+    for (int i = 0; i < 2 * k * (l - 1); i++) mask = (mask << 1) + 1;
+
+    for (int i = 1; i < syncmers.size() - l + 1; ++i) {
+        cacheForwardH = ((cacheForwardH & mask) << (k * 2)) + std::get<0>(syncmers[i+l-1]);
+
+        cacheReversedH = (cacheReversedH >> (2 * k)) + (std::get<0>(syncmers[i+l-1]) << (2 * k * (l - 1)));
+
+        // Skip if strand ambiguous
+        if (cacheForwardH < cacheReversedH) {
+            kminmers.emplace_back(cacheForwardH,  std::get<1>(syncmers[i]), std::get<2>(syncmers[i+l-1]), false, iorder);
+            hashes.insert(cacheForwardH);
+            ++iorder;
+        } else if (cacheReversedH < cacheForwardH) {
+            kminmers.emplace_back(cacheReversedH, std::get<1>(syncmers[i]), std::get<2>(syncmers[i+l-1]), true, iorder);
+            hashes.insert(cacheReversedH);
+            ++iorder;
+        }
+    }
+
+    return std::make_pair(std::move(kminmers), std::move(hashes));
+}
+
+void mutateSeedmers(mgsr::seedmers& seedmers, const std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>& index, std::unordered_set<size_t>& affectedSeedmers, std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>& seedmersToRevert) {
+    for (const auto& change : index) {
+        auto [beg, end, hash, rev, del] = change;
+        if (del) {
+            auto positionMapIt = seedmers.positionMap.find(beg);
+            auto seedmersMapIt = seedmers.seedmersMap.find(hash);
+            auto [cend, chash, crev] = positionMapIt->second;
+            seedmersToRevert.emplace_back(std::make_tuple(beg, cend, chash, crev, false));
+
+            assert(seedmers.positionMap.erase(beg));
+            assert(seedmersMapIt->second.erase(beg));
+            size_t curHashNum = seedmersMapIt->second.size();
+            if (curHashNum <= 1) {
+                affectedSeedmers.insert(hash);
+                if (curHashNum == 0) {
+                    seedmers.seedmersMap.erase(hash);
+                }
+            }
+        } else {
+            auto positionMapIt = seedmers.positionMap.find(beg);
+            if (positionMapIt != seedmers.positionMap.end()) {
+                auto [oend, ohash, orev] = positionMapIt->second;
+                auto seedmersMapIt = seedmers.seedmersMap.find(ohash);
+
+                assert(seedmersMapIt->second.erase(beg));
+                size_t ohashNum = seedmersMapIt->second.size();
+                if (ohashNum <= 1) {
+                    affectedSeedmers.insert(ohash);
+                    if (ohashNum == 0) {
+                        seedmers.seedmersMap.erase(ohash);
+                    }
+                }
+                seedmersToRevert.emplace_back(std::make_tuple(beg, oend, ohash, orev, false));
+            } else {
+                seedmersToRevert.emplace_back(std::make_tuple(beg, 0, hash, false, true));
+            }
+            seedmers.positionMap[beg] = std::make_tuple(end, hash, rev);
+            seedmers.seedmersMap[hash].insert(beg);
+            affectedSeedmers.insert(hash);
+        }
+    }
+}
+
+void revertSeedmers(mgsr::seedmers& seedmers, const std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>& seedmersToRevert) {
+    for (int i = seedmersToRevert.size() - 1; i > -1; --i) {
+        auto [beg, end, hash, rev, del] = seedmersToRevert[i];
+        if (del) {
+            auto seedmersMapIt = seedmers.seedmersMap.find(hash);
+            assert(seedmers.positionMap.erase(beg));
+            assert(seedmersMapIt->second.erase(beg));
+            if (seedmersMapIt->second.empty()) {
+                seedmers.seedmersMap.erase(hash);
+            }
+        } else {
+            auto positionMapIt = seedmers.positionMap.find(beg);
+            if (positionMapIt != seedmers.positionMap.end()) {
+                auto [oend, ohash, orev] = positionMapIt->second;
+                auto seedmersMapIt = seedmers.seedmersMap.find(ohash);
+
+                assert(seedmersMapIt->second.erase(beg));
+                if (seedmersMapIt->second.empty()) {
+                    seedmers.seedmersMap.erase(ohash);
+                }
+            }
+            seedmers.positionMap[beg] = std::make_tuple(end, hash, rev);
+            seedmers.seedmersMap[hash].insert(beg);
+        }
+    }
+}
+
+void initializeFastq(const std::string &fastqPath, std::vector<readSeedmers_t>& readSeedmers, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, const int32_t k, const int32_t s, const int32_t l) {
+    
+    FILE *fp;
+    kseq_t *seq;
+    fp = fopen(fastqPath.c_str(), "r");
+    if(!fp){
+        std::cerr << "Error: File " << fastqPath << " not found" << std::endl;
+        exit(0);
+    }
+
+    seq = kseq_init(fileno(fp));
+    
+    int line;
+    while ((line = kseq_read(seq)) >= 0) {
+        readSequences.push_back(seq->seq.s);
+        readNames.push_back(seq->name.s);
+        readQuals.push_back(seq->qual.s);
+    }
+    
+    readSeedmers.reserve(readSequences.size());
+    for (const std::string& seq : readSequences) {
+        std::vector<std::tuple<size_t, int32_t, int32_t>> curSyncmers = syncmersSketch(seq, k, s, false);
+        readSeedmers_t curKminmers = extractKminmers(curSyncmers, k, l);
+        readSeedmers.push_back(std::move(curKminmers));
+    }
+}
+
+bool redo(const std::unordered_set<size_t>& a, const std::unordered_set<size_t>& b) {
+    const auto& smallerSet = (a.size() < b.size()) ? a : b;
+    const auto& largerSet  = (a.size() < b.size()) ? b : a;
+
+    for (const auto& h : smallerSet) {
+        if (largerSet.find(h) != largerSet.end()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int32_t extend(match_t& curMatch, const std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>& querySeedmers, const mgsr::seedmers& refSeedmers, int32_t qidx, std::map<int32_t, std::tuple<int32_t, size_t, bool>>::const_iterator refPositionIt, int32_t c) {
+    if (qidx == querySeedmers.size() - 1) return c;
+    const auto& [qbeg, qend, rbeg, rend, rev, _] = curMatch;
+    const auto& [nhash, nqbeg, nqend, nqrev, nqidx] = querySeedmers[qidx+1];
+    auto prevRefPositionIt = refPositionIt;
+    auto nextRefPositionIt = refPositionIt;
+    --prevRefPositionIt;
+    ++nextRefPositionIt;
+    if (refSeedmers.seedmersMap.count(nhash) > 0 && refSeedmers.seedmersMap.find(nhash)->second.size() < 2) {
+        assert(refSeedmers.seedmersMap.find(nhash)->second.size() == 1);
+        const auto& rbeg = *(refSeedmers.seedmersMap.find(nhash)->second.begin());
+        auto curRefPositionIt = refSeedmers.positionMap.find(rbeg);
+        const auto& [rend, rhash, rrev] = curRefPositionIt->second;
+        if (rev == (nqrev != rrev)) {
+            if ((rev == 0 && curRefPositionIt->first == nextRefPositionIt->first) || (rev == 1 && curRefPositionIt->first == prevRefPositionIt->first)) {
+                ++c;
+                if (rev == 0) {
+                    curMatch = std::make_tuple(std::get<0>(curMatch), nqend, std::get<2>(curMatch), rend, std::get<4>(curMatch), c);
+                } else if (rev == 1) {
+                    curMatch = std::make_tuple(std::get<0>(curMatch), nqend, rbeg, std::get<3>(curMatch), std::get<4>(curMatch), c);
+                }
+                return extend(curMatch, querySeedmers, refSeedmers, nqidx, curRefPositionIt, c);
+            }
+        }
+    }
+    return c;
+}
+
+// typedef std::tuple<int, int, int, int, bool, int> match_t;
+// query start, query end, ref start, ref end, strand, count
+std::vector<match_t> match(const std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>& querySeedmers, const mgsr::seedmers& refSeedmers, double& duplicates) {
+    std::vector<match_t> matches;
+    int32_t i = 0;
+    while (i < querySeedmers.size()) {
+        const auto& [hash, qbeg, qend, qrev, qidx] = querySeedmers[i];
+        int32_t c = 1;
+        if (refSeedmers.seedmersMap.count(hash) > 0) {
+            if (refSeedmers.seedmersMap.find(hash)->second.size() < 2) {
+                assert(refSeedmers.seedmersMap.find(hash)->second.size() == 1);
+                const auto& rbeg = *(refSeedmers.seedmersMap.find(hash)->second.begin());
+                auto curRefPositionIt = refSeedmers.positionMap.find(rbeg);
+                const auto& [rend, rhash, rrev] = curRefPositionIt->second;
+                match_t curMatch = std::make_tuple(qbeg, qend, rbeg, rend, qrev != rrev, c);
+                c = extend(curMatch, querySeedmers, refSeedmers, qidx, curRefPositionIt, c);
+                matches.push_back(curMatch);
+            } else {
+                duplicates += 1.0;
+            }
+        }
+        i += c; 
+    }
+    return matches;
+}
+
+int32_t degapGlobal(const int32_t& globalCoord, const std::map<int32_t, int32_t>& coordsIndex) {
+    auto coordIt = coordsIndex.upper_bound(globalCoord);
+    --coordIt;
+    return globalCoord - coordIt->second;
+}
+
+bool isColinear(const match_t& match1, const match_t& match2, const std::map<int32_t, int32_t>& coordsIndex, int maximumGap) {
+    const auto& [qbeg1, qend1, rglobalbeg1, rglobalend1, rev1, count1] = match1;
+    const auto& [qbeg2, qend2, rglobalbeg2, rglobalend2, rev2, count2] = match2;
+    if (rev1 != rev2) return false;
+    
+    auto rbeg1 = degapGlobal(rglobalbeg1, coordsIndex);
+    auto rend1 = degapGlobal(rglobalend1, coordsIndex);
+    auto rbeg2 = degapGlobal(rglobalbeg2, coordsIndex);
+    auto rend2 = degapGlobal(rglobalend2, coordsIndex);
+
+    if (rev1 == false) {
+        int32_t qgap = abs(qbeg2 - qend1);
+        int32_t rgap = abs(rbeg2 - rend1);
+        if (rbeg1 < rbeg2 && abs(qgap - rgap) < maximumGap) return true;
+    } else {
+        int32_t qgap = abs(qbeg2 - qend1);
+        int32_t rgap = abs(rbeg1 - rend2);
+        if (rbeg2 < rbeg1 && abs(qgap - rgap) < maximumGap) return true;
+    }
+    return false;
+
+}
+
+std::vector<match_t> chainPseudo(const std::vector<match_t>& matches, const std::map<int32_t, int32_t>& coordsIndex, int maximumGap, int minimumCount, int minimumScore) {
+    std::vector<match_t> pseudoChain;
+
+    if (matches.size() == 0) {
+        return pseudoChain;
+    }
+    else if (matches.size() == 1) {
+        pseudoChain.push_back(matches[0]);
+        return pseudoChain;
+    }
+
+    size_t maxIndex = 0;
+    for (size_t i = 1; i < matches.size(); ++i) {
+        if (std::get<5>(matches[i]) > std::get<5>(matches[maxIndex])) maxIndex = i;
+    }
+
+    for (size_t i = 0; i < matches.size(); ++i) {
+        if (i == maxIndex) {
+            pseudoChain.push_back(matches[i]);
+            continue;
+        }
+
+        // typedef std::tuple<int, int, int, int, bool, int> match_t;
+        // query start, query end, ref start, ref end, strand, count
+        if (std::get<0>(matches[maxIndex]) < std::get<0>(matches[i])) {
+            if (isColinear(matches[maxIndex], matches[i], coordsIndex, maximumGap)) pseudoChain.push_back(matches[i]);
+        } else {
+            if (isColinear(matches[i], matches[maxIndex], coordsIndex, maximumGap)) pseudoChain.push_back(matches[i]);
+        }
+    }
+
+    return pseudoChain;
+}
+
+int scorePseudoChain(const std::vector<match_t>& pseudoChain) {
+    int32_t score = 0;
+    for (const match_t& match : pseudoChain) {
+        score += std::get<5>(match);
+    }
+    return score;
+}
+
+void scoreDFS(mgsr::seedmers& seedmers, const std::unordered_map<std::string, std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>>& seedmersIndex, const std::unordered_map<std::string, std::map<int32_t, int32_t>>& coordsIndex, const std::vector<readSeedmers_t>& readSeedmers, std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, const Node *node, Tree *T, size_t& totalCount, size_t& redoCount) {
+    std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>> seedmersToRevert;
+    std::unordered_set<size_t> affectedSeedmers;
+    mutateSeedmers(seedmers, seedmersIndex.find(node->identifier)->second, affectedSeedmers, seedmersToRevert);
+
+    if (node->identifier == T->root->identifier) {
+        allScores[node->identifier].reserve(readSeedmers.size());
+        for (size_t i = 0; i < readSeedmers.size(); ++i) {
+            ++totalCount;
+            ++redoCount;
+            double duplicates = 0;
+            const auto& curReadSeedmers = readSeedmers[i];
+            std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
+            std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, 10, 0, 0);
+            int32_t pseudoScore = scorePseudoChain(pseudoChain);
+            double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size()) - duplicates);
+
+            allScores[node->identifier].push_back({pseudoScore, pseudoProb});
+        }
+    } else {
+        allScores[node->identifier].reserve(readSeedmers.size());
+        for (size_t i = 0; i < readSeedmers.size(); ++i) {
+            ++totalCount;
+            const auto& curReadSeedmers = readSeedmers[i];
+            if (redo(curReadSeedmers.second, affectedSeedmers)) {
+                ++redoCount;
+                double duplicates = 0;
+                std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
+                std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, 10, 0, 0);
+                int32_t pseudoScore = scorePseudoChain(pseudoChain);
+                double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size()) - duplicates);
+
+                allScores[node->identifier].push_back({pseudoScore, pseudoProb});
+            } else {
+                allScores[node->identifier].push_back(allScores[node->parent->identifier][i]);
+            }
+        }
+    }
+
+
+    for (Node *child : node->children) {
+        scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, allScores, child, T, totalCount, redoCount);
+    }
+    revertSeedmers(seedmers, seedmersToRevert);
+}
+
+void mgsr::scorePseudo(std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, Tree *T, std::ofstream &scoreOut) {
+    // get read seeds
+    std::string line;
+    std::getline(indexFile, line);
+    std::vector<std::string> spltTop;
+    PangenomeMAT::stringSplit(line, ' ', spltTop);
+    int32_t tempK = std::stoi(spltTop[0]);
+    int32_t tempS = std::stoi(spltTop[1]);
+    int32_t tempJ = std::stoi(spltTop[2]);
+
+    std::vector<std::string> readSequences;
+    std::vector<std::string> readQuals;
+    std::vector<std::string> readNames;
+    std::vector<readSeedmers_t> readSeedmers;
+
+    //                 node                     scores
+    std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>> allScores;
+
+    //                 node                                beg      end      hash    rev   del
+    std::unordered_map<std::string, std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>> seedmersIndex;
+    std::unordered_map<std::string, std::map<int32_t, int32_t>> coordsIndex;
+    std::cerr << "start reading tree seedmers index" << std::endl;
+    while (std::getline(indexFile, line)) {
+        std::vector<std::string> split;
+        PangenomeMAT::stringSplit(line, ' ', split);
+        std::string nid = split[0];
+        seedmersIndex[nid] = {};
+        coordsIndex[nid] = {};
+        for (int32_t i = 1; i < split.size(); ++i) {
+            std::vector<std::string> metaSplit;
+            PangenomeMAT::stringSplit(split[i], ':', metaSplit);
+            if (metaSplit[0] == "c") {
+                std::vector<std::string> coorsSplit;
+                PangenomeMAT::stringSplit(metaSplit[1], ',', coorsSplit);
+                assert(coorsSplit.size() % 2 == 0);
+                for (size_t i = 0; i < coorsSplit.size(); i+=2) {
+                    int32_t globalCoord = std::stoi(coorsSplit[i]);
+                    int32_t offset = std::stoi(coorsSplit[i+1]);
+                    coordsIndex[nid][globalCoord] = offset;
+                }
+            } else {
+                int32_t beg = std::stoi(metaSplit[0]);
+                if (metaSplit[1] == "+") {
+                    std::vector<std::string> infoSplit;
+                    PangenomeMAT::stringSplit(metaSplit[2], ',', infoSplit);
+                    int32_t end = std::stoi(infoSplit[0]);
+                    std::stringstream sstream(infoSplit[1]);
+                    size_t hash;
+                    sstream >> hash;
+                    bool rev = (infoSplit[2] == "1") ? true : false;
+                    seedmersIndex[nid].emplace_back(std::make_tuple(beg, end, hash, rev, false)); 
+                }
+                else if (metaSplit[1] == "-") {
+                    std::stringstream sstream(metaSplit[2]);
+                    size_t hash;
+                    sstream >> hash;
+                    seedmersIndex[nid].emplace_back(std::make_tuple(beg, 0, hash, false, true));
+                }
+                else {
+                    throw std::invalid_argument("Error reading index file. Can't determine insertion/subsitution or deletion");
+                }
+            }
+        }
+    }
+    std::cerr << "finished reading tree seedmers index\n" << std::endl;
+
+    std::cerr << "start initializing read seedmers" << std::endl; 
+    initializeFastq(reads1Path, readSeedmers, readSequences, readQuals, readNames, tempK, tempS, tempJ);
+    std::cerr << "finished initializing read seedmers... total number of reads " << readSeedmers.size() << "\n" << std::endl;
+
+    std::cerr << "start scoring DFS" << std::endl;
+    mgsr::seedmers seedmers;
+    size_t totalCount = 0;
+    size_t redoCount = 0;
+    scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, allScores, T->root, T, totalCount, redoCount);
+    std::cerr << "Need to process " << redoCount << " out of " << totalCount << std::endl;  
+    std::cerr << "finished scoring DFS" << std::endl;
+
+    // std::vector<std::pair<std::string, int32_t>> scores;
+    // for (const auto& n : T->allNodes) scores.emplace_back(std::make_pair(n.first, allScores[n.first].first));
+    // std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
+    //     return a.second > b.second;
+    // });
+    // for (const auto& score : scores) scoreOut << score.first << "\t" << score.second << "\n";
+
 }

@@ -61,9 +61,7 @@ void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutD
         size_t globalCoord = tree::getGlobalCoordinate(blockId, nucPosition, nucGapPosition, globalCoords);
         if(type < 3) { // Either S, I or D
             int len = ((node->nucMutation[i].mutInfo) >> 4);
-            std::cerr << "globalCoord: " << globalCoord << "\tnucGapPosition: " << nucGapPosition << "\tlen: " << len << std::endl;
             if(type == PangenomeMAT::NucMutationType::NS) {
-                std::cerr << "-NS-" << std::endl;
                 // Substitution     
                 if(nucGapPosition != -1) {
                     for(int j = 0; j < len; j++) {
@@ -83,7 +81,6 @@ void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutD
             }
             else if(type == PangenomeMAT::NucMutationType::NI) {
                 // Insertion
-                std::cerr << "-NI-" << std::endl;
                 if(nucGapPosition != -1) {
                     for(int j = 0; j < len; j++) {
                         char oldVal = data.sequence[blockId].first[nucPosition].second[nucGapPosition+j];
@@ -103,7 +100,6 @@ void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutD
             }
             else if(type == PangenomeMAT::NucMutationType::ND) {
                 // Deletion
-                std::cerr << "-ND-" << std::endl;
                 if(nucGapPosition != -1) {
                     for(int j = 0; j < len; j++) {
                         char oldVal = data.sequence[blockId].first[nucPosition].second[nucGapPosition+j];

@@ -71,7 +71,7 @@ namespace tree {
     };
 
     /* Interface */
-    void updateConsensus(mutableTreeData &data, Tree *T);
+    void updateConsensus(mutableTreeData &data, Tree *T, std::map<int32_t, int32_t> *coordsIndex=nullptr);
    
     void removeIndices(std::vector<seed>& v, std::stack<int32_t>& rm);
     std::string getConsensus(Tree *T); // ungapped!

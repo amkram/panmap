@@ -35,18 +35,25 @@ std::string tree::getConsensus(Tree *T) {
 - regap not used anywhere else
 - change how regap is constructed for tracking the end position of syncmers and seedmers
 */
-void tree::updateConsensus(mutableTreeData &data, Tree *T) {
+void tree::updateConsensus(mutableTreeData &data, Tree *T, std::map<int32_t, int32_t> *coordsIndex) {
     std::string consensus = tree::getStringFromCurrData(data, T, T->root, true);
     data.gappedConsensus = consensus;
     std::string ungapped = "";
     data.degap.clear();
     data.regap.clear();
+    int32_t numGaps = 0;
     for (int32_t i = 0; i < consensus.size(); i ++) {
         char &c = consensus[i];
+        char &p = consensus[std::max(0, i-1)];
         data.degap.push_back(ungapped.size());
         if (c != '-') {
             ungapped += c;
             data.regap.push_back(i);
+            if (coordsIndex != nullptr && (i == 0 || p == '-')) {
+                coordsIndex->insert({i, numGaps});
+            }
+        } else if (coordsIndex != nullptr) {
+            ++numGaps;
         }
     }
     data.ungappedConsensus = ungapped;
