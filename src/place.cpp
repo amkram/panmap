@@ -318,6 +318,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
     
+    
     std::string bestMatch;
     if ( !use_root ) {
         
@@ -336,7 +337,6 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         bestMatch = T->root->identifier;
     }
     
-    
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestMatch, true);
     std::vector<int32_t> degapVec;
@@ -347,7 +347,6 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
             bestMatchSequence += c;
         }
     }
-
 
     
     // path format {target}.*.fastq
@@ -374,6 +373,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         seedToRefPositions[seed].push_back(degapVec[refPos]);
     }
 
+
     //Print out reference
     if(refFileName.size() > 0){
         std::ofstream outFile{refFileName};
@@ -389,7 +389,6 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         }
     }
     
-
     //Create SAM
     std::vector<char *> samAlignments;
     std::string samHeader;

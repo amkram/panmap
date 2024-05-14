@@ -25,6 +25,7 @@ void createSam(
     std::string &samHeader
 )   {
     
+
     for(int r = 0; r < readSequences.size() ; r++){
 
         std::vector<seed> matchingSeeds;
@@ -42,7 +43,6 @@ void createSam(
 
         readSeeds[r] = matchingSeeds;
     }
-
 
     
     //Preparing C structures for minimap
@@ -125,14 +125,16 @@ void createSam(
         }
     }
 
-
     
     samHeader = "@SQ\tSN:ref\tLN:";
     samHeader += std::to_string(bestMatchSequence.length());
-    
-    char *sam_alignments[n_reads];
 
-    
+    std::vector<char *> samAlignmentsBuffer(n_reads);
+
+    char **sam_alignments = &samAlignmentsBuffer[0];
+
+
+
     align_reads(reference,n_reads,read_strings,qual_strings, read_names, r_lens, seed_counts, reversed, ref_positions, qry_positions, sam_alignments, k, pairedEndReads);
 
 
