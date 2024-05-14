@@ -1004,11 +1004,18 @@ void mgsr::scorePseudo(std::ifstream &indexFile, const std::string &reads1Path, 
     std::cerr << "Need to process " << redoCount << " out of " << totalCount << std::endl;  
     std::cerr << "finished scoring DFS" << std::endl;
 
-    // std::vector<std::pair<std::string, int32_t>> scores;
-    // for (const auto& n : T->allNodes) scores.emplace_back(std::make_pair(n.first, allScores[n.first].first));
-    // std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
-    //     return a.second > b.second;
-    // });
-    // for (const auto& score : scores) scoreOut << score.first << "\t" << score.second << "\n";
+    std::vector<std::pair<std::string, int32_t>> scores;
+
+    for (const auto& node : allScores) {
+        int32_t totalScore = 0;
+        for (const auto& score : node.second) {
+            totalScore += score.first;
+        }
+        scores.push_back({node.first, totalScore});
+    }
+    std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
+        return a.second > b.second;
+    });
+    for (const auto& score : scores) scoreOut << score.first << "\t" << score.second << "\n";
 
 }
