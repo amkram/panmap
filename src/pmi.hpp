@@ -1,6 +1,7 @@
 #ifndef __PMI_HPP
 #define __PMI_HPP
 
+#include <__config>
 #pragma once
 #include "seeding.hpp"
 #include "tree.hpp"
@@ -9,7 +10,7 @@ using namespace PangenomeMAT;
 using namespace seeding;
 using namespace tree;
 
-typedef std::unordered_map<int32_t, std::pair<int32_t, std::string>> seedMap_t;
+typedef std::map<int64_t, std::string> seedMap_t;
 namespace pmi { // functions and types for seed indexing
 
     struct seedIndex {
@@ -21,19 +22,18 @@ namespace pmi { // functions and types for seed indexing
         std::unordered_map<std::string, std::vector<seed>> insertions;
         int32_t k;
         int32_t s;
+        int32_t j;
     };
 
     /* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
     void build(seedIndex &index, Tree *T, const size_t j, const size_t k, const size_t s);
 }
 
-/* Expose some pmi.cpp helpers for unit testing */
+/* Expose some pmi.cpp helpers for unit testing also tree.cpp uses applyMutations for now */
 using namespace pmi;
 
-void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tree *T, const Node *node, const int32_t l, const size_t k, const size_t s, const globalCoords_t &globalCoords);
+void buildHelper(mutableTreeData &data, seedMap_t &seedMap, seedIndex &index, Tree *T, const Node *node, const globalCoords_t &globalCoords);
+void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, std::set<std::tuple<int, int, int, int>, decltype(rangeCmp)> &recompRanges, nucMutData_t &nucMutData, Tree *T, const Node *node, const globalCoords_t &globalCoords, seedIndex &index);
 void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T, const Node *node, const blockMutData_t &blockMutData, const nucMutData_t &nucMutData);
-void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutData_t &nucMutData, Tree *T, const Node *node, const globalCoords_t &globalCoords);
-range_t getRecomputePositions(const range_t &p, const std::string &gappedSequence, const int32_t k);
-std::vector<range_t> getAffectedRanges(mutableTreeData &data, const blockMutData_t &blockMutData, const nucMutData_t &nucMutData, std::string &seq, Tree *T, const int32_t k, const globalCoords_t &globalCoords);
 
 #endif
