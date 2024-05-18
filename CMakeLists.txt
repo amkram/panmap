@@ -10,11 +10,12 @@ option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." ON)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PROFILE "Enable profiling." ON)
+option(OPTION_TRACE "Enable tracing." ON)
 
 cmake_policy(SET CMP0135 NEW)
 
 include(FetchContent)
-
+set(FETCHCONTENT_QUIET OFF)
 FetchContent_Declare(easy_profiler
     GIT_REPOSITORY https://github.com/yse/easy_profiler
     GIT_TAG develop
@@ -33,6 +34,17 @@ add_executable(panmap
     src/mm_align.c
     src/pileup.c
 )
+add_executable(tests
+    src/test/main.test.cpp
+    src/test/pmi.test.cpp
+    src/conversion.cpp
+    src/place.cpp
+    src/genotype.cpp
+    src/pmi.cpp
+    src/tree.cpp
+    src/mm_align.c
+    src/pileup.c
+    )
 
 
 # system
@@ -95,21 +107,35 @@ FetchContent_MakeAvailable(panmat)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 
 # Lets us do: 
 #    #include <minimap2/kseq.h>
 #    #include <htslib/sam.h>    
 #    ...
 
-target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib $<$<BOOL:${OPTION_TRACE}>:easy_profiler>)
+find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
+target_link_libraries(tests panmat minimap2 samtools htslib $<$<BOOL:${OPTION_PROFILE}>:easy_profiler>
+                      ${Boost_FILESYSTEM_LIBRARY}
+                      ${Boost_SYSTEM_LIBRARY}
+                      ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+                      )
+
+target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib $<$<BOOL:${OPTION_PROFILE}>:easy_profiler>)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(panmap PRIVATE -lm -lz -lpthread)
 
+target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+target_link_options(tests PRIVATE -lm -lz -lpthread)
 
 if (OPTION_DEBUG)
-    target_compile_options(panmap PRIVATE -g -O1)
+    target_compile_options(panmap PRIVATE -g -O0 -ggdb -glldb)
+    target_compile_options(tests PRIVATE -g -O0 -ggdb -glldb)
 else()
     target_compile_options(panmap PRIVATE -g -O3)
+    target_compile_options(tests PRIVATE -g -O3)
 endif()
 
 # Unit testing data
