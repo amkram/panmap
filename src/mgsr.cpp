@@ -1,12 +1,16 @@
 #include <algorithm>
+#include <iterator>
 #include <cassert>
 #include <deque>
 #include <queue>
+#include <math.h>
 #include <boost/functional/hash.hpp>
+#include <boost/filesystem.hpp>
 #include "PangenomeMAT.hpp"
 #include "seeding.hpp"
 #include "mgsr.hpp"
 
+namespace fs = boost::filesystem;
 
 void mgsr::accio(PangenomeMAT::Tree *T, std::ifstream& indexFile, size_t k, size_t l) {
     std::cout << "What's my purpose\nYou pass butter" << std::endl;
@@ -346,6 +350,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     seedMap[c].second = kmer;
                     if (seedMap[c].second == prevseedmer) {
                         syncmerGlobalEndCoorChanges[c] = data.regap[data.degap[c] + k - 1];
+                        continue;
                     }
                     if (seedMap[c].second.size() == k) {
                         std::string str = "";
@@ -399,8 +404,8 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
     if (seedmersIndex.seedmersMap.size() == 0) {
         /*build seedmer for root*/
-        // std::cerr << node->identifier << std::endl;
-        seedmersOutStream << node->identifier << " ";
+        // std::cerr << "initializing" << node->identifier << std::endl;
+        seedmersOutStream << node->identifier << ":" << data.ungappedConsensus.size() << " ";
         initializeMap(seedmersIndex, syncmerChanges, curSeeds, l, k, seedmersOutStream);
         
         seedmersOutStream << "c:";
@@ -408,15 +413,18 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
             seedmersOutStream << coord.first << "," << coord.second << ",";
         }
         seedmersOutStream << "\n";
-        // std::string seedsPath = "../src/test/data/mgsr/test/" + node->identifier + ".smi";
+
+        // std::string dirName = "../src/test/data/mgsr/test/k" + std::to_string(k) + "_s" + std::to_string(s) + "_l" + std::to_string(l);
+        // fs::create_directories(dirName);
+        // std::string seedsPath = dirName + "/" + node->identifier + ".smi";
+        // std::string seedmersPath = dirName + "/" + node->identifier + ".kmi";
         // writeCurSeeds(seedsPath, curSeeds, data);
-        // std::string seedmersPath = "../src/test/data/mgsr/test/" + node->identifier + ".kmi";
         // writeCurSeedmers(seedmersPath, seedmersIndex, data);
     } else {
         // std::cerr << node->identifier << std::endl;
         updateCurSeeds(curSeeds, syncmerChanges, syncmerGlobalEndCoorChanges);
 
-        seedmersOutStream << node->identifier << " ";
+        seedmersOutStream << node->identifier << ":" << data.ungappedConsensus.size() << " ";
 
         std::unordered_set<int32_t> seenBegs;
         size_t  cacheReversedH;
@@ -523,19 +531,20 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
         }
 
         for (const auto& endCoorChange : syncmerGlobalEndCoorChanges) {
-            auto curPositionIt = seedmersIndex.positionMap.find(endCoorChange.first);
-            if (curPositionIt == seedmersIndex.positionMap.end()) continue;
+            auto curSeedIt = curSeeds.find(endCoorChange.first);
             int count = 0;
             while (count < l - 1) {
-                if (curPositionIt == seedmersIndex.positionMap.begin()) break;
-                --curPositionIt;
+                if (curSeedIt == curSeeds.begin()) break;
                 ++count;
+                --curSeedIt;
             }
             if (count != l - 1) continue;
+            auto curPositionIt = seedmersIndex.positionMap.find(curSeedIt->first);
+            if (curPositionIt == seedmersIndex.positionMap.end()) continue;
 
             if (std::get<0>(curPositionIt->second) != endCoorChange.second) {
                 curPositionIt->second = std::make_tuple(endCoorChange.second, std::get<1>(curPositionIt->second), std::get<2>(curPositionIt->second));
-                seedmersOutStream << endCoorChange.first << ":e:" << endCoorChange.second << " ";
+                seedmersOutStream << curPositionIt->first << ":e:" << endCoorChange.second << " ";
             }
         }
 
@@ -545,9 +554,12 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
         }
         seedmersOutStream << "\n";
 
-        // std::string seedsPath = "../src/test/data/mgsr/test/" + node->identifier + ".smi";
+        
+        // std::string dirName = "../src/test/data/mgsr/test/k" + std::to_string(k) + "_s" + std::to_string(s) + "_l" + std::to_string(l);
+        // fs::create_directories(dirName);
+        // std::string seedsPath = dirName + "/" + node->identifier + ".smi";
+        // std::string seedmersPath = dirName + "/" + node->identifier + ".kmi";
         // writeCurSeeds(seedsPath, curSeeds, data);
-        // std::string seedmersPath = "../src/test/data/mgsr/test/" + node->identifier + ".kmi";
         // writeCurSeedmers(seedmersPath, seedmersIndex, data);
     }
 
@@ -563,7 +575,6 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
 
     /* Recursive step */
     for (Node* child: node->children){
-        // if (child->identifier == "node_3" || child->identifier == "node_502" || child->identifier == "node_1002") {continue;}
         mgsr::buildSeedmerHelper(data, seedMap, index, seedmersIndex, curSeeds, T, child, l, k, s, globalCoords, seedmersOutStream);
     }
     /* Undo seed and sequence mutations when backtracking */
@@ -645,25 +656,36 @@ readSeedmers_t extractKminmers(const std::vector<std::tuple<size_t, int32_t, int
     return std::make_pair(std::move(kminmers), std::move(hashes));
 }
 
-void mutateSeedmers(mgsr::seedmers& seedmers, const std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>& index, std::unordered_set<size_t>& affectedSeedmers, std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>& seedmersToRevert) {
-    for (const auto& change : index) {
-        auto [beg, end, hash, rev, del] = change;
-        if (del) {
+int32_t degapGlobal(const int32_t& globalCoord, const std::map<int32_t, int32_t>& coordsIndex) {
+    auto coordIt = coordsIndex.upper_bound(globalCoord);
+    if (coordIt == coordsIndex.begin()) {
+        return 0;
+    }
+    --coordIt;
+    return globalCoord - coordIt->second;
+}
+
+void mutateSeedmers(mgsr::seedmers& seedmers, const std::pair<int32_t, std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>>>& index, const std::map<int32_t, int32_t>& coordsIndex, std::unordered_set<size_t>& affectedSeedmers, std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>>& seedmersToRevert, const int32_t& ignoreEnds) {
+    const auto& length = index.first;
+    for (const auto& change : index.second) {
+        auto [beg, end, hash, rev, type] = change;
+        if (type == 1) {
             auto positionMapIt = seedmers.positionMap.find(beg);
             auto seedmersMapIt = seedmers.seedmersMap.find(hash);
             auto [cend, chash, crev] = positionMapIt->second;
-            seedmersToRevert.emplace_back(std::make_tuple(beg, cend, chash, crev, false));
+            seedmersToRevert.emplace_back(std::make_tuple(beg, cend, chash, crev, 0));
 
             assert(seedmers.positionMap.erase(beg));
             assert(seedmersMapIt->second.erase(beg));
             size_t curHashNum = seedmersMapIt->second.size();
             if (curHashNum <= 1) {
+                // if (degapGlobal(beg, coordsIndex) >= ignoreEnds && degapGlobal(cend, coordsIndex) <= length - 1 - ignoreEnds) affectedSeedmers.insert(hash);
                 affectedSeedmers.insert(hash);
                 if (curHashNum == 0) {
                     seedmers.seedmersMap.erase(hash);
                 }
             }
-        } else {
+        } else if (type == 0) {
             auto positionMapIt = seedmers.positionMap.find(beg);
             if (positionMapIt != seedmers.positionMap.end()) {
                 auto [oend, ohash, orev] = positionMapIt->second;
@@ -672,33 +694,42 @@ void mutateSeedmers(mgsr::seedmers& seedmers, const std::vector<std::tuple<int32
                 assert(seedmersMapIt->second.erase(beg));
                 size_t ohashNum = seedmersMapIt->second.size();
                 if (ohashNum <= 1) {
+                    // if (degapGlobal(beg, coordsIndex) >= ignoreEnds && degapGlobal(oend, coordsIndex) <= length - 1 - ignoreEnds) affectedSeedmers.insert(ohash);
                     affectedSeedmers.insert(ohash);
                     if (ohashNum == 0) {
                         seedmers.seedmersMap.erase(ohash);
                     }
                 }
-                seedmersToRevert.emplace_back(std::make_tuple(beg, oend, ohash, orev, false));
+                seedmersToRevert.emplace_back(std::make_tuple(beg, oend, ohash, orev, 0));
             } else {
-                seedmersToRevert.emplace_back(std::make_tuple(beg, 0, hash, false, true));
+                seedmersToRevert.emplace_back(std::make_tuple(beg, 0, hash, false, 1));
             }
             seedmers.positionMap[beg] = std::make_tuple(end, hash, rev);
             seedmers.seedmersMap[hash].insert(beg);
+            // if (degapGlobal(beg, coordsIndex) >= ignoreEnds && degapGlobal(end, coordsIndex) <= length - 1 - ignoreEnds) affectedSeedmers.insert(hash);
             affectedSeedmers.insert(hash);
+        } else if (type == 2) {
+            auto positionMapIt = seedmers.positionMap.find(beg);
+            auto [cend, chash, crev] = positionMapIt->second;
+            seedmers.positionMap[beg] = std::make_tuple(end, chash, crev);
+            seedmersToRevert.emplace_back(std::make_tuple(beg, cend, 0, false, 2));
+        } else {
+            throw std::invalid_argument("Error reading index file. Can't determine seedmer change type.");
         }
     }
 }
 
-void revertSeedmers(mgsr::seedmers& seedmers, const std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>& seedmersToRevert) {
+void revertSeedmers(mgsr::seedmers& seedmers, const std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>>& seedmersToRevert) {
     for (int i = seedmersToRevert.size() - 1; i > -1; --i) {
-        auto [beg, end, hash, rev, del] = seedmersToRevert[i];
-        if (del) {
+        auto [beg, end, hash, rev, type] = seedmersToRevert[i];
+        if (type == 1) {
             auto seedmersMapIt = seedmers.seedmersMap.find(hash);
             assert(seedmers.positionMap.erase(beg));
             assert(seedmersMapIt->second.erase(beg));
             if (seedmersMapIt->second.empty()) {
                 seedmers.seedmersMap.erase(hash);
             }
-        } else {
+        } else if (type == 0) {
             auto positionMapIt = seedmers.positionMap.find(beg);
             if (positionMapIt != seedmers.positionMap.end()) {
                 auto [oend, ohash, orev] = positionMapIt->second;
@@ -711,6 +742,10 @@ void revertSeedmers(mgsr::seedmers& seedmers, const std::vector<std::tuple<int32
             }
             seedmers.positionMap[beg] = std::make_tuple(end, hash, rev);
             seedmers.seedmersMap[hash].insert(beg);
+        } else if (type == 2) {
+            auto positionMapIt = seedmers.positionMap.find(beg);
+            auto [cend, chash, crev] = positionMapIt->second;
+            seedmers.positionMap[beg] = std::make_tuple(end, chash, crev);
         }
     }
 }
@@ -809,12 +844,6 @@ std::vector<match_t> match(const std::vector<std::tuple<size_t, int32_t, int32_t
     return matches;
 }
 
-int32_t degapGlobal(const int32_t& globalCoord, const std::map<int32_t, int32_t>& coordsIndex) {
-    auto coordIt = coordsIndex.upper_bound(globalCoord);
-    --coordIt;
-    return globalCoord - coordIt->second;
-}
-
 bool isColinear(const match_t& match1, const match_t& match2, const std::map<int32_t, int32_t>& coordsIndex, int maximumGap) {
     const auto& [qbeg1, qend1, rglobalbeg1, rglobalend1, rev1, count1] = match1;
     const auto& [qbeg2, qend2, rglobalbeg2, rglobalend2, rev2, count2] = match2;
@@ -880,10 +909,41 @@ int scorePseudoChain(const std::vector<match_t>& pseudoChain) {
     return score;
 }
 
-void scoreDFS(mgsr::seedmers& seedmers, const std::unordered_map<std::string, std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>>& seedmersIndex, const std::unordered_map<std::string, std::map<int32_t, int32_t>>& coordsIndex, const std::vector<readSeedmers_t>& readSeedmers, std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, const Node *node, Tree *T, size_t& totalCount, size_t& redoCount) {
-    std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>> seedmersToRevert;
+void printReadSeedmers(const std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>& seedmers) {
+    std::cout << "seedmers:" << std::endl;
+    for (const auto& seedmer : seedmers) {
+        std::cout << std::get<0>(seedmer) << "\t"
+                  << std::get<1>(seedmer) << "\t"
+                  << std::get<2>(seedmer) << "\t"
+                  << std::get<3>(seedmer) << "\t"
+                  << std::get<4>(seedmer) << std::endl;
+    }
+    std::cout << std::endl;
+}
+
+void printMatches(const std::vector<match_t> matches) {
+    std::cout << "Matches:" << std::endl;
+    for (const match_t& match : matches) {
+        std::cout << std::get<0>(match) << "\t"
+                  << std::get<1>(match) << "\t"
+                  << std::get<2>(match) << "\t"
+                  << std::get<3>(match) << "\t"
+                  << std::get<4>(match) << "\t"
+                  << std::get<5>(match) << std::endl;
+    }
+    std::cout << std::endl;
+}
+
+void scoreDFS(
+    mgsr::seedmers& seedmers, const std::unordered_map<std::string, std::pair<int32_t, std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>>>>& seedmersIndex,
+    const std::unordered_map<std::string, std::map<int32_t, int32_t>>& coordsIndex, const std::vector<readSeedmers_t>& readSeedmers, 
+    std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, std::unordered_map<std::string, std::string>& identicalPairs, 
+    const Node *node, Tree *T, size_t& totalCount, size_t& redoCount, const int& maximumGap, const int& minimumCount, const int& minimumScore, const int32_t& ignoreEnds
+    ) {
+    // std::cerr << "identifier " << node->identifier << std::endl;
+    std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>> seedmersToRevert;
     std::unordered_set<size_t> affectedSeedmers;
-    mutateSeedmers(seedmers, seedmersIndex.find(node->identifier)->second, affectedSeedmers, seedmersToRevert);
+    mutateSeedmers(seedmers, seedmersIndex.find(node->identifier)->second, coordsIndex.find(node->identifier)->second, affectedSeedmers, seedmersToRevert, ignoreEnds);
 
     if (node->identifier == T->root->identifier) {
         allScores[node->identifier].reserve(readSeedmers.size());
@@ -893,40 +953,50 @@ void scoreDFS(mgsr::seedmers& seedmers, const std::unordered_map<std::string, st
             double duplicates = 0;
             const auto& curReadSeedmers = readSeedmers[i];
             std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
-            std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, 10, 0, 0);
+            std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, maximumGap, minimumCount, minimumScore);
             int32_t pseudoScore = scorePseudoChain(pseudoChain);
             double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size()) - duplicates);
-
             allScores[node->identifier].push_back({pseudoScore, pseudoProb});
         }
     } else {
         allScores[node->identifier].reserve(readSeedmers.size());
-        for (size_t i = 0; i < readSeedmers.size(); ++i) {
-            ++totalCount;
-            const auto& curReadSeedmers = readSeedmers[i];
-            if (redo(curReadSeedmers.second, affectedSeedmers)) {
-                ++redoCount;
-                double duplicates = 0;
-                std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
-                std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, 10, 0, 0);
-                int32_t pseudoScore = scorePseudoChain(pseudoChain);
-                double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size()) - duplicates);
+        if (affectedSeedmers.size() == 0) {
+            identicalPairs[node->identifier] = node->parent->identifier;
+            allScores[node->identifier] = allScores[node->parent->identifier];
+        } else {
+            for (size_t i = 0; i < readSeedmers.size(); ++i) {
+                ++totalCount;
+                const auto& curReadSeedmers = readSeedmers[i];
+                if (redo(curReadSeedmers.second, affectedSeedmers)) {
+                    ++redoCount;
+                    double duplicates = 0;
+                    std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
+                    std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, maximumGap, minimumCount, minimumScore);
+                    int32_t pseudoScore = scorePseudoChain(pseudoChain);
+                    double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size()) - duplicates);
 
-                allScores[node->identifier].push_back({pseudoScore, pseudoProb});
-            } else {
-                allScores[node->identifier].push_back(allScores[node->parent->identifier][i]);
+                    allScores[node->identifier].push_back({pseudoScore, pseudoProb});
+                } else {
+                    allScores[node->identifier].push_back(allScores[node->parent->identifier][i]);
+                }
             }
         }
     }
 
 
     for (Node *child : node->children) {
-        scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, allScores, child, T, totalCount, redoCount);
+        scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, allScores, identicalPairs, child, T, totalCount, redoCount, maximumGap, minimumCount, minimumScore, ignoreEnds);
     }
     revertSeedmers(seedmers, seedmersToRevert);
 }
 
-void mgsr::scorePseudo(std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, Tree *T, std::ofstream &scoreOut) {
+void mgsr::scorePseudo(
+    std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path,
+    std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, 
+    std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
+    std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    Tree *T, const int& maximumGap, const int& minimumCount, const int& minimumScore, int32_t ignoreEnds = 0
+    ) {
     // get read seeds
     std::string line;
     std::getline(indexFile, line);
@@ -941,18 +1011,24 @@ void mgsr::scorePseudo(std::ifstream &indexFile, const std::string &reads1Path, 
     std::vector<std::string> readNames;
     std::vector<readSeedmers_t> readSeedmers;
 
-    //                 node                     scores
-    std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>> allScores;
+    //                 node         parent
+    std::unordered_map<std::string, std::string> identicalPairs;
+    //                 node         children, grandchildren, etc.                  
 
-    //                 node                                beg      end      hash    rev   del
-    std::unordered_map<std::string, std::vector<std::tuple<int32_t, int32_t, size_t, bool, bool>>> seedmersIndex;
+    //                 node                                beg      end      hash    rev   type
+    std::unordered_map<std::string, std::pair<int32_t, std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>>>> seedmersIndex;
     std::unordered_map<std::string, std::map<int32_t, int32_t>> coordsIndex;
+    
     std::cerr << "start reading tree seedmers index" << std::endl;
     while (std::getline(indexFile, line)) {
         std::vector<std::string> split;
         PangenomeMAT::stringSplit(line, ' ', split);
-        std::string nid = split[0];
-        seedmersIndex[nid] = {};
+        std::string nodeInfo = split[0];
+        std::vector<std::string> nodeInfoSplit;
+        PangenomeMAT::stringSplit(nodeInfo, ':', nodeInfoSplit);
+        std::string nid = nodeInfoSplit[0];
+        int32_t length = std::stoi(nodeInfoSplit[1]);
+        seedmersIndex[nid] = {length, {}};
         coordsIndex[nid] = {};
         for (int32_t i = 1; i < split.size(); ++i) {
             std::vector<std::string> metaSplit;
@@ -976,15 +1052,17 @@ void mgsr::scorePseudo(std::ifstream &indexFile, const std::string &reads1Path, 
                     size_t hash;
                     sstream >> hash;
                     bool rev = (infoSplit[2] == "1") ? true : false;
-                    seedmersIndex[nid].emplace_back(std::make_tuple(beg, end, hash, rev, false)); 
+                    seedmersIndex[nid].second.emplace_back(std::make_tuple(beg, end, hash, rev, 0)); 
                 }
                 else if (metaSplit[1] == "-") {
                     std::stringstream sstream(metaSplit[2]);
                     size_t hash;
                     sstream >> hash;
-                    seedmersIndex[nid].emplace_back(std::make_tuple(beg, 0, hash, false, true));
-                }
-                else {
+                    seedmersIndex[nid].second.emplace_back(std::make_tuple(beg, 0, hash, false, 1));
+                } else if (metaSplit[1] == "e") {
+                    int32_t newEnd = std::stoi(metaSplit[2]);
+                    seedmersIndex[nid].second.emplace_back(std::make_tuple(beg, newEnd, 0, false, 2));
+                } else {
                     throw std::invalid_argument("Error reading index file. Can't determine insertion/subsitution or deletion");
                 }
             }
@@ -1000,22 +1078,217 @@ void mgsr::scorePseudo(std::ifstream &indexFile, const std::string &reads1Path, 
     mgsr::seedmers seedmers;
     size_t totalCount = 0;
     size_t redoCount = 0;
-    scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, allScores, T->root, T, totalCount, redoCount);
+
+    scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, allScores, identicalPairs, T->root, T, totalCount, redoCount, maximumGap, minimumCount, minimumScore, ignoreEnds);
     std::cerr << "Need to process " << redoCount << " out of " << totalCount << std::endl;  
     std::cerr << "finished scoring DFS" << std::endl;
+    std::cerr << "numer of identical pairs: " << identicalPairs.size() << std::endl;
 
-    std::vector<std::pair<std::string, int32_t>> scores;
+    // //                 node         parent
+    // std::unordered_map<std::string, std::string> identicalPairs;
+    // //                 node         children, grandchildren, etc.                  
+    // std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets
+    for (const auto& pair : identicalPairs) {
+        std::unordered_set<std::string> curIdenticals;
+        std::string curNode = pair.first;
+        std::string curParent = pair.second;
+        curIdenticals.insert(curNode);
+        while (identicalPairs.find(curParent) != identicalPairs.end()) {
+            curNode = curParent;   
+            curParent = identicalPairs[curParent];
+            curIdenticals.insert(curNode);      
+        }
+        for (const auto& node : curIdenticals) {
+            identicalSets[curParent].insert(node);
+        }
+    }
+
+    for (const auto& set : identicalSets) {
+        for (const auto& offspring : set.second) {
+            leastRecentIdenticalAncestor[offspring] = set.first;
+        }
+    }
+}
+
+double getExp(const std::vector<std::vector<double>>& probs, const std::vector<double>& props) {
+    double llh = 0;
+    for (size_t i = 0; i < probs.front().size(); ++i) {
+        double curReadSum = 0;
+        for (size_t j = 0; j < probs.size(); ++j) {
+            curReadSum += probs[j][i] * props[j];
+        }
+        llh += log(curReadSum);
+    }
+    return llh;
+}
+
+std::vector<double> getMax(const std::vector<std::vector<double>>& probs, const std::vector<double>& props) {
+    std::vector<double> newProps;
+    newProps.reserve(props.size());
+    for (size_t i = 0; i < probs.size(); ++i) {
+        double newProp = 0;
+        for (size_t j = 0; j < probs.front().size(); ++j) {
+            double denom = 0;
+            for (size_t l = 0; l < probs.size(); ++l) {
+                denom += probs[l][j] * props[l];
+            }
+            newProp += (props[i] * probs[i][j] / denom);
+        }
+        newProp /= static_cast<double>(probs.front().size());
+        newProps.push_back(newProp);
+    }
+    return newProps;
+}
+
+
+
+void mgsr::em(const std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores) {
+    std::vector<std::vector<double>> probs;
+    std::vector<std::string> nodes;
+    std::vector<double> props;
+    double llh;
+    double up = 1.0 / static_cast<double>(allScores.size());
+    nodes.reserve(allScores.size());
+    probs.reserve(allScores.size());
+    props.reserve(allScores.size());
 
     for (const auto& node : allScores) {
-        int32_t totalScore = 0;
+        std::vector<double> curProbs;
+        curProbs.reserve(node.second.size());
         for (const auto& score : node.second) {
-            totalScore += score.first;
+            curProbs.push_back(score.second);
         }
-        scores.push_back({node.first, totalScore});
+        nodes.push_back(node.first);
+        probs.push_back(std::move(curProbs));
+        props.push_back(up);
     }
-    std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
-        return a.second > b.second;
-    });
-    for (const auto& score : scores) scoreOut << score.first << "\t" << score.second << "\n";
 
+    int iterations = 20;
+    int curit = 0;
+    while (curit < iterations) {
+        llh = getExp(probs, props);
+        std::cerr << llh << std::endl;
+        props = getMax(probs, props);
+        ++curit;
+    }
+    std::cerr << llh << std::endl;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        std::cout << nodes[i] << "\t" << props[i] << std::endl;
+    }
+}
+
+void normalize(std::vector<double>& props) {
+    double sum = 0;
+    for (double& prop : props) {
+        if (prop < 0) prop = 0;
+        sum += prop;
+    }
+
+    for (double& prop : props) {
+        prop /= sum;
+    }
+}
+
+void mgsr::squarem(const std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets) {
+    std::vector<std::vector<double>> probs;
+    std::vector<std::string> nodes;
+    std::vector<double> props;
+    nodes.reserve(allScores.size() - leastRecentIdenticalAncestors.size());
+    probs.reserve(allScores.size() - leastRecentIdenticalAncestors.size());
+    props.reserve(allScores.size() - leastRecentIdenticalAncestors.size());
+
+    double up = 1.0 / static_cast<double>(allScores.size() - leastRecentIdenticalAncestors.size());
+
+    for (const auto& node : allScores) {
+        if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
+        std::vector<double> curProbs;
+        curProbs.reserve(node.second.size());
+        for (const auto& score : node.second) {
+            curProbs.push_back(score.second);
+        }
+        nodes.push_back(node.first);
+        probs.push_back(std::move(curProbs));
+        props.push_back(up);
+    }
+
+    
+    
+    int iterations = 50;
+    int curit = 0;
+    double llh = getExp(probs, props);
+    std::cerr << "iteration " << curit << ": " << llh << std::endl;
+    while (curit < iterations) {
+        auto theta1 = getMax(probs, props);
+        normalize(theta1);
+        auto theta2 = getMax(probs, theta1);
+        normalize(theta2);
+
+        std::vector<double> r;
+        std::vector<double> v;
+        std::vector<double> theta_p;
+        double r_norm = 0;
+        double v_norm = 0;
+        r.reserve(props.size());
+        v.reserve(props.size());
+        theta_p.reserve(props.size());
+        for (size_t i = 0; i < props.size(); ++i) {
+            r.push_back(theta1[i] - props[i]);
+            v.push_back(theta2[i] - theta1[i] - r[i]);
+            r_norm += r[i] * r[i];
+            v_norm += v[i] * v[i];
+        }
+        r_norm = sqrt(r_norm);
+        v_norm = sqrt(v_norm);
+        double alpha = - r_norm / v_norm;
+        double newllh;
+        std::cerr << "alpha: " << alpha << std::endl;
+        
+
+        if (alpha > -1) {
+            alpha = -1;
+            for (size_t i = 0; i < props.size(); ++i) theta_p.push_back(props[i] - 2 * alpha * r[i] + alpha * alpha * v[i]);
+            props = getMax(probs, theta_p);
+            normalize(props);
+            newllh = getExp(probs, props);
+        } else {
+            for (size_t i = 0; i < props.size(); ++i) theta_p.push_back(props[i] - 2 * alpha * r[i] + alpha * alpha * v[i]);
+            auto newProps = getMax(probs, theta_p);
+            normalize(newProps);
+            newllh = getExp(probs, newProps);
+            if (newllh >= llh) {
+                props = std::move(newProps);
+            } else {
+                while (newllh <= llh) {
+                    alpha = (alpha - 1) / 2;
+                    std::cerr << "alpha: " << alpha << " " << newllh << " vs " << llh << std::endl;
+                    for (size_t i = 0; i < theta_p.size(); ++i) theta_p[i] = props[i] - 2 * alpha * r[i] + alpha * alpha * v[i];
+                    newProps = getMax(probs, theta_p);
+                    normalize(newProps);
+                    newllh   = getExp(probs, newProps);
+                }
+                props = std::move(newProps);
+            }
+        }
+
+        if (newllh - llh < 0.000001) {
+            llh = newllh;
+            break;
+        }        
+        llh = newllh;
+        ++curit;
+        std::cerr << "iteration " << curit << ": " << llh << std::endl;
+        std::string outPropName = "proportions_it_" + std::to_string(curit) + ".tsv";
+        std::ofstream outProp(outPropName);
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            outProp << props[i] << "\t";
+            outProp << nodes[i];
+            if (identicalSets.find(nodes[i]) != identicalSets.end()) {
+                for (const auto& identicalNode : identicalSets.at(nodes[i])) {
+                    outProp << "," << identicalNode;
+                }
+            }
+            outProp << "\n";
+        }
+        outProp.close();
+    }
 }

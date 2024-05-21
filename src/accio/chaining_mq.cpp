@@ -9,9 +9,9 @@ typedef std::tuple<int, int, int, int, bool, int> match_t;
 
 std::vector<minimizer_t> minimizerSketch(const std::string s, int w, int k);
 std::vector<kminmer_t> extractKminmers(const std::vector<minimizer_t>& minimizers, int k, int l);
-std::vector<match_t> match(const std::vector<kminmer_t>& query_kminmers, const std::unordered_map<size_t, std::tuple<int, int, bool, int>>& ref_unique_kminmers);
+std::vector<match_t> match(const std::vector<kminmer_t>& query_kminmers, const std::unordered_map<size_t, std::tuple<int, int, bool, int>>& ref_unique_kminmers, size_t& duplicates);
 std::vector<match_t> chainPseudo(const std::vector<match_t>& matches, const std::pair<int, int>& lens, int maximumGap, int minimumCount, int minimumScore);
-std::tuple<std::vector<minimizer_t>, std::vector<minimizer_t>, std::vector<kminmer_t>, std::vector<kminmer_t>, std::unordered_map<size_t, std::tuple<int, int, bool, int>>, std::vector<match_t>, std::vector<match_t>, int>
+std::tuple<std::vector<minimizer_t>, std::vector<minimizer_t>, std::vector<kminmer_t>, std::vector<kminmer_t>, std::unordered_map<size_t, std::tuple<int, int, bool, int>>, std::vector<match_t>, std::vector<match_t>, int, size_t>
 runAll(const std::string& read, const std::string& ref, int k, int w, int l, int maximumGap, int minimumCount, int minimumScore);
 void printMinimizers(const std::vector<minimizer_t>& minimizers);
 void printKminmers(const std::vector<kminmer_t>& kminmers);
@@ -50,7 +50,7 @@ int main() {
     int l = 3;
     int minimumScore  = 0;
     int minimumCount  = 0;
-    int maximumGap    = 50;
+    int maximumGap    = 10;
     
     {
     auto r1_to_ref1 = runAll(r1, ref1, k, w, l, maximumGap, minimumCount, minimumScore);
@@ -61,6 +61,9 @@ int main() {
     const auto& refUniqKminmers = std::get<4>(r1_to_ref1);
     const auto& matches         = std::get<5>(r1_to_ref1);
     const auto& pseudoChain     = std::get<6>(r1_to_ref1);
+    const auto& score           = std::get<7>(r1_to_ref1);
+    const auto& duplicates      = std::get<8>(r1_to_ref1);
+
     
     std::cout << "read minimizers" << std::endl;
     printMinimizers(readMinimizers);
@@ -76,21 +79,24 @@ int main() {
     printMatches(matches);
     std::cout << "pseudoChain" << std::endl;
     printMatches(pseudoChain);
-    std::cout << "score:" << std::get<7>(r1_to_ref1) << std::endl;
+    std::cout << "score:" << score << std::endl;
+    std::cout << "duplicates: " << duplicates << std::endl;
     }
 
     std::cout << "--------------------------------------------------------------------------------------------" << std::endl;
     
     {
-    auto r1_to_ref1 = runAll(r2, ref1, k, w, l, maximumGap, minimumCount, minimumScore);
-    const auto& readMinimizers  = std::get<0>(r1_to_ref1);
-    const auto& refMinimizers   = std::get<1>(r1_to_ref1);
-    const auto& readKminmers    = std::get<2>(r1_to_ref1);
-    const auto& refKminmers     = std::get<3>(r1_to_ref1);
-    const auto& refUniqKminmers = std::get<4>(r1_to_ref1);
-    const auto& matches         = std::get<5>(r1_to_ref1);
-    const auto& pseudoChain     = std::get<6>(r1_to_ref1);
-    
+    auto r2_to_ref1 = runAll(r2, ref1, k, w, l, maximumGap, minimumCount, minimumScore);
+    const auto& readMinimizers  = std::get<0>(r2_to_ref1);
+    const auto& refMinimizers   = std::get<1>(r2_to_ref1);
+    const auto& readKminmers    = std::get<2>(r2_to_ref1);
+    const auto& refKminmers     = std::get<3>(r2_to_ref1);
+    const auto& refUniqKminmers = std::get<4>(r2_to_ref1);
+    const auto& matches         = std::get<5>(r2_to_ref1);
+    const auto& pseudoChain     = std::get<6>(r2_to_ref1);
+    const auto& score           = std::get<7>(r2_to_ref1);
+    const auto& duplicates      = std::get<8>(r2_to_ref1);
+
     std::cout << "read minimizers" << std::endl;
     printMinimizers(readMinimizers);
     std::cout << "ref minimizers" << std::endl;
@@ -105,7 +111,8 @@ int main() {
     printMatches(matches);
     std::cout << "pseudoChain" << std::endl;
     printMatches(pseudoChain);
-    std::cout << "score:" << std::get<7>(r1_to_ref1) << std::endl;
+    std::cout << "score:" << score << std::endl;
+    std::cout << "duplicates: " << duplicates << std::endl;
     }
 }
 
@@ -117,7 +124,7 @@ size_t btn(char b);
 bool isColinear(const match_t& match1, const match_t& match2, int maximumGap);
 int scorePseudoChain(const std::vector<match_t>& pseudoChain);
 
-std::tuple<std::vector<minimizer_t>, std::vector<minimizer_t>, std::vector<kminmer_t>, std::vector<kminmer_t>, std::unordered_map<size_t, std::tuple<int, int, bool, int>>, std::vector<match_t>, std::vector<match_t>, int>
+std::tuple<std::vector<minimizer_t>, std::vector<minimizer_t>, std::vector<kminmer_t>, std::vector<kminmer_t>, std::unordered_map<size_t, std::tuple<int, int, bool, int>>, std::vector<match_t>, std::vector<match_t>, int, size_t>
 runAll(const std::string& read, const std::string& ref, int k, int w, int l, int maximumGap, int minimumCount, int minimumScore) {
     std::vector<minimizer_t> ref_minimizers  = minimizerSketch(ref, w, k);
     std::vector<minimizer_t> read_minimizers = minimizerSketch(read, w, k);
@@ -134,12 +141,13 @@ runAll(const std::string& read, const std::string& ref, int k, int w, int l, int
         }
     }
 
-    std::vector<match_t> matches = match(read_kminmers, ref_unique_kminmers);
+    size_t duplicates = 0;
+    std::vector<match_t> matches = match(read_kminmers, ref_unique_kminmers, duplicates);
     std::vector<match_t> pseudoChain = chainPseudo(matches, std::make_pair(read.size(), ref.size()), maximumGap, minimumCount, minimumScore);
 
     int score = scorePseudoChain(pseudoChain);
 
-    return std::make_tuple(read_minimizers, ref_minimizers, read_kminmers, ref_kminmers, ref_unique_kminmers, matches, pseudoChain, score);
+    return std::make_tuple(read_minimizers, ref_minimizers, read_kminmers, ref_kminmers, ref_unique_kminmers, matches, pseudoChain, score, duplicates);
 }
 
 int scorePseudoChain(const std::vector<match_t>& pseudoChain) {
@@ -241,7 +249,7 @@ std::vector<kminmer_t> extractKminmers(const std::vector<minimizer_t>& minimizer
     return kminmers;
 }
 
-int extend(match_t& match, const std::vector<kminmer_t>& query_kminmers, const std::unordered_map<size_t, std::tuple<int, int, bool, int>>& ref_unique_kminmers, int iq, int ir, int c) {
+int extend(match_t& match, const std::vector<kminmer_t>& query_kminmers, const std::unordered_map<size_t, std::tuple<int, int, bool, int>>& ref_unique_kminmers, int iq, int ir, int c, size_t& duplicates) {
     if (iq == query_kminmers.size() - 1) return c;
     kminmer_t nextqKminmer = query_kminmers[iq+1];
     if (ref_unique_kminmers.count(std::get<0>(nextqKminmer)) > 0 && std::get<3>(ref_unique_kminmers.at(std::get<0>(nextqKminmer))) != -1) {
@@ -256,7 +264,7 @@ int extend(match_t& match, const std::vector<kminmer_t>& query_kminmers, const s
                     // sq, e'q, s'r, er, pi, c+1
                     match = std::make_tuple(std::get<0>(match), std::get<2>(nextqKminmer), std::get<0>(rKminmer), std::get<3>(match), std::get<4>(match), c);
                 }
-                return extend(match, query_kminmers, ref_unique_kminmers, std::get<4>(nextqKminmer), std::get<3>(rKminmer), c);
+                return extend(match, query_kminmers, ref_unique_kminmers, std::get<4>(nextqKminmer), std::get<3>(rKminmer), c, duplicates);
             }
         }
     }
@@ -265,24 +273,29 @@ int extend(match_t& match, const std::vector<kminmer_t>& query_kminmers, const s
 
 // typedef std::tuple<int, int, int, int, bool, int> match_t;
 // query start, query end, ref start, ref end, strand, count
-std::vector<match_t> match(const std::vector<kminmer_t>& query_kminmers, const std::unordered_map<size_t, std::tuple<int, int, bool, int>>& ref_unique_kminmers) {
+std::vector<match_t> match(const std::vector<kminmer_t>& query_kminmers, const std::unordered_map<size_t, std::tuple<int, int, bool, int>>& ref_unique_kminmers, size_t& duplicates) {
     std::vector<match_t> matches;
     int i = 0;
     while (i < query_kminmers.size()) {
         const kminmer_t& qKminmer = query_kminmers[i];
         int c = 1;
-        if (ref_unique_kminmers.count(std::get<0>(qKminmer)) > 0 && std::get<3>(ref_unique_kminmers.at(std::get<0>(qKminmer))) != -1) {
-            const std::tuple<int, int, bool, int>& rKminmer = ref_unique_kminmers.at(std::get<0>(qKminmer));
-            match_t curMatch = std::make_tuple(
-                std::get<1>(qKminmer), // query start
-                std::get<2>(qKminmer), // query end
-                std::get<0>(rKminmer), // ref start
-                std::get<1>(rKminmer), // ref end
-                std::get<3>(qKminmer) != std::get<2>(rKminmer), // 0 if same strand; 1 if opposite
-                c
-            );
-            c = extend(curMatch, query_kminmers, ref_unique_kminmers, std::get<4>(qKminmer), std::get<3>(rKminmer), c);
-            matches.push_back(curMatch);
+        if (ref_unique_kminmers.count(std::get<0>(qKminmer)) > 0) {
+            if (std::get<3>(ref_unique_kminmers.at(std::get<0>(qKminmer))) != -1) {
+                const std::tuple<int, int, bool, int>& rKminmer = ref_unique_kminmers.at(std::get<0>(qKminmer));
+                match_t curMatch = std::make_tuple(
+                    std::get<1>(qKminmer), // query start
+                    std::get<2>(qKminmer), // query end
+                    std::get<0>(rKminmer), // ref start
+                    std::get<1>(rKminmer), // ref end
+                    std::get<3>(qKminmer) != std::get<2>(rKminmer), // 0 if same strand; 1 if opposite
+                    c
+                );
+                c = extend(curMatch, query_kminmers, ref_unique_kminmers, std::get<4>(qKminmer), std::get<3>(rKminmer), c, duplicates);
+                matches.push_back(curMatch);
+            } else {
+                std::cout << std::get<0>(qKminmer) << " duplicates at initiating matches!" << std::endl;
+                ++duplicates;
+            }
         }
         i+=c;
     }

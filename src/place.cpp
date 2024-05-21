@@ -354,6 +354,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     // path format {target}.*.fastq
     std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
     std::cerr << "\n" << targetId << "\t" << bestMatch << std::endl;
+    exit(0);
     std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
     std::unordered_map<int32_t, std::string> targetSeedmers;
     std::unordered_map<int32_t, std::string> dynamicSeedmersTarget;
