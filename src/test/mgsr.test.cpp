@@ -115,6 +115,76 @@ BOOST_AUTO_TEST_CASE(_index) {
 
     // mgsr::accio(T, indexFile, k, l);
 }
+void _initializeFastq(const std::string &fastqPath, std::vector<readSeedmers_t>& readSeedmers, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, const int32_t k, const int32_t s, const int32_t l);
+BOOST_AUTO_TEST_CASE(_reads) {
+    // int32_t numsample = 1;
+    // int32_t numread   = 2;
+    // int32_t k = 10;
+    // int32_t s = 5;
+    // int32_t l = 2;
+    // std::vector<std::string> readSequences;
+    // std::vector<std::string> readQuals;
+    // std::vector<std::string> readNames;
+    // std::vector<readSeedmers_t> readSeedmers;
+    // std::string reads1Path = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R1.fastq";
+    // _initializeFastq(reads1Path, readSeedmers, readSequences, readQuals, readNames, k, s, l);
+}
+
+BOOST_AUTO_TEST_CASE(_score) {
+    ifstream ifs("../dev/examples/sars2k.pmat");
+    boost::iostreams::filtering_streambuf< boost::iostreams::input> b;
+    b.push(boost::iostreams::gzip_decompressor());
+    b.push(ifs);
+    istream is(&b);
+    auto T = new PangenomeMAT::Tree(is);
+
+
+    size_t k = 10;
+    size_t s = 5;
+    size_t l = 2;
+    std::string seedmersIndexPath = "../dev/examples/sars2k_" + std::to_string(k) + "_" + std::to_string(s) + "_" + std::to_string(l) + ".pmat.kmi";
+    std::ifstream seedmersIndex(seedmersIndexPath);
+    // std::vector<int32_t> numSamples = {1, 3, 5, 10};
+    std::vector<int32_t> numSamples = {1};
+    std::vector<int32_t> numReads = {20};
+
+    for (auto numread : numReads) {
+        for (auto numsample : numSamples) {
+            std::string r1 = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R1.fastq";
+            std::string r2 = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R2.fastq";
+            int maximumGap = 10;
+            int minimumCount = 0;
+            int minimumScore = 0;
+            int32_t ignoreEnds = 50;
+            std::unordered_map<std::string, std::vector<std::tuple<int32_t, double, int32_t>>> allScores;
+            std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
+            std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
+            mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, leastRecentIdenticalAncestor, identicalSets, T, maximumGap, minimumCount, minimumScore, ignoreEnds);
+
+            std::string outScoresPath = "../src/test/data/mgsr/pseudoScores/k" + std::to_string(k) + "_s" + std::to_string(s) + "_l" + std::to_string(l) + "/" + std::to_string(numsample) + "_" + std::to_string(numread) + "k.txt";
+            ofstream outScores(outScoresPath);
+            std::vector<std::pair<std::string, int32_t>> scores;
+            for (const auto& node : allScores) {
+                int32_t score = 0;
+                for (const auto& curScore : node.second) {
+                    score += std::get<0>(curScore) * std::get<2>(curScore);
+                }
+                scores.emplace_back(std::make_pair(node.first, score));
+            }
+            std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
+                return a.second > b.second;
+            });
+            for (const auto& score : scores) {
+                outScores << score.first << "\t" << score.second << "\n";
+            }
+            outScores.close();
+
+
+            // mgsr::squarem(allScores, leastRecentIdenticalAncestor, identicalSets);
+        }
+    }
+}
+
 struct kminmerHasher {
     std::size_t operator()(const std::tuple<size_t, int32_t, int32_t, bool, int32_t>& t) const {
         std::size_t seed = 0;
@@ -191,74 +261,6 @@ void _initializeFastq(const std::string &fastqPath, std::vector<readSeedmers_t>&
     std::cerr << "num reads " << readSequences.size() << std::endl;
     std::cerr << "num unique reads " << dupMarkedReads.size() << std::endl;
     std::cerr << "num unique kminmer sets " << dupMarkedKminmers.size() << std::endl;
-}
-BOOST_AUTO_TEST_CASE(_reads) {
-    int32_t numsample = 1;
-    int32_t numread   = 2;
-    int32_t k = 10;
-    int32_t s = 5;
-    int32_t l = 2;
-    std::vector<std::string> readSequences;
-    std::vector<std::string> readQuals;
-    std::vector<std::string> readNames;
-    std::vector<readSeedmers_t> readSeedmers;
-    std::string reads1Path = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R1.fastq";
-    _initializeFastq(reads1Path, readSeedmers, readSequences, readQuals, readNames, k, s, l);
-}
-
-BOOST_AUTO_TEST_CASE(_score) {
-    // ifstream ifs("../dev/examples/sars2k.pmat");
-    // boost::iostreams::filtering_streambuf< boost::iostreams::input> b;
-    // b.push(boost::iostreams::gzip_decompressor());
-    // b.push(ifs);
-    // istream is(&b);
-    // auto T = new PangenomeMAT::Tree(is);
-
-
-    // size_t k = 10;
-    // size_t s = 5;
-    // size_t l = 2;
-    // std::string seedmersIndexPath = "../dev/examples/sars2k_" + std::to_string(k) + "_" + std::to_string(s) + "_" + std::to_string(l) + ".pmat.kmi";
-    // std::ifstream seedmersIndex(seedmersIndexPath);
-    // // std::vector<int32_t> numSamples = {1, 3, 5, 10};
-    // std::vector<int32_t> numSamples = {1};
-    // std::vector<int32_t> numReads = {2};
-
-    // for (auto numread : numReads) {
-    //     for (auto numsample : numSamples) {
-    //         std::string r1 = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R1.fastq";
-    //         std::string r2 = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R2.fastq";
-    //         int maximumGap = 10;
-    //         int minimumCount = 0;
-    //         int minimumScore = 0;
-    //         int32_t ignoreEnds = 50;
-    //         std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>> allScores;
-    //         std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
-    //         std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
-    //         mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, leastRecentIdenticalAncestor, identicalSets, T, maximumGap, minimumCount, minimumScore, ignoreEnds);
-
-    //         std::string outScoresPath = "../src/test/data/mgsr/pseudoScores/k" + std::to_string(k) + "_s" + std::to_string(s) + "_l" + std::to_string(l) + "/" + std::to_string(numsample) + "_" + std::to_string(numread) + "k.txt";
-    //         ofstream outScores(outScoresPath);
-    //         std::vector<std::pair<std::string, int32_t>> scores;
-    //         for (const auto& node : allScores) {
-    //             int32_t score = 0;
-    //             for (const auto& curScore : node.second) {
-    //                 score += curScore.first;
-    //             }
-    //             scores.emplace_back(std::make_pair(node.first, score));
-    //         }
-    //         std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
-    //             return a.second > b.second;
-    //         });
-    //         for (const auto& score : scores) {
-    //             outScores << score.first << "\t" << score.second << "\n";
-    //         }
-    //         outScores.close();
-
-
-    //         // mgsr::squarem(allScores, leastRecentIdenticalAncestor, identicalSets);
-    //     }
-    // }
 }
 
 void makeFasta(const std::string& name, const std::string& seq, const std::string& path) {
