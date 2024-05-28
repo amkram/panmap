@@ -95,9 +95,9 @@ BOOST_AUTO_TEST_CASE(_index) {
     // auto T = new PangenomeMAT::Tree(is);
 
 
-    // size_t k = 10;
-    // size_t s = 5;
-    // size_t l = 2;
+    // size_t k = 5;
+    // size_t s = 2;
+    // size_t l = 6;
     // string indexFilePath = "../dev/examples/sars2k.pmat.spmi";
     // string seedmersIndexPath = "../dev/examples/sars2k_" + std::to_string(k) + "_" + std::to_string(s) + "_" + to_string(l) + ".pmat.kmi";
     // pmi::seedIndex index;
@@ -145,29 +145,33 @@ BOOST_AUTO_TEST_CASE(_score) {
     std::string seedmersIndexPath = "../dev/examples/sars2k_" + std::to_string(k) + "_" + std::to_string(s) + "_" + std::to_string(l) + ".pmat.kmi";
     std::ifstream seedmersIndex(seedmersIndexPath);
     // std::vector<int32_t> numSamples = {1, 3, 5, 10};
-    std::vector<int32_t> numSamples = {1};
-    std::vector<int32_t> numReads = {20};
+    std::vector<int32_t> numSamples = {10};
+    std::vector<int32_t> numReads = {100};
 
     for (auto numread : numReads) {
         for (auto numsample : numSamples) {
             std::string r1 = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R1.fastq";
+            // std::string r1 = "../src/test/data/mgsr/tmp/3_genomes_metagenomics_20k_reads_R1.fastq";
             std::string r2 = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R2.fastq";
             int maximumGap = 10;
             int minimumCount = 0;
             int minimumScore = 0;
+            double errorRate = 0.025;
             int32_t ignoreEnds = 50;
-            std::unordered_map<std::string, std::vector<std::tuple<int32_t, double, int32_t>>> allScores;
+            int32_t numReads;
+            std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>> allScores;
+            std::vector<std::pair<int32_t, std::vector<size_t>>> numReadDuplicates;
             std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
             std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
-            mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, leastRecentIdenticalAncestor, identicalSets, T, maximumGap, minimumCount, minimumScore, ignoreEnds);
+            mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, maximumGap, minimumCount, minimumScore, errorRate, ignoreEnds);
 
             std::string outScoresPath = "../src/test/data/mgsr/pseudoScores/k" + std::to_string(k) + "_s" + std::to_string(s) + "_l" + std::to_string(l) + "/" + std::to_string(numsample) + "_" + std::to_string(numread) + "k.txt";
             ofstream outScores(outScoresPath);
             std::vector<std::pair<std::string, int32_t>> scores;
             for (const auto& node : allScores) {
                 int32_t score = 0;
-                for (const auto& curScore : node.second) {
-                    score += std::get<0>(curScore) * std::get<2>(curScore);
+                for (size_t i = 0; i < node.second.size(); ++i) {
+                    score += node.second[i].first * numReadDuplicates[i].first;
                 }
                 scores.emplace_back(std::make_pair(node.first, score));
             }
@@ -179,8 +183,14 @@ BOOST_AUTO_TEST_CASE(_score) {
             }
             outScores.close();
 
+            int32_t totalReads = 0;
+            for (const auto& n : numReadDuplicates) totalReads += n.first;
+            assert(totalReads == numReads);
+            
+       
+            mgsr::squarem(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets);
+            // mgsr::em(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets);
 
-            // mgsr::squarem(allScores, leastRecentIdenticalAncestor, identicalSets);
         }
     }
 }
