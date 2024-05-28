@@ -16,6 +16,7 @@ cmake_policy(SET CMP0135 NEW)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
+find_package(Qt5 COMPONENTS Widgets REQUIRED)
 FetchContent_Declare(easy_profiler
     GIT_REPOSITORY https://github.com/yse/easy_profiler
     GIT_TAG develop
@@ -79,7 +80,6 @@ add_custom_command(
 add_custom_target(build-deps DEPENDS
     libminimap2.a
     libst.a
-    libhts.a
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 add_library(minimap2 STATIC IMPORTED)
@@ -92,7 +92,7 @@ add_dependencies(samtools build-deps)
 
 add_library(htslib STATIC IMPORTED)
 set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libhts.a")
-add_dependencies(htslib build-deps)
+add_dependencies(htslib samtools)
 
 # panmat
 FetchContent_Declare(
@@ -117,13 +117,13 @@ target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
 #    ...
 
 find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
-target_link_libraries(tests panmat minimap2 samtools htslib $<$<BOOL:${OPTION_PROFILE}>:easy_profiler>
+target_link_libraries(tests panmat minimap2 samtools htslib
                       ${Boost_FILESYSTEM_LIBRARY}
                       ${Boost_SYSTEM_LIBRARY}
-                      ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+                      ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY} easy_profiler
                       )
 
-target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib $<$<BOOL:${OPTION_PROFILE}>:easy_profiler>)
+target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib easy_profiler)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(panmap PRIVATE -lm -lz -lpthread)
 
