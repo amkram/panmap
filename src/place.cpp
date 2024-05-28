@@ -272,7 +272,8 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
 void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T, bool use_root) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
-    tree::setup(data, globalCoords, T);
+    std::vector<tupleCoord_t> altGlobalCoords;
+    tree::setup(data, globalCoords, altGlobalCoords, T);
 
     /* Read processing */
     std::cout << "\n◠◡ Processing reads ... " << std::flush;

@@ -43,7 +43,7 @@ BOOST_AUTO_TEST_CASE(seedmersIndex) {
   b.push(boost::iostreams::gzip_decompressor());
   b.push(ifs);
   std::istream is(&b);
-  auto T = new PangenomeMAT::Tree(is);
+  PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
 
   // std::vector<std::tuple<int, int, int>> parameters = {{10, 5, 2}, {10, 5,
   // 1}, {15, 7, 3}, {15, 7, 1}};
@@ -67,16 +67,20 @@ BOOST_AUTO_TEST_CASE(seedmersIndex) {
       if (fs::exists(outSeedmersPath))
         continue;
 
-      std::string node_seq = T->getStringFromReference(node_idn, true);
+      std::string node_seq = tree::getStringAtNode(n.second, T, true);
+      std::string node_seq_nogap = tree::getStringAtNode(n.second, T, false);
+
       std::vector<std::tuple<std::string, int, int>> seedmers =
           extractSeedmers(node_seq, k, s, l, false);
-
+      std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
+          extractSeedmers(node_seq_nogap, k, s, l, false);
       std::ofstream osdmfs(outSeedmersPath);
       osdmfs << node_seq << std::endl;
+      osdmfs << node_seq_nogap << std::endl;
 
-      for (const auto &seedmer : seedmers) {
-        osdmfs << std::get<0>(seedmer) << "\t" << std::get<1>(seedmer) << "\t"
-               << std::get<2>(seedmer) << std::endl;
+      for (int i = 0; i < seedmers.size(); i++) {
+        osdmfs << std::get<0>(seedmers[i]) << "\tpos: " << std::get<1>(seedmers[i])
+               << "\tnogap: " << std::get<1>(seedmers_nogap[i]) << std::endl;
       }
       osdmfs.close();
     }
