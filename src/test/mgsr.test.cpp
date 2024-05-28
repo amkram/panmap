@@ -145,8 +145,8 @@ BOOST_AUTO_TEST_CASE(_score) {
     std::string seedmersIndexPath = "../dev/examples/sars2k_" + std::to_string(k) + "_" + std::to_string(s) + "_" + std::to_string(l) + ".pmat.kmi";
     std::ifstream seedmersIndex(seedmersIndexPath);
     // std::vector<int32_t> numSamples = {1, 3, 5, 10};
-    std::vector<int32_t> numSamples = {10};
-    std::vector<int32_t> numReads = {100};
+    std::vector<int32_t> numSamples = {3};
+    std::vector<int32_t> numReads = {200};
 
     for (auto numread : numReads) {
         for (auto numsample : numSamples) {
@@ -156,7 +156,7 @@ BOOST_AUTO_TEST_CASE(_score) {
             int maximumGap = 10;
             int minimumCount = 0;
             int minimumScore = 0;
-            double errorRate = 0.025;
+            double errorRate = 0.005;
             int32_t ignoreEnds = 50;
             int32_t numReads;
             std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>> allScores;
@@ -188,7 +188,7 @@ BOOST_AUTO_TEST_CASE(_score) {
             assert(totalReads == numReads);
             
        
-            mgsr::squarem(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets);
+            mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets);
             // mgsr::em(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets);
 
         }
