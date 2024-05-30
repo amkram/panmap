@@ -29,10 +29,11 @@ struct tupleCoord_t {
         : blockId(blockId), nucPos(nucPos), nucGapPos(nucGapPos) {}
 
     bool operator<(const tupleCoord_t &rhs) const {
-        if (rhs.blockId == -1 && rhs.nucPos == -1 && rhs.nucGapPos == -1) return false;
+        if (blockId == -1 && nucPos == -1 && nucGapPos == -1) return false;
+        if (rhs.blockId == -1 && rhs.nucPos == -1 && rhs.nucGapPos == -1) return true;
         if (blockId != rhs.blockId) return blockId < rhs.blockId;
         if (nucPos != rhs.nucPos) return nucPos < rhs.nucPos;
-        if (nucGapPos != -1 && rhs.nucGapPos != -1) return nucGapPos < rhs.nucGapPos;
+        //if (nucGapPos != -1 && rhs.nucGapPos != -1) return nucGapPos < rhs.nucGapPos;
         if (nucGapPos == -1 && rhs.nucGapPos != -1) return false;
         if (nucGapPos != -1 && rhs.nucGapPos == -1) return true;
         return nucGapPos < rhs.nucGapPos;
@@ -47,7 +48,7 @@ struct tupleCoord_t {
     }
 
     bool operator>=(const tupleCoord_t &rhs) const {
-        return !(*this < rhs) || *this == rhs;
+        return !(*this < rhs);
     }
 
     bool operator>(const tupleCoord_t &rhs) const {
@@ -88,8 +89,6 @@ struct mutableTreeData {
   sequence_t sequence; // the main object encoding the MSA
   int64_t maxGlobalCoordinate;
   std::string ungappedConsensus; // not used
-  std::unordered_map<int64_t, std::tuple<int32_t, int32_t, int32_t>>
-      coordToTuple;
 
   std::vector<seed> seeds; // dynamic vector of seeds in each node's sequence
   std::vector<seedmer> seedmers;
@@ -131,15 +130,12 @@ std::string getStringFromCurrData(mutableTreeData &data, Tree *T,
 int64_t getGlobalCoordinate(const int blockId, const int nucPosition,
                             const int nucGapPosition,
                             const globalCoords_t &globalCoords);
-void setup(mutableTreeData &data, globalCoords_t &globalCoords,
-                 std::vector<tupleCoord_t> &altGlobalCoords, const Tree *T);
+void setup(mutableTreeData &data, globalCoords_t &globalCoords, const Tree *T);
 
 void setupGlobalCoordinates(
     int64_t &ctr, globalCoords_t &globalCoords,
-    std::unordered_map<int64_t, std::tuple<int32_t, int32_t, int32_t>>
-        &coordToTuple,
     const BlockGapList &blockGaps, const std::vector<Block> &blocks,
-    const std::vector<GapList> &gaps, std::vector<tupleCoord_t> &altGlobalCoords,
+    const std::vector<GapList> &gaps,
     const sequence_t &sequence);
 
 // Fill mutation matrices from tree or file
@@ -156,7 +152,7 @@ void writeMutationMatrices(const mutationMatrices &mutMat,
                            std::ofstream &mmfout);
 
 std::string getNucleotideSequenceFromBlockCoordinates(
-    const tupleCoord_t &start, const tupleCoord_t &end,
+    const tupleCoord_t &start, tupleCoord_t &end,
     const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords);
