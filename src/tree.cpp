@@ -41,7 +41,7 @@ std::string tree::getConsensus(Tree *T) {
 
 // coords (blockId, nucPosition, nucGapPosition)
 std::string tree::getNucleotideSequenceFromBlockCoordinates(
-    const tupleCoord_t &start, const tupleCoord_t &end,
+    const tupleCoord_t &start, tupleCoord_t &end,
     const sequence_t &sequence, const blockExists_t &blockExists,
     const blockStrand_t &blockStrand, const Tree *T, const Node *node,
     const globalCoords_t &globalCoords) {
@@ -59,6 +59,11 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
   std::cout << "from (" << startBlockId << ", " << startNuc << ", "
             << start.nucGapPos << ") to (" << endBlockId << ", " << endNuc
             << ", " << end.nucGapPos << ")" << std::endl;
+  if (end == tupleCoord_t{-1,-1,-1}) {
+    end.blockId = sequence.size() - 1;
+    end.nucPos = sequence[end.blockId].first.size() - 1;
+    end.nucGapPos = -1;
+  }
   for (int32_t i = startBlockId; i <= endBlockId; i++) {
     std::cout << "\n\ni: " << i;
     if (!blockExists[i].first) { // all gaps
@@ -221,8 +226,7 @@ std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
   std::unordered_map<std::string, std::string> strings;
   tree::mutableTreeData data;
   tree::globalCoords_t globalCoords;
-  std::vector<tupleCoord_t> altGlobalCoords;
-  setup(data, globalCoords, altGlobalCoords, T);
+  setup(data, globalCoords, T);
 
   getAllStringsHelper(strings, data, T, T->root, globalCoords);
 
@@ -324,11 +328,8 @@ std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T,
 }
 void tree::setupGlobalCoordinates(
     int64_t &ctr, globalCoords_t &globalCoords,
-    std::unordered_map<int64_t, std::tuple<int32_t, int32_t, int32_t>>
-        &coordToTuple,
     const BlockGapList &blockGaps, const std::vector<Block> &blocks,
-    const std::vector<GapList> &gaps,
-    std::vector<tupleCoord_t> &altGlobalCoords, const sequence_t &sequence) {
+    const std::vector<GapList> &gaps, const sequence_t &sequence) {
 
   globalCoords.resize(blocks.size() + 1);
   // Assigning block gaps
@@ -376,47 +377,14 @@ void tree::setupGlobalCoordinates(
     for (j = 0; j < globalCoords[i].first.size(); j++) {
       for (k = 0; k < globalCoords[i].first[j].second.size(); k++) {
         globalCoords[i].first[j].second[k] = ctr;
-        altGlobalCoords.push_back({i, j, k});
-        // std::cout << "coordToTuple[" << ctr << "] = " << i << " " << j << " "
-        // << k << std::endl;
         ctr++;
       }
-      // std::cout << "coordToTuple[" << ctr << "] = " << i << " " << j << "
-      // -1"<< std::endl;
-      altGlobalCoords.push_back({i, j, -1});
-      coordToTuple[ctr] = std::make_tuple(i, j, -1);
       globalCoords[i].first[j].first = ctr;
       ctr++;
     }
   }
 }
-void tree::removeIndices(std::vector<seed> &v, std::stack<int32_t> &rm) {
-
-  if (rm.size() < 1) {
-    return;
-  }
-  int32_t rmVal = rm.top();
-  rm.pop();
-  v.erase(std::remove_if(std::begin(v), std::end(v),
-                         [&](seed &elem) {
-                           if (rmVal == -1) {
-                             return false;
-                           }
-                           if (&elem - &v[0] == rmVal) {
-                             if (!rm.empty()) {
-                               rmVal = rm.top();
-                               rm.pop();
-                             } else {
-                               rmVal = -1;
-                             }
-                             return true;
-                           }
-                           return false;
-                         }),
-          std::end(v));
-}
-void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords,
-                 std::vector<tupleCoord_t> &altGlobalCoords, const Tree *T) {
+void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords, const Tree *T) {
 
   const BlockGapList &blockGaps = T->blockGaps;
   const std::vector<GapList> &gaps = T->gaps;
@@ -480,11 +448,8 @@ void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords,
   data.sequence = sequence;
   data.blockExists = blockExists;
   data.blockStrand = blockStrand;
-  std::unordered_map<int64_t, std::tuple<int32_t, int32_t, int32_t>>
-      coordToTuple;
-  setupGlobalCoordinates(data.maxGlobalCoordinate, globalCoords, coordToTuple,
-                         blockGaps, blocks, gaps, altGlobalCoords, sequence);
-  data.coordToTuple = coordToTuple;
+  setupGlobalCoordinates(data.maxGlobalCoordinate, globalCoords,
+                         blockGaps, blocks, gaps, sequence);
 }
 int64_t tree::getGlobalCoordinate(const int blockId, const int nucPosition,
                                   const int nucGapPosition,

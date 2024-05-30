@@ -63,13 +63,8 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
             std::make_tuple(blockId, oldMut, oldStrand, false, true));
       }
     }
-    int32_t bid = blockId == 0 ? 0 : blockId - 1;
-    int32_t bid2 = blockId == data.sequence.size() - 1 ? blockId : blockId + 1;
-    int32_t blen = data.sequence[bid].first.size();
-    recompRanges.push_back(
-        {tupleCoord_t{bid, blen - 1, -1},
-         tupleCoord_t{bid2, 0,
-                      data.sequence[bid2].first[0].second.empty() ? -1 : 0}});
+    recompRanges.push_back({tupleCoord_t{blockId, 0, data.sequence[blockId].first[0].second.empty() ? -1 : 0},
+        tupleCoord_t{blockId, (int32_t)data.sequence[blockId].first.size() - 1, -1}});
   }
   for (size_t i = 0; i < node->nucMutation.size(); i++) {
     int32_t blockId = node->nucMutation[i].primaryBlockId;
@@ -263,36 +258,74 @@ public:
     return c == '-' || c == 'x';
   }
 
-  tupleCoord_t increment(const tupleCoord_t &coord) const {
-    if (coord == tupleCoord_t{-1, -1, -1}) {
-      return tupleCoord_t(sequence.size() - 1, sequence.back().first.size() - 1,
-                          -1);
-    }
-    if (coord.nucGapPos != -1) {
-      if (coord.nucGapPos + 1 <
-          (int32_t)sequence[coord.blockId].first[coord.nucPos].second.size()) {
-        return tupleCoord_t(coord.blockId, coord.nucPos, coord.nucGapPos + 1);
-      } else {
-        return tupleCoord_t(coord.blockId, coord.nucPos, -1);
+  
+  tupleCoord_t increment(const tupleCoord_t &givencoord) const {
+    tupleCoord_t coord = givencoord;
+    //std::cout << "honda acoord.nucPos: " << coord.nucPos << std::endl;
+    if (coord.nucGapPos == -1){
+      coord.nucPos++;
+      //std::cout << "coord.nucPos: " << coord.nucPos << std::endl;
+
+      if(coord.nucPos >= sequence[coord.blockId].first.size()){
+        //std::cout << "yeah... that just happened....\n";
+        coord.blockId++;
+        //std::cout << "coord.blockId: " << coord.blockId << std::endl;
+        if(coord.blockId >= sequence.size()){
+          //std::cout << "yeah... that also just happened....\n";
+          return tupleCoord_t{-1,-1,-1};
+        }
+        coord.nucPos = 0;
       }
-    }
-    if (coord.nucPos + 1 < (int32_t)sequence[coord.blockId].first.size()) {
-      if (sequence[coord.blockId].first[coord.nucPos + 1].second.empty()) {
-        return tupleCoord_t(coord.blockId, coord.nucPos + 1, -1);
-      } else {
-        return tupleCoord_t(coord.blockId, coord.nucPos + 1, 0);
+
+      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()){
+        coord.nucGapPos = 0;
       }
-    }
-    if (coord.blockId + 1 < (int32_t)sequence.size()) {
-      if (sequence[coord.blockId + 1].first[0].second.empty()) {
-        return tupleCoord_t(coord.blockId + 1, 0, -1);
-      } else {
-        return tupleCoord_t(coord.blockId + 1, 0, 0);
+      return coord;
+    }else{
+      coord.nucGapPos++;
+      if(coord.nucGapPos >= sequence[coord.blockId].first[coord.nucPos].second.size()){
+        coord.nucGapPos = -1;
       }
+      return coord;
     }
   }
 
-  tupleCoord_t decrement(const tupleCoord_t &coord) const {
+  tupleCoord_t decrement(const tupleCoord_t &givencoord) const {
+    tupleCoord_t coord = givencoord;
+    if (coord.nucGapPos == -1) {
+      if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+          coord.blockId--;
+          if(coord.blockId < 0){
+            return tupleCoord_t{0,0,0};
+          }
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+        }
+        return coord;
+      }else{
+        coord.nucGapPos = sequence[coord.blockId].first[coord.nucPos].second.size() - 1;
+        return coord;
+      }
+    }else{
+      coord.nucGapPos--;
+      if(coord.nucGapPos < 0){
+        coord.nucGapPos = -1;
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+          coord.blockId--;
+          if(coord.blockId < 0){
+            return tupleCoord_t{0,0,0};
+          }
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+        }
+        return coord;
+      }
+      return coord;
+    }
+  }
+
+  tupleCoord_t baddecrement(const tupleCoord_t &coord) const {
     if (coord.blockId == 0 && coord.nucPos == 0 && coord.nucGapPos == 0) {
       return tupleCoord_t{0, 0, 0};
     }
@@ -333,52 +366,87 @@ private:
 tupleCoord_t expandLeft(const CoordNavigator &navigator, tupleCoord_t coord,
                         int neededNongap, blockExists_t &blockExists) {
   int count = 0;
-  // std::cout << "expandLeft..." << std::endl;
+  //std::cout << "expandLeft..." << std::endl;
   // std::cout << "orig coord: (" << coord.blockId << ", " << coord.nucPos << ",
   // "
   //           << coord.nucGapPos << ") to => ... " << std::endl;
-  while (count < neededNongap && coord >= tupleCoord_t{0, 0, 0} &&
-         coord < tupleCoord_t{-1, -1, -1}) {
+  //std::cout << "ENTERING EXPANDLEFT\n";
+
+  //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+
+  while (count < neededNongap && coord > tupleCoord_t{0, 0, 0}) {
+
+    //std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
+    //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+
     if (!blockExists[coord.blockId].first) {
+      //std::cout << "block doesn't exist\n";
+      //TODO jump down to prev block pleaesse
+
+      //std::cout << "coord pre decrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
       coord = navigator.decrement(coord);
+      //std::cout << "coord post decrememnto " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+
       continue;
     }
     // std::cout << "isGap? " << std::endl;
-    if (!navigator.isGap(coord))
+    if (!navigator.isGap(coord)) {
+      //std::cout << "is not gap\n";
       count++;
-    if (count >= neededNongap || coord.blockId == -1)
-      return coord;
-    tupleCoord_t prev = coord;
+    }
+
+    //tupleCoord_t prev = coord;
 
     // std::cout << " from (" << coord.blockId << ", " << coord.nucPos << ", "
     // << coord.nucGapPos << ") to => ";
-
+    //std::cout << "coord pre mad decrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
     coord = navigator.decrement(coord);
+    //std::cout << "coord post mado decrememnto " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+
   }
   return coord;
 }
 
+
+
 tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
                          int neededNongap, blockExists_t &blockExists) {
   int count = 0;
-  while (count < neededNongap && coord < tupleCoord_t{-1, -1, -1} &&
-         coord > tupleCoord_t{0, 0, 0}) {
+
+  //std::cout << "ENTERING EXPANDRIGHT\n";
+
+  //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+
+
+  while (count < neededNongap && coord < tupleCoord_t{-1, -1, -1}) {
+
+    //std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
+    //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+
+
     if (!blockExists[coord.blockId].first) {
-      // std::cout << "++ (" << coord.blockId << ", " << coord.nucPos << ", " <<
-      // coord.nucGapPos << ") ";
+      //std::cout << "block doesn't exist\n";
+      //TODO jump down to next block pleaesse
+
+      //std::cout << "coord pre incrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
       coord = navigator.increment(coord);
-      // std::cout << "=> (" << coord.blockId << ", " << coord.nucPos << ", " <<
-      // coord.nucGapPos << ")" << std::endl;
+      // std::cout << "coord post instigation " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+      // std::cout << (coord < tupleCoord_t{-1, -1, -1}) << "\n";
+      // std::cout << "we\n";
       continue;
     }
-    if (!navigator.isGap(coord))
+
+    if (!navigator.isGap(coord)) {
+      //std::cout << "is not gap\n";
       count++;
-    if (count >= neededNongap || coord.blockId == -1 ||
-        coord.blockId > blockExists.size())
-      return coord;
-    tupleCoord_t prev = coord;
+    }
+    //tupleCoord_t prev = coord;
+
+    //std::cout << "coord pre incrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
     coord = navigator.increment(coord);
+    // std::cout << "coord post incrimination " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
   }
+  // std::cout << "returning coord\n";
   return coord;
 }
 
@@ -390,36 +458,60 @@ std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator,
     return {};
 
   std::vector<tupleRange> merged;
+  
   tupleRange current = ranges[0];
+  /*
   tupleCoord_t tmpStop = current.stop;
   current.start =
       expandLeft(navigator, current.start, neededNongap, blockExists);
   current.stop =
       expandRight(navigator, current.stop, neededNongap, blockExists);
-  merged.push_back(current);
+  merged.push_back(current);*/
 
-  for (size_t i = 1; i < ranges.size(); ++i) {
+  for (size_t i = 0; i < ranges.size(); ++i) {
     // std::cout << "Merging range " << i << " which is " <<
     // ranges[i].start.blockId << ", " << ranges[i].start.nucPos << ", " <<
     // ranges[i].start.nucGapPos << " to " << ranges[i].stop.blockId << ", " <<
     // ranges[i].stop.nucPos << ", " << ranges[i].stop.nucGapPos << std::endl;
+
+    std::cout << "unexp range:" << ranges[i].start.blockId << ", "
+              << ranges[i].start.nucPos << ", " << ranges[i].start.nucGapPos
+              << " to " << ranges[i].stop.blockId << ", "
+              << ranges[i].stop.nucPos << ", " << ranges[i].stop.nucGapPos
+              << std::endl;
+      
+    std::cout << "WEEEEEEEEEEE\n";
     tupleRange expandedRange = {
         expandLeft(navigator, ranges[i].start, neededNongap, blockExists),
         expandRight(navigator, ranges[i].stop, neededNongap, blockExists),
     };
-    if (expandedRange.start == tupleCoord_t{-1, -1, -1}) {
-      expandedRange.start = tupleCoord_t{0, 0, 0};
-    }
+    std::cout << "HELLO????????????????\n";
+
+    std::cout << "Expanded range:" << expandedRange.start.blockId << ", "
+              << expandedRange.start.nucPos << ", " << expandedRange.start.nucGapPos
+              << " to " << expandedRange.stop.blockId << ", "
+              << expandedRange.stop.nucPos << ", " << expandedRange.stop.nucGapPos
+              << std::endl;
+
+
+    //if (expandedRange.start == tupleCoord_t{-1, -1, -1}) {
+    //  expandedRange.start = tupleCoord_t{0, 0, 0};
+    //}
+
     if (expandedRange.start <= current.stop) {
-      tmpStop = current.stop;
+      //tmpStop = current.stop;
       current.stop = std::max(current.stop, expandedRange.stop);
     } else {
       merged.push_back(current);
-      tmpStop = current.stop;
+      //tmpStop = current.stop;
       current = expandedRange;
     }
   }
   merged.push_back(current);
+
+  std::cout << "donzo\n";
+  //exit(0);
+
   return merged;
 }
 
@@ -434,12 +526,11 @@ int64_t tupleToScalarCoord(const tupleCoord_t &coord,
 int32_t nodesDone = 0;
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, seedIndex &index,
                  Tree *T, const Node *node, const globalCoords_t &globalCoords,
-                 const std::vector<tupleCoord_t> &altGlobalCoords,
                  CoordNavigator &navigator) {
   blockMutData_t blockMutData;
   nucMutData_t nucMutData;
 
-  // std::cout << "buildHelper: " << node->identifier << std::endl;
+  std::cout << "buildHelper: " << node->identifier << std::endl;
 
   std::vector<tupleRange> recompRanges;
 
@@ -475,17 +566,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, seedIndex &index,
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << "\n";
   }
-  //std::cout << "\nNode " << node->identifier << " has " << merged.size()
-            // << " merged ranges\n";
+  std::cout << "\nNode " << node->identifier << " has " << merged.size()
+            << " merged ranges\n";
   int32_t range_i = -1;
   for (auto &recompRange : std::ranges::reverse_view(merged)) {
     range_i++;
-    // std::cout << "Processing range " << range_i << " from ("
-    //           << recompRange.start.blockId << ", " << recompRange.start.nucPos
-    //           << ", " << recompRange.start.nucGapPos << ") to ("
-    //           << recompRange.stop.blockId << ", " << recompRange.stop.nucPos
-    //           << ", " << recompRange.stop.nucGapPos << ")\n";
-
     std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(
         recompRange.start, recompRange.stop, data.sequence, data.blockExists,
         data.blockStrand, T, node, globalCoords);
@@ -503,6 +588,16 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, seedIndex &index,
     //           << ", " << lastDownstreamSeedPos.nucPos << ", "
     //           << lastDownstreamSeedPos.nucGapPos << ")\n";
     int32_t str_i = recomputeSeq.size();
+    std::cout << "start: (" << recompRange.start.blockId << ", "
+              << recompRange.start.nucPos << ", " << recompRange.start.nucGapPos
+              << ") stop: (" << recompRange.stop.blockId << ", "
+              << recompRange.stop.nucPos << ", " << recompRange.stop.nucGapPos
+              << ")" << " = ";
+    if (data.sequence[recompRange.start.blockId].first[recompRange.start.nucPos].second.empty()) {
+      std::cout << globalCoords[recompRange.start.blockId].first[recompRange.start.nucPos].first << std::endl;
+    } else {
+      std::cout << globalCoords[recompRange.start.blockId].first[recompRange.start.nucPos].second[recompRange.start.nucGapPos] << std::endl;
+    }
     for (tupleCoord_t currCoord = recompRange.stop;
          currCoord >= recompRange.start;
          currCoord = navigator.decrement(currCoord)) {
@@ -648,8 +743,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, seedIndex &index,
   nodesDone++;
   /* Recursive step */
   for (const Node *child : node->children) {
-    buildHelper(data, seedMap, index, T, child, globalCoords, altGlobalCoords,
-                navigator);
+    //exit(0);
+    buildHelper(data, seedMap, index, T, child, globalCoords, navigator);
   }
   // undo seed mutations
   for (const auto &back : backtrack) {
@@ -666,12 +761,12 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, seedIndex &index,
 /* Interface implementation */
 void pmi::build(seedIndex &index, Tree *T, const size_t j, const size_t k,
                 const size_t s) {
+
   /* Setup for seed indexing */
   tree::mutableTreeData data;
   tree::globalCoords_t globalCoords;
-  std::vector<tupleCoord_t> altGlobalCoords;
-
-  tree::setup(data, globalCoords, altGlobalCoords, T);
+  
+  tree::setup(data, globalCoords, T);
 
   index.j = j;
   index.k = k;
@@ -680,8 +775,8 @@ void pmi::build(seedIndex &index, Tree *T, const size_t j, const size_t k,
   seedMap_t seedMap;
   index.outStream << k << " " << s << " " << j << "\n";
   std::cout << "Building index\n";
+  
   /* Recursive traversal of tree to build the index */
   CoordNavigator navigator(data.sequence);
-  buildHelper(data, seedMap, index, T, T->root, globalCoords, altGlobalCoords,
-              navigator);
+  buildHelper(data, seedMap, index, T, T->root, globalCoords,navigator);
 }
