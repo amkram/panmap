@@ -17,7 +17,7 @@ namespace seeding {
 struct seed {
 
     std::string seq;
-    int32_t pos;  // start position in sequence
+    int32_t pos;  // start position in sequence (position on query)
     int32_t idx;  // index of kmer in vector used in indexing DFS
     bool reversed;
     int32_t gappedEnd;

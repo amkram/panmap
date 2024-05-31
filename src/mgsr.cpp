@@ -4,11 +4,17 @@
 #include <deque>
 #include <queue>
 #include <math.h>
+#include <atomic>
 #include <boost/functional/hash.hpp>
 #include <boost/filesystem.hpp>
+#include <tbb/concurrent_vector.h>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range2d.h>
+#include <tbb/parallel_reduce.h>
 #include "PangenomeMAT.hpp"
 #include "seeding.hpp"
 #include "mgsr.hpp"
+#include <eigen3/Eigen/Dense>
 
 namespace fs = boost::filesystem;
 
@@ -995,7 +1001,7 @@ void scoreDFS(
     mgsr::seedmers& seedmers, const std::unordered_map<std::string, std::pair<int32_t, std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>>>>& seedmersIndex,
     const std::unordered_map<std::string, std::map<int32_t, int32_t>>& coordsIndex,
     const std::vector<std::pair<std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>>>& readSeedmers,
-    const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores,
+    const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
     std::unordered_map<std::string, std::string>& identicalPairs, const Node *node, Tree *T, size_t& totalCount, size_t& redoCount,
     const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate, const int32_t& ignoreEnds
     ) {
@@ -1005,45 +1011,52 @@ void scoreDFS(
     mutateSeedmers(seedmers, seedmersIndex.find(node->identifier)->second, coordsIndex.find(node->identifier)->second, affectedSeedmers, seedmersToRevert, ignoreEnds);
 
     if (node->identifier == T->root->identifier) {
-        allScores[node->identifier].reserve(readSeedmers.size());
-        for (const auto& curReadSeedmers : readSeedmers) {
-            double duplicates = 0;
-            std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
-            std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, maximumGap, minimumCount, minimumScore);
-            int32_t pseudoScore = scorePseudoChain(pseudoChain);
-            double maxScore = static_cast<double>(curReadSeedmers.first.size()) - duplicates;
-            double pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
-            // double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size() - duplicates));
-            assert(pseudoProb <= 1.0);
-            allScores[node->identifier].push_back({pseudoScore, pseudoProb});
-            ++totalCount;
-            ++redoCount;
-        }
-    } else {
-        allScores[node->identifier].reserve(readSeedmers.size());
-        if (affectedSeedmers.size() == 0) {
-            identicalPairs[node->identifier] = node->parent->identifier;
-            allScores[node->identifier] = allScores[node->parent->identifier];
-        } else {
-            size_t i = 0;
-            for (const auto& curReadSeedmers : readSeedmers) {
-                if (redo(curReadSeedmers.second, affectedSeedmers)) {
-                    ++redoCount;
+        allScores[node->identifier].resize(readSeedmers.size());
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, readSeedmers.size(), 1000),
+            [&](const tbb::blocked_range<size_t>& range) {
+                for (size_t i = range.begin(); i < range.end(); ++i) {
+                    const auto& curReadSeedmers = readSeedmers[i];
                     double duplicates = 0;
                     std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
                     std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, maximumGap, minimumCount, minimumScore);
                     int32_t pseudoScore = scorePseudoChain(pseudoChain);
                     double maxScore = static_cast<double>(curReadSeedmers.first.size()) - duplicates;
+                    // Need to change how pseudoProb is calculated
+                    // pseudoProb = 0 if pseudoScore < 1/2 (estimated number of kminmers on a read)
                     double pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
                     // double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size() - duplicates));
                     assert(pseudoProb <= 1.0);
-                    allScores[node->identifier].push_back({pseudoScore, pseudoProb});
-                } else {
-                    allScores[node->identifier].push_back(allScores[node->parent->identifier][i]);
+                    allScores[node->identifier][i] = {pseudoScore, pseudoProb};
+                    ++totalCount;
+                    ++redoCount;
                 }
-                ++totalCount;
-                ++i;
-            }
+        });
+    } else {
+        allScores[node->identifier].resize(readSeedmers.size());
+        if (affectedSeedmers.size() == 0) {
+            identicalPairs[node->identifier] = node->parent->identifier;
+            allScores[node->identifier] = allScores[node->parent->identifier];
+        } else {
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, readSeedmers.size(), 1000),
+                [&](const tbb::blocked_range<size_t>& range) {
+                    for (size_t i = range.begin(); i < range.end(); ++i) {
+                        const auto& curReadSeedmers = readSeedmers[i];
+                        if (redo(curReadSeedmers.second, affectedSeedmers)) {
+                            ++redoCount;
+                            double duplicates = 0;
+                            std::vector<match_t> matches = match(curReadSeedmers.first, seedmers, duplicates);
+                            std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, maximumGap, minimumCount, minimumScore);
+                            int32_t pseudoScore = scorePseudoChain(pseudoChain);
+                            double maxScore = static_cast<double>(curReadSeedmers.first.size()) - duplicates;
+                            double pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));                            // double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size() - duplicates));
+                            assert(pseudoProb <= 1.0);
+                            allScores[node->identifier][i] = {pseudoScore, pseudoProb};
+                        } else {
+                            allScores[node->identifier][i] = allScores[node->parent->identifier][i];
+                        }
+                        ++totalCount;
+                    }
+            });
         }
     }
 
@@ -1054,7 +1067,7 @@ void scoreDFS(
     revertSeedmers(seedmers, seedmersToRevert);
 }
 
-bool identicalReadScores(const std::vector<std::pair<int32_t, double>>& scores1, const std::vector<std::pair<int32_t, double>>& scores2) {
+bool identicalReadScores(const tbb::concurrent_vector<std::pair<int32_t, double>>& scores1, const tbb::concurrent_vector<std::pair<int32_t, double>>& scores2) {
     assert(scores1.size() == scores2.size());
     for (size_t i = 0; i < scores1.size(); ++i) {
         if (scores1[i].second != scores2[i].second) return false;
@@ -1064,7 +1077,7 @@ bool identicalReadScores(const std::vector<std::pair<int32_t, double>>& scores1,
 
 void updateIdenticalSeedmerSets(
     const std::unordered_set<std::string>& identicalGroup,
-    const std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores,
+    const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
     std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
     std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets
     ) {
@@ -1097,7 +1110,7 @@ void updateIdenticalSeedmerSets(
 }
 
 void writeScores(
-    const std::string& nodeId, const std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores,
+    const std::string& nodeId, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
     const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, const std::vector<std::string>& readSequences,
     const std::vector<std::string>& readNames, const std::string& outPath
     ) {
@@ -1120,7 +1133,7 @@ void writeScores(
 
 void mgsr::scorePseudo(
     std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path,
-    std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, 
+    std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, 
     std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
     std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, int32_t& numReads, Tree *T, 
     const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate, int32_t ignoreEnds = 0
@@ -1298,6 +1311,7 @@ double getExp(const std::vector<std::vector<double>>& probs, const std::vector<d
     for (size_t i = 0; i < numReads; ++i) {
         llh += numReadDuplicates[i].first * log(readSums[i]);
     }
+
     return llh;
 }
 
@@ -1308,12 +1322,12 @@ std::vector<double> getMax(const std::vector<std::vector<double>>& probs, const 
     size_t numNodes = probs.size();
 
     std::vector<double> denoms(numReads, 0.0);
-
     for (size_t l = 0; l < numNodes; ++l) {
         for (size_t j = 0; j < numReads; ++j) {
             denoms[j] += probs[l][j] * props[l];
         }
     }
+
 
     for (size_t i = 0; i < numNodes; ++i) {
         double newProp = 0;
@@ -1339,147 +1353,6 @@ void normalize(std::vector<double>& props) {
         prop /= sum;
     }
 }
-
-
-// void mgsr::em(
-//     PangenomeMAT::Tree *T, const std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
-//     const int32_t& numReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets
-//     ) {
-//    std::vector<std::vector<double>> probs;
-//     std::vector<std::string> nodes;
-//     // for (const auto& node : allScores) {
-//     //     if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
-//     //     std::vector<double> curProbs;
-//     //     curProbs.reserve(node.second.size());
-//     //     for (const auto& score : node.second) {
-//     //         curProbs.push_back(score.second);
-//     //     }
-//     //     nodes.push_back(node.first);
-//     //     probs.push_back(std::move(curProbs));
-//     //     props.push_back(up);
-//     // }
-
-//     std::unordered_set<std::string> knowns = {"OM410575.1", "OP573714.1", "MW671606.1"};
-
-//     std::unordered_set<std::string> skipLeaf;
-//     for (const auto& node: allScores) {
-//         if (identicalSets.find(node.first) == identicalSets.end()) continue;
-//         bool containLeaf = false;
-//         if (T->allNodes[node.first]->children.size() == 0) {
-//             containLeaf = true;
-//             skipLeaf.insert(node.first);
-//         }
-//         for (const auto& idenNode : identicalSets.at(node.first)) {
-//             if (T->allNodes[idenNode]->children.size() == 0) {
-//                 containLeaf = true;
-//                 skipLeaf.insert(idenNode);
-//             }
-//         }
-//         if (!containLeaf) continue;
-
-//         /* Only EM on known haplotypes*/
-//         bool containKnown = false;
-//         if (knowns.find(node.first) != knowns.end()) containKnown = true;
-//         for (const auto& idenNode : identicalSets.at(node.first)) {
-//             if (knowns.find(idenNode) != knowns.end()) {
-//                 containKnown = true;
-//                 break;
-//             }
-//         }
-//         if (!containKnown) continue;
-//         /* Only EM on known haplotypes*/
-
-//         std::vector<double> curProbs;
-//         curProbs.reserve(node.second.size());
-//         for (const auto& score : node.second) {
-//             curProbs.push_back(score.second);
-//         }
-//         nodes.push_back(node.first);
-//         probs.push_back(std::move(curProbs));
-//     }
-
-//     for (const auto& node: allScores) {
-//         if (identicalSets.find(node.first) != identicalSets.end() || T->allNodes[node.first]->children.size() != 0 || skipLeaf.find(node.first) != skipLeaf.end()) continue;
-
-//         /* Only EM on known haplotypes*/
-//         if (knowns.find(node.first) == knowns.end()) continue;
-//         /* Only EM on known haplotypes*/
-
-//         std::vector<double> curProbs;
-//         curProbs.reserve(node.second.size());
-//         for (const auto& score : node.second) {
-//             curProbs.push_back(score.second);
-//         }
-//         nodes.push_back(node.first);
-//         probs.push_back(std::move(curProbs));
-//     }
-
-//     std::cerr << "num nodes " << nodes.size() << std::endl;
-//     std::vector<double> props(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
-
-//     std::cout << "probs: " << probs.size() << std::endl;
-//     for (const auto& prop : props) std::cout << prop << " ";
-//     std::cout << std::endl;
-
-//     for (const auto& n : nodes) std::cout << n << " ";
-//     std::cout << std::endl;
-
-//     for(const auto& readProbs : probs) {
-//         for (size_t i = 0; i < 10; ++i) std::cout << readProbs[i] << " ";
-//         std::cout << std::endl;
-//     }
-
-//     std::unordered_map<std::string, double> knownProps = {{"OM410575.1", 0.5}, {"OP573714.1", 0.3}, {"MW671606.1", 0.2}};
-//     std::vector<double> trueProps;
-//     for (const auto& node : nodes) {
-//         trueProps.push_back(knownProps.at(node));
-//     }
-//     std::cerr << "True prop llh: " << getExp(probs, trueProps, numReadDuplicates) << std::endl;
-
-//     int curit = 0;
-//     double llh = getExp(probs, props, numReadDuplicates);
-//     std::cerr << "iteration " << curit << ": " << llh << std::endl;
-//     while (true) {
-//         props = getMax(probs, props, numReadDuplicates, numReads);
-//         normalize(props);
-//         double newllh = getExp(probs, props, numReadDuplicates);
-//         ++curit;
-//         std::cerr << "iteration " << curit << ": " << newllh << std::endl;
-
-//         if (curit % 100 == 0) {
-//             std::string outPropName = "proportions_it_" + std::to_string(curit) + ".tsv";
-//             std::ofstream outProp(outPropName);
-//             for (size_t i = 0; i < nodes.size(); ++i) {
-//                 outProp << props[i] << "\t";
-//                 outProp << nodes[i];
-//                 if (identicalSets.find(nodes[i]) != identicalSets.end()) {
-//                     for (const auto& identicalNode : identicalSets.at(nodes[i])) {
-//                         outProp << "," << identicalNode;
-//                     }
-//                 }
-//                 outProp << "\n";
-//             }
-//             outProp.close();            
-//         }
-//         if (newllh - llh < 0.000001) {
-//             break;
-//         }
-//         llh = newllh;
-//     }
-//     std::string outPropName = "proportions_it_" + std::to_string(curit) + ".tsv";
-//     std::ofstream outProp(outPropName);
-//     for (size_t i = 0; i < nodes.size(); ++i) {
-//         outProp << props[i] << "\t";
-//         outProp << nodes[i];
-//         if (identicalSets.find(nodes[i]) != identicalSets.end()) {
-//             for (const auto& identicalNode : identicalSets.at(nodes[i])) {
-//                 outProp << "," << identicalNode;
-//             }
-//         }
-//         outProp << "\n";
-//     }
-//     outProp.close();   
-// }
 
 void em(
     const std::vector<std::string>& nodes, const std::vector<std::vector<double>>& probs,
@@ -1545,24 +1418,21 @@ void squarem(
         auto theta2 = getMax(probs, theta1, numReadDuplicates, numReads);
         normalize(theta2);
 
-        std::vector<double> r;
-        std::vector<double> v;
-        std::vector<double> theta_p;
+        std::vector<double> r(props.size());
+        std::vector<double> v(props.size());
+        std::vector<double> theta_p(props.size());
         double r_norm = 0;
         double v_norm = 0;
-        r.reserve(props.size());
-        v.reserve(props.size());
-        theta_p.reserve(props.size());
         for (size_t i = 0; i < props.size(); ++i) {
-            r.push_back(theta1[i] - props[i]);
-            v.push_back(theta2[i] - theta1[i] - r[i]);
+            r.at(i) = theta1[i] - props[i];
+            v.at(i) = theta2[i] - theta1[i] - r[i];
             r_norm += r[i] * r[i];
             v_norm += v[i] * v[i];
         }
         r_norm = sqrt(r_norm);
         v_norm = sqrt(v_norm);
-        std::cerr << "r_norm: " << r_norm << std::endl;
-        std::cerr << "c_norm: " << v_norm << std::endl;
+        // std::cerr << "r_norm: " << r_norm << std::endl;
+        // std::cerr << "c_norm: " << v_norm << std::endl;
         double alpha;
         if (r_norm == 0 || v_norm == 0) {
             alpha = 0;
@@ -1570,26 +1440,26 @@ void squarem(
             alpha = - r_norm / v_norm;
         }
         double newllh;
-        std::cerr << "alpha: " << alpha << std::endl;
+        // std::cerr << "alpha: " << alpha << std::endl;
         
 
         if (alpha > -1) {
             alpha = -1;
-            for (size_t i = 0; i < props.size(); ++i) theta_p.push_back(props[i] - 2 * alpha * r[i] + alpha * alpha * v[i]);
+            for (size_t i = 0; i < props.size(); ++i) theta_p.at(i) = props[i] - 2 * alpha * r[i] + alpha * alpha * v[i];
             props = getMax(probs, theta_p, numReadDuplicates, numReads);
             normalize(props);
             newllh = getExp(probs, props, numReadDuplicates);
         } else {
-            for (size_t i = 0; i < props.size(); ++i) theta_p.push_back(props[i] - 2 * alpha * r[i] + alpha * alpha * v[i]);
+            for (size_t i = 0; i < props.size(); ++i) theta_p.at(i) = props[i] - 2 * alpha * r[i] + alpha * alpha * v[i];
             auto newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
             normalize(newProps);
             newllh = getExp(probs, newProps, numReadDuplicates);
             if (newllh >= llh) {
                 props = std::move(newProps);
             } else {
-                while (newllh <= llh) {
+                while (newllh < llh) {
                     alpha = (alpha - 1) / 2;
-                    std::cerr << "alpha: " << alpha << " " << newllh << " vs " << llh << std::endl;
+                    // std::cerr << "alpha: " << alpha << " " << newllh << " vs " << llh << std::endl;
                     for (size_t i = 0; i < theta_p.size(); ++i) theta_p[i] = props[i] - 2 * alpha * r[i] + alpha * alpha * v[i];
                     newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
                     normalize(newProps);
@@ -1599,52 +1469,63 @@ void squarem(
             }
         }
 
-        if (newllh - llh < 0.000001) {
+        if (newllh - llh < 0.00001) {
             llh = newllh;
             break;
         }        
         llh = newllh;
-        std::cerr << "iteration " << curit << ": " << llh << std::endl;
-        if (curit % 50 == 0) {
-            std::string outPropName = "proportions_it_" + std::to_string(curit) + ".tsv";
-            std::ofstream outProp(outPropName);
-            for (size_t i = 0; i < nodes.size(); ++i) {
-                outProp << props[i] << "\t";
-                outProp << nodes[i];
-                if (identicalSets.find(nodes[i]) != identicalSets.end()) {
-                    for (const auto& identicalNode : identicalSets.at(nodes[i])) {
-                        outProp << "," << identicalNode;
-                    }
-                }
-                outProp << "\n";
-            }
-            outProp.close();            
-        }
+        // std::cerr << "iteration " << curit << ": " << llh << std::endl;
+        // if (curit % 50 == 0) {
+        //     std::string outPropName = "proportions_it_" + std::to_string(curit) + ".tsv";
+        //     std::ofstream outProp(outPropName);
+        //     for (size_t i = 0; i < nodes.size(); ++i) {
+        //         outProp << props[i] << "\t";
+        //         outProp << nodes[i];
+        //         if (identicalSets.find(nodes[i]) != identicalSets.end()) {
+        //             for (const auto& identicalNode : identicalSets.at(nodes[i])) {
+        //                 outProp << "," << identicalNode;
+        //             }
+        //         }
+        //         outProp << "\n";
+        //     }
+        //     outProp.close();            
+        // }
         ++curit;
     }
-    std::string outPropName = "proportions_it_" + std::to_string(curit) + ".tsv";
-    std::ofstream outProp(outPropName);
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        outProp << props[i] << "\t";
-        outProp << nodes[i];
-        if (identicalSets.find(nodes[i]) != identicalSets.end()) {
-            for (const auto& identicalNode : identicalSets.at(nodes[i])) {
-                outProp << "," << identicalNode;
-            }
-        }
-        outProp << "\n";
-    }
-    outProp.close();
+    // std::string outPropName = "proportions_it_" + std::to_string(curit) + ".tsv";
+    // std::ofstream outProp(outPropName);
+    // for (size_t i = 0; i < nodes.size(); ++i) {
+    //     outProp << props[i] << "\t";
+    //     outProp << nodes[i];
+    //     if (identicalSets.find(nodes[i]) != identicalSets.end()) {
+    //         for (const auto& identicalNode : identicalSets.at(nodes[i])) {
+    //             outProp << "," << identicalNode;
+    //         }
+    //     }
+    //     outProp << "\n";
+    // }
+    // outProp.close();
     ++curit;
 }
+
 void mgsr::squaremHelper(
-    PangenomeMAT::Tree *T, const std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
-    const int32_t& numReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets
+    PangenomeMAT::Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
+    const int32_t& numReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    std::vector<std::vector<double>>& probs, std::vector<std::string>& nodes, std::vector<double>& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude
     ) {
-    std::vector<std::vector<double>> probs;
-    std::vector<std::string> nodes;
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "starting EM estimation of haplotype proportions" << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "starting EM estimation of haplotype proportions excluding " << exclude << "\n";
+        std::cerr << msg.str();
+    }
+
     for (const auto& node : allScores) {
         if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
+        if (!exclude.empty() && node.first == exclude) continue;
         std::vector<double> curProbs;
         curProbs.reserve(node.second.size());
         for (const auto& score : node.second) {
@@ -1709,29 +1590,54 @@ void mgsr::squaremHelper(
     //     probs.push_back(std::move(curProbs));
     // }
 
-    std::cerr << "num nodes " << nodes.size();
-    std::vector<double> props(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
+    // std::cerr << "num nodes " << nodes.size() << std::endl;
+    props.resize(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
 
 
     
     int curit = 0;
-    double llh = getExp(probs, props, numReadDuplicates);
-    std::cerr << "iteration " << curit << ": " << llh << std::endl;
+    llh = getExp(probs, props, numReadDuplicates);
+    // std::cerr << "iteration " << curit << ": " << llh << std::endl;
     squarem(nodes, probs, identicalSets, numReadDuplicates, numReads, props, llh, curit);
-    std::vector<std::string> sigNodes;
-    // std::vector<double> sigProps;
-    std::vector<std::vector<double>> sigProbs;
-    std::cerr << nodes.size() << " " << probs.size() << " " << props.size() << std::endl;
-    for (size_t i = 0; i < props.size(); ++i) {
-        if (props[i] >= 0.005) {
 
-            sigNodes.push_back(nodes[i]);
-            sigProbs.push_back(probs[i]);
-            // sigProps.push_back(props[i]);
+   for (int32_t i = 0; i < roundsRemove; ++i) {
+        std::vector<std::string> sigNodes;
+        std::vector<std::vector<double>> sigProbs;
+        for (size_t i = 0; i < props.size(); ++i) {
+            if (props[i] >= removeThreshold) {
+                sigNodes.push_back(nodes[i]);
+                sigProbs.push_back(probs[i]);
+            }
         }
+        if (sigNodes.size() == nodes.size()) break;
+        std::vector<double> sigProps(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
+        
+        llh = getExp(sigProbs, sigProps, numReadDuplicates);
+        squarem(sigNodes, sigProbs, identicalSets, numReadDuplicates, numReads, sigProps, llh, curit);
+        nodes = std::move(sigNodes);
+        probs = std::move(sigProbs);
+        props = std::move(sigProps);
     }
-    std::vector<double> sigProps(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
 
-    llh = getExp(sigProbs, sigProps, numReadDuplicates);
-    squarem(sigNodes, sigProbs, identicalSets, numReadDuplicates, numReads, sigProps, llh, curit);
+    if (!exclude.empty()) {
+        std::vector<double> curProbs;
+        curProbs.reserve(allScores.at(exclude).size());
+        for (const auto& score : allScores.at(exclude)) {
+            curProbs.push_back(score.second);
+        }
+        probs.push_back(std::move(curProbs));
+        nodes.push_back(exclude);
+        props.push_back(0.0);
+        llh = getExp(probs, props, numReadDuplicates);
+    }
+
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "Finished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "Finished EM estimation of haplotype proportions excluding " << exclude << ". Total EM iterations: " << curit<< "\n";
+        std::cerr << msg.str();
+    }
 }

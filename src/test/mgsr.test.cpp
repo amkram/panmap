@@ -1,6 +1,9 @@
 #include <boost/functional/hash.hpp>
 #include <boost/test/unit_test.hpp>
 #include <boost/filesystem.hpp>
+#include <tbb/parallel_for.h>
+#include <tbb/concurrent_vector.h>
+#include <tbb/global_control.h>
 #include <unordered_map>
 #include <iostream>
 #include "../mgsr.hpp"
@@ -115,19 +118,32 @@ BOOST_AUTO_TEST_CASE(_index) {
 
     // mgsr::accio(T, indexFile, k, l);
 }
-void _initializeFastq(const std::string &fastqPath, std::vector<readSeedmers_t>& readSeedmers, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, const int32_t k, const int32_t s, const int32_t l);
-BOOST_AUTO_TEST_CASE(_reads) {
-    // int32_t numsample = 1;
-    // int32_t numread   = 2;
-    // int32_t k = 10;
-    // int32_t s = 5;
-    // int32_t l = 2;
-    // std::vector<std::string> readSequences;
-    // std::vector<std::string> readQuals;
-    // std::vector<std::string> readNames;
-    // std::vector<readSeedmers_t> readSeedmers;
-    // std::string reads1Path = "../src/test/data/mgsr/simulated_mgsr_reads/" + std::to_string(numsample) + "_genomes_metagenomics_" + std::to_string(numread) + "k_reads_R1.fastq";
-    // _initializeFastq(reads1Path, readSeedmers, readSequences, readQuals, readNames, k, s, l);
+
+BOOST_AUTO_TEST_CASE(_tbbtest) {
+    // const size_t N = 10000; // Size of the array
+    // std::vector<int> array(N);
+
+    // // Initialize the array with some values
+    // for (size_t i = 0; i < N; ++i) {
+    //     array[i] = i;
+    // }
+
+    // // Parallel computation using TBB's parallel_for
+    // tbb::parallel_for(tbb::blocked_range<size_t>(0, N),
+    //     [&array](const tbb::blocked_range<size_t>& range) {
+    //         for (size_t i = range.begin(); i < range.end(); ++i) {
+    //             array[i] = array[i] * array[i]; // Compute the square
+    //         }
+    //     }
+    // );
+
+
+
+    // // Output some of the results
+    // for (size_t i = 0; i < 10; ++i) {
+    //     std::cout << array[i] << " ";
+    // }
+    // std::cout << std::endl;
 }
 
 BOOST_AUTO_TEST_CASE(_score) {
@@ -138,15 +154,15 @@ BOOST_AUTO_TEST_CASE(_score) {
     istream is(&b);
     auto T = new PangenomeMAT::Tree(is);
 
-
+    tbb::global_control c(tbb::global_control::max_allowed_parallelism, 8);
     size_t k = 10;
     size_t s = 5;
-    size_t l = 2;
+    size_t l = 3;
     std::string seedmersIndexPath = "../dev/examples/sars2k_" + std::to_string(k) + "_" + std::to_string(s) + "_" + std::to_string(l) + ".pmat.kmi";
     std::ifstream seedmersIndex(seedmersIndexPath);
     // std::vector<int32_t> numSamples = {1, 3, 5, 10};
-    std::vector<int32_t> numSamples = {3};
-    std::vector<int32_t> numReads = {200};
+    std::vector<int32_t> numSamples = {10};
+    std::vector<int32_t> numReads = {100};
 
     for (auto numread : numReads) {
         for (auto numsample : numSamples) {
@@ -159,38 +175,69 @@ BOOST_AUTO_TEST_CASE(_score) {
             double errorRate = 0.005;
             int32_t ignoreEnds = 50;
             int32_t numReads;
-            std::unordered_map<std::string, std::vector<std::pair<int32_t, double>>> allScores;
+            bool confidence = false;
+            int32_t roundsRemove = 2;
+            double removeThreshold = 0.005;
+            std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>> allScores;
             std::vector<std::pair<int32_t, std::vector<size_t>>> numReadDuplicates;
             std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
             std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
-            mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, maximumGap, minimumCount, minimumScore, errorRate, ignoreEnds);
-
-            std::string outScoresPath = "../src/test/data/mgsr/pseudoScores/k" + std::to_string(k) + "_s" + std::to_string(s) + "_l" + std::to_string(l) + "/" + std::to_string(numsample) + "_" + std::to_string(numread) + "k.txt";
-            ofstream outScores(outScoresPath);
-            std::vector<std::pair<std::string, int32_t>> scores;
-            for (const auto& node : allScores) {
-                int32_t score = 0;
-                for (size_t i = 0; i < node.second.size(); ++i) {
-                    score += node.second[i].first * numReadDuplicates[i].first;
-                }
-                scores.emplace_back(std::make_pair(node.first, score));
+            mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, maximumGap, minimumCount, minimumScore, errorRate, ignoreEnds);       
+            
+            std::vector<std::vector<double>> probs;
+            std::vector<std::string> nodes;
+            std::vector<double> props;
+            double llh;
+            mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
+            
+            std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
+            for (size_t i = 0; i < nodes.size(); ++i) {
+                sortedOut.at(i) = {nodes[i], props[i]};
             }
-            std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
+            std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
                 return a.second > b.second;
             });
-            for (const auto& score : scores) {
-                outScores << score.first << "\t" << score.second << "\n";
+
+            std::vector<double> llhdiffs(nodes.size());
+            std::vector<double> exclllhs(nodes.size());
+            if (confidence) {
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes.size()), [&](const tbb::blocked_range<size_t>& range) {
+                    for (size_t i = range.begin(); i < range.end(); ++i) {
+                        std::vector<std::vector<double>> curprobs;
+                        std::vector<std::string> curnodes;
+                        std::vector<double> curprops;
+                        double curllh;
+                        mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
+                        exclllhs.at(i) = curllh;
+                        llhdiffs.at(i) = llh - curllh;
+                    }
+                });
             }
-            outScores.close();
 
-            int32_t totalReads = 0;
-            for (const auto& n : numReadDuplicates) totalReads += n.first;
-            assert(totalReads == numReads);
+            std::cout << "likelihood: " << llh << "\n";
+            for (size_t i = 0; i < sortedOut.size(); ++i) {
+                const auto& node = sortedOut[i];
+                if (confidence) {
+                    std::cout << node.first;
+                    if (identicalSets.find(node.first) != identicalSets.end()) {
+                        for (const auto& identicalNode : identicalSets.at(node.first)) {
+                            std::cout << "," << identicalNode << "\t";
+                        }
+                    }
+                    std::cout << node.second << "\t" << exclllhs[i] << "\t" << llhdiffs[i] << "\n";
+                } else {
+                    std::cout << node.first;
+                    if (identicalSets.find(node.first) != identicalSets.end()) {
+                        for (const auto& identicalNode : identicalSets.at(node.first)) {
+                            std::cout << "," << identicalNode << "\t";
+                        }
+                    }
+                    std::cout << node.second << "\n";
+                }
+            }
+
+            // mgsr::accio(allScore, nodes, )
             
-       
-            mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets);
-            // mgsr::em(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets);
-
         }
     }
 }
