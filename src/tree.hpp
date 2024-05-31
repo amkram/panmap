@@ -65,6 +65,124 @@ struct tupleRange {
         return start < rhs.start;
     }
 };
+class CoordNavigator {
+public:
+  CoordNavigator(const sequence_t &sequence) : sequence(sequence) {}
+
+  bool isGap(const tupleCoord_t &coord) const {
+    char c;
+    if (coord.nucGapPos == -1) {
+      c = sequence[coord.blockId].first[coord.nucPos].first;
+    } else {
+      c = sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
+    }
+    return c == '-' || c == 'x';
+  }
+
+  
+  tupleCoord_t increment(const tupleCoord_t &givencoord) const {
+    tupleCoord_t coord = givencoord;
+    //std::cout << "honda acoord.nucPos: " << coord.nucPos << std::endl;
+    if (coord.nucGapPos == -1){
+      coord.nucPos++;
+      //std::cout << "coord.nucPos: " << coord.nucPos << std::endl;
+
+      if(coord.nucPos >= sequence[coord.blockId].first.size()){
+        //std::cout << "yeah... that just happened....\n";
+        coord.blockId++;
+        //std::cout << "coord.blockId: " << coord.blockId << std::endl;
+        if(coord.blockId >= sequence.size()){
+          //std::cout << "yeah... that also just happened....\n";
+          return tupleCoord_t{-1,-1,-1};
+        }
+        coord.nucPos = 0;
+      }
+
+      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()){
+        coord.nucGapPos = 0;
+      }
+      return coord;
+    }else{
+      coord.nucGapPos++;
+      if(coord.nucGapPos >= sequence[coord.blockId].first[coord.nucPos].second.size()){
+        coord.nucGapPos = -1;
+      }
+      return coord;
+    }
+  }
+
+  tupleCoord_t decrement(const tupleCoord_t &givencoord) const {
+    tupleCoord_t coord = givencoord;
+    if (coord.nucGapPos == -1) {
+      if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+          coord.blockId--;
+          if(coord.blockId < 0){
+            return tupleCoord_t{0,0,0};
+          }
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+        }
+        return coord;
+      }else{
+        coord.nucGapPos = sequence[coord.blockId].first[coord.nucPos].second.size() - 1;
+        return coord;
+      }
+    }else{
+      coord.nucGapPos--;
+      if(coord.nucGapPos < 0){
+        coord.nucGapPos = -1;
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+          coord.blockId--;
+          if(coord.blockId < 0){
+            return tupleCoord_t{0,0,0};
+          }
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+        }
+        return coord;
+      }
+      return coord;
+    }
+  }
+
+  tupleCoord_t baddecrement(const tupleCoord_t &coord) const {
+    if (coord.blockId == 0 && coord.nucPos == 0 && coord.nucGapPos == 0) {
+      return tupleCoord_t{0, 0, 0};
+    }
+    if (coord.blockId >= 0) {
+      if (coord.nucPos > 0) {
+        if (coord.nucGapPos > 0) {
+          return tupleCoord_t(coord.blockId, coord.nucPos, coord.nucGapPos - 1);
+        } else if (coord.nucGapPos == 0) {
+            return tupleCoord_t(coord.blockId, coord.nucPos-1, -1);
+        } else { // coord.nucGapPos == -1
+          if (sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+            return tupleCoord_t(coord.blockId, coord.nucPos-1, -1);
+          } else {
+            return tupleCoord_t(coord.blockId, coord.nucPos,
+                                sequence[coord.blockId].first[coord.nucPos].second.size() - 1);
+          }
+          return tupleCoord_t(coord.blockId, coord.nucPos - 1, -1);
+        }
+      } else if (coord.nucPos == 0) {
+        if (coord.nucGapPos > 0) {
+          return tupleCoord_t(coord.blockId, coord.nucPos, coord.nucGapPos - 1);
+        } else if (coord.nucGapPos == 0) {
+          return tupleCoord_t(coord.blockId-1, sequence[coord.blockId-1].first.size()-1, -1);
+        } else { // coord.nucGapPos == -1
+          return tupleCoord_t(coord.blockId-1, sequence[coord.blockId-1].first.size()-1, -1);
+        }
+      } else { // coord.nucPos == -1, shouldn't happen
+        return tupleCoord_t(coord.blockId-1, sequence[coord.blockId-1].first.size()-1, -1);
+      }
+    }
+    return tupleCoord_t{0,0,0};
+  }
+
+private:
+  const sequence_t &sequence;
+};
 
 
 typedef std::unordered_map<

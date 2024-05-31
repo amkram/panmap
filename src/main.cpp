@@ -14,14 +14,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-
+#include "index.pb.h"
 
 
 using namespace pmi;
 namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
-/* Helpers */
+void readFromProtoFile(const std::string &filename, SeedmerIndex &index) {
+    std::ifstream input(filename, std::ios::binary);
+    if (!input) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return;
+    }
+    if (!index.ParseFromIstream(&input)) {
+        std::cerr << "Failed to parse index." << std::endl;
+    }
+    input.close();
+}
+
+void writeIndex(const std::string &filename, SeedmerIndex &index) {
+    std::ofstream output(filename, std::ios::binary);
+    if (!output) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return;
+    }
+    
+    if (!index.SerializeToOstream(&output)) {
+        std::cerr << "Failed to write index." << std::endl;
+    }
+    output.close();
+}
+
 void promptAndPlace(Tree *T, const tree::mutationMatrices &mutMat,
                     const int32_t k, const int32_t s,
                     const std::string &indexFile, const std::string &pmatFile,
@@ -53,12 +77,15 @@ void promptAndPlace(Tree *T, const tree::mutationMatrices &mutMat,
   if (reads1File == "q" || reads2File == "q") {
     exit(0);
   }
-  std::ifstream ifs(indexFile);
-
-  place::placeIsolate(ifs, mutMat, reads1File, reads2File, samFileName,
+  SeedmerIndex index;
+  readFromProtoFile(indexFile, index);
+  place::placeIsolate(index, mutMat, reads1File, reads2File, samFileName,
                       bamFileName, mpileupFileName, vcfFileName, refFileName, T,
                       use_root);
 }
+
+using namespace std;
+
 
 void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
 
@@ -72,17 +99,21 @@ void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
   cin >> j;
   cout << "Building (" << k << ", " << s << ", " << j << ") index ..."
        << std::endl;
-  seedIndex index;
+       
+  SeedmerIndex index;
+
+  /* Main index construction */
   pmi::build(index, T, j, k, s);
+
+  /* Write protobuf index to disk */
   std::cout << "Writing to " << indexFile << "..." << std::endl;
-  std::ofstream fout(indexFile);
-  fout << index.outStream.str();
-  std::cout << "Done." << std::endl;
+  writeIndex(indexFile, index);
 }
 
 
 /* Parse command line input and run logic */
 int main(int argc, char *argv[]) {
+
   try {
     po::options_description desc("Options");
     desc.add_options()("panmat", po::value<std::string>()->required(),
