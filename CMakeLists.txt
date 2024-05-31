@@ -10,19 +10,19 @@ option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." ON)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PROFILE "Enable profiling." ON)
-option(OPTION_TRACE "Enable tracing." ON)
+# option(OPTION_TRACE "Enable tracing." ON)
 
 cmake_policy(SET CMP0135 NEW)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
-find_package(Qt5 COMPONENTS Widgets REQUIRED)
-FetchContent_Declare(easy_profiler
-    GIT_REPOSITORY https://github.com/yse/easy_profiler
-    GIT_TAG develop
-    GIT_SHALLOW TRUE
-    )
-FetchContent_MakeAvailable(easy_profiler)
+# find_package(Qt5 COMPONENTS Widgets REQUIRED)
+# FetchContent_Declare(easy_profiler
+#     GIT_REPOSITORY https://github.com/yse/easy_profiler
+#     GIT_TAG develop
+#     GIT_SHALLOW TRUE
+#     )
+# FetchContent_MakeAvailable(easy_profiler)
 
 
 add_executable(panmap
@@ -105,10 +105,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(panmat)
 
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
 target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 
 # Lets us do: 
@@ -120,10 +122,21 @@ find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
 target_link_libraries(tests panmat minimap2 samtools htslib
                       ${Boost_FILESYSTEM_LIBRARY}
                       ${Boost_SYSTEM_LIBRARY}
-                      ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY} easy_profiler
+                        ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
                       )
 
-target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib easy_profiler)
+# run protoc compiler
+add_dependencies(panmap protobuf::libprotobuf)
+add_dependencies(tests protobuf::libprotobuf)
+include(${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake)
+set(proto_SRCS index.pb.cc)
+set(proto_PROTOS index.proto)
+target_sources(panmap PRIVATE ${proto_SRCS} ${proto_PROTOS})
+target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
+
+protobuf_generate(TARGET panmap)
+
+target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(panmap PRIVATE -lm -lz -lpthread)
 

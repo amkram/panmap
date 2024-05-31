@@ -45,6 +45,8 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
     const sequence_t &sequence, const blockExists_t &blockExists,
     const blockStrand_t &blockStrand, const Tree *T, const Node *node,
     const globalCoords_t &globalCoords) {
+  
+
   const auto &rotationIndexes = T->rotationIndexes;
   const auto &sequenceInverted = T->sequenceInverted;
   const auto &circularSequences = T->circularSequences;
@@ -55,130 +57,126 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
 
   std::string sequenceString;
   // todo implement inversions
-  std::cout << "GETTING SEQUENCE FROM BLOCK COORDINATES\n";
-  std::cout << "from (" << startBlockId << ", " << startNuc << ", "
-            << start.nucGapPos << ") to (" << endBlockId << ", " << endNuc
-            << ", " << end.nucGapPos << ")" << std::endl;
   if (end == tupleCoord_t{-1,-1,-1}) {
     end.blockId = sequence.size() - 1;
     end.nucPos = sequence[end.blockId].first.size() - 1;
     end.nucGapPos = -1;
   }
   for (int32_t i = startBlockId; i <= endBlockId; i++) {
-    std::cout << "\n\ni: " << i;
+    // std::cout << "\n\ni: " << i;
     if (!blockExists[i].first) { // all gaps
-    std::cout << "exist => ";
+    // std::cout << "exist => ";
       if (i == startBlockId) {
-        std::cout << "is start => ";
+        // std::cout << "is start => ";
         if (startBlockId == endBlockId) {
-          std::cout << "is end => ";
+          // std::cout << "is end => ";
           for (int32_t j = std::max(0, startNuc);
                j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
               sequenceString += '-';
             }
-            std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
         } else {
-          std::cout << "is not end => ";
+          // std::cout << "is not end => ";
           for (int32_t j = std::max(0, startNuc);
                j <= (int32_t)sequence[i].first.size() - 1; j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
               sequenceString += '-';
             }
-            std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
         }
       } else {
-        std::cout << "is not start => ";
+        // std::cout << "is not start => ";
         if (i == endBlockId) {
-          std::cout << "is end => ";
+          // std::cout << "is end => ";
           for (int32_t j = 0;
                j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
               sequenceString += '-';
             }
-            std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
         } else {
-          std::cout << "is not end => ";
+          // std::cout << "is not end => ";
           for (int32_t j = 0; j < sequence[i].first.size(); j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
               sequenceString += '-';
             }
-            std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
         }
       }
     } else {
-      std::cout << "exists => ";
+      // std::cout << "exists => ";
       // block exists
       if (i == startBlockId) {
-        std::cout << "is start => ";
+        // std::cout << "is start => ";
         if (startBlockId == endBlockId) {
-          std::cout << "is end => ";
+          // std::cout << "is end => ";
           for (int32_t j = std::max(0, startNuc);
                j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
             }
             nuc = sequence[i].first[j].first;
-            std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
             sequenceString += nuc == 'x' ? '-' : nuc;
           }
         } else {
-          std::cout << "is not end => ";
+          // std::cout << "is not end => ";
           for (int32_t j = std::max(0, startNuc);
                j < sequence[i].first.size(); j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
             }
             nuc = sequence[i].first[j].first;
             sequenceString += nuc == 'x' ? '-' : nuc;
-            std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
           }
         }
       } else {
-        std::cout << "is not start => ";
+        // std::cout << "is not start => ";
         if (i == endBlockId) {
-          std::cout << "is end => ";
+          // std::cout << "is end => ";
           for (int32_t j = 0;
                j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
             }
             nuc = sequence[i].first[j].first;
-            std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
             sequenceString += '-';
           }
         } else {
-          std::cout << "is not end => ";
+          // std::cout << "is not end => ";
           for (int32_t j = 0; j < sequence[i].first.size(); j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
             }
             nuc = sequence[i].first[j].first;
-            std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
             sequenceString += nuc == 'x' ? '-' : nuc;
           }
         }
@@ -234,6 +232,7 @@ std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
 }
 std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T,
                                         const Node *node, const bool aligned) {
+  
   // T should be const but [] operator on T->sequenceInverted is non-const
   std::string line;
   if (node == nullptr) { // consensus sequence (all blocks on) rather than a
@@ -757,6 +756,8 @@ void tree::fillMutationMatricesFromFile(mutationMatrices &mutMat,
 }
 
 std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
+
+  
   Node *referenceNode = nullptr;
 
   for (auto u : T->allNodes) {
