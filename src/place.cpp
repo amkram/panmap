@@ -157,17 +157,7 @@ void perfect_shuffle(vector<std::string>& v) {
     v = canvas;
 }
 
-seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, int32_t *j, std::unordered_map<std::string, int32_t> &seedmerCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<std::vector<seed>> &readSeedsFwd, std::vector<std::vector<seed>> &readSeedsBwd,  const std::string &fastqPath1, const std::string &fastqPath2) {
-    util::scopedTimer();
-    seedmerIndex_t seedmerIndex;
-    std::string line0;
-    std::getline(indexFile, line0);
-    std::vector<std::string> spltTop;
-    stringSplit(line0, ' ', spltTop);
-    int32_t tempK = std::stoi(spltTop[0]);
-    int32_t tempS = std::stoi(spltTop[1]);
-    int32_t tempJ = std::stoi(spltTop[2]);
-
+void seedsFromFastq(SeedmerIndex &index, std::unordered_map<std::string, int32_t> &seedmerCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<std::vector<seed>> &readSeedsFwd, std::vector<std::vector<seed>> &readSeedsBwd,  const std::string &fastqPath1, const std::string &fastqPath2) {
     FILE *fp;
     kseq_t *seq;
     fp = fopen(fastqPath1.c_str(), "r");
@@ -175,29 +165,23 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
         std::cerr << "Error: File " << fastqPath1 << " not found" << std::endl;
         exit(0);
     }
-
     seq = kseq_init(fileno(fp));
-    
     int line;
     while ((line = kseq_read(seq)) >= 0) {
         readSequences.push_back(seq->seq.s);
         readNames.push_back(seq->name.s);
         readQuals.push_back(seq->qual.s);
     }
-
-    
     if (fastqPath2.size() > 0) {
         fp = fopen(fastqPath2.c_str(), "r");
         if(!fp){
             std::cerr << "Error: File " << fastqPath2 << " not found" << std::endl;
             exit(0);
         }
-
         seq = kseq_init(fileno(fp));
 
         line = 0;
         int forwardReads = readSequences.size();
-
         while ((line = kseq_read(seq)) >= 0) {
             readSequences.push_back(reverseComplement(seq->seq.s));
             readNames.push_back(seq->name.s);
@@ -215,23 +199,19 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
         perfect_shuffle(readQuals);
     }
 
-
-    
-
-
     for (int i = 0; i < readSequences.size(); i++) {
         std::string seq = readSequences[i];
         std::string name = readNames[i];
         std::string rc = reverseComplement(seq);
 
-        std::vector<seed> syncmers = syncmerize(seq, tempK, tempS, false, true, 0);
+        std::vector<seed> syncmers = syncmerize(seq, index.k(), index.s(), false, true, 0);
         readSeedsFwd.push_back(syncmers);
 
-        std::vector<seed> syncmersReverse = syncmerize(rc, tempK, tempS, false, true, 0);
+        std::vector<seed> syncmersReverse = syncmerize(rc, index.k(), index.s(), false, true, 0);
         readSeedsBwd.push_back(syncmersReverse);
 
-        std::vector<seedmer> seedmers = seedmerize(syncmers, tempJ);
-        std::vector<seedmer> seedmersReverse = seedmerize(syncmersReverse, tempJ);
+        std::vector<seedmer> seedmers = seedmerize(syncmers, index.j());
+        std::vector<seedmer> seedmersReverse = seedmerize(syncmersReverse, index.j());
         for (const auto &m : seedmers) {
             if (seedmerCounts.find(m.seq) == seedmerCounts.end()) {
                 seedmerCounts[m.seq] = 1;
@@ -247,29 +227,9 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
             }
         }
     }
-
-
-    while (std::getline(indexFile, line0)) {
-        std::vector<std::string> splt;
-        stringSplit(line0, ' ', splt);
-        std::string nid = splt[0];
-        seedmerIndex[nid] = {};
-        for (int32_t i = 1; i < splt.size(); i++) {
-            std::vector<std::string> splt2;
-            stringSplit(splt[i], ':', splt2);
-            int32_t pos = std::stoi(splt2[0]);
-            std::string seedmer = splt2[1];
-            seedmerIndex[nid].insert(std::make_pair(pos, seedmer));
-        }
-    }
-    *k = tempK;
-    *s = tempS;
-    *j = tempJ;
-    return seedmerIndex;
 }
 
-
-void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T, bool use_root) {
+void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T, bool use_root) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
     tree::setup(data, globalCoords, T);
@@ -282,10 +242,8 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     std::vector<std::vector<seed>> readSeedsFwd;
     std::vector<std::vector<seed>> readSeedsBwd;
     std::unordered_map<std::string, int32_t> seedmerCounts;
-    int32_t k, s, j;
     
-
-    seedmerIndex_t seedmerIndex = seedsFromFastq(indexFile, &k, &s, &j, seedmerCounts, readSequences, readQuals, readNames, readSeedsFwd, readSeedsBwd, reads1Path, reads2Path);
+    seedsFromFastq(index, seedmerCounts, readSequences, readQuals, readNames, readSeedsFwd, readSeedsBwd, reads1Path, reads2Path);
     
     /* Collecting forward and backward seeds into one vector */
     std::vector<std::vector<seed>> readSeeds;
@@ -296,20 +254,18 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
 
         for(int j = 0; j < readSeedsFwd[i].size(); j++) {
             readSeedsFwd[i][j].reversed = false;
-            readSeedsFwd[i][j].pos = readSeedsFwd[i][j].pos + k - 1; // Minimap standard
+            readSeedsFwd[i][j].pos = readSeedsFwd[i][j].pos + index.k() - 1; // Minimap standard
             thisReadsSeeds.push_back(readSeedsFwd[i][j]);
         }
         for(int j = 0; j < readSeedsBwd[i].size(); j++) {
             readSeedsBwd[i][j].reversed = true;
-            readSeedsBwd[i][j].pos = readSeedsBwd[i][j].pos + k - 1; // Minimap standard
+            readSeedsBwd[i][j].pos = readSeedsBwd[i][j].pos + index.k() - 1; // Minimap standard
             thisReadsSeeds.push_back(readSeedsBwd[i][j]);
         }
         readSeeds.push_back(thisReadsSeeds);
     }
 
-
     bool pairedEndReads = reads2Path.size();
-
 
     /* Sample placement */
     std::cout << "⋌⋋ Placing sample ... " << std::flush;
@@ -317,8 +273,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     std::unordered_map<std::string, int32_t> phyloCounts;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPhylo;
     std::unordered_map<int32_t, std::string> dynamicSeedmersPlace;
-    
-    
+    seedmerIndex_t seedmerIndex;
     std::string bestMatch;
     if ( !use_root ) {
         
@@ -330,10 +285,9 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         std::vector<std::pair<std::string, float>> targetNodes;
         std::copy(scores.begin(), scores.end(), back_inserter<std::vector<std::pair<std::string, float>>>(targetNodes));
         std::sort(targetNodes.begin(), targetNodes.end(), [] (auto &left, auto &right) { return left.second > right.second; });
-        // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
         
         bestMatch = targetNodes[0].first;
-    }else{
+    } else{
         bestMatch = T->root->identifier;
     }
     
@@ -348,25 +302,32 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         }
     }
 
-    
     // path format {target}.*.fastq
     std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
     std::cerr << "\n" << targetId << "\t" << bestMatch << std::endl;
     std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
     std::unordered_map<int32_t, std::string> targetSeedmers;
     std::unordered_map<int32_t, std::string> dynamicSeedmersTarget;
+
+    for (int i = 0; i < index.per_node_mutations_size(); i++) {
+        const NodeSeedmerMutations muts = index.per_node_mutations(i);
+        seedmerIndex[muts.node_id()] = {};
+        for (int j = 0; j < muts.mutations_size(); j++) {
+            const SeedmerMutation mut = muts.mutations(j);
+            seedmerIndex[muts.node_id()].insert({mut.pos(), (mut.is_deletion() ? '@' + mut.seq() : mut.seq())});
+        }
+    }
     
+    // redo DFS with target node -> returns early with dynamicSeedmers in target node's state
     placeDFS(nullptr, seedmerIndex, dynamicSeedmersTarget, scores, seedmerCounts, phyloCounts, T->root, T, bestMatch, &targetSeedmers);
 
-
-    
     /* Debug Print statements */
     for (const auto &seedmer : targetSeedmers) {
         if (seedmer.second == "" ) {
             continue;
         }
         int32_t refPos = seedmer.first;
-        std::string seed = seedmer.second.substr(0, k);
+        std::string seed = seedmer.second.substr(0, index.k());
         if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
             seedToRefPositions[seed] = {};
         }
@@ -401,7 +362,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         bestMatchSequence,
         seedToRefPositions,
         samFileName,
-        k,
+        index.k(),
         pairedEndReads,
 
         samAlignments,
