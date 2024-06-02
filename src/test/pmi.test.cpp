@@ -161,7 +161,6 @@ BOOST_AUTO_TEST_CASE(performance) {
       std::string node_seq = tree::getStringAtNode(nod, T, true);
        std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
 
-
       std::vector<std::tuple<std::string, int, int>> seedmers =
           extractSeedmers(node_seq, k, s, j, false);
       std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
@@ -312,6 +311,109 @@ extractSeedmers(const std::string &seq, const int k, const int s, const int l,
 
   return seedmers;
 }
+
+BOOST_AUTO_TEST_CASE(getNucSeq)
+{
+    using namespace tree;
+
+    size_t k = 5;
+    size_t s = 3;
+    tree::mutableTreeData data;
+    std::string seq = "----A-A-CCG---TLEMONC--CC---------";
+    sequence_t sequence = {
+      {
+        { // block 0
+          {'-', {}}
+        },{}
+      },
+        //block 1
+      { {
+          {'A', {'-', '-', '-', 'A', '-'}},
+  //(0,0,-1)^     ^ (0,0,0)
+          {'-', {'-', 'C', 'C', 'G'}},
+        }, {}//unused
+      },
+      {
+        // block 2 - OFF
+       {
+        {'-', {}},
+        {'G', {}},
+       }, {}//unused
+      },
+      { // block 3
+       {
+        {'T', {}},
+        {'C', {'L', 'E', 'M', 'O', 'N'}},
+        {'C', {'-', '-'}},
+        {'C', {}},
+        {'x', {'-'}}
+       }, {}//unused
+      },
+      {
+        // block 4
+       {
+        {'-', {'P','L','S','-','N','O'}},
+       }, {}//unused
+      },
+      
+    };
+    
+    globalCoords_t globalCoords = {
+      {//block 0
+        {
+          {0, {}},
+        }, {}//unused
+      },
+      {//block 1
+        {
+          {6, {1, 2, 3, 4, 5}},
+          {11, {7, 8, 9, 10}},
+        }, {}//unused
+      },
+      {//block 2
+        
+        {
+          {12, {}},
+          {13, {}},
+        }, {}//unused
+      },
+      { // block 3
+       {
+        {14, {}},
+        {20, {15, 16, 17, 18, 19}},
+        {23, {21, 22}},
+        {24, {}},
+        {26, {25}}
+       }, {}//unused
+      },
+      {//block 4
+        
+        {
+          {33, {27, 28, 29, 30, 31, 32}},
+        }, {}//unused
+      },
+    };
+    // block starts: 0:^       1:^       2:^
+    //
+    //                 ---A-A-CCG- | TLEMONC--CC--
+    //                 012345...     ^11...    
+    tupleCoord_t start = {0,0,0};
+    tupleCoord_t end = {-1,-1,-1};
+    const blockExists_t blockExists = {{{false},{}}, {{true},{}}, {{false},{}}, {{true},{}}, {{false},{}}};
+    const blockStrand_t blockStrand = {{{true},{}}, {{true},{}}, {{true},{}}, {{true},{}}, {{true},{}}};
+    const Tree *T;
+    const Node *node;
+    std::string wholeSeq =
+      tree::getNucleotideSequenceFromBlockCoordinates(start, end, sequence,
+      blockExists, blockStrand, T, node, globalCoords);
+    std::cout << wholeSeq << "\n";
+    BOOST_TEST(wholeSeq == seq);
+    //BOOST_TEST(false);
+    std::cout << "sup homie, you really wanna knowme?\n";
+
+
+}
+
 
 // BOOST_AUTO_TEST_CASE(_getRecomputePositions)
 // {
