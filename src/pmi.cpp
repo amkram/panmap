@@ -18,201 +18,386 @@ using namespace PangenomeMAT;
 using namespace tree;
 
 /* Helpers */
+
 void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
-                    blockMutData_t &blockMutData,
+                    blockMutationInfo_t &blockMutationInfo,
                     std::vector<tupleRange> &recompRanges,
-                    nucMutData_t &nucMutData, Tree *T, const Node *node,
-                    const globalCoords_t &globalCoords, SeedmerIndex &index) {
+                    mutationInfo_t &mutationInfo, Tree *T, Node *node,
+                    globalCoords_t &globalCoords, SeedmerIndex &index)
+{
   blockExists_t &blockExists = data.blockExists;
   blockStrand_t &blockStrand = data.blockStrand;
-  
-  // Block mutations
-  for (const auto &mutation : node->blockMutation) {
-    int32_t blockId = mutation.primaryBlockId;
+  // here
+  auto &blocks = T->blocks;
+  auto &gaps = T->gaps;
+  auto &blockGaps = T->blockGaps;
+  auto &sequenceInverted = T->sequenceInverted;
+  auto &sequence = data.sequence;
+  auto &circularSequences = T->circularSequences;
+  // List of blocks. Each block has a nucleotide list. Along with each
+  // nucleotide is a gap list.
+
+  // Block Mutations
+  for (auto mutation : node->blockMutation)
+  {
+    int32_t primaryBlockId = mutation.primaryBlockId;
+    int32_t secondaryBlockId = mutation.secondaryBlockId;
     bool type = mutation.blockMutInfo;
     bool inversion = mutation.inversion;
-    if (type == 1) {
+
+    recompRanges.push_back({tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0},
+                            tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1}});
+
+    if (type == 1)
+    {
       // insertion
       bool oldStrand;
       bool oldMut;
-      oldStrand = blockStrand[blockId].first;
-      oldMut = blockExists[blockId].first; // NICO:This should always be
-                                           // false???
-      blockExists[blockId].first = true;
-      // if insertion of inverted block takes place, the strand is backwards
-      blockStrand[blockId].first = !inversion;
-      blockMutData.push_back(
-          std::make_tuple(blockId, oldMut, oldStrand, true, !inversion));
-    } else {
+      if (secondaryBlockId != -1)
+      {
+        oldStrand = blockStrand[primaryBlockId].second[secondaryBlockId];
+        oldMut = blockExists[primaryBlockId].second[secondaryBlockId];
+        blockExists[primaryBlockId].second[secondaryBlockId] = true;
+
+        // if insertion of inverted block takes place, the strand is backwards
+        blockStrand[primaryBlockId].second[secondaryBlockId] = !inversion;
+      }
+      else
+      {
+        oldStrand = blockStrand[primaryBlockId].first;
+        oldMut = blockExists[primaryBlockId].first;
+        blockExists[primaryBlockId].first = true;
+
+        // if insertion of inverted block takes place, the strand is backwards
+        blockStrand[primaryBlockId].first = !inversion;
+      }
+      blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, true, !inversion));
+    }
+    else
+    {
       bool oldMut;
       bool oldStrand;
-      if (inversion) {
-        oldStrand = blockStrand[blockId].first;
-        oldMut = blockExists[blockId].first;
-        blockStrand[blockId].first = !oldStrand;
-        blockMutData.push_back(
-            std::make_tuple(blockId, oldMut, oldStrand, oldMut, !oldStrand));
-      } else {
-        // Actually a deletion
-        oldStrand = blockStrand[blockId].first;
-        oldMut = blockExists[blockId].first; // would be true
-        blockExists[blockId].first = false;
-        // resetting strand to true during deletion
-        blockStrand[blockId].first = true;
-        blockMutData.push_back(
-            std::make_tuple(blockId, oldMut, oldStrand, false, true));
+      if (inversion)
+      {
+        // This means that this is not a deletion, but instead an inversion
+        if (secondaryBlockId != -1)
+        {
+          oldStrand = blockStrand[primaryBlockId].second[secondaryBlockId];
+          oldMut = blockExists[primaryBlockId].second[secondaryBlockId];
+          blockStrand[primaryBlockId].second[secondaryBlockId] = !oldStrand;
+        }
+        else
+        {
+          oldStrand = blockStrand[primaryBlockId].first;
+          oldMut = blockExists[primaryBlockId].first;
+          blockStrand[primaryBlockId].first = !oldStrand;
+        }
+        if (oldMut != true)
+        {
+          std::cout << "There was a problem in PanMAT generation. Please Report." << std::endl;
+        }
+        blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, oldMut, !oldStrand));
       }
+      else
+      {
+        // Actually a deletion
+
+        if (secondaryBlockId != -1)
+        {
+          oldStrand = blockStrand[primaryBlockId].second[secondaryBlockId];
+          oldMut = blockExists[primaryBlockId].second[secondaryBlockId];
+          blockExists[primaryBlockId].second[secondaryBlockId] = false;
+
+          // resetting strand to true during deletion
+          blockStrand[primaryBlockId].second[secondaryBlockId] = true;
+        }
+        else
+        {
+          oldStrand = blockStrand[primaryBlockId].first;
+          oldMut = blockExists[primaryBlockId].first;
+          blockExists[primaryBlockId].first = false;
+
+          // resetting strand to true during deletion
+          blockStrand[primaryBlockId].first = true;
+        }
+      }
+      blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, false, true));
     }
-    recompRanges.push_back({tupleCoord_t{blockId, 0, data.sequence[blockId].first[0].second.empty() ? -1 : 0},
-        tupleCoord_t{blockId, (int32_t)data.sequence[blockId].first.size() - 1, -1}});
   }
 
   // Nuc mutations
-  for (size_t i = 0; i < node->nucMutation.size(); i++) {
-    int32_t blockId = node->nucMutation[i].primaryBlockId;
+  for (size_t i = 0; i < node->nucMutation.size(); i++)
+  {
+    int32_t primaryBlockId = node->nucMutation[i].primaryBlockId;
+    int32_t secondaryBlockId = node->nucMutation[i].secondaryBlockId;
+
     int32_t nucPosition = node->nucMutation[i].nucPosition;
     int32_t nucGapPosition = node->nucMutation[i].nucGapPosition;
     uint32_t type = (node->nucMutation[i].mutInfo & 0x7);
     char newVal = '-';
-
-    if (type < 3) { // Either S, I or D
+    if (type < 3)
+    {
+      // Either S, I or D
       int len = ((node->nucMutation[i].mutInfo) >> 4);
+      recompRanges.push_back({tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition},
+                              tupleCoord_t{primaryBlockId, nucPosition + len, -1}});
 
-      recompRanges.push_back(
-          {{blockId, nucPosition, nucGapPosition},
-           {blockId,
-            std::min(nucPosition + len,
-                     (int32_t)data.sequence[blockId].first.size() - 1),
-            -1}});
 
-      if (type == PangenomeMAT::NucMutationType::NS) {
+      if (type == PangenomeMAT::NucMutationType::NS)
+      {
         // Substitution
-        if (nucGapPosition != -1) {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId]
-                              .first[nucPosition]
-                              .second[nucGapPosition + j];
-            newVal = PangenomeMAT::getNucleotideFromCode(
-                ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-            data.sequence[blockId]
-                .first[nucPosition]
-                .second[nucGapPosition + j] = newVal;
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                                 nucGapPosition + j, oldVal));
+        if (secondaryBlockId != -1)
+        {
+          if (nucGapPosition != -1)
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
+            }
           }
-        } else {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId].first[nucPosition + j].first;
-            newVal = PangenomeMAT::getNucleotideFromCode(
-                ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-            data.sequence[blockId].first[nucPosition + j].first = newVal;
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition + j,
-                                                 nucGapPosition, oldVal));
-          }
-        }
-      } else if (type == PangenomeMAT::NucMutationType::NI) {
-        // Insertion
-        if (nucGapPosition != -1) {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId]
-                              .first[nucPosition]
-                              .second[nucGapPosition + j];
-            newVal = PangenomeMAT::getNucleotideFromCode(
-                ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-            data.sequence[blockId]
-                .first[nucPosition]
-                .second[nucGapPosition + j] = newVal;
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                                 nucGapPosition + j, oldVal));
-          }
-        } else {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId].first[nucPosition + j].first;
-            const int nucCode =
-                ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF;
-            newVal = PangenomeMAT::getNucleotideFromCode(
-                ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-            data.sequence[blockId].first[nucPosition + j].first = newVal;
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition + j,
-                                                 nucGapPosition, oldVal));
+          else
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
+            }
           }
         }
-      } else if (type == PangenomeMAT::NucMutationType::ND) {
-        // Deletion
-        if (nucGapPosition != -1) {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId]
-                              .first[nucPosition]
-                              .second[nucGapPosition + j];
-            data.sequence[blockId]
-                .first[nucPosition]
-                .second[nucGapPosition + j] = '-';
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition,
-                                                 nucGapPosition + j, oldVal));
+        else
+        {
+          if (nucGapPosition != -1)
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
+            }
           }
-        } else {
-          for (int j = 0; j < len; j++) {
-            char oldVal = data.sequence[blockId].first[nucPosition + j].first;
-            data.sequence[blockId].first[nucPosition + j].first = '-';
-            nucMutData.push_back(std::make_tuple(blockId, nucPosition + j,
-                                                 nucGapPosition, oldVal));
+          else
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].first[nucPosition + j].first = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
+            }
           }
         }
       }
-    } else {
+      else if (type == PangenomeMAT::NucMutationType::NI)
+      {
+        // Insertion
+        if (secondaryBlockId != -1)
+        {
+          if (nucGapPosition != -1)
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
+            }
+          }
+          else
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
+            }
+          }
+        }
+        else
+        {
+          if (nucGapPosition != -1)
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
+            }
+          }
+          else
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
+              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              sequence[primaryBlockId].first[nucPosition + j].first = newVal;
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
+            }
+          }
+        }
+      }
+      else if (type == PangenomeMAT::NucMutationType::ND)
+      {
+        // Deletion
+        if (secondaryBlockId != -1)
+        {
+          if (nucGapPosition != -1)
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
+              sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = '-';
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, '-'));
+            }
+          }
+          else
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
+              sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = '-';
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, '-'));
+            }
+          }
+        }
+        else
+        {
+          if (nucGapPosition != -1)
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
+              sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = '-';
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, '-'));
+            }
+          }
+          else
+          {
+            for (int j = 0; j < len; j++)
+            {
+              char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
+              sequence[primaryBlockId].first[nucPosition + j].first = '-';
+              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, '-'));
+            }
+          }
+        }
+      }
+    }
+    else
+    {
       int len = 0;
-      recompRanges.push_back(
-          {{blockId, nucPosition, nucGapPosition}, {blockId, nucPosition, -1}});
+      recompRanges.push_back({tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition},
+                              tupleCoord_t{primaryBlockId, nucPosition + len, -1}});
 
-      if (type == PangenomeMAT::NucMutationType::NSNPS) {
+      if (type == PangenomeMAT::NucMutationType::NSNPS)
+      {
         // SNP Substitution
-        newVal = PangenomeMAT::getNucleotideFromCode(
-            ((node->nucMutation[i].nucs) >> 20) & 0xF);
-        if (nucGapPosition != -1) {
-          char oldVal =
-              data.sequence[blockId].first[nucPosition].second[nucGapPosition];
-          data.sequence[blockId].first[nucPosition].second[nucGapPosition] =
-              newVal;
-          nucMutData.push_back(
-              std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal));
-        } else {
-          char oldVal = data.sequence[blockId].first[nucPosition].first;
-          data.sequence[blockId].first[nucPosition].first = newVal;
-          nucMutData.push_back(
-              std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal));
+        newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
+        if (secondaryBlockId != -1)
+        {
+          if (nucGapPosition != -1)
+          {
+            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition];
+            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
+          else
+          {
+            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first;
+            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
         }
-      } else if (type == PangenomeMAT::NucMutationType::NSNPI) {
+        else
+        {
+          if (nucGapPosition != -1)
+          {
+            char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition];
+            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
+          else
+          {
+            char oldVal = sequence[primaryBlockId].first[nucPosition].first;
+            sequence[primaryBlockId].first[nucPosition].first = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
+        }
+      }
+      else if (type == PangenomeMAT::NucMutationType::NSNPI)
+      {
         // SNP Insertion
-        len = 1;
-        newVal = PangenomeMAT::getNucleotideFromCode(
-            ((node->nucMutation[i].nucs) >> 20) & 0xF);
-        if (nucGapPosition != -1) {
-          char oldVal =
-              data.sequence[blockId].first[nucPosition].second[nucGapPosition];
-          data.sequence[blockId].first[nucPosition].second[nucGapPosition] =
-              newVal;
-          nucMutData.push_back(
-              std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal));
-        } else {
-          char oldVal = data.sequence[blockId].first[nucPosition].first;
-          data.sequence[blockId].first[nucPosition].first = newVal;
-          nucMutData.push_back(
-              std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal));
+        newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
+        if (secondaryBlockId != -1)
+        {
+          if (nucGapPosition != -1)
+          {
+            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition];
+            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
+          else
+          {
+            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first;
+            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
         }
-      } else if (type == PangenomeMAT::NucMutationType::NSNPD) {
+        else
+        {
+          if (nucGapPosition != -1)
+          {
+            char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition];
+            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
+          else
+          {
+            char oldVal = sequence[primaryBlockId].first[nucPosition].first;
+            sequence[primaryBlockId].first[nucPosition].first = newVal;
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
+          }
+        }
+      }
+      else if (type == PangenomeMAT::NucMutationType::NSNPD)
+      {
         // SNP Deletion
-        if (nucGapPosition != -1) {
-          char oldVal =
-              data.sequence[blockId].first[nucPosition].second[nucGapPosition];
-          data.sequence[blockId].first[nucPosition].second[nucGapPosition] =
-              '-';
-          nucMutData.push_back(
-              std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal));
-        } else {
-          char oldVal = data.sequence[blockId].first[nucPosition].first;
-          data.sequence[blockId].first[nucPosition].first = '-';
-          nucMutData.push_back(
-              std::make_tuple(blockId, nucPosition, nucGapPosition, oldVal));
+        if (secondaryBlockId != -1)
+        {
+          if (nucGapPosition != -1)
+          {
+            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition];
+            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = '-';
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
+          }
+          else
+          {
+            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first;
+            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = '-';
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
+          }
+        }
+        else
+        {
+          if (nucGapPosition != -1)
+          {
+            char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition];
+            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = '-';
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
+          }
+          else
+          {
+            char oldVal = sequence[primaryBlockId].first[nucPosition].first;
+            sequence[primaryBlockId].first[nucPosition].first = '-';
+            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
+          }
         }
       }
     }
@@ -220,101 +405,113 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
 }
 
 void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
-                   const Node *node, const blockMutData_t &blockMutData,
-                   const nucMutData_t &nucMutData) {
-  
-  blockExists_t &blockExists = data.blockExists;
-  blockStrand_t &blockStrand = data.blockStrand;
-
-  for (auto it = blockMutData.rbegin(); it != blockMutData.rend(); it++) {
-    auto mutation = *it;
-    blockExists[std::get<0>(mutation)].first = std::get<1>(mutation);
-    blockStrand[std::get<0>(mutation)].first = std::get<2>(mutation);
-  }
-
-  // Undo nuc mutations when current node and its subtree have been
-  // processed
-  for (auto it = nucMutData.rbegin(); it != nucMutData.rend(); it++) {
-    auto mutation = *it;
-    if (std::get<2>(mutation) != -1) {
-      data.sequence[std::get<0>(mutation)]
-          .first[std::get<1>(mutation)]
-          .second[std::get<2>(mutation)] = std::get<3>(mutation);
-    } else {
-      data.sequence[std::get<0>(mutation)].first[std::get<1>(mutation)].first =
-          std::get<3>(mutation);
+                   const Node *node, const blockMutationInfo_t &blockMutationInfo,
+                   const mutationInfo_t &mutationInfo)
+{
+  auto &sequence = data.sequence;
+  auto &blockExists = data.blockExists;
+  auto &blockStrand = data.blockStrand;
+ // Undo block mutations when current node and its subtree have been processed
+    for(auto it = blockMutationInfo.rbegin(); it != blockMutationInfo.rend(); it++) {
+        auto mutation = *it;
+        if(std::get<1>(mutation) != -1) {
+            blockExists[std::get<0>(mutation)].second[std::get<1>(mutation)] = std::get<2>(mutation);
+            blockStrand[std::get<0>(mutation)].second[std::get<1>(mutation)] = std::get<3>(mutation);
+        } else {
+            blockExists[std::get<0>(mutation)].first = std::get<2>(mutation);
+            blockStrand[std::get<0>(mutation)].first = std::get<3>(mutation);
+        }
     }
-  }
+
+    // Undo nuc mutations when current node and its subtree have been processed
+    for(auto it = mutationInfo.rbegin(); it != mutationInfo.rend(); it++) {
+        auto mutation = *it;
+        if(std::get<1>(mutation) != -1) {
+            if(std::get<3>(mutation) != -1) {
+                sequence[std::get<0>(mutation)].second[std::get<1>(mutation)][std::get<2>(mutation)].second[std::get<3>(mutation)] = std::get<4>(mutation);
+            } else {
+                sequence[std::get<0>(mutation)].second[std::get<1>(mutation)][std::get<2>(mutation)].first = std::get<4>(mutation);
+            }
+        } else {
+            if(std::get<3>(mutation) != -1) {
+                sequence[std::get<0>(mutation)].first[std::get<2>(mutation)].second[std::get<3>(mutation)] = std::get<4>(mutation);
+            } else {
+                sequence[std::get<0>(mutation)].first[std::get<2>(mutation)].first = std::get<4>(mutation);
+            }
+        }
+    }
 }
 
 // Go upstream until neededNongap nucleotides are seen and return the new coord.
-tupleCoord_t expandLeft(const CoordNavigator &navigator, tupleCoord_t coord,
-                        int neededNongap, blockExists_t &blockExists) {
-  
+tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
+                        int neededNongap, blockExists_t &blockExists)
+{
 
   int count = 0;
-  //std::cout << "expandLeft..." << std::endl;
-  // std::cout << "orig coord: (" << coord.blockId << ", " << coord.nucPos << ",
-  // "
-  //           << coord.nucGapPos << ") to => ... " << std::endl;
+  // std::cout << "expandLeft..." << std::endl;
+  //  std::cout << "orig coord: (" << coord.blockId << ", " << coord.nucPos << ",
+  //  "
+  //            << coord.nucGapPos << ") to => ... " << std::endl;
 
   // std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
 
-  while (count < neededNongap && coord > tupleCoord_t{0, 0, 0}) {
+  while (count < neededNongap && coord > tupleCoord_t{0, 0, 0})
+  {
 
-    //std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
-    // std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+    // std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
+    //  std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
 
-    if (!blockExists[coord.blockId].first) {
-      //TODO jump down to prev block pleaesse
+    if (!blockExists[coord.blockId].first)
+    {
+      // TODO jump down to prev block pleaesse
 
-      //std::cout << "coord pre decrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+      // std::cout << "coord pre decrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
       coord = navigator.decrement(coord);
-      //std::cout << "coord post decrememnto " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+      // std::cout << "coord post decrememnto " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
 
       continue;
     }
     // std::cout << "isGap? " << std::endl;
-    if (!navigator.isGap(coord)) {
-      //std::cout << "is not gap\n";
+    if (!navigator.isGap(coord))
+    {
+      // std::cout << "is not gap\n";
       count++;
     }
 
-    //tupleCoord_t prev = coord;
+    // tupleCoord_t prev = coord;
 
     // std::cout << " from (" << coord.blockId << ", " << coord.nucPos << ", "
     // << coord.nucGapPos << ") to => ";
-    //std::cout << "coord pre mad decrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+    // std::cout << "coord pre mad decrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
     coord = navigator.decrement(coord);
-    //std::cout << "coord post mado decrememnto " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
-
+    // std::cout << "coord post mado decrememnto " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
   }
   return coord;
 }
 
 // Go downstream until neededNongap nucleotides are seen and return the new coord.
-tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
-                         int neededNongap, blockExists_t &blockExists) {
-  
+tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
+                         int neededNongap, blockExists_t &blockExists)
+{
 
   int count = 0;
 
-  //std::cout << "ENTERING EXPANDRIGHT\n";
+  // std::cout << "ENTERING EXPANDRIGHT\n";
 
-  //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+  // std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
 
+  while (count < neededNongap && coord < tupleCoord_t{-1, -1, -1})
+  {
 
-  while (count < neededNongap && coord < tupleCoord_t{-1, -1, -1}) {
+    // std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
+    // std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
 
-    //std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
-    //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+    if (!blockExists[coord.blockId].first)
+    {
+      // std::cout << "block doesn't exist\n";
+      // TODO jump down to next block pleaesse
 
-
-    if (!blockExists[coord.blockId].first) {
-      //std::cout << "block doesn't exist\n";
-      //TODO jump down to next block pleaesse
-
-      //std::cout << "coord pre incrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+      // std::cout << "coord pre incrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
       coord = navigator.increment(coord);
       // std::cout << "coord post instigation " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
       // std::cout << (coord < tupleCoord_t{-1, -1, -1}) << "\n";
@@ -322,13 +519,14 @@ tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
       continue;
     }
 
-    if (!navigator.isGap(coord)) {
-      //std::cout << "is not gap\n";
+    if (!navigator.isGap(coord))
+    {
+      // std::cout << "is not gap\n";
       count++;
     }
-    //tupleCoord_t prev = coord;
+    // tupleCoord_t prev = coord;
 
-    //std::cout << "coord pre incrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+    // std::cout << "coord pre incrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
     coord = navigator.increment(coord);
     // std::cout << "coord post incrimination " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
   }
@@ -338,23 +536,24 @@ tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
 
 // Merges each range with overlapping ranges after expanding left and right
 // by `neededNongap` non-gap nucleotides.
-std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator,
+std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
                                              std::vector<tupleRange> &ranges,
                                              int neededNongap,
-                                             blockExists_t &blockExists) {
-  
+                                             blockExists_t &blockExists)
+{
 
   if (ranges.empty())
     return {};
 
   std::vector<tupleRange> merged;
-  
-  tupleRange current = {
-        expandLeft(navigator, ranges[0].start, neededNongap, blockExists),
-        expandRight(navigator, ranges[0].stop, neededNongap, blockExists),
-    };
 
-  for (size_t i = 1; i < ranges.size(); ++i) {
+  tupleRange current = {
+      expandLeft(navigator, ranges[0].start, neededNongap, blockExists),
+      expandRight(navigator, ranges[0].stop, neededNongap, blockExists),
+  };
+
+  for (size_t i = 1; i < ranges.size(); ++i)
+  {
     // std::cout << "Merging range " << i << " which is " <<
     // ranges[i].start.blockId << ", " << ranges[i].start.nucPos << ", " <<
     // ranges[i].start.nucGapPos << " to " << ranges[i].stop.blockId << ", " <<
@@ -365,7 +564,7 @@ std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator,
     //           << " to " << ranges[i].stop.blockId << ", "
     //           << ranges[i].stop.nucPos << ", " << ranges[i].stop.nucGapPos
     //           << std::endl;
-      
+
     // std::cout << "WEEEEEEEEEEE\n";
     tupleRange expandedRange = {
         expandLeft(navigator, ranges[i].start, neededNongap, blockExists),
@@ -379,17 +578,19 @@ std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator,
     //           << expandedRange.stop.nucPos << ", " << expandedRange.stop.nucGapPos
     //           << std::endl;
 
+    // if (expandedRange.start == tupleCoord_t{-1, -1, -1}) {
+    //   expandedRange.start = tupleCoord_t{0, 0, 0};
+    // }
 
-    //if (expandedRange.start == tupleCoord_t{-1, -1, -1}) {
-    //  expandedRange.start = tupleCoord_t{0, 0, 0};
-    //}
-
-    if (expandedRange.start <= current.stop) {
-      //tmpStop = current.stop;
+    if (expandedRange.start <= current.stop)
+    {
+      // tmpStop = current.stop;
       current.stop = std::max(current.stop, expandedRange.stop);
-    } else {
+    }
+    else
+    {
       merged.push_back(current);
-      //tmpStop = current.stop;
+      // tmpStop = current.stop;
       current = expandedRange;
     }
   }
@@ -400,11 +601,14 @@ std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator,
 
 // Get a single integer representing a position in the MSA from a tupleCoord_t = {blockId, nucPos, nucGapPos}
 int64_t tupleToScalarCoord(const tupleCoord_t &coord,
-                           const globalCoords_t &globalCoords) {
-  if (coord == tupleCoord_t{-1, -1, -1}) {
+                           const globalCoords_t &globalCoords)
+{
+  if (coord == tupleCoord_t{-1, -1, -1})
+  {
     return globalCoords.back().first.back().first;
   }
-  if (coord.nucGapPos >= 0) {
+  if (coord.nucGapPos >= 0)
+  {
     return globalCoords[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
   }
   return globalCoords[coord.blockId].first[coord.nucPos].first;
@@ -412,122 +616,147 @@ int64_t tupleToScalarCoord(const tupleCoord_t &coord,
 
 // Recursive function to build the seed index
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
-                 Tree *T, const Node *node, const globalCoords_t &globalCoords,
-                 CoordNavigator &navigator) {
-  blockMutData_t blockMutData;
-  nucMutData_t nucMutData;
+                 Tree *T, Node *node, globalCoords_t &globalCoords,
+                 CoordNavigator &navigator)
+{
+  
+  //std::cout << "buildhelper in node: " << node->identifier << std::endl;
+
+  blockMutationInfo_t blockMutationInfo;
+  mutationInfo_t mutationInfo;
+  tupleCoord_t start = {0, 0, 0};
+  tupleCoord_t end = {-1, -1, -1};
 
   // First, a range is made marking the start -> end
   // of each block and nuc mutation. This is done while
   // applying mutations to the sequence object.
   std::vector<tupleRange> recompRanges;
-  applyMutations(data, seedMap, blockMutData, recompRanges, nucMutData, T, node,
+  applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
                  globalCoords, index);
   std::sort(recompRanges.begin(), recompRanges.end());
-  
-  
+
+    if (node->identifier == "node_2")
+  {
+    std::cout << "WE ARE AT NODE 2 OHHH YEAHHHHH....." << std::endl;
+    std::string seq = getNucleotideSequenceFromBlockCoordinates(start, end,
+                                                           data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords);
+    std::cout << "str: " << seq << std::endl;
+  }
+
   std::vector<tupleCoord_t> seedsToClear; // seeds to clear from seedMap
   std::vector<std::pair<tupleCoord_t, std::string>> backtrack;
 
   std::vector<tupleRange> merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists);
-  std::cout << "merged ranges: " << std::endl;
-  for (auto &range : merged) {
-    std::cout << "range: " << range.start.blockId << ", " << range.start.nucPos << ", " << range.start.nucGapPos << " to " << range.stop.blockId << ", " << range.stop.nucPos << ", " << range.stop.nucGapPos << std::endl;
-    std::cout << "ntpos: " << tupleToScalarCoord(range.start, globalCoords) << " to " << tupleToScalarCoord(range.stop, globalCoords) << std::endl;
-  }
+  // std::cout << "merged ranges: " << std::endl;
+  // for (auto &range : merged)
+  // {
+  //   std::cout << "range: " << range.start.blockId << ", " << range.start.nucPos << ", " << range.start.nucGapPos << " to " << range.stop.blockId << ", " << range.stop.nucPos << ", " << range.stop.nucGapPos << std::endl;
+  //   std::cout << "ntpos: " << tupleToScalarCoord(range.start, globalCoords) << " to " << tupleToScalarCoord(range.stop, globalCoords) << std::endl;
+  // }
   // Protobuf message for this node's mutations
   NodeSeedmerMutations *pb_node_mutations = index.add_per_node_mutations();
   pb_node_mutations->set_node_id(node->identifier);
 
   // Seed re-processing
-  for (auto &range : std::ranges::reverse_view(merged)) {
+  for (auto &range : std::ranges::reverse_view(merged))
+  {
     std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop,
-      data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords);
-    
+                                                                               data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords);
+
     // Track the last downstream seed to stack k-mers into seedmers
     tupleCoord_t lastDownstreamSeedPos = range.stop;
     auto boundItr = seedMap.upper_bound(range.stop);
-    if (boundItr == seedMap.end()) {
+    if (boundItr == seedMap.end())
+    {
       lastDownstreamSeedPos = tupleCoord_t{-1, -1, -1};
-    } else {
+    }
+    else
+    {
       lastDownstreamSeedPos = boundItr->first;
     }
 
     int32_t str_i = recomputeSeq.size();
     int32_t seen_non_gap = 0;
-    for (auto currCoord = range.stop; currCoord >= range.start; currCoord = navigator.decrement(currCoord)) {
+    for (auto currCoord = range.stop; currCoord >= range.start; currCoord = navigator.decrement(currCoord))
+    {
       str_i--;
       char nt = recomputeSeq[str_i];
-      std::cout << "Processing coord (" << currCoord.blockId << ", "
-                << currCoord.nucPos << ", " << currCoord.nucGapPos
-                << "): " << tupleToScalarCoord(currCoord, globalCoords)
-                << " with nt " << nt << std::endl;
-      if (str_i < 0) {
+      // std::cout << "Processing coord (" << currCoord.blockId << ", "
+      //           << currCoord.nucPos << ", " << currCoord.nucGapPos
+      //           << "): " << tupleToScalarCoord(currCoord, globalCoords)
+      //           << " with nt " << nt << std::endl;
+      if (str_i < 0)
+      {
         break;
       }
-      // todo jump around
-      if (!data.blockExists[currCoord.blockId].first) {
-        std::cout << "block doesn't exist at (" << currCoord.blockId << ", "
-                  << currCoord.nucPos << ", " << currCoord.nucGapPos
-                  << "): " << tupleToScalarCoord(currCoord, globalCoords)
-                  << std::endl;
-        // std::cout << "smushing...\n";
-        recomputeSeq[str_i] = '-';
-      }
 
-      if (recomputeSeq[str_i] != '-' && recomputeSeq[str_i] != 'x') {
+      if (recomputeSeq[str_i] != '-' && recomputeSeq[str_i] != 'x')
+      {
         seen_non_gap++;
       }
-
-      
+      if (seen_non_gap < index.k())
+      {
+        continue;
+      }
       // std::cout << "str[i=" << str_i << "] = " << recomputeSeq[str_i]
       //           << std::endl;
 
-      if (!data.blockExists[currCoord.blockId].first) {
-        if (seedMap.find(currCoord) != seedMap.end()) {
+      if (!data.blockExists[currCoord.blockId].first)
+      {
+        if (seedMap.find(currCoord) != seedMap.end())
+        {
           // std::cout << "(+)->(-): " << seedMap[currCoord] << std::endl;
           // was a seed, no longer a seed due to block no exist -> delete
           backtrack.push_back(std::make_pair(currCoord, seedMap[currCoord]));
           seedsToClear.push_back(currCoord);
-          if (seedMap[currCoord].size() == index.j() * index.k()) {
+          if (seedMap[currCoord].size() == index.j() * index.k())
+          {
             SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
             pb_mut->set_is_deletion(true);
             pb_mut->set_pos(tupleToScalarCoord(currCoord, globalCoords));
             pb_mut->set_seq(seedMap[currCoord]);
           }
         }
-      } else if (recomputeSeq[str_i] == '-' ||
-                 recomputeSeq[str_i] ==
-                     'x') { // block does exist but seq is a gap
-        if (seedMap.find(currCoord) != seedMap.end()) {
+      }
+      else if (recomputeSeq[str_i] == '-' ||
+               recomputeSeq[str_i] ==
+                   'x')
+      { // block does exist but seq is a gap
+        if (seedMap.find(currCoord) != seedMap.end())
+        {
           // is a gap, no longer a seed -> delete
           // std::cout << "(+)->(_): " << seedMap[currCoord] << std::endl;
           SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
-            pb_mut->set_is_deletion(true);
-            pb_mut->set_pos(tupleToScalarCoord(currCoord, globalCoords));
-            pb_mut->set_seq(seedMap[currCoord]);
-            
+          pb_mut->set_is_deletion(true);
+          pb_mut->set_pos(tupleToScalarCoord(currCoord, globalCoords));
+          pb_mut->set_seq(seedMap[currCoord]);
+
           backtrack.push_back(std::make_pair(currCoord, seedMap[currCoord]));
           seedsToClear.push_back(currCoord);
 
         } /* else: no seed, wasn't seed, no change */
-      } else {
-        std::cout << "(+)->(+): " << seedMap[currCoord] << std::endl;
+      }
+      else
+      {
+        // std::cout << "(+)->(+): " << seedMap[currCoord] << std::endl;
         // block exists and seq is not a gap at currCoord
         // get the next k non-gap bases
         std::string kmer = "";
         int64_t seen_k = 0;
         int64_t k_pos = str_i;
-        while (seen_k < index.k() * index.j() && k_pos < recomputeSeq.size()) {
-          if (recomputeSeq[k_pos] != '-' && recomputeSeq[k_pos] != 'x') {
+        while (seen_k < index.k() * index.j() && k_pos < recomputeSeq.size())
+        {
+          if (recomputeSeq[k_pos] != '-' && recomputeSeq[k_pos] != 'x')
+          {
             kmer += recomputeSeq[k_pos];
             seen_k++;
           }
           k_pos++;
         }
 
-        std::cout << "kmer: " << kmer << std::endl;
-        if (seedMap.find(currCoord) != seedMap.end()) {
+        // std::cout << "kmer: " << kmer << std::endl;
+        if (seedMap.find(currCoord) != seedMap.end())
+        {
           // non gap position and kmer is already a seed.
           std::string prevseedmer =
               lastDownstreamSeedPos != tupleCoord_t{-1, -1, -1}
@@ -536,7 +765,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
           // std::cout << "prevseedmer: " << prevseedmer << std::endl;
           // std::cout << "bt " << c << " " << seedMap[c] << std::endl;
 
-          if (seeding::is_syncmer(kmer, index.s(), false)) {
+          if (seeding::is_syncmer(kmer, index.s(), false))
+          {
             // Is it still a seed?
             // std::cout << "still seed" << std::endl;
             backtrack.push_back(std::make_pair(currCoord, seedMap[currCoord]));
@@ -546,13 +776,16 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
             // std::cout << "set seedMap[" << c << "] = " << seedMap[c] <<
             // std::endl;
             lastDownstreamSeedPos = currCoord;
-            if (seedMap[currCoord].size() == index.j() * index.k()) {
+            if (seedMap[currCoord].size() == index.j() * index.k())
+            {
               SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
               pb_mut->set_is_deletion(false);
               pb_mut->set_pos(tupleToScalarCoord(currCoord, globalCoords));
               pb_mut->set_seq(seedMap[currCoord]);
             }
-          } else {
+          }
+          else
+          {
             // no longer a seed -> delete
             // std::cout << "no longer seed, del " << c << " " << seedMap[c] <<
             // std::endl;
@@ -560,19 +793,23 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
             pb_mut->set_is_deletion(true);
             pb_mut->set_pos(tupleToScalarCoord(currCoord, globalCoords));
             pb_mut->set_seq(seedMap[currCoord]);
-      
+
             seedsToClear.push_back(currCoord);
           }
-        } else {
+        }
+        else
+        {
           //  not in seed map, could be a seed now
-          if (seeding::is_syncmer(kmer, index.s(), false)) {
+          if (seeding::is_syncmer(kmer, index.s(), false))
+          {
             backtrack.push_back(std::make_pair(currCoord, ""));
             std::string prevseedmer =
                 lastDownstreamSeedPos != tupleCoord_t{-1, -1, -1}
                     ? seedMap[lastDownstreamSeedPos]
                     : "";
             seedMap[currCoord] = kmer + prevseedmer.substr(0, (index.j() - 1) * index.k());
-            if (seedMap[currCoord].size() == index.j() * index.k()) {
+            if (seedMap[currCoord].size() == index.j() * index.k())
+            {
               SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
               pb_mut->set_is_deletion(false);
               pb_mut->set_pos(tupleToScalarCoord(currCoord, globalCoords));
@@ -584,36 +821,44 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       }
     }
   }
-  for (const auto &pos : seedsToClear) {
-    if (seedMap.find(pos) != seedMap.end()) {
+  for (const auto &pos : seedsToClear)
+  {
+    if (seedMap.find(pos) != seedMap.end())
+    {
       seedMap.erase(pos);
     }
   }
 
   /* Recursive step */
-  for (const Node *child : node->children) {
-    //exit(0);
+  for (Node *child : node->children)
+  {
+    // exit(0);
     buildHelper(data, seedMap, index, T, child, globalCoords, navigator);
   }
   // undo seed mutations
-  for (const auto &back : backtrack) {
-    if (seedMap.find(back.first) != seedMap.end()) {
+  for (const auto &back : backtrack)
+  {
+    if (seedMap.find(back.first) != seedMap.end())
+    {
       seedMap.erase(back.first);
-    } else {
+    }
+    else
+    {
       seedMap[back.first] = back.second;
     }
   }
   /* Undo sequence mutations when backtracking */
-  undoMutations(data, index, T, node, blockMutData, nucMutData);
+  undoMutations(data, index, T, node, blockMutationInfo, mutationInfo);
 }
 
 /* implementation */
-void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s) {
+void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
+{
 
   // Setup for seed indexing
   tree::mutableTreeData data;
   tree::globalCoords_t globalCoords;
-  
+
   tree::setup(data, globalCoords, T);
 
   index.set_j(j);
@@ -635,11 +880,11 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s) {
   //  Otherwise: => the coordinate reflects sequence[blockId].first[nucPos].second[nucGapPos],
   //       which is the nucleotide char at nucGapPos within the optional "gap list" at nucPos.
   //       The gap list is a list of nucleotides that come before the main nucleotide
-  //       (in tuple/int global coords) at nucPos. An example ascending ordered list of 
+  //       (in tuple/int global coords) at nucPos. An example ascending ordered list of
   //       tuple coordinates is: {0,2,0}, {0,2,1}, {0,2,2}, {0,2,-1}, {0,3,-1}, {1,0,0}, ...
-  //       
+  //
   CoordNavigator navigator(data.sequence);
-  
+
   /* Recursive traversal of tree to build the index */
-  buildHelper(data, seedMap, index, T, T->root, globalCoords,navigator);
+  buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator);
 }
