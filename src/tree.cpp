@@ -3,6 +3,7 @@
 #include "seeding.hpp"
 #include <cmath>
 #include <iostream>
+#include <sys/_types/_int64_t.h>
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -41,143 +42,296 @@ std::string tree::getConsensus(Tree *T) {
 
 // coords (blockId, nucPosition, nucGapPosition)
 std::string tree::getNucleotideSequenceFromBlockCoordinates(
-    const tupleCoord_t &start, tupleCoord_t &end,
-    const sequence_t &sequence, const blockExists_t &blockExists,
-    const blockStrand_t &blockStrand, const Tree *T, const Node *node,
-    const globalCoords_t &globalCoords) {
-  
+    const tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
+    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
+    const Tree *T, const Node *node, const globalCoords_t &globalCoords) {
 
-  const auto &rotationIndexes = T->rotationIndexes;
-  const auto &sequenceInverted = T->sequenceInverted;
-  const auto &circularSequences = T->circularSequences;
+  // TODO handle these
+  // const auto &rotationIndexes = T->rotationIndexes;
+  // const auto &sequenceInverted = T->sequenceInverted;
+  // const auto &circularSequences = T->circularSequences;
+
+  //std::cout << "THISNODE " << node->identifier << "\n";
+
   const auto &startBlockId = start.blockId;
   const auto &startNuc = start.nucPos;
   const auto &endBlockId = end.blockId;
-  const auto &endNuc = end.nucPos;
+  auto &endNuc = end.nucPos;
 
   std::string sequenceString;
   // todo implement inversions
-  if (end == tupleCoord_t{-1,-1,-1}) {
+  if (end == tupleCoord_t{-1, -1, -1}) {
     end.blockId = sequence.size() - 1;
     end.nucPos = sequence[end.blockId].first.size() - 1;
     end.nucGapPos = -1;
   }
+
   for (int32_t i = startBlockId; i <= endBlockId; i++) {
+    
+    /*if (i == 8){
+      std::cout << "BLOCK 8\n";
+      for(int j = 0; j < sequence[i].first.size(); j++){
+        for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++){
+          std::cout << sequence[i].first[j].second[k] << "\n";
+        }
+        std::cout << sequence[i].first[j].first << "\n";
+      }
+    }*/
+
+
     // std::cout << "\n\ni: " << i;
     if (!blockExists[i].first) { // all gaps
-    // std::cout << "exist => ";
+                                 // std::cout << "NOT exist => ";
       if (i == startBlockId) {
-        // std::cout << "is start => ";
+        //  std::cout << "is start => ";
         if (startBlockId == endBlockId) {
-          // std::cout << "is end => ";
+          /// std::cout << "is end => ";
           for (int32_t j = std::max(0, startNuc);
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
+               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
+               j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "mama crunch\n";
+                std::cout << "is a: -" << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << k << "): -"
+                          << std::endl;
+              }
               sequenceString += '-';
             }
-            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "mama buncha\n";
+              std::cout << "is a: -" << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
+                        << std::endl;
+            }
+            //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
         } else {
-          // std::cout << "is not end => ";
+          //  std::cout << "is not end => ";
           for (int32_t j = std::max(0, startNuc);
                j <= (int32_t)sequence[i].first.size() - 1; j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              //  std::cout << "(" << i << ", " << j << ", " << k << "): -" <<
+              //  std::endl;
               sequenceString += '-';
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "mama ragu\n";
+                std::cout << "is a: -" << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
+                          << std::endl;
+              }
             }
-            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "o sole mio\n";
+              std::cout << "is a: -" << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
+                        << std::endl;
+            }
+            //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
         }
       } else {
         // std::cout << "is not start => ";
         if (i == endBlockId) {
-          // std::cout << "is end => ";
+          //  std::cout << "is end => ";
           for (int32_t j = 0;
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
+               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
+               j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): -" <<
+              // std::endl;
               sequenceString += '-';
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "bana na\n";
+                std::cout << "is a: -" << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << k << "): -"
+                          << std::endl;
+              }
             }
             // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "papa pia\n";
+              std::cout << "is a: -" << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
+                        << std::endl;
+            }
           }
         } else {
-          // std::cout << "is not end => ";
+          //  std::cout << "is not end => ";
           for (int32_t j = 0; j < sequence[i].first.size(); j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              // std::cout << "(" << i << ", " << j << ", " << k << "): -" << std::endl;
+              //  std::cout << "(" << i << ", " << j << ", " << k << "): -" <<
+              //  std::endl;
               sequenceString += '-';
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "mama kia soul\n";
+                std::cout << "is a: -" << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << k << "): -"
+                          << std::endl;
+              }
             }
-            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
+            //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "mama mario\n";
+              std::cout << "is a: -" << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
+                        << std::endl;
+            }
           }
         }
       }
     } else {
-      // std::cout << "exists => ";
+      //  std::cout << "exists => ";
       // block exists
       if (i == startBlockId) {
-        // std::cout << "is start => ";
+        //  std::cout << "is start => ";
         if (startBlockId == endBlockId) {
-          // std::cout << "is end => ";
+          //  std::cout << "is end => ";
           for (int32_t j = std::max(0, startNuc);
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
+               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
+               j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
-              sequenceString += nuc == 'x' ? '-' : nuc;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
+              // << std::endl;
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "mama mingus\n";
+                std::cout << "is a: " << nuc << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
+                          << std::endl;
+              }
+
+              sequenceString += (nuc == 'x') ? '-' : nuc;
+              // std::cout << "AAA ? " << nuc << " what? " << (nuc == 'x') <<
+              // "\n"; std::cout << "now sequenceString: " << sequenceString <<
+              // "\n";
             }
             nuc = sequence[i].first[j].first;
-            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
-            sequenceString += nuc == 'x' ? '-' : nuc;
+            // std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
+            // std::endl;
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "mama mia\n";
+              std::cout << "is a: " << nuc << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
+                        << std::endl;
+            }
+            sequenceString += (nuc == 'x') ? '-' : nuc;
+            // std::cout << "huh ? " << nuc << " what? " << (nuc == 'x') <<
+            // "\n"; std::cout << "now sequenceString: " << sequenceString <<
+            // "\n";
           }
         } else {
           // std::cout << "is not end => ";
-          for (int32_t j = std::max(0, startNuc);
-               j < sequence[i].first.size(); j++) {
+          for (int32_t j = std::max(0, startNuc); j < sequence[i].first.size();
+               j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
+              // << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "mama miara\n";
+                std::cout << "is a: " << nuc << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
+                          << std::endl;
+              }
             }
             nuc = sequence[i].first[j].first;
             sequenceString += nuc == 'x' ? '-' : nuc;
-            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
+            // std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
+            // std::endl;
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "mamaleek mia\n";
+              std::cout << "is a: " << nuc << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
+                        << std::endl;
+            }
           }
         }
       } else {
-        // std::cout << "is not start => ";
+        //  std::cout << "is not start => ";
         if (i == endBlockId) {
-          // std::cout << "is end => ";
+          //  std::cout << "is end => ";
           for (int32_t j = 0;
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1); j++) {
+               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
+               j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
-              sequenceString += nuc == 'x' ? '-' : nuc;
+              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
+              // << std::endl;
+              sequenceString += (nuc == 'x') ? '-' : nuc;
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "marrrrma mia\n";
+                std::cout << "is a: " << nuc << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
+                          << std::endl;
+              }
+              // std::cout << "NUC: " << nuc << " is x? " << (nuc == 'x') <<
+              // "\n"; std::cout << "now sequenceString: " << sequenceString <<
+              // "\n";
             }
             nuc = sequence[i].first[j].first;
-            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
-            sequenceString += '-';
+            //  std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
+            //  std::endl;
+            sequenceString += (nuc == 'x') ? '-' : nuc;
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "mafffma mia\n";
+              std::cout << "is a: " << nuc << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
+                        << std::endl;
+            }
+            // std::cout << "TEE: " << nuc << " is x? " << (nuc == 'x') << "\n";
+            // std::cout << "now sequenceString: " << sequenceString << "\n";
           }
         } else {
-          // std::cout << "is not end => ";
+          //  std::cout << "is not end => ";
           for (int32_t j = 0; j < sequence[i].first.size(); j++) {
             char nuc;
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               nuc = sequence[i].first[j].second[k];
-              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc << std::endl;
+              //  std::cout << "(" << i << ", " << j << ", " << k << "): " <<
+              //  nuc << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
+              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
+              if (abs(gc - 3120) < 10) {
+                std::cout << "mdama mia\n";
+                std::cout << "is a: " << nuc << std::endl;
+                std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
+                          << std::endl;
+              }
             }
             nuc = sequence[i].first[j].first;
-            // std::cout << "(" << i << ", " << j << ", -1): " << nuc << std::endl;
+            //  std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
+            //  std::endl;
             sequenceString += nuc == 'x' ? '-' : nuc;
+            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
+            if (abs(gc - 3120) < 10) {
+              std::cout << "wama mia\n";
+              std::cout << "is a: " << nuc << std::endl;
+              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
+                        << std::endl;
+            }
           }
         }
       }
@@ -232,7 +386,7 @@ std::unordered_map<std::string, std::string> tree::getAllNodeStrings(Tree *T) {
 }
 std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T,
                                         const Node *node, const bool aligned) {
-  
+
   // T should be const but [] operator on T->sequenceInverted is non-const
   std::string line;
   if (node == nullptr) { // consensus sequence (all blocks on) rather than a
@@ -325,10 +479,11 @@ std::string tree::getStringFromCurrData(mutableTreeData &data, Tree *T,
 
   return line;
 }
-void tree::setupGlobalCoordinates(
-    int64_t &ctr, globalCoords_t &globalCoords,
-    const BlockGapList &blockGaps, const std::vector<Block> &blocks,
-    const std::vector<GapList> &gaps, const sequence_t &sequence) {
+void tree::setupGlobalCoordinates(int64_t &ctr, globalCoords_t &globalCoords,
+                                  const BlockGapList &blockGaps,
+                                  const std::vector<Block> &blocks,
+                                  const std::vector<GapList> &gaps,
+                                  const sequence_t &sequence) {
 
   globalCoords.resize(blocks.size() + 1);
   // Assigning block gaps
@@ -383,7 +538,8 @@ void tree::setupGlobalCoordinates(
     }
   }
 }
-void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords, const Tree *T) {
+void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords,
+                 const Tree *T) {
 
   const BlockGapList &blockGaps = T->blockGaps;
   const std::vector<GapList> &gaps = T->gaps;
@@ -447,8 +603,8 @@ void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords, const Tree
   data.sequence = sequence;
   data.blockExists = blockExists;
   data.blockStrand = blockStrand;
-  setupGlobalCoordinates(data.maxGlobalCoordinate, globalCoords,
-                         blockGaps, blocks, gaps, sequence);
+  setupGlobalCoordinates(data.maxGlobalCoordinate, globalCoords, blockGaps,
+                         blocks, gaps, sequence);
 }
 int64_t tree::getGlobalCoordinate(const int blockId, const int nucPosition,
                                   const int nucGapPosition,
@@ -757,7 +913,6 @@ void tree::fillMutationMatricesFromFile(mutationMatrices &mutMat,
 
 std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
 
-  
   Node *referenceNode = nullptr;
 
   for (auto u : T->allNodes) {

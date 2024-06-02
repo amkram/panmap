@@ -67,9 +67,9 @@ struct tupleRange {
 };
 class CoordNavigator {
 public:
-  CoordNavigator(const sequence_t &sequence) : sequence(sequence) {}
+  CoordNavigator(sequence_t &sequence) : sequence(sequence) {}
 
-  bool isGap(const tupleCoord_t &coord) const {
+  bool isGap(const tupleCoord_t &coord) {
     char c;
     if (coord.nucGapPos == -1) {
       c = sequence[coord.blockId].first[coord.nucPos].first;
@@ -80,7 +80,7 @@ public:
   }
 
   
-  tupleCoord_t increment(const tupleCoord_t &givencoord) const {
+  tupleCoord_t increment(tupleCoord_t &givencoord) {
     tupleCoord_t coord = givencoord;
     //std::cout << "honda acoord.nucPos: " << coord.nucPos << std::endl;
     if (coord.nucGapPos == -1){
@@ -98,7 +98,7 @@ public:
         coord.nucPos = 0;
       }
 
-      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()){
+      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
         coord.nucGapPos = 0;
       }
       return coord;
@@ -111,7 +111,7 @@ public:
     }
   }
 
-  tupleCoord_t decrement(const tupleCoord_t &givencoord) const {
+  tupleCoord_t decrement(tupleCoord_t &givencoord) {
     tupleCoord_t coord = givencoord;
     if (coord.nucGapPos == -1) {
       if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
@@ -146,7 +146,7 @@ public:
     }
   }
 
-  tupleCoord_t baddecrement(const tupleCoord_t &coord) const {
+  tupleCoord_t baddecrement(tupleCoord_t &coord) {
     if (coord.blockId == 0 && coord.nucPos == 0 && coord.nucGapPos == 0) {
       return tupleCoord_t{0, 0, 0};
     }
@@ -181,7 +181,7 @@ public:
   }
 
 private:
-  const sequence_t &sequence;
+  sequence_t &sequence;
 };
 
 
@@ -197,10 +197,10 @@ typedef std::vector<
     std::pair<std::vector<std::pair<int, std::vector<int>>>,
               std::vector<std::vector<std::pair<int, std::vector<int>>>>>>
     globalCoords_t;
-typedef std::vector<std::tuple<int32_t, bool, bool, bool, bool>> blockMutData_t;
+typedef std::vector<std::tuple<int32_t, int32_t, bool, bool, bool, bool>> blockMutationInfo_t;
 typedef std::vector<
-    std::tuple<int32_t, int32_t, int32_t, char>>
-    nucMutData_t;
+    std::tuple<int32_t, int32_t, int32_t, int32_t, char, char>>
+    mutationInfo_t;
 
 struct mutableTreeData {
   // These fields are intended to be mutated at each node during a DFS

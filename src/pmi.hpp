@@ -28,13 +28,27 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                  Tree *T, const Node *node, const globalCoords_t &globalCoords,
                  CoordNavigator &navigator);
 void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
-                    blockMutData_t &blockMutData,
+                    blockMutationInfo_t &blockMutData,
                     std::vector<tupleRange> &recompRanges,
-                    nucMutData_t &nucMutData, Tree *T, const Node *node,
+                    mutationInfo_t &nucMutData, Tree *T, const Node *node,
                     globalCoords_t &globalCoords, const SeedmerIndex &index);
 void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
-                   const Node *node, const blockMutData_t &blockMutData,
-                   const nucMutData_t &nucMutData);
+                   const Node *node, const blockMutationInfo_t &blockMutData,
+                   const mutationInfo_t &nucMutData);
+
+
+// Go upstream until neededNongap nucleotides are seen and return the new coord.
+tupleCoord_t expandLeft(const CoordNavigator &navigator, tupleCoord_t coord,
+                        int neededNongap, blockExists_t &blockExists);
+
+// Go downstream until neededNongap nucleotides are seen and return the new coord.
+tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
+                         int neededNongap, blockExists_t &blockExists);
+
+// Merges each range with overlapping ranges after expanding left and right
+// by `neededNongap` non-gap nucleotides.
+std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator, std::vector<tupleRange> &ranges, int neededNongap, blockExists_t &blockExists);
+int64_t tupleToScalarCoord(const tupleCoord_t &coord, const globalCoords_t &globalCoords);
 
 
 #endif
