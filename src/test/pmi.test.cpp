@@ -104,7 +104,8 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   osdmfsAlex << node_seq << std::endl;
   osdmfsAlex << node_seq_nogap << std::endl;
   for (const auto &pair : seedmersAlex) {
-    osdmfsAlex << pair.second << "\t" << degap[pair.first] << std::endl;
+    osdmfsAlex << pair.second << "\t" << degap[pair.first] << "\t" << pair.first
+               << std::endl;
   }
   osdmfsAlex.close();
 
@@ -171,7 +172,9 @@ BOOST_AUTO_TEST_CASE(performance) {
 
       for (int i = 0; i < seedmers.size(); i++) {
         osdmfs << std::get<0>(seedmers[i]) << "\t"
-               << std::get<1>(seedmers_nogap[i]) << std::endl;
+               << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
+                << std::endl;
+               
       }
       osdmfs.close();
 

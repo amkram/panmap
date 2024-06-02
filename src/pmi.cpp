@@ -257,17 +257,15 @@ tupleCoord_t expandLeft(const CoordNavigator &navigator, tupleCoord_t coord,
   // std::cout << "orig coord: (" << coord.blockId << ", " << coord.nucPos << ",
   // "
   //           << coord.nucGapPos << ") to => ... " << std::endl;
-  //std::cout << "ENTERING EXPANDLEFT\n";
 
-  //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
+  // std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
 
   while (count < neededNongap && coord > tupleCoord_t{0, 0, 0}) {
 
     //std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
-    //std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
+    // std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
 
     if (!blockExists[coord.blockId].first) {
-      //std::cout << "block doesn't exist\n";
       //TODO jump down to prev block pleaesse
 
       //std::cout << "coord pre decrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl; 
@@ -351,9 +349,12 @@ std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator,
 
   std::vector<tupleRange> merged;
   
-  tupleRange current = ranges[0];
+  tupleRange current = {
+        expandLeft(navigator, ranges[0].start, neededNongap, blockExists),
+        expandRight(navigator, ranges[0].stop, neededNongap, blockExists),
+    };
 
-  for (size_t i = 0; i < ranges.size(); ++i) {
+  for (size_t i = 1; i < ranges.size(); ++i) {
     // std::cout << "Merging range " << i << " which is " <<
     // ranges[i].start.blockId << ", " << ranges[i].start.nucPos << ", " <<
     // ranges[i].start.nucGapPos << " to " << ranges[i].stop.blockId << ", " <<
@@ -400,6 +401,9 @@ std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator,
 // Get a single integer representing a position in the MSA from a tupleCoord_t = {blockId, nucPos, nucGapPos}
 int64_t tupleToScalarCoord(const tupleCoord_t &coord,
                            const globalCoords_t &globalCoords) {
+  if (coord == tupleCoord_t{-1, -1, -1}) {
+    return globalCoords.back().first.back().first;
+  }
   if (coord.nucGapPos >= 0) {
     return globalCoords[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
   }
@@ -425,8 +429,12 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   std::vector<tupleCoord_t> seedsToClear; // seeds to clear from seedMap
   std::vector<std::pair<tupleCoord_t, std::string>> backtrack;
 
-  std::vector<tupleRange> merged = expandAndMergeRanges(navigator, recompRanges, index.k() * index.j(), data.blockExists);
-  
+  std::vector<tupleRange> merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists);
+  std::cout << "merged ranges: " << std::endl;
+  for (auto &range : merged) {
+    std::cout << "range: " << range.start.blockId << ", " << range.start.nucPos << ", " << range.start.nucGapPos << " to " << range.stop.blockId << ", " << range.stop.nucPos << ", " << range.stop.nucGapPos << std::endl;
+    std::cout << "ntpos: " << tupleToScalarCoord(range.start, globalCoords) << " to " << tupleToScalarCoord(range.stop, globalCoords) << std::endl;
+  }
   // Protobuf message for this node's mutations
   NodeSeedmerMutations *pb_node_mutations = index.add_per_node_mutations();
   pb_node_mutations->set_node_id(node->identifier);
@@ -450,15 +458,19 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     for (auto currCoord = range.stop; currCoord >= range.start; currCoord = navigator.decrement(currCoord)) {
       str_i--;
       char nt = recomputeSeq[str_i];
-      // std::cout << "Processing coord (" << currCoord.blockId << ", "
-      //           << currCoord.nucPos << ", " << currCoord.nucGapPos
-      //           << "): " << tupleToScalarCoord(currCoord, globalCoords)
-      //           << " with nt " << nt << std::endl;
+      std::cout << "Processing coord (" << currCoord.blockId << ", "
+                << currCoord.nucPos << ", " << currCoord.nucGapPos
+                << "): " << tupleToScalarCoord(currCoord, globalCoords)
+                << " with nt " << nt << std::endl;
       if (str_i < 0) {
         break;
       }
       // todo jump around
       if (!data.blockExists[currCoord.blockId].first) {
+        std::cout << "block doesn't exist at (" << currCoord.blockId << ", "
+                  << currCoord.nucPos << ", " << currCoord.nucGapPos
+                  << "): " << tupleToScalarCoord(currCoord, globalCoords)
+                  << std::endl;
         // std::cout << "smushing...\n";
         recomputeSeq[str_i] = '-';
       }
@@ -466,9 +478,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       if (recomputeSeq[str_i] != '-' && recomputeSeq[str_i] != 'x') {
         seen_non_gap++;
       }
-      if (seen_non_gap < index.k() * index.j()) {
-        continue;
-      }
+
+      
       // std::cout << "str[i=" << str_i << "] = " << recomputeSeq[str_i]
       //           << std::endl;
 
@@ -501,7 +512,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
         } /* else: no seed, wasn't seed, no change */
       } else {
-        // std::cout << "(+)->(+): " << seedMap[currCoord] << std::endl;
+        std::cout << "(+)->(+): " << seedMap[currCoord] << std::endl;
         // block exists and seq is not a gap at currCoord
         // get the next k non-gap bases
         std::string kmer = "";
@@ -514,7 +525,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
           }
           k_pos++;
         }
-        // std::cout << "kmer: " << kmer << std::endl;
+
+        std::cout << "kmer: " << kmer << std::endl;
         if (seedMap.find(currCoord) != seedMap.end()) {
           // non gap position and kmer is already a seed.
           std::string prevseedmer =
