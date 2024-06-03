@@ -11,5 +11,5 @@ cd build
   make install
   cd ..
 
-  cmake -Dlibpanmat_DIR=${PWD}/../../pangenome-mat/build ..
+  cmake -Dlibpanmat_DIR=${PWD}/../../pangenome-mat/build -DTBB_DIR=${PWD}/../../pangenome-mat/build/oneTBB-2019_U9 ..
   make -j8

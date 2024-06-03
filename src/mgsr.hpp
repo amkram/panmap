@@ -9,6 +9,8 @@
 #include "PangenomeMAT.hpp"
 #include "tree.hpp"
 #include "pmi.hpp"
+#include <eigen3/Eigen/Dense>
+
 
 
 
@@ -34,6 +36,8 @@ namespace mgsr {
     void buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pmi::seedIndex &index, mgsr::seedmers seedmersIndex, std::map<int32_t, std::pair<int32_t, size_t>> curSeeds, PangenomeMAT::Tree *T, const PangenomeMAT::Node *node, const int32_t l, const int32_t k, const int32_t s, const tree::globalCoords_t &globalCoords, std::stringstream& seedmersOutStream);
     void scorePseudo(std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path, std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, int32_t& numReads, Tree *T, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate, int32_t ignoreEnds);
     void squaremHelper(PangenomeMAT::Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, const int32_t& numReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, std::vector<std::vector<double>>& probs, std::vector<std::string>& nodes, std::vector<double>& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude);
+    void squaremHelper2(PangenomeMAT::Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, const int32_t& numReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs, std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude);
+
 }
 
 

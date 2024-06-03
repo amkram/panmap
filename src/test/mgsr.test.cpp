@@ -8,6 +8,8 @@
 #include <iostream>
 #include "../mgsr.hpp"
 #include "../seeding.hpp"
+#include <eigen3/Eigen/Dense>
+
 
 using namespace std;
 namespace fs = boost::filesystem;
@@ -161,7 +163,7 @@ BOOST_AUTO_TEST_CASE(_score) {
     std::string seedmersIndexPath = "../dev/examples/sars2k_" + std::to_string(k) + "_" + std::to_string(s) + "_" + std::to_string(l) + ".pmat.kmi";
     std::ifstream seedmersIndex(seedmersIndexPath);
     // std::vector<int32_t> numSamples = {1, 3, 5, 10};
-    std::vector<int32_t> numSamples = {10};
+    std::vector<int32_t> numSamples = {5};
     std::vector<int32_t> numReads = {100};
 
     for (auto numread : numReads) {
@@ -184,15 +186,68 @@ BOOST_AUTO_TEST_CASE(_score) {
             std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
             mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, maximumGap, minimumCount, minimumScore, errorRate, ignoreEnds);       
             
-            std::vector<std::vector<double>> probs;
-            std::vector<std::string> nodes;
-            std::vector<double> props;
-            double llh;
-            mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
+            // std::vector<std::vector<double>> probs;
+            // std::vector<std::string> nodes;
+            // std::vector<double> props;
+            // double llh;
+            // mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
             
+            // std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
+            // for (size_t i = 0; i < nodes.size(); ++i) {
+            //     sortedOut.at(i) = {nodes[i], props[i]};
+            // }
+            // std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
+            //     return a.second > b.second;
+            // });
+
+            // std::vector<double> llhdiffs(nodes.size());
+            // std::vector<double> exclllhs(nodes.size());
+            // if (confidence) {
+            //     tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes.size()), [&](const tbb::blocked_range<size_t>& range) {
+            //         for (size_t i = range.begin(); i < range.end(); ++i) {
+            //             std::vector<std::vector<double>> curprobs;
+            //             std::vector<std::string> curnodes;
+            //             std::vector<double> curprops;
+            //             double curllh;
+            //             mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
+            //             exclllhs.at(i) = curllh;
+            //             llhdiffs.at(i) = llh - curllh;
+            //         }
+            //     });
+            // }
+
+            // std::cout << "likelihood: " << llh << "\n";
+            // for (size_t i = 0; i < sortedOut.size(); ++i) {
+            //     const auto& node = sortedOut[i];
+            //     if (confidence) {
+            //         std::cout << node.first << "\t";
+            //         if (identicalSets.find(node.first) != identicalSets.end()) {
+            //             for (const auto& identicalNode : identicalSets.at(node.first)) {
+            //                 std::cout << "," << identicalNode << "\t";
+            //             }
+            //         }
+            //         std::cout << node.second << "\t" << exclllhs[i] << "\t" << llhdiffs[i] << "\n";
+            //     } else {
+            //         std::cout << node.first << "\t";
+            //         if (identicalSets.find(node.first) != identicalSets.end()) {
+            //             for (const auto& identicalNode : identicalSets.at(node.first)) {
+            //                 std::cout << "," << identicalNode << "\t";
+            //             }
+            //         }
+            //         std::cout << node.second << "\n";
+            //     }
+            // }
+
+            // mgsr::accio(allScore, nodes, )
+            Eigen::MatrixXd probs;
+            Eigen::VectorXd props;
+            std::vector<std::string> nodes;
+            double llh;
+            mgsr::squaremHelper2(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
+
             std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
             for (size_t i = 0; i < nodes.size(); ++i) {
-                sortedOut.at(i) = {nodes[i], props[i]};
+                sortedOut.at(i) = {nodes[i], props(i)};
             }
             std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
                 return a.second > b.second;
@@ -203,11 +258,11 @@ BOOST_AUTO_TEST_CASE(_score) {
             if (confidence) {
                 tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes.size()), [&](const tbb::blocked_range<size_t>& range) {
                     for (size_t i = range.begin(); i < range.end(); ++i) {
-                        std::vector<std::vector<double>> curprobs;
+                        Eigen::MatrixXd curprobs;
+                        Eigen::VectorXd curprops;
                         std::vector<std::string> curnodes;
-                        std::vector<double> curprops;
                         double curllh;
-                        mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
+                        mgsr::squaremHelper2(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
                         exclllhs.at(i) = curllh;
                         llhdiffs.at(i) = llh - curllh;
                     }
@@ -218,7 +273,7 @@ BOOST_AUTO_TEST_CASE(_score) {
             for (size_t i = 0; i < sortedOut.size(); ++i) {
                 const auto& node = sortedOut[i];
                 if (confidence) {
-                    std::cout << node.first;
+                    std::cout << node.first << "\t";
                     if (identicalSets.find(node.first) != identicalSets.end()) {
                         for (const auto& identicalNode : identicalSets.at(node.first)) {
                             std::cout << "," << identicalNode << "\t";
@@ -226,7 +281,7 @@ BOOST_AUTO_TEST_CASE(_score) {
                     }
                     std::cout << node.second << "\t" << exclllhs[i] << "\t" << llhdiffs[i] << "\n";
                 } else {
-                    std::cout << node.first;
+                    std::cout << node.first << "\t";
                     if (identicalSets.find(node.first) != identicalSets.end()) {
                         for (const auto& identicalNode : identicalSets.at(node.first)) {
                             std::cout << "," << identicalNode << "\t";
@@ -235,9 +290,6 @@ BOOST_AUTO_TEST_CASE(_score) {
                     std::cout << node.second << "\n";
                 }
             }
-
-            // mgsr::accio(allScore, nodes, )
-            
         }
     }
 }

@@ -30,8 +30,11 @@ add_library(remote-deps ${docopt_SOURCE_DIR}/docopt.cpp)
 
 # Dependency: panmat-utils
 find_package(libpanmat REQUIRED)
-include_directories(${libpanmat_DIR}/include ${libpanmat_DIR}/oneTBB-2019_U9/include)
+include_directories(${libpanmat_DIR}/include)
 
+include(${TBB_DIR}/cmake/TBBBuild.cmake)
+tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS arch=arm64 tbb_cpf=1)
+find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
 
 # Dependency: Boost
 find_package(Boost COMPONENTS system filesystem program_options unit_test_framework iostreams date_time REQUIRED)
@@ -55,6 +58,9 @@ add_custom_target(sample.o
 
 # Dependency: htslib
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/include)
+
+link_directories("/opt/homebrew/lib")
+include_directories("/opt/homebrew/include")
 
 
 file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a" "src/samtools_src/sample.c" "src/samtools_src/bedidx.c" "src/samtools_src/sam_opts.c" "src/samtools_src/bam_plbuf.c" "src/samtools_src/sam_utils.c" "${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.a")

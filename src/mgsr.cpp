@@ -1329,29 +1329,27 @@ std::vector<double> getMax(const std::vector<std::vector<double>>& probs, const 
     }
 
 
+    double sum = 0;
     for (size_t i = 0; i < numNodes; ++i) {
         double newProp = 0;
         for (size_t j = 0; j < numReads; ++j) {
             newProp += numReadDuplicates[j].first * (props[i] * probs[i][j] / denoms[j]);
         }
         newProp /= static_cast<double>(totalReads);
-        newProps[i] = newProp;
+        if (newProp <= 0) {
+            newProps[i] = std::numeric_limits<double>::min();
+        } else {
+            newProps[i] = newProp;
+        }
+        sum += newProps[i];
+    }
+
+    for (double& newProp : newProps) {
+        newProp /= sum;
     }
 
     return newProps;
 
-}
-
-void normalize(std::vector<double>& props) {
-    double sum = 0;
-    for (double& prop : props) {
-        if (prop <= 0) prop = std::numeric_limits<double>::min();
-        sum += prop;
-    }
-
-    for (double& prop : props) {
-        prop /= sum;
-    }
 }
 
 void em(
@@ -1364,7 +1362,6 @@ void em(
     assert(nodes.size() == props.size());
     while (true) {
         props = getMax(probs, props, numReadDuplicates, numReads);
-        normalize(props);
         double newllh = getExp(probs, props, numReadDuplicates);
         ++curit;
         std::cerr << "iteration " << curit << ": " << newllh << std::endl;
@@ -1413,10 +1410,10 @@ void squarem(
     assert(nodes.size() == probs.size());
     assert(nodes.size() == props.size());
     while (true) {
+        std::cerr << props[0] << " " << props[1] << " " << props[2] << std::endl;
+        std::cerr << "it " << curit << std::endl;
         auto theta1 = getMax(probs, props, numReadDuplicates, numReads);
-        normalize(theta1);
         auto theta2 = getMax(probs, theta1, numReadDuplicates, numReads);
-        normalize(theta2);
 
         std::vector<double> r(props.size());
         std::vector<double> v(props.size());
@@ -1431,6 +1428,7 @@ void squarem(
         }
         r_norm = sqrt(r_norm);
         v_norm = sqrt(v_norm);
+        std::cerr << llh << " " << r_norm << " " << v_norm << std::endl;
         // std::cerr << "r_norm: " << r_norm << std::endl;
         // std::cerr << "c_norm: " << v_norm << std::endl;
         double alpha;
@@ -1440,29 +1438,33 @@ void squarem(
             alpha = - r_norm / v_norm;
         }
         double newllh;
-        // std::cerr << "alpha: " << alpha << std::endl;
+        std::cerr << "alpha: " << alpha << std::endl;
         
 
         if (alpha > -1) {
             alpha = -1;
             for (size_t i = 0; i < props.size(); ++i) theta_p.at(i) = props[i] - 2 * alpha * r[i] + alpha * alpha * v[i];
             props = getMax(probs, theta_p, numReadDuplicates, numReads);
-            normalize(props);
             newllh = getExp(probs, props, numReadDuplicates);
         } else {
             for (size_t i = 0; i < props.size(); ++i) theta_p.at(i) = props[i] - 2 * alpha * r[i] + alpha * alpha * v[i];
+            std::cerr << theta_p[0] << " " << theta_p[1] << " " << theta_p[2] << std::endl;
             auto newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
-            normalize(newProps);
+            std::cerr << props[0] << " " << props[1] << " " << props[2] << std::endl;
             newllh = getExp(probs, newProps, numReadDuplicates);
+            std::cerr << "newllh " << newllh << std::endl;
+
             if (newllh >= llh) {
+                std::cerr << props[0] << " " << props[1] << " " << props[2] << std::endl;
                 props = std::move(newProps);
+                std::cerr << props[0] << " " << props[1] << " " << props[2] << std::endl;
             } else {
                 while (newllh < llh) {
                     alpha = (alpha - 1) / 2;
+                    std::cerr << "new alpha: " << alpha << std::endl;
                     // std::cerr << "alpha: " << alpha << " " << newllh << " vs " << llh << std::endl;
                     for (size_t i = 0; i < theta_p.size(); ++i) theta_p[i] = props[i] - 2 * alpha * r[i] + alpha * alpha * v[i];
                     newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
-                    normalize(newProps);
                     newllh   = getExp(probs, newProps, numReadDuplicates);
                 }
                 props = std::move(newProps);
@@ -1610,6 +1612,7 @@ void mgsr::squaremHelper(
             }
         }
         if (sigNodes.size() == nodes.size()) break;
+        std::cerr << "remove round " << i << std::endl;
         std::vector<double> sigProps(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
         
         llh = getExp(sigProbs, sigProps, numReadDuplicates);
@@ -1629,6 +1632,225 @@ void mgsr::squaremHelper(
         nodes.push_back(exclude);
         props.push_back(0.0);
         llh = getExp(probs, props, numReadDuplicates);
+    }
+
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "Finished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "Finished EM estimation of haplotype proportions excluding " << exclude << ". Total EM iterations: " << curit<< "\n";
+        std::cerr << msg.str();
+    }
+}
+// ------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------
+double getExp2(const Eigen::MatrixXd& probs, const Eigen::VectorXd& props, const Eigen::VectorXd& numReadDuplicates) {
+    assert(props.size() == probs.cols());
+
+    Eigen::VectorXd readSums = probs * props;
+    double llh = (numReadDuplicates.array() * readSums.array().log()).sum();
+
+    return llh;
+}
+
+Eigen::VectorXd getMax2(const Eigen::MatrixXd& probs, const Eigen::VectorXd& props, const Eigen::VectorXd& numReadDuplicates, const int32_t& totalReads) {
+    size_t numNodes = probs.cols();
+
+    Eigen::VectorXd denoms = probs * props;
+
+    Eigen::VectorXd newProps(numNodes);
+    newProps.setZero();
+
+    for (size_t i = 0; i < numNodes; ++i) {
+        Eigen::VectorXd ratios = (probs.col(i).array() * props[i]) / denoms.array();
+        double newProp = (numReadDuplicates.array() * ratios.array()).sum();
+        newProp /= totalReads;
+        newProps(i) = newProp;
+    }
+
+    return newProps;
+
+}
+
+void normalize2(Eigen::VectorXd& props) {    
+    for (int i = 0; i < props.size(); ++i) {
+        if (props(i) <= 0) {
+            props(i) = std::numeric_limits<double>::min();
+        }
+    }
+    double sum = props.sum();
+    props /= sum;
+}
+
+void squarem2(
+    const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs,
+    const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    const Eigen::VectorXd& numReadDuplicates, const int32_t& numReads, 
+    Eigen::VectorXd& props, double& llh, int& curit
+    ) {
+    assert(nodes.size() == probs.cols());
+    assert(nodes.size() == props.size());
+    while (true) {
+        std::cerr << props(0) << " " << props(1) << " " << props(2) << std::endl;
+        std::cerr << "it " << curit << std::endl;
+        Eigen::VectorXd theta1 = getMax2(probs, props, numReadDuplicates, numReads);
+        normalize2(theta1);
+        Eigen::VectorXd theta2 = getMax2(probs, theta1, numReadDuplicates, numReads);
+        normalize2(theta2);
+
+        Eigen::VectorXd r = theta1 - props;
+        Eigen::VectorXd v = theta2 - theta1 - r;
+        double r_norm = r.norm();
+        double v_norm = v.norm();
+        std::cerr << llh << " " << r_norm << " " << v_norm << std::endl;
+
+        double alpha;
+        if (r_norm == 0 || v_norm == 0) {
+            alpha = 0;
+        } else {
+            alpha = - r_norm / v_norm;
+        }
+        double newllh;
+        std::cerr << "alpha: " << alpha << std::endl;
+
+        
+        Eigen::VectorXd theta_p;
+        if (alpha > -1) {
+            alpha = -1;
+            theta_p = props - 2 * alpha * r + alpha * alpha * v;
+            props = getMax2(probs, theta_p, numReadDuplicates, numReads);
+            normalize2(props);
+            newllh = getExp2(probs, props, numReadDuplicates);
+        } else {
+            theta_p = props - 2 * alpha * r + alpha * alpha * v;
+            std::cerr << theta_p(0) << " " << theta_p(1) << " " << theta_p(2) << std::endl;
+            auto newProps = getMax2(probs, theta_p, numReadDuplicates, numReads);
+            normalize2(newProps);
+            std::cerr << props(0) << " " << props(1) << " " << props(2) << std::endl;
+            newllh = getExp2(probs, newProps, numReadDuplicates);
+            std::cerr << "newllh " << newllh << std::endl;
+            if (newllh >= llh) {
+                std::cerr << props(0) << " " << props(1) << " " << props(2) << std::endl;
+                props = std::move(newProps);
+                std::cerr << props(0) << " " << props(1) << " " << props(2) << std::endl;
+            } else {
+                while (newllh < llh) {
+                    alpha = (alpha - 1) / 2;
+                    std::cerr << "new alpha: " << alpha << std::endl;
+                    // std::cerr << "alpha: " << alpha << " " << newllh << " vs " << llh << std::endl;
+                    theta_p = props - 2 * alpha * r + alpha * alpha * v;
+                    newProps = getMax2(probs, theta_p, numReadDuplicates, numReads);
+                    normalize2(newProps);
+                    newllh   = getExp2(probs, newProps, numReadDuplicates);
+                }
+                props = std::move(newProps);
+            }
+        }
+
+        if (newllh - llh < 0.00001) {
+            llh = newllh;
+            break;
+        }        
+        llh = newllh;
+        ++curit;
+    }
+    ++curit;
+}
+
+void mgsr::squaremHelper2(
+    PangenomeMAT::Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
+    const int32_t& numReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    Eigen::MatrixXd& probs, std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude
+    ) {
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "starting EM estimation of haplotype proportions" << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "starting EM estimation of haplotype proportions excluding " << exclude << "\n";
+        std::cerr << msg.str();
+    }
+
+
+    if (!exclude.empty()) {
+        probs.resize(allScores.begin()->second.size(), allScores.size() - leastRecentIdenticalAncestors.size() - 1);
+    } else {
+        probs.resize(allScores.begin()->second.size(), allScores.size() - leastRecentIdenticalAncestors.size());
+    }
+    size_t colIndex = 0;
+    for (const auto& node : allScores) {
+        if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
+        if (!exclude.empty() && node.first == exclude) continue;
+        std::vector<double> curProbs;
+        size_t rowIndex = 0;
+        for (const auto& score : node.second) {
+            probs(rowIndex, colIndex) = score.second;
+            ++rowIndex;
+        }
+        nodes.push_back(node.first);
+        ++colIndex;
+    }
+
+    // std::cerr << "num nodes " << nodes.size() << std::endl;
+    props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
+    Eigen::VectorXd readDuplicates(allScores.begin()->second.size());
+    for (size_t i = 0; i < numReadDuplicates.size(); ++i) {
+        readDuplicates(i) = numReadDuplicates[i].first;
+    }
+
+    
+    int curit = 0;
+    llh = getExp2(probs, props, readDuplicates);
+    // std::cerr << "iteration " << curit << ": " << llh << std::endl;
+    squarem2(nodes, probs, identicalSets, readDuplicates, numReads, props, llh, curit);
+
+    for (int32_t i = 0; i < roundsRemove; ++i) {
+        std::vector<size_t> significantIndices;
+        std::vector<std::string> sigNodes;
+
+        for (size_t i = 0; i < props.size(); ++i) {
+            if (props(i) >= removeThreshold) {
+                significantIndices.push_back(i);
+            }
+        }
+        if (significantIndices.size() == nodes.size()) break;
+        std::cerr << "remove round " << i << std::endl;
+
+        for (size_t idx : significantIndices) {
+            sigNodes.push_back(nodes[idx]);
+        }
+
+        Eigen::MatrixXd sigProbs(probs.rows(), significantIndices.size());
+        sigProbs.resize(probs.rows(), significantIndices.size());
+        for (size_t i = 0; i < significantIndices.size(); ++i) {
+            sigProbs.col(i) = probs.col(significantIndices[i]);
+        }
+        std::cerr << "AAA" << std::endl;
+        Eigen::VectorXd sigProps = Eigen::VectorXd::Constant(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
+        std::cerr << "BBB" << std::endl;
+        llh = getExp2(sigProbs, sigProps, readDuplicates);
+        std::cerr << "CCC" << std::endl;
+        squarem2(sigNodes, sigProbs, identicalSets, readDuplicates, numReads, sigProps, llh, curit);
+        nodes = std::move(sigNodes);
+        probs = std::move(sigProbs);
+        props = std::move(sigProps);
+    }
+
+    if (!exclude.empty()) {
+        Eigen::VectorXd curProbs(numReads);
+        for (size_t i = 0; i < numReads; ++i) {
+            curProbs(i) = allScores.at(exclude)[i].second;
+        }
+
+        probs = probs, curProbs;
+        props = props, 0.0;
+        llh = getExp2(probs, props, readDuplicates);
     }
 
     if (exclude.empty()) {
