@@ -3,6 +3,7 @@
 #include "pmi.hpp"
 #include "genotype.hpp"
 #include "place.hpp"
+#include "mgsr.hpp"
 #include "tree.hpp"
 #include <iostream>
 #include <string>
@@ -11,6 +12,9 @@
 #include <boost/filesystem.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
+#include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
+#include <tbb/concurrent_vector.h>
 
 using namespace pmi;
 namespace po = boost::program_options;
@@ -83,6 +87,11 @@ int main(int argc, char *argv[]) {
             ("m", po::value<std::string>(), "Path to mpileup output")
             ("v", po::value<std::string>(), "Path to vcf output")
             ("r", po::value<std::string>(), "Path to reference fasta output")
+            /* accio */
+            ("accio", "Accio!")
+            ("accioParams", po::value<std::vector<int32_t>>()->multitoken(), "Accio parameters --accioParams k,s,l")
+            ("cpus", po::value<size_t>()->default_value(1), "cpus to use")
+            /* accio */
             ("g", "Use root as reference, do not place") //FIXME for debugging purposes, remove for release
         ;
 
@@ -122,95 +131,193 @@ int main(int argc, char *argv[]) {
             reads2File = vm["reads2"].as<std::string>();
         }
 
-        int32_t k = -1;
-        int32_t s = -1;
-        bool prompt = !vm.count("f");
-        bool use_root = vm.count("g");
-
-        if (vm.count("params")) {
-            auto k_s_values = vm["params"].as<std::vector<int32_t>>();
-            if (k_s_values.size() != 2) {
-                std::cerr << "× Error: -r/--reindex requires two integer values (k and s), e.g. -r 13,8." << std::endl;
-                return 1;
-            } else {
-                k = k_s_values[0];
-                s = k_s_values[1];
+        if (vm.count("accio")) {
+            /* accio */
+            tbb::global_control c(tbb::global_control::max_allowed_parallelism, vm["cpus"].as<size_t>());            
+            int32_t accioK = 10;
+            int32_t accioS = 5;
+            int32_t accioL = 3;
+            if (vm.count("accioParams")) {
+                auto accioParamValues = vm["accioParams"].as<std::vector<int32_t>>();
+                int32_t accioK = accioParamValues[0];
+                int32_t accioS = accioParamValues[1];
+                int32_t accioL = accioParamValues[2];
             }
-        } else if (vm.count("index")) {
-            indexFile = vm["index"].as<std::string>();
-            std::cout << "Using seed index: \e[3;1m" << indexFile << "\e[0m" << std::endl;          
+            std::string defaultKmiPath = pmatFile + "." + std::to_string(accioK) + "_" + std::to_string(accioS) + "_" + std::to_string(accioL) + ".kmi";
+            std::string defaultSmiPath = pmatFile + "." + std::to_string(accioK) + "_" + std::to_string(accioS) + ".smi";
+            if (!fs::exists(defaultKmiPath)) {
+                std::cerr << "kmi file not detected... building kmi file using input parameters" << std::endl;
+                pmi::seedIndex smiIndex;
+                std::stringstream seedmersOutStream;
+                mgsr::buildSeedmer(smiIndex, T, accioL, accioK, accioS, seedmersOutStream);
+                std::cerr << "Writing to " << defaultKmiPath << "..." << std::endl;
+                std::ofstream smfout(defaultKmiPath);
+                smfout << seedmersOutStream.str();
+                std::cerr << "Writing to " << defaultSmiPath << "..." << std::endl;
+                std::ofstream fout(defaultSmiPath);
+                fout << smiIndex.outStream.str();
+            }
+            int maximumGap = 10;
+            int minimumCount = 0;
+            int minimumScore = 0;
+            double errorRate = 0.005;
+            int32_t numReads;
+            bool confidence = false;
+            int32_t roundsRemove = 2;
+            double removeThreshold = 0.005;
+            std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>> allScores;
+            std::vector<std::pair<int32_t, std::vector<size_t>>> numReadDuplicates;
+            std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
+            std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
+            std::vector<std::string> readSequences;
+            std::vector<std::string> readQuals;
+            std::vector<std::string> readNames;
+            std::ifstream seedmersIndex(defaultKmiPath);
+            mgsr::scorePseudo(seedmersIndex, reads1File, reads2File, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, readSequences, readQuals, readNames, maximumGap, minimumCount, minimumScore, errorRate);       
+
+            Eigen::MatrixXd probs;
+            Eigen::VectorXd props;
+            std::vector<std::string> nodes;
+            double llh;
+            mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
+
+            std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
+            for (size_t i = 0; i < nodes.size(); ++i) {
+                sortedOut.at(i) = {nodes[i], props(i)};
+            }
+            std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
+                return a.second > b.second;
+            });
+
+            std::vector<double> llhdiffs(nodes.size());
+            std::vector<double> exclllhs(nodes.size());
+            if (confidence) {
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes.size()), [&](const tbb::blocked_range<size_t>& range) {
+                    for (size_t i = range.begin(); i < range.end(); ++i) {
+                        Eigen::MatrixXd curprobs;
+                        Eigen::VectorXd curprops;
+                        std::vector<std::string> curnodes;
+                        double curllh;
+                        mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
+                        exclllhs.at(i) = curllh;
+                        llhdiffs.at(i) = llh - curllh;
+                    }
+                });
+            }
+
+            std::unordered_map<std::string, std::unordered_set<size_t>> assignedReads;
+            mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, assignedReads);
+            std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
+            
+            std::cout << "\nlikelihood: " << llh << "\n";
+            for (size_t i = 0; i < sortedOut.size(); ++i) {
+                const auto& node = sortedOut[i];
+                std::cout << node.first;
+                if (identicalSets.find(node.first) != identicalSets.end()) {
+                    for (const auto& identicalNode : identicalSets.at(node.first)) {
+                        std::cout << "," << identicalNode;
+                    }
+                }
+                std::cout << "\t"
+                          << node.second << "\t"
+                          << assignedReads[node.first].size() << "\t"
+                          << readAssignmentAccuracy[node.first].first << "\t"
+                          << readAssignmentAccuracy[node.first].second << "\t"
+                          << readAssignmentAccuracy[node.first].first / readAssignmentAccuracy[node.first].second << std::endl;
+            }
+            /* accio */
         } else {
-            bool keep = false;
-            std::string defaultIndexPath = pmatFile + ".pmi";
-            std::string inp;
-            if (boost::filesystem::exists(defaultIndexPath)) {
-                if (prompt){
-                    std::cout << "Use existing index? [Y/n]";
-                    getline(std::cin, inp);
-                    if (inp == "Y" || inp == "y" || inp == "") {
+            int32_t k = -1;
+            int32_t s = -1;
+            bool prompt = !vm.count("f");
+            bool use_root = vm.count("g");
+
+            if (vm.count("params")) {
+                auto k_s_values = vm["params"].as<std::vector<int32_t>>();
+                if (k_s_values.size() != 2) {
+                    std::cerr << "× Error: -r/--reindex requires two integer values (k and s), e.g. -r 13,8." << std::endl;
+                    return 1;
+                } else {
+                    k = k_s_values[0];
+                    s = k_s_values[1];
+                }
+            } else if (vm.count("index")) {
+                indexFile = vm["index"].as<std::string>();
+                std::cout << "Using seed index: \e[3;1m" << indexFile << "\e[0m" << std::endl;          
+            } else {
+                bool keep = false;
+                std::string defaultIndexPath = pmatFile + ".pmi";
+                std::string inp;
+                if (boost::filesystem::exists(defaultIndexPath)) {
+                    if (prompt){
+                        std::cout << "Use existing index? [Y/n]";
+                        getline(std::cin, inp);
+                        if (inp == "Y" || inp == "y" || inp == "") {
+                            keep = true;
+                        }
+                    }else{
                         keep = true;
                     }
-                }else{
-                    keep = true;
+                } else {
+                    std::cout << "\nNo index found." << std::endl;
                 }
+                if (!keep) {
+                    promptAndIndex(T, prompt, defaultIndexPath);
+                }
+                indexFile = defaultIndexPath;
+            }
+
+            // Mutation matrix (mm) file
+            tree::mutationMatrices mutMat = tree::mutationMatrices();
+            std::string defaultMutmatPath = pmatFile + ".mm";
+            if (vm.count("mutmat")) {
+                mutmatFile = fs::canonical(fs::path(vm["mutmat"].as<std::string>())).string();
+                std::ifstream mminf(mutmatFile);
+                tree::fillMutationMatricesFromFile(mutMat, mminf);
+                mminf.close();
+                std::cout << "Using mutation matrix file: " << mutmatFile << std::endl;
+            } else if (fs::exists(defaultMutmatPath)) {
+                std::ifstream mminf(defaultMutmatPath);
+                tree::fillMutationMatricesFromFile(mutMat, mminf);
+                mminf.close();
+                std::cout << "Mutation matrix file detected, using mutation matrix file: " << defaultMutmatPath << std::endl;
             } else {
-                std::cout << "\nNo index found." << std::endl;
+                std::cout << "No mutation matrix file detected, building mutation matrix ..." << std::endl; 
+                // build mutation matrix
+                tree::fillMutationMatricesFromTree(mutMat, T, vm["window"].as<size_t>(), vm["percent_identity"].as<double>());
+                // write to file
+                std::cout << "Writing to " << defaultMutmatPath << " ..." << std::endl;
+                std::ofstream mmfout(defaultMutmatPath);
+                tree::writeMutationMatrices(mutMat, mmfout);
+                mmfout.close();
+                mutmatFile = defaultMutmatPath;
             }
-            if (!keep) {
-                promptAndIndex(T, prompt, defaultIndexPath);
+            
+            // TODO, add some sort of error if all of these are empty, cus then why are we placing
+            std::string samFileName = "";
+            std::string bamFileName = "";
+            std::string mpileupFileName = "";
+            std::string vcfFileName = "";
+            std::string refFileName = "";
+            if (vm.count("s")) {
+                samFileName = vm["s"].as<std::string>();
             }
-            indexFile = defaultIndexPath;
-        }
+            if (vm.count("b")) {
+                bamFileName = vm["b"].as<std::string>();
+            }
+            if (vm.count("m")) {
+                mpileupFileName = vm["m"].as<std::string>();
+            }
+            if (vm.count("v")) {
+                vcfFileName = vm["v"].as<std::string>();
+            }
+            if (vm.count("r")) {
+                refFileName = vm["r"].as<std::string>();
+            }
 
-        // Mutation matrix (mm) file
-        tree::mutationMatrices mutMat = tree::mutationMatrices();
-        std::string defaultMutmatPath = pmatFile + ".mm";
-        if (vm.count("mutmat")) {
-            mutmatFile = fs::canonical(fs::path(vm["mutmat"].as<std::string>())).string();
-            std::ifstream mminf(mutmatFile);
-            tree::fillMutationMatricesFromFile(mutMat, mminf);
-            mminf.close();
-            std::cout << "Using mutation matrix file: " << mutmatFile << std::endl;
-        } else if (fs::exists(defaultMutmatPath)) {
-            std::ifstream mminf(defaultMutmatPath);
-            tree::fillMutationMatricesFromFile(mutMat, mminf);
-            mminf.close();
-            std::cout << "Mutation matrix file detected, using mutation matrix file: " << defaultMutmatPath << std::endl;
-        } else {
-            std::cout << "No mutation matrix file detected, building mutation matrix ..." << std::endl; 
-            // build mutation matrix
-            tree::fillMutationMatricesFromTree(mutMat, T, vm["window"].as<size_t>(), vm["percent_identity"].as<double>());
-            // write to file
-            std::cout << "Writing to " << defaultMutmatPath << " ..." << std::endl;
-            std::ofstream mmfout(defaultMutmatPath);
-            tree::writeMutationMatrices(mutMat, mmfout);
-            mmfout.close();
-            mutmatFile = defaultMutmatPath;
-        }
-        
-        // TODO, add some sort of error if all of these are empty, cus then why are we placing
-        std::string samFileName = "";
-        std::string bamFileName = "";
-        std::string mpileupFileName = "";
-        std::string vcfFileName = "";
-        std::string refFileName = "";
-        if (vm.count("s")) {
-            samFileName = vm["s"].as<std::string>();
-        }
-        if (vm.count("b")) {
-            bamFileName = vm["b"].as<std::string>();
-        }
-        if (vm.count("m")) {
-            mpileupFileName = vm["m"].as<std::string>();
-        }
-        if (vm.count("v")) {
-            vcfFileName = vm["v"].as<std::string>();
-        }
-        if (vm.count("r")) {
-            refFileName = vm["r"].as<std::string>();
-        }
+            promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt, use_root);
 
-        promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName, refFileName, prompt, use_root);
+        }
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
