@@ -138,10 +138,10 @@ protobuf_generate(TARGET panmap)
 
 target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_link_options(panmap PRIVATE -lm -lz -lpthread)
+target_link_options(panmap PRIVATE -lm -lpthread -lz)
 
 target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_link_options(tests PRIVATE -lm -lz -lpthread)
+target_link_options(tests PRIVATE -lm -lpthread -lz)
 
 if (OPTION_DEBUG)
     target_compile_options(panmap PRIVATE -g -O0 -ggdb -glldb)

@@ -91,21 +91,10 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
                j++) {
             for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "mama crunch\n";
-                std::cout << "is a: -" << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << k << "): -"
-                          << std::endl;
-              }
               sequenceString += '-';
             }
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "mama buncha\n";
-              std::cout << "is a: -" << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
-                        << std::endl;
-            }
+            
             //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
@@ -118,20 +107,10 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               //  std::endl;
               sequenceString += '-';
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "mama ragu\n";
-                std::cout << "is a: -" << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
-                          << std::endl;
-              }
+              
             }
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "o sole mio\n";
-              std::cout << "is a: -" << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
-                        << std::endl;
-            }
+            
             //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
           }
@@ -148,22 +127,12 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               // std::endl;
               sequenceString += '-';
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "bana na\n";
-                std::cout << "is a: -" << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << k << "): -"
-                          << std::endl;
-              }
+              
             }
             // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "papa pia\n";
-              std::cout << "is a: -" << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
-                        << std::endl;
-            }
+            
           }
         } else {
           //  std::cout << "is not end => ";
@@ -173,22 +142,12 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               //  std::endl;
               sequenceString += '-';
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "mama kia soul\n";
-                std::cout << "is a: -" << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << k << "): -"
-                          << std::endl;
-              }
+              
             }
             //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
             sequenceString += '-';
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "mama mario\n";
-              std::cout << "is a: -" << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): -"
-                        << std::endl;
-            }
+            
           }
         }
       }
@@ -208,12 +167,7 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
               // << std::endl;
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "mama mingus\n";
-                std::cout << "is a: " << nuc << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
-                          << std::endl;
-              }
+              
 
               sequenceString += (nuc == 'x') ? '-' : nuc;
               // std::cout << "AAA ? " << nuc << " what? " << (nuc == 'x') <<
@@ -224,12 +178,7 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
             // std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
             // std::endl;
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "mama mia\n";
-              std::cout << "is a: " << nuc << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
-                        << std::endl;
-            }
+            
             sequenceString += (nuc == 'x') ? '-' : nuc;
             // std::cout << "huh ? " << nuc << " what? " << (nuc == 'x') <<
             // "\n"; std::cout << "now sequenceString: " << sequenceString <<
@@ -246,24 +195,14 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               // << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "mama miara\n";
-                std::cout << "is a: " << nuc << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
-                          << std::endl;
-              }
+              
             }
             nuc = sequence[i].first[j].first;
             sequenceString += nuc == 'x' ? '-' : nuc;
             // std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
             // std::endl;
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "mamaleek mia\n";
-              std::cout << "is a: " << nuc << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
-                        << std::endl;
-            }
+            
           }
         }
       } else {
@@ -280,12 +219,7 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               // << std::endl;
               sequenceString += (nuc == 'x') ? '-' : nuc;
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "marrrrma mia\n";
-                std::cout << "is a: " << nuc << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
-                          << std::endl;
-              }
+              
               // std::cout << "NUC: " << nuc << " is x? " << (nuc == 'x') <<
               // "\n"; std::cout << "now sequenceString: " << sequenceString <<
               // "\n";
@@ -295,12 +229,7 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
             //  std::endl;
             sequenceString += (nuc == 'x') ? '-' : nuc;
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "mafffma mia\n";
-              std::cout << "is a: " << nuc << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
-                        << std::endl;
-            }
+            
             // std::cout << "TEE: " << nuc << " is x? " << (nuc == 'x') << "\n";
             // std::cout << "now sequenceString: " << sequenceString << "\n";
           }
@@ -314,24 +243,14 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               //  nuc << std::endl;
               sequenceString += nuc == 'x' ? '-' : nuc;
               int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              if (abs(gc - 3120) < 10) {
-                std::cout << "mdama mia\n";
-                std::cout << "is a: " << nuc << std::endl;
-                std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
-                          << std::endl;
-              }
+              
             }
             nuc = sequence[i].first[j].first;
             //  std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
             //  std::endl;
             sequenceString += nuc == 'x' ? '-' : nuc;
             int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            if (abs(gc - 3120) < 10) {
-              std::cout << "wama mia\n";
-              std::cout << "is a: " << nuc << std::endl;
-              std::cout << "(" << i << ", " << j << ", " << -1 << "): " << nuc
-                        << std::endl;
-            }
+            
           }
         }
       }
