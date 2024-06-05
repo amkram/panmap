@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <sys/_types/_int64_t.h>
 
 namespace fs = boost::filesystem;
 
@@ -54,34 +55,43 @@ void findSyncmers(
 // Recursive function to build the seed index
 void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
                  int32_t &pb_i, std::map<int32_t, std::string> &seedmersAlex) {
+  // std::cout << "BH2 " << node->identifier << "\n";
   
-  std::cout << "node " << node->identifier << "\n";
+  // std::cout << "node " << node->identifier << "\n";
   std::cout << "pbi " << pb_i << "\n";
-  std::cout << "size " << index.per_node_mutations_size() << "\n";
+  // std::cout << "size " << index.per_node_mutations_size() << "\n";
 
   NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_i);  //somthing bad
 
-  std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
+  // std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
 
   std::string node_idn = node->identifier;
 
   std::vector<std::pair<int32_t, std::string>> backtrack;
+  std::vector<int64_t> delSeeds;
+  std::vector<std::pair<int64_t, std::string>> addSeeds;
   
   for (int mut_i = 0; mut_i < pb_node_mutations.mutations_size(); mut_i++) {
     const auto &mut = pb_node_mutations.mutations(mut_i);
     int32_t pos = mut.pos();
     if (mut.is_deletion()) {
       backtrack.push_back({pos, seedmersAlex[pos]});
-      seedmersAlex.erase(pos);
+      delSeeds.push_back(pos);
     } else {
       if (seedmersAlex.find(pos) != seedmersAlex.end()) {
         backtrack.push_back({pos, seedmersAlex[pos]});
       } else {
         backtrack.push_back({pos, ""});
       }
-      seedmersAlex[pos] = mut.seq();
+      addSeeds.push_back({pos, mut.seq()});
       
     }
+  }
+  for (const auto &p : delSeeds) {
+    seedmersAlex.erase(p);
+  }
+  for (const auto &p : addSeeds) {
+    seedmersAlex[p.first] = p.second;
   }
 
   std::string node_seq = tree::getStringAtNode(node, T, true);
