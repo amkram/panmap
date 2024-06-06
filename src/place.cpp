@@ -3,11 +3,16 @@
 #include "pmi.hpp"
 #include "util.hpp"
 #include "tree.hpp"
+#include "mgsr.hpp"
+#include "seeding.hpp"
 #include "genotype.hpp"
 #include <cmath>
 #include <htslib/sam.h>
 
 #include "conversion.hpp"
+#include <tbb/parallel_for.h>
+#include <tbb/concurrent_vector.h>
+
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -270,7 +275,7 @@ seedmerIndex_t seedsFromFastq(std::ifstream &indexFile, int32_t *k, int32_t *s, 
 }
 
 
-void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, Tree *T, bool use_root) {
+void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, const std::string& prefix, const bool& makeSam, const bool& makeBam, const bool& makeMPileup, const bool& makeVCF, const bool& makeRef, Tree *T, bool use_root) {
     tree::mutableTreeData data;
     tree::globalCoords_t globalCoords;
     tree::setup(data, globalCoords, T);
@@ -377,7 +382,8 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
 
 
     //Print out reference
-    if(refFileName.size() > 0){
+    std::string refFileName = prefix + ".fa";
+    if(makeRef){
         std::ofstream outFile{refFileName};
 
         if (outFile.is_open()) {
@@ -396,6 +402,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     std::vector<char *> samAlignments;
     std::string samHeader;
 
+    std::string samFileName = prefix + ".sam";
     createSam(
         readSeeds,
         readSequences,
@@ -403,6 +410,7 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
         readNames,
         bestMatchSequence,
         seedToRefPositions,
+        makeSam,
         samFileName,
         k,
         pairedEndReads,
@@ -416,9 +424,11 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     sam_hdr_t *header;
     bam1_t **bamRecords;
 
+    std::string bamFileName = prefix + ".bam";
     createBam(
         samAlignments,
         samHeader,
+        makeBam,
         bamFileName,
 
         header,
@@ -429,11 +439,13 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
     //Convert to Mplp
     char *mplpString;
 
+    std::string mpileupFileName = prefix + ".mpileup";
     createMplp(
         bestMatchSequence,
         header,
         bamRecords,
         samAlignments.size(),
+        makeMPileup,
         mpileupFileName,
 
         mplpString
@@ -441,10 +453,169 @@ void place::placeIsolate(std::ifstream &indexFile, const tree::mutationMatrices&
 
 
     //Convert to VCF
+
+    std::string vcfFileName = prefix + ".vcf";
     createVcf(
         mplpString,
         mutMat,
+        makeVCF,
         vcfFileName
     );
 
+}
+
+void place::placeAccio(
+    PangenomeMAT::Tree *T, const tree::mutationMatrices& mutMat, const int32_t& accioK, const int32_t& accioS, const int32_t& accioL,
+    const std::string& defaultKmiPath, const std::string& reads1File, const std::string& reads2File, const std::string& prefix,
+    const bool& makeSam, const bool& makeBam, const bool& makeMPileup, const bool& makeVCF, const bool& makeRef, const int& maximumGap,
+    const int& minimumCount, const int& minimumScore, const double& errorRate, const bool& confidence, const int32_t& roundsRemove, const double& removeThreshold
+    ) {
+    std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>> allScores;
+    std::vector<std::pair<int32_t, std::vector<size_t>>> numReadDuplicates;
+    std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
+    std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
+    std::vector<std::string> readSequences;
+    std::vector<std::string> readQuals;
+    std::vector<std::string> readNames;
+    std::vector<std::vector<seeding::seed>> readSeeds;
+    std::ifstream seedmersIndex(defaultKmiPath);
+    int32_t numReads;
+    mgsr::scorePseudo(seedmersIndex, reads1File, reads2File, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, readSeeds, readSequences, readQuals, readNames, maximumGap, minimumCount, minimumScore, errorRate);       
+    std::cerr << "readSeeds size: " << readSeeds.size() << "\nreadQuals size: " << readQuals.size() << std::endl;
+    Eigen::MatrixXd probs;
+    Eigen::VectorXd props;
+    std::vector<std::string> nodes;
+    double llh;
+    mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
+
+    std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        sortedOut.at(i) = {nodes[i], props(i)};
+    }
+    std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
+        return a.second > b.second;
+    });
+
+    std::vector<double> llhdiffs(nodes.size());
+    std::vector<double> exclllhs(nodes.size());
+    if (confidence) {
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes.size()), [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t i = range.begin(); i < range.end(); ++i) {
+                Eigen::MatrixXd curprobs;
+                Eigen::VectorXd curprops;
+                std::vector<std::string> curnodes;
+                double curllh;
+                mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
+                exclllhs.at(i) = curllh;
+                llhdiffs.at(i) = llh - curllh;
+            }
+        });
+    }
+
+    std::unordered_map<std::string, std::unordered_set<size_t>> assignedReads;
+    mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, assignedReads);
+    std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
+    
+    std::cout << "\nlikelihood: " << llh << "\n";
+    for (size_t i = 0; i < sortedOut.size(); ++i) {
+        const auto& node = sortedOut[i];
+        std::cout << node.first;
+        if (identicalSets.find(node.first) != identicalSets.end()) {
+            for (const auto& identicalNode : identicalSets.at(node.first)) {
+                std::cout << "," << identicalNode;
+            }
+        }
+        std::cout << "\t"
+                    << node.second << "\t"
+                    << assignedReads[node.first].size() << "\t"
+                    << readAssignmentAccuracy[node.first].first << "\t"
+                    << readAssignmentAccuracy[node.first].second << "\t"
+                    << readAssignmentAccuracy[node.first].first / readAssignmentAccuracy[node.first].second << std::endl;
+    }
+
+    bool pairedEndReads = reads2File.size();
+    for (const auto& node : sortedOut) {
+        const std::string& nodeName = node.first;
+        std::string nodeSeq = T->getStringFromReference(nodeName, false);
+        std::vector<std::vector<seeding::seed>> assignedReadSeeds;
+        std::vector<std::string> assignedReadSequences;
+        std::vector<std::string> assignedReadQuals;
+        std::vector<std::string> assignedReadNames;
+        assignedReadSeeds.reserve(assignedReads[nodeName].size());
+        for (const size_t& readIdx : assignedReads[nodeName]) {
+            assignedReadSeeds.push_back(readSeeds[readIdx]);
+            assignedReadSequences.push_back(readSequences[readIdx]);
+            assignedReadQuals.push_back(readQuals[readIdx]);
+            assignedReadNames.push_back(readNames[readIdx]);
+        }
+        std::cerr << nodeName << ": " << assignedReadSeeds.size() << std::endl;
+        std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
+        for (size_t i = 0; i < nodeSeq.size() - accioK + 1; ++i) {
+            std::string kmer = nodeSeq.substr(i, accioK);
+            if (seeding::is_syncmer(kmer, accioS, false)) {
+                seedToRefPositions[kmer].push_back(i);
+            }
+        }
+
+        //Create SAM
+        std::vector<char *> samAlignments;
+        std::string samHeader;
+
+        std::string samFileName = prefix + "_" + nodeName + ".sam";
+        createSam(
+            assignedReadSeeds,
+            assignedReadSequences,
+            assignedReadQuals,
+            assignedReadNames,
+            nodeSeq,
+            seedToRefPositions,
+            makeSam,
+            samFileName,
+            accioK,
+            pairedEndReads,
+            samAlignments,
+            samHeader
+        );
+
+
+        //Convert to BAM
+        sam_hdr_t *header;
+        bam1_t **bamRecords;
+
+        std::string bamFileName = prefix + "_" + nodeName + ".bam";
+        createBam(
+            samAlignments,
+            samHeader,
+            makeBam,
+            bamFileName,
+
+            header,
+            bamRecords
+        );
+
+        //Convert to Mplp
+        char *mplpString;
+
+        std::string mpileupFileName = prefix + "_" + nodeName + ".mpileup";
+        createMplp(
+            nodeSeq,
+            header,
+            bamRecords,
+            samAlignments.size(),
+            makeMPileup,
+            mpileupFileName,
+
+            mplpString
+        );
+
+
+        //Convert to VCF
+        std::string vcfFileName = prefix + "_" + nodeName + ".vcf";
+        createVcf(
+            mplpString,
+            mutMat,
+            makeVCF,
+            vcfFileName
+        );
+    }
 }

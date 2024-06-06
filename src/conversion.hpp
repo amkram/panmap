@@ -1,5 +1,6 @@
 #include "util.hpp"
 #include "tree.hpp"
+#include <htslib/sam.h>
 
 
 void createSam(
@@ -9,7 +10,8 @@ void createSam(
     std::vector<std::string> &readNames,
     std::string &bestMatchSequence,
     std::unordered_map<std::string, std::vector<int32_t>> &seedToRefPositions,
-    std::string &samFileName,
+    const bool& makeSam,
+    const std::string& samFileName,
     int k,
     bool pairedEndReads,
     
@@ -22,7 +24,8 @@ void createSam(
 void createBam(
     std::vector<char *> &samAlignments,
     std::string &samHeader,
-    std::string &bamFileName,
+    const bool& makeBam,
+    const std::string& bamFileName,
 
     sam_hdr_t * &header,
     bam1_t ** &bamRecords
@@ -34,7 +37,8 @@ void createMplp(
     sam_hdr_t *header,
     bam1_t **bamRecords,
     int numBams,
-    std::string &mpileupFileName,
+    const bool& makeMPileup,
+    const std::string& mpileupFileName,
 
     char * &mplpString
 );
@@ -42,5 +46,6 @@ void createMplp(
 void createVcf(
     char *mplpString,
     const tree::mutationMatrices& mutMat,
-    std::string &vcfFileName
+    const bool& makeVCF,
+    const std::string& vcfFileName
 );

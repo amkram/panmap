@@ -786,10 +786,25 @@ struct seedmerSetEqual {
     }
 };
 
+static std::string reverseComplement(std::string dna_sequence) {
+    std::string complement = "";
+    for (char c : dna_sequence) {
+        switch (c) {
+            case 'A': complement += 'T'; break;
+            case 'T': complement += 'A'; break;
+            case 'C': complement += 'G'; break;
+            case 'G': complement += 'C'; break;
+            default: complement += c; break;
+        }
+    }
+    std::reverse(complement.begin(), complement.end());
+    return complement;
+}
+
 void initializeFastq(
     const std::string &fastqPath, std::vector<std::pair<std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>>>& readSeedmers,
-    std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
-    const int32_t k, const int32_t s, const int32_t l
+    std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::vector<std::vector<seeding::seed>>& readSeeds, std::vector<std::string> &readSequences,
+    std::vector<std::string> &readQuals, std::vector<std::string> &readNames, const int32_t k, const int32_t s, const int32_t l
     ) {
     FILE *fp;
     kseq_t *seq;
@@ -801,15 +816,41 @@ void initializeFastq(
 
     seq = kseq_init(fileno(fp));
     std::unordered_map<std::string, std::pair<int32_t, std::vector<size_t>>> dupMarkedReads;
+    std::vector<std::vector<seed>> readSeedsFwd;
+    std::vector<std::vector<seed>> readSeedsBwd;
     int line;
     size_t curIndex = 0;
     while ((line = kseq_read(seq)) >= 0) {
         readSequences.push_back(seq->seq.s);
         readNames.push_back(seq->name.s);
         readQuals.push_back(seq->qual.s);
+
+        std::vector<seed> syncmers = seeding::syncmerize(seq->seq.s, k, s, false, false, 0);
+        readSeedsFwd.push_back(syncmers);
+        std::vector<seed> syncmersReverse = seeding::syncmerize(reverseComplement(seq->seq.s), k, s, false, false, 0);
+        readSeedsBwd.push_back(syncmersReverse);
+
         ++dupMarkedReads[seq->seq.s].first;
         dupMarkedReads[seq->seq.s].second.push_back(curIndex);
         ++curIndex;
+    }
+
+    readSeeds.reserve( readSeedsFwd.size());
+    for(int i = 0; i < readSeedsFwd.size(); i++) {
+        std::vector<seed> thisReadsSeeds;
+        thisReadsSeeds.reserve(readSeedsFwd[i].size() + readSeedsBwd[i].size());
+
+        for(int j = 0; j < readSeedsFwd[i].size(); j++) {
+            readSeedsFwd[i][j].reversed = false;
+            readSeedsFwd[i][j].pos = readSeedsFwd[i][j].pos + k - 1; // Minimap standard
+            thisReadsSeeds.push_back(readSeedsFwd[i][j]);
+        }
+        for(int j = 0; j < readSeedsBwd[i].size(); j++) {
+            readSeedsBwd[i][j].reversed = true;
+            readSeedsBwd[i][j].pos = readSeedsBwd[i][j].pos + k - 1; // Minimap standard
+            thisReadsSeeds.push_back(readSeedsBwd[i][j]);
+        }
+        readSeeds.push_back(thisReadsSeeds);
     }
     
     std::unordered_map<std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>, size_t, seedmerSetHasher, seedmerSetEqual> duplicateCounts;
@@ -1124,8 +1165,8 @@ void mgsr::scorePseudo(
     std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, 
     std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
     std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, int32_t& numReads, Tree *T,
-    std::vector<std::string>& readSequences, std::vector<std::string>& readQuals, std::vector<std::string>& readNames,
-    const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate
+    std::vector<std::vector<seeding::seed>>& readSeeds, std::vector<std::string>& readSequences, std::vector<std::string>& readQuals,
+    std::vector<std::string>& readNames, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate
     ) {
     // get read seeds
     std::string line;
@@ -1197,7 +1238,7 @@ void mgsr::scorePseudo(
     std::cerr << "finished reading tree seedmers index\n" << std::endl;
 
     std::cerr << "start initializing read seedmers" << std::endl; 
-    initializeFastq(reads1Path, readSeedmers, numReadDuplicates, readSequences, readQuals, readNames, tempK, tempS, tempJ);
+    initializeFastq(reads1Path, readSeedmers, numReadDuplicates, readSeeds, readSequences, readQuals, readNames, tempK, tempS, tempJ);
     assert(readSeedmers.size() == numReadDuplicates.size());
     numReads = readSequences.size();
     std::cerr << "finished initializing read seedmers... total number of reads " << readSequences.size() << "\n" << std::endl;

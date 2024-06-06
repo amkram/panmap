@@ -187,7 +187,8 @@ BOOST_AUTO_TEST_CASE(_score) {
             std::vector<std::string> readSequences;
             std::vector<std::string> readQuals;
             std::vector<std::string> readNames;
-            mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, readSequences, readQuals, readNames, maximumGap, minimumCount, minimumScore, errorRate);       
+            std::vector<std::vector<seeding::seed>> readSeeds;
+            mgsr::scorePseudo(seedmersIndex, r1, r2, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, readSeeds, readSequences, readQuals, readNames, maximumGap, minimumCount, minimumScore, errorRate);       
             int32_t totalReads = 0;
             for (const auto& curDupRead : numReadDuplicates) {
                 totalReads += curDupRead.first;

@@ -26,7 +26,8 @@ void createSam(
     std::vector<std::string> &readNames,
     std::string &bestMatchSequence,
     std::unordered_map<std::string, std::vector<int32_t>> &seedToRefPositions,
-    std::string &samFileName,
+    const bool& makeSam,
+    const std::string& samFileName,
     int k,
     bool pairedEndReads,
     
@@ -147,7 +148,7 @@ void createSam(
 
     
     //Print out sam
-    if(samFileName.size() > 0){
+    if(makeSam){
         std::ofstream outFile{samFileName};
 
         if (outFile.is_open()) {
@@ -229,7 +230,8 @@ void createSam(
 void createBam(
     std::vector<char *> &samAlignments,
     std::string &samHeader,
-    std::string &bamFileName,
+    const bool& makeBam,
+    const std::string& bamFileName,
 
     sam_hdr_t * &header,
     bam1_t ** &bamRecords
@@ -241,7 +243,7 @@ void createBam(
 
     htsFile *bam_file = NULL;
 
-    if (bamFileName.size() > 0) {
+    if (makeBam) {
         bam_file = hts_open(bamFileName.c_str(), "wb");
         if (!bam_file) {
             fprintf(stderr, "Error: Failed to open output BAM file.\n");
@@ -299,7 +301,8 @@ void createMplp(
     sam_hdr_t *header,
     bam1_t **bamRecords,
     int numBams,
-    std::string &mpileupFileName,
+    const bool& makeMPileup,
+    const std::string& mpileupFileName,
 
     char * &mplpString
 ){
@@ -311,7 +314,7 @@ void createMplp(
     bam_and_ref_to_mplp(header, bamRecords, numBams, ref_string, bestMatchSequence.size(), &mplp_string);
 
     //Print out mpileup
-    if(mpileupFileName.size() > 0){
+    if(makeMPileup){
         std::ofstream outFile{mpileupFileName};
 
         if (outFile.is_open()) {
@@ -338,13 +341,14 @@ void createMplp(
 void createVcf(
     char *mplpString,
     const tree::mutationMatrices& mutMat,
-    std::string &vcfFileName
+    const bool& makeVCF,
+    const std::string& vcfFileName
 )   {
     // Convert c string of mpileup to ifstream
     std::istringstream mpileipStream(mplpString);
 
     std::ofstream vcfOutFile;
-    if(vcfFileName.size() > 0) {
+    if(makeVCF) {
         vcfOutFile.open(vcfFileName);
         if (vcfOutFile.is_open()) {
 
