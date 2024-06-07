@@ -481,7 +481,6 @@ void place::placeAccio(
     std::ifstream seedmersIndex(defaultKmiPath);
     int32_t numReads;
     mgsr::scorePseudo(seedmersIndex, reads1File, reads2File, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, readSeeds, readSequences, readQuals, readNames, maximumGap, minimumCount, minimumScore, errorRate);       
-    std::cerr << "readSeeds size: " << readSeeds.size() << "\nreadQuals size: " << readQuals.size() << std::endl;
     Eigen::MatrixXd probs;
     Eigen::VectorXd props;
     std::vector<std::string> nodes;
@@ -513,25 +512,35 @@ void place::placeAccio(
     }
 
     std::unordered_map<std::string, std::unordered_set<size_t>> assignedReads;
+    std::cerr << "\nStarting reads assignment" << std::endl;
     mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, assignedReads);
+
     std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
-    
-    std::cout << "\nlikelihood: " << llh << "\n";
+    std::cerr << "Finished reads assignment" << std::endl;
+
+    std::string abundanceOutFile = prefix + ".abundance";
+    std::ofstream abundanceOut(abundanceOutFile);
+    abundanceOut << "@likelihood: " << llh << "\n";
     for (size_t i = 0; i < sortedOut.size(); ++i) {
         const auto& node = sortedOut[i];
-        std::cout << node.first;
+        abundanceOut << node.first;
         if (identicalSets.find(node.first) != identicalSets.end()) {
             for (const auto& identicalNode : identicalSets.at(node.first)) {
                 std::cout << "," << identicalNode;
             }
         }
-        std::cout << "\t"
-                    << node.second << "\t"
-                    << assignedReads[node.first].size() << "\t"
-                    << readAssignmentAccuracy[node.first].first << "\t"
-                    << readAssignmentAccuracy[node.first].second << "\t"
-                    << readAssignmentAccuracy[node.first].first / readAssignmentAccuracy[node.first].second << std::endl;
+        abundanceOut << "\t"
+                  << node.second << "\t"
+                  << assignedReads[node.first].size() << "\t"
+                  << readAssignmentAccuracy[node.first].first << "\t"
+                  << readAssignmentAccuracy[node.first].second;
+        // std::cout << "\n";
+
+        /* for assessing read assignment accuracy*/
+        abundanceOut << "\t" << readAssignmentAccuracy[node.first].first / readAssignmentAccuracy[node.first].second << "\n";
     }
+
+    std::cerr << "Wrote abundance estimates and reads assignment data to " << abundanceOutFile << std::endl;
 
     bool pairedEndReads = reads2File.size();
     for (const auto& node : sortedOut) {
@@ -548,7 +557,6 @@ void place::placeAccio(
             assignedReadQuals.push_back(readQuals[readIdx]);
             assignedReadNames.push_back(readNames[readIdx]);
         }
-        std::cerr << nodeName << ": " << assignedReadSeeds.size() << std::endl;
         std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
         for (size_t i = 0; i < nodeSeq.size() - accioK + 1; ++i) {
             std::string kmer = nodeSeq.substr(i, accioK);
@@ -557,6 +565,9 @@ void place::placeAccio(
             }
         }
 
+        if (!(makeSam || makeBam || makeMPileup || makeVCF)) {
+            return;
+        }
         //Create SAM
         std::vector<char *> samAlignments;
         std::string samHeader;

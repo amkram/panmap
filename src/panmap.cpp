@@ -228,7 +228,7 @@ int main(int argc, char *argv[]) {
             if (vm.count("params")) {
                 auto k_s_values = vm["params"].as<std::vector<int32_t>>();
                 if (k_s_values.size() != 2) {
-                    std::cerr << "× Error: -r/--reindex requires two integer values (k and s), e.g. -r 13,8." << std::endl;
+                    std::cerr << " Error: -r/--reindex requires two integer values (k and s), e.g. -r 13,8." << std::endl;
                     return 1;
                 } else {
                     k = k_s_values[0];

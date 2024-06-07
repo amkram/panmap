@@ -114,18 +114,14 @@ void updateCurSeeds(std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, con
 static size_t btn(char b) {
     size_t n;
     switch (b) {
-    case 'A':
-        n = 0;
-        break;
-    case 'C':
-        n = 1;
-        break;
-    case 'G':
-        n = 2;
-        break;
-    case 'T':
-        n = 3;
-        break;
+    case 'A': n = 0; break;
+    case 'a': n = 0; break;
+    case 'C': n = 1; break;
+    case 'c': n = 1; break;
+    case 'G': n = 2; break;
+    case 'g': n = 2; break;
+    case 'T': n = 3; break;
+    case 't': n = 3; break;
     default:
         throw std::invalid_argument("Kmer contains non canonical base");
         break;
@@ -152,22 +148,17 @@ static size_t hash(const std::string& s) {
 static char comp(char c) {
     char compC;
     switch (c) { 
-    case 'A':
-        compC = 'T';
-        break;
-    case 'C':
-        compC = 'G';
-        break;
-    case 'G':
-        compC = 'C';
-        break;
-    case 'T':
-        compC = 'A';
-        break;
-    default:
-        compC = 'N';
-        break;
+    case 'A': compC = 'T'; break;
+    case 'a': compC = 't'; break;
+    case 'C': compC = 'G'; break;
+    case 'c': compC = 'g'; break;
+    case 'G': compC = 'C'; break;
+    case 'g': compC = 'c'; break;
+    case 'T': compC = 'A'; break;
+    case 't': compC = 'a'; break;
+    default:  compC = 'N'; break;
     }
+
     return compC;
 }
 
@@ -1525,7 +1516,6 @@ void mgsr::accio(
     const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
     std::unordered_map<std::string, std::unordered_set<size_t>>& assignedReads
     ) {
-        std::cerr << "\nAccio Reads!" << std::endl;
         for (size_t i = 0; i < probs.rows(); ++i) {
             const Eigen::VectorXd& curprobs = probs.row(i);
             double curmax = curprobs.maxCoeff();
