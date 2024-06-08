@@ -146,39 +146,6 @@ public:
     }
   }
 
-  tupleCoord_t baddecrement(tupleCoord_t &coord) {
-    if (coord.blockId == 0 && coord.nucPos == 0 && coord.nucGapPos == 0) {
-      return tupleCoord_t{0, 0, 0};
-    }
-    if (coord.blockId >= 0) {
-      if (coord.nucPos > 0) {
-        if (coord.nucGapPos > 0) {
-          return tupleCoord_t(coord.blockId, coord.nucPos, coord.nucGapPos - 1);
-        } else if (coord.nucGapPos == 0) {
-            return tupleCoord_t(coord.blockId, coord.nucPos-1, -1);
-        } else { // coord.nucGapPos == -1
-          if (sequence[coord.blockId].first[coord.nucPos].second.empty()) {
-            return tupleCoord_t(coord.blockId, coord.nucPos-1, -1);
-          } else {
-            return tupleCoord_t(coord.blockId, coord.nucPos,
-                                sequence[coord.blockId].first[coord.nucPos].second.size() - 1);
-          }
-          return tupleCoord_t(coord.blockId, coord.nucPos - 1, -1);
-        }
-      } else if (coord.nucPos == 0) {
-        if (coord.nucGapPos > 0) {
-          return tupleCoord_t(coord.blockId, coord.nucPos, coord.nucGapPos - 1);
-        } else if (coord.nucGapPos == 0) {
-          return tupleCoord_t(coord.blockId-1, sequence[coord.blockId-1].first.size()-1, -1);
-        } else { // coord.nucGapPos == -1
-          return tupleCoord_t(coord.blockId-1, sequence[coord.blockId-1].first.size()-1, -1);
-        }
-      } else { // coord.nucPos == -1, shouldn't happen
-        return tupleCoord_t(coord.blockId-1, sequence[coord.blockId-1].first.size()-1, -1);
-      }
-    }
-    return tupleCoord_t{0,0,0};
-  }
 
 private:
   sequence_t &sequence;
@@ -273,7 +240,7 @@ std::string getNucleotideSequenceFromBlockCoordinates(
     const tupleCoord_t &start, tupleCoord_t &end,
     const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const Tree *T, const Node *node, const globalCoords_t &globalCoords);
+    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator);
 
 std::string getStringAtNode(Node *node, Tree *T, bool aligned);
 

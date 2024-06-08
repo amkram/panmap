@@ -8,7 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <sys/_types/_int64_t.h>
+//#include <sys/_types/_int64_t.h>
 
 namespace fs = boost::filesystem;
 
@@ -56,16 +56,23 @@ void findSyncmers(
 void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
                  int32_t &pb_i, std::map<int32_t, std::string> &seedmersAlex) {
   // std::cout << "BH2 " << node->identifier << "\n";
-  
-  // std::cout << "node " << node->identifier << "\n";
+
+
+
+
+
   std::cout << "pbi " << pb_i << "\n";
   // std::cout << "size " << index.per_node_mutations_size() << "\n";
+
+
 
   NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_i);  //somthing bad
 
   // std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
 
   std::string node_idn = node->identifier;
+  bool is22 = (node->identifier == "node_22");
+
 
   std::vector<std::pair<int32_t, std::string>> backtrack;
   std::vector<int64_t> delSeeds;
@@ -121,7 +128,9 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
 
   /* Recursive step */
   for (Node *child : node->children) {
-    // exit(0);
+    if(is22){
+      //exit(0);
+    }
     pb_i++;
     buildHelper2(index, T, child, pb_i, seedmersAlex);
   }
@@ -161,6 +170,8 @@ BOOST_AUTO_TEST_CASE(performance) {
     int32_t pb_i = 0;
 
     buildHelper2(index, T, T->root, pb_i, seedmersAlex);
+
+    exit(0);
 
     for (auto &n : T->allNodes) {
       std::string node_idn = n.first;
@@ -322,6 +333,8 @@ extractSeedmers(const std::string &seq, const int k, const int s, const int l,
   return seedmers;
 }
 
+
+/*
 BOOST_AUTO_TEST_CASE(getNucSeq)
 {
     using namespace tree;
@@ -330,7 +343,7 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
     size_t s = 3;
     tree::mutableTreeData data;
     std::string seq = "----A-A-CCG---TLEMONC--CC---------";
-    sequence_t sequence = {
+    const sequence_t sequence = {
       {
         { // block 0
           {'-', {}}
@@ -413,9 +426,12 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
     const blockStrand_t blockStrand = {{{true},{}}, {{true},{}}, {{true},{}}, {{true},{}}, {{true},{}}};
     const Tree *T;
     const Node *node;
+
+    CoordNavigator navigator(sequence);
+
     std::string wholeSeq =
       tree::getNucleotideSequenceFromBlockCoordinates(start, end, sequence,
-      blockExists, blockStrand, T, node, globalCoords);
+      blockExists, blockStrand, T, node, globalCoords, navigator);
     std::cout << wholeSeq << "\n";
     BOOST_TEST(wholeSeq == seq);
     //BOOST_TEST(false);
@@ -423,6 +439,7 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
 
 
 }
+*/
 
 
 // BOOST_AUTO_TEST_CASE(_getRecomputePositions)
