@@ -3,7 +3,7 @@
 #include "seeding.hpp"
 #include <cmath>
 #include <iostream>
-#include <sys/_types/_int64_t.h>
+//#include <sys/_types/_int64_t.h>
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -41,7 +41,42 @@ std::string tree::getConsensus(Tree *T) {
 }
 
 // coords (blockId, nucPosition, nucGapPosition)
+// Sequence includes both boundary coordinates
+//TODO be more efficient for non existant blocks
 std::string tree::getNucleotideSequenceFromBlockCoordinates(
+    const tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
+    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
+    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
+  // TODO handle these
+  // const auto &rotationIndexes = T->rotationIndexes;
+  // const auto &sequenceInverted = T->sequenceInverted;
+  // const auto &circularSequences = T->circularSequences;
+    std::string seq = "";
+
+    if (end == tupleCoord_t{-1,-1,-1})
+    {
+      end= tupleCoord_t{sequence.size() - 1, sequence.back().first.size() - 1, -1};
+    }
+  
+    for(auto currCoord = start; currCoord <= end; currCoord = navigator.increment(currCoord) ){
+
+      if(blockExists[currCoord.blockId].first){
+        if (currCoord.nucGapPos == -1){
+          seq += sequence[currCoord.blockId].first[currCoord.nucPos].first;
+        }else{
+          seq += sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
+        }
+      }else{
+        seq += '-';
+      }
+    }
+
+    return seq;
+}
+
+
+/*
+std::string tree::badgerNucleotideSequenceFromBlockCoordinates(
     const tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords) {
@@ -67,16 +102,6 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
   }
 
   for (int32_t i = startBlockId; i <= endBlockId; i++) {
-    
-    /*if (i == 8){
-      std::cout << "BLOCK 8\n";
-      for(int j = 0; j < sequence[i].first.size(); j++){
-        for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++){
-          std::cout << sequence[i].first[j].second[k] << "\n";
-        }
-        std::cout << sequence[i].first[j].first << "\n";
-      }
-    }*/
 
 
     // std::cout << "\n\ni: " << i;
@@ -258,6 +283,14 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
   }
   return sequenceString;
 }
+*/
+
+
+
+
+
+
+
 
 /*
 - regap not used anywhere previously -> changed how regap is constructed for the
