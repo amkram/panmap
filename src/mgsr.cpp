@@ -1555,12 +1555,12 @@ std::unordered_map<std::string, std::pair<double, double>> mgsr::getReadAssignme
         if (leastRecentIdenticalAncestor.find(trueNode) != leastRecentIdenticalAncestor.end()) {
             const std::string& identicalAncestor = leastRecentIdenticalAncestor.at(trueNode);
             readAssignmentAccuracy[identicalAncestor].second += 1;
-            if (assignedReads.at(identicalAncestor).find(i) != assignedReads.at(identicalAncestor).end()) {
+            if (assignedReads.find(identicalAncestor) != assignedReads.end() && assignedReads.at(identicalAncestor).find(i) != assignedReads.at(identicalAncestor).end()) {
                 readAssignmentAccuracy[identicalAncestor].first += 1;
             }
         } else {
             readAssignmentAccuracy[trueNode].second += 1;
-            if (assignedReads.at(trueNode).find(i) != assignedReads.at(trueNode).end()) {
+            if (assignedReads.find(trueNode) != assignedReads.end() && assignedReads.at(trueNode).find(i) != assignedReads.at(trueNode).end()) {
                 readAssignmentAccuracy[trueNode].first += 1;
             }
         }

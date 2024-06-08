@@ -514,7 +514,6 @@ void place::placeAccio(
     std::unordered_map<std::string, std::unordered_set<size_t>> assignedReads;
     std::cerr << "\nStarting reads assignment" << std::endl;
     mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, assignedReads);
-
     std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
     std::cerr << "Finished reads assignment" << std::endl;
 
@@ -526,7 +525,7 @@ void place::placeAccio(
         abundanceOut << node.first;
         if (identicalSets.find(node.first) != identicalSets.end()) {
             for (const auto& identicalNode : identicalSets.at(node.first)) {
-                std::cout << "," << identicalNode;
+                abundanceOut << "," << identicalNode;
             }
         }
         abundanceOut << "\t"
