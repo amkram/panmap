@@ -1,7 +1,7 @@
 #ifndef __PMI_HPP
 #define __PMI_HPP
 
-#include <__config>
+//#include <__config>
 #pragma once
 #include "seeding.hpp"
 #include "tree.hpp"
