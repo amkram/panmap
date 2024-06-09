@@ -71,7 +71,7 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   // std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
 
   std::string node_idn = node->identifier;
-  bool is22 = (node->identifier == "node_22");
+  bool is22 = (node->identifier == "OL776362.1");
 
 
   std::vector<std::pair<int32_t, std::string>> backtrack;
@@ -126,11 +126,12 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   }
   osdmfsAlex.close();
 
+if(is22){
+      exit(0);
+    }
   /* Recursive step */
   for (Node *child : node->children) {
-    if(is22){
-      //exit(0);
-    }
+    
     pb_i++;
     buildHelper2(index, T, child, pb_i, seedmersAlex);
   }

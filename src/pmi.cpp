@@ -47,7 +47,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
     bool type = mutation.blockMutInfo;
     bool inversion = mutation.inversion;
 
-    //std::cout << "issa mutante " << primaryBlockId << " " << secondaryBlockId << " " << type << " " << inversion <<"\n";
+    std::cout << "issa mutante " << primaryBlockId << " " << secondaryBlockId << " " << type << " " << inversion <<"\n";
 
     recompRanges.push_back({tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0},
                             tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1}});
@@ -145,12 +145,20 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
       int len = ((node->nucMutation[i].mutInfo) >> 4);
 
       tupleCoord_t endboundary = tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition};
-      for(int j = 0; j < len; j++){
+      for(int j = 0; j <= len; j++){
         endboundary = navigator.increment(endboundary);
       }
 
-      recompRanges.push_back({tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition},
-                              endboundary});
+
+      std::cout << "NORMal mutation " << len << "\n";
+      std::cout << primaryBlockId << " "<< nucPosition << " "<< nucGapPosition << "\n";
+      std::cout << endboundary.blockId << " "<< endboundary.nucPos << " "<< endboundary.nucGapPos << "\n";
+
+      //Alex look here
+
+      recompRanges.push_back({tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition},    endboundary});
+      
+      //recompRanges.push_back({tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition},  tupleCoord_t{primaryBlockId, nucPosition+len, -1}});
 
 
       if (type == PangenomeMAT::NucMutationType::NS)
@@ -303,6 +311,10 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
     else
     {
       int len = 0;
+      
+      std::cout << "Hell yeah " << len << "\n";
+      std::cout << primaryBlockId << " "<< nucPosition << " "<< nucGapPosition << "\n";
+
       recompRanges.push_back({tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition},
                               tupleCoord_t{primaryBlockId, nucPosition + len, nucGapPosition}});       //TODO inefficient and wrong?
 
@@ -516,13 +528,18 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
     // std::cout << "count: " << count << " neededNongap: " << neededNongap << std::endl;
     // std::cout << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
 
-    if (!blockExists[coord.blockId].first)
+    if (!blockExists[coord.blockId].first) // TODO jump down to next block 
     {
       // std::cout << "block doesn't exist\n";
-      // TODO jump down to next block pleaesse
+      
 
       // std::cout << "coord pre incrememnt " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
       coord = navigator.increment(coord);
+
+      //coord.blockId += 1;
+      //coord.nucPos = 0;
+      //coord.nucGapPos = 0;
+
       // std::cout << "coord post instigation " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
       // std::cout << (coord < tupleCoord_t{-1, -1, -1}) << "\n";
       // std::cout << "we\n";
@@ -541,6 +558,10 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
     // std::cout << "coord post incrimination " << coord.blockId << ", " << coord.nucPos << ", " << coord.nucGapPos << std::endl;
   }
   // std::cout << "returning coord\n";
+  //if(coord < tupleCoord_t{-1, -1, -1} ) {
+    //coord = navigator.increment(coord);
+  //}
+
   return coord;
 }
 
@@ -591,24 +612,30 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
     // if (expandedRange.start == tupleCoord_t{-1, -1, -1}) {
     //   expandedRange.start = tupleCoord_t{0, 0, 0};
     // }
+
+    /*
     std::cout << "$%^*^% :" << expandedRange.start.blockId << ", "
                << expandedRange.start.nucPos << ", " << expandedRange.start.nucGapPos
                << " to " << current.stop.blockId << ", "
                << current.stop.nucPos << ", " << current.stop.nucGapPos
                 << std::endl;
+                */
 
     if (expandedRange.start <= current.stop)
     {
       // tmpStop = current.stop;
+      /*
       std::cout << "comparino:" << expandedRange.stop.blockId << ", "
                << expandedRange.stop.nucPos << ", " << expandedRange.stop.nucGapPos
                << " to " << current.stop.blockId << ", "
                << current.stop.nucPos << ", " << current.stop.nucGapPos
                 << std::endl;
+                */
+
       current.stop = std::max(current.stop, expandedRange.stop);
-      std::cout << "ooosbijk:" <<  current.stop.blockId << ", "
-               << current.stop.nucPos << ", " << current.stop.nucGapPos
-                << std::endl;
+
+      //std::cout << "ooosbijk:" <<  current.stop.blockId << ", "<< current.stop.nucPos << ", " << current.stop.nucGapPos  << std::endl;
+                
     }
     else
     {
