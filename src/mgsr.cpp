@@ -1059,10 +1059,11 @@ void scoreDFS(
                     std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, maximumGap, minimumCount, minimumScore);
                     int32_t pseudoScore = scorePseudoChain(pseudoChain);
                     double maxScore = static_cast<double>(curReadSeedmers.first.size()) - duplicates;
+                    // expected number seedmer per read is (150 - k + 1) / ((k - s + 1) / 2) - l + 1
                     // Need to change how pseudoProb is calculated
                     // pseudoProb = 0 if pseudoScore < 1/2 (estimated number of kminmers on a read)
                     double pseudoProb;
-                    if (pseudoScore || maxScore == 0) {
+                    if (pseudoScore < 45 / 2) {
                         pseudoProb = std::numeric_limits<double>::min();
                     } else {
                         pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
@@ -1088,7 +1089,12 @@ void scoreDFS(
                             std::vector<match_t> pseudoChain = chainPseudo(matches, coordsIndex.find(node->identifier)->second, maximumGap, minimumCount, minimumScore);
                             int32_t pseudoScore = scorePseudoChain(pseudoChain);
                             double maxScore = static_cast<double>(curReadSeedmers.first.size()) - duplicates;
-                            double pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));                            // double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size() - duplicates));
+                            double pseudoProb;
+                            if (pseudoScore < 45 / 2) {
+                                pseudoProb = std::numeric_limits<double>::min();
+                            } else {
+                                pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
+                            }
                             assert(pseudoProb <= 1.0);
                             allScores[node->identifier][i] = {pseudoScore, pseudoProb};
                         } else {
@@ -1261,9 +1267,6 @@ void mgsr::scorePseudo(
     scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, numReadDuplicates, allScores, identicalPairs, T->root, T, maximumGap, minimumCount, minimumScore, errorRate);
     std::cerr << "finished scoring DFS\n" << std::endl;
 
-    // writeScores("OP573714.1", allScores, numReadDuplicates, readSequences, readNames, "OP573714.1_scores.txt");
-    // writeScores("MW671606.1", allScores, numReadDuplicates, readSequences, readNames, "MW671606.1_scores.txt");
-    // writeScores("OM410575.1", allScores, numReadDuplicates, readSequences, readNames, "OM410575.1_scores.txt");
 
 
     // //                 node         parent
