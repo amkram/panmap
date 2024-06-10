@@ -61,7 +61,7 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
 
 
 
-  std::cout << "pbi " << pb_i << "\n";
+  std::cout << "pbi " << pb_i << std::endl;
   // std::cout << "size " << index.per_node_mutations_size() << "\n";
 
 
@@ -126,8 +126,8 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   }
   osdmfsAlex.close();
 
-if(is22){
-      exit(0);
+    if(is22){
+      //exit(0);
     }
   /* Recursive step */
   for (Node *child : node->children) {
@@ -154,6 +154,7 @@ BOOST_AUTO_TEST_CASE(performance) {
   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
 
   std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
+  //parameters = {{11, 4, 1}};
 
   for (const auto &param : parameters) {
     auto k = std::get<0>(param);
@@ -234,7 +235,7 @@ static void mutateSeedmerMap(
     std::unordered_map<int32_t, std::string> &seedmers, const std::string &nid,
     seedmerIndex_t &index,
     std::vector<std::pair<int32_t, std::string>> &seedmersToRevert) {
-  // std::cout << "Forward => " << nid << "\n";
+  
   for (const auto &op : index[nid]) {
     std::string seedmer = op.second;
     int32_t pos = op.first;
