@@ -470,6 +470,11 @@ void place::placeAccio(
     const bool& makeSam, const bool& makeBam, const bool& makeMPileup, const bool& makeVCF, const bool& makeRef, const int& maximumGap,
     const int& minimumCount, const int& minimumScore, const double& errorRate, const bool& confidence, const int32_t& roundsRemove, const double& removeThreshold
     ) {
+    bool pairedEndReads = reads2File.size();
+    std::cerr << "reads 1 file: " << reads1File << std::endl;
+    if (pairedEndReads) {
+        std::cerr << "reads 2 file: " << reads2File << std::endl;
+    }
     std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>> allScores;
     std::vector<std::pair<int32_t, std::vector<size_t>>> numReadDuplicates;
     std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
@@ -514,9 +519,9 @@ void place::placeAccio(
     std::unordered_map<std::string, std::unordered_set<size_t>> assignedReads;
     std::cerr << "\nStarting reads assignment" << std::endl;
     mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, assignedReads);
-    std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
     std::cerr << "Finished reads assignment" << std::endl;
-
+    std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
+    std::cerr << "Finished reads accuracy" << std::endl;
     std::string abundanceOutFile = prefix + ".abundance";
     std::ofstream abundanceOut(abundanceOutFile);
     abundanceOut << "@likelihood: " << llh << "\n";
@@ -541,7 +546,6 @@ void place::placeAccio(
 
     std::cerr << "Wrote abundance estimates and reads assignment data to " << abundanceOutFile << std::endl;
 
-    bool pairedEndReads = reads2File.size();
     for (const auto& node : sortedOut) {
         const std::string& nodeName = node.first;
         std::string nodeSeq = T->getStringFromReference(nodeName, false);

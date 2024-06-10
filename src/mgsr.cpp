@@ -792,6 +792,14 @@ static std::string reverseComplement(std::string dna_sequence) {
     return complement;
 }
 
+std::string toUpper(const std::string& str) {
+    std::string result = str;
+    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) {
+        return std::toupper(c);
+    });
+    return result;
+}
+
 void initializeFastq(
     const std::string &fastqPath, std::vector<std::pair<std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>>>& readSeedmers,
     std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::vector<std::vector<seeding::seed>>& readSeeds, std::vector<std::string> &readSequences,
@@ -812,19 +820,19 @@ void initializeFastq(
     int line;
     size_t curIndex = 0;
     while ((line = kseq_read(seq)) >= 0) {
-        readSequences.push_back(seq->seq.s);
+        readSequences.push_back(toUpper(seq->seq.s));
         readNames.push_back(seq->name.s);
         readQuals.push_back(seq->qual.s);
 
-        std::vector<seed> syncmers = seeding::syncmerize(seq->seq.s, k, s, false, false, 0);
+        std::vector<seed> syncmers = seeding::syncmerize(readSequences.back(), k, s, false, false, 0);
         readSeedsFwd.push_back(syncmers);
-        std::vector<seed> syncmersReverse = seeding::syncmerize(reverseComplement(seq->seq.s), k, s, false, false, 0);
+        std::vector<seed> syncmersReverse = seeding::syncmerize(reverseComplement(readSequences.back()), k, s, false, false, 0);
         readSeedsBwd.push_back(syncmersReverse);
 
-        ++dupMarkedReads[seq->seq.s].first;
-        dupMarkedReads[seq->seq.s].second.push_back(curIndex);
+        ++dupMarkedReads[readSequences.back()].first;
+        dupMarkedReads[readSequences.back()].second.push_back(curIndex);
         ++curIndex;
-    }
+    } 
 
     readSeeds.reserve( readSeedsFwd.size());
     for(int i = 0; i < readSeedsFwd.size(); i++) {
@@ -849,7 +857,13 @@ void initializeFastq(
         const std::string& seq = dupMarkedRead.first;
         const int32_t&  numDup = dupMarkedRead.second.first;
         std::vector<std::tuple<size_t, int32_t, int32_t>> curSyncmers = syncmersSketch(seq, k, s, false);
-        readSeedmers_t curKminmers = extractKminmers(curSyncmers, k, l);
+
+        readSeedmers_t curKminmers;
+        if (curSyncmers.size() < l) {
+            curKminmers = {};
+        } else {
+            curKminmers = extractKminmers(curSyncmers, k, l);
+        }
         auto it = duplicateCounts.find(curKminmers.first);
         if (it == duplicateCounts.end()) {
             duplicateCounts[curKminmers.first] = readSeedmers.size();
@@ -1047,7 +1061,12 @@ void scoreDFS(
                     double maxScore = static_cast<double>(curReadSeedmers.first.size()) - duplicates;
                     // Need to change how pseudoProb is calculated
                     // pseudoProb = 0 if pseudoScore < 1/2 (estimated number of kminmers on a read)
-                    double pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
+                    double pseudoProb;
+                    if (pseudoScore || maxScore == 0) {
+                        pseudoProb = std::numeric_limits<double>::min();
+                    } else {
+                        pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
+                    }
                     // double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size() - duplicates));
                     assert(pseudoProb <= 1.0);
                     allScores[node->identifier][i] = {pseudoScore, pseudoProb};
@@ -1355,6 +1374,7 @@ void squarem(
     assert(nodes.size() == probs.cols());
     assert(nodes.size() == props.size());
     while (true) {
+        // std::cerr << "it " << curit << std::endl;
         Eigen::VectorXd theta1 = getMax(probs, props, numReadDuplicates, numReads);
         normalize(theta1);
         Eigen::VectorXd theta2 = getMax(probs, theta1, numReadDuplicates, numReads);
@@ -1390,6 +1410,7 @@ void squarem(
                 props = std::move(newProps);
             } else {
                 while (llh - newllh > 0.00001) {
+                    // std::cerr << "alpha " << alpha << std::endl;
                     alpha = (alpha - 1) / 2;
                     theta_p = props - 2 * alpha * r + alpha * alpha * v;
                     newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
