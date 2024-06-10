@@ -75,221 +75,6 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
 }
 
 
-/*
-std::string tree::badgerNucleotideSequenceFromBlockCoordinates(
-    const tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
-    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const Tree *T, const Node *node, const globalCoords_t &globalCoords) {
-
-  // TODO handle these
-  // const auto &rotationIndexes = T->rotationIndexes;
-  // const auto &sequenceInverted = T->sequenceInverted;
-  // const auto &circularSequences = T->circularSequences;
-
-  //std::cout << "THISNODE " << node->identifier << "\n";
-
-  const auto &startBlockId = start.blockId;
-  const auto &startNuc = start.nucPos;
-  const auto &endBlockId = end.blockId;
-  auto &endNuc = end.nucPos;
-
-  std::string sequenceString;
-  // todo implement inversions
-  if (end == tupleCoord_t{-1, -1, -1}) {
-    end.blockId = sequence.size() - 1;
-    end.nucPos = sequence[end.blockId].first.size() - 1;
-    end.nucGapPos = -1;
-  }
-
-  for (int32_t i = startBlockId; i <= endBlockId; i++) {
-
-
-    // std::cout << "\n\ni: " << i;
-    if (!blockExists[i].first) { // all gaps
-                                 // std::cout << "NOT exist => ";
-      if (i == startBlockId) {
-        //  std::cout << "is start => ";
-        if (startBlockId == endBlockId) {
-          /// std::cout << "is end => ";
-          for (int32_t j = std::max(0, startNuc);
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
-               j++) {
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              sequenceString += '-';
-            }
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-            //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
-            sequenceString += '-';
-          }
-        } else {
-          //  std::cout << "is not end => ";
-          for (int32_t j = std::max(0, startNuc);
-               j <= (int32_t)sequence[i].first.size() - 1; j++) {
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              //  std::cout << "(" << i << ", " << j << ", " << k << "): -" <<
-              //  std::endl;
-              sequenceString += '-';
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              
-            }
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-            //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
-            sequenceString += '-';
-          }
-        }
-      } else {
-        // std::cout << "is not start => ";
-        if (i == endBlockId) {
-          //  std::cout << "is end => ";
-          for (int32_t j = 0;
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
-               j++) {
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              // std::cout << "(" << i << ", " << j << ", " << k << "): -" <<
-              // std::endl;
-              sequenceString += '-';
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              
-            }
-            // std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
-            sequenceString += '-';
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-          }
-        } else {
-          //  std::cout << "is not end => ";
-          for (int32_t j = 0; j < sequence[i].first.size(); j++) {
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              //  std::cout << "(" << i << ", " << j << ", " << k << "): -" <<
-              //  std::endl;
-              sequenceString += '-';
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              
-            }
-            //  std::cout << "(" << i << ", " << j << ", -1): -" << std::endl;
-            sequenceString += '-';
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-          }
-        }
-      }
-    } else {
-      //  std::cout << "exists => ";
-      // block exists
-      if (i == startBlockId) {
-        //  std::cout << "is start => ";
-        if (startBlockId == endBlockId) {
-          //  std::cout << "is end => ";
-          for (int32_t j = std::max(0, startNuc);
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
-               j++) {
-            char nuc;
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              nuc = sequence[i].first[j].second[k];
-              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
-              // << std::endl;
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              
-
-              sequenceString += (nuc == 'x') ? '-' : nuc;
-              // std::cout << "AAA ? " << nuc << " what? " << (nuc == 'x') <<
-              // "\n"; std::cout << "now sequenceString: " << sequenceString <<
-              // "\n";
-            }
-            nuc = sequence[i].first[j].first;
-            // std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
-            // std::endl;
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-            sequenceString += (nuc == 'x') ? '-' : nuc;
-            // std::cout << "huh ? " << nuc << " what? " << (nuc == 'x') <<
-            // "\n"; std::cout << "now sequenceString: " << sequenceString <<
-            // "\n";
-          }
-        } else {
-          // std::cout << "is not end => ";
-          for (int32_t j = std::max(0, startNuc); j < sequence[i].first.size();
-               j++) {
-            char nuc;
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              nuc = sequence[i].first[j].second[k];
-              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
-              // << std::endl;
-              sequenceString += nuc == 'x' ? '-' : nuc;
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              
-            }
-            nuc = sequence[i].first[j].first;
-            sequenceString += nuc == 'x' ? '-' : nuc;
-            // std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
-            // std::endl;
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-          }
-        }
-      } else {
-        //  std::cout << "is not start => ";
-        if (i == endBlockId) {
-          //  std::cout << "is end => ";
-          for (int32_t j = 0;
-               j <= std::min(endNuc, (int32_t)sequence[i].first.size() - 1);
-               j++) {
-            char nuc;
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              nuc = sequence[i].first[j].second[k];
-              // std::cout << "(" << i << ", " << j << ", " << k << "): " << nuc
-              // << std::endl;
-              sequenceString += (nuc == 'x') ? '-' : nuc;
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              
-              // std::cout << "NUC: " << nuc << " is x? " << (nuc == 'x') <<
-              // "\n"; std::cout << "now sequenceString: " << sequenceString <<
-              // "\n";
-            }
-            nuc = sequence[i].first[j].first;
-            //  std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
-            //  std::endl;
-            sequenceString += (nuc == 'x') ? '-' : nuc;
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-            // std::cout << "TEE: " << nuc << " is x? " << (nuc == 'x') << "\n";
-            // std::cout << "now sequenceString: " << sequenceString << "\n";
-          }
-        } else {
-          //  std::cout << "is not end => ";
-          for (int32_t j = 0; j < sequence[i].first.size(); j++) {
-            char nuc;
-            for (int32_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-              nuc = sequence[i].first[j].second[k];
-              //  std::cout << "(" << i << ", " << j << ", " << k << "): " <<
-              //  nuc << std::endl;
-              sequenceString += nuc == 'x' ? '-' : nuc;
-              int64_t gc = getGlobalCoordinate(i, j, k, globalCoords);
-              
-            }
-            nuc = sequence[i].first[j].first;
-            //  std::cout << "(" << i << ", " << j << ", -1): " << nuc <<
-            //  std::endl;
-            sequenceString += nuc == 'x' ? '-' : nuc;
-            int64_t gc = getGlobalCoordinate(i, j, -1, globalCoords);
-            
-          }
-        }
-      }
-    }
-  }
-  return sequenceString;
-}
-*/
-
-
-
-
-
-
 
 
 /*
@@ -518,7 +303,6 @@ void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords,
 
   for (size_t i = 0; i < blocks.size(); i++) {
     int32_t b = ((int32_t)blocks[i].primaryBlockId);
-    // std::cerr << b << "hello " << i << "\n";
     maxBlock = std::max(maxBlock, b);
     for (size_t j = 0; j < blocks[i].consensusSeq.size(); j++) {
       bool stop = false;
@@ -571,16 +355,13 @@ int64_t tree::getGlobalCoordinate(const int blockId, const int nucPosition,
   }
 
   if (nucGapPosition == -1) {
-    // std::cout << "accessing globalCoords[" << blockId << "].first[" <<
-    // nucPosition << "].first\n";
     return globalCoords[blockId].first[nucPosition].first;
   }
 
   if (globalCoords[blockId].first[nucPosition].second.size() == 0) {
     return globalCoords[blockId].first[nucPosition].first;
   }
-  // std::cout << "** accessing globalCoords[" << blockId << "].first[" <<
-  // nucPosition << "].second[" << nucGapPosition << "]\n";
+
   return globalCoords[blockId].first[nucPosition].second[nucGapPosition];
 }
 static int getIndexFromNucleotide(char nuc) {
