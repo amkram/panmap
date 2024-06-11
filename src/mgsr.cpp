@@ -1039,8 +1039,9 @@ void scoreDFS(
     mgsr::seedmers& seedmers, const std::unordered_map<std::string, std::pair<int32_t, std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>>>>& seedmersIndex,
     const std::unordered_map<std::string, std::map<int32_t, int32_t>>& coordsIndex,
     const std::vector<std::pair<std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>>>& readSeedmers,
-    const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
-    std::unordered_map<std::string, std::string>& identicalPairs, const Node *node, Tree *T,
+    const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::vector<bool>& lowScoreReads,
+    std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
+    std::unordered_map<std::string, std::string>& identicalPairs, const Node *node, Tree *T, std::atomic<size_t>& numLowScoreReads,
     const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate
     ) {
     // std::cerr << "identifier " << node->identifier << std::endl;
@@ -1067,6 +1068,10 @@ void scoreDFS(
                         pseudoProb = std::numeric_limits<double>::min();
                     } else {
                         pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
+                        if (lowScoreReads[i]) {
+                            lowScoreReads[i] = false;
+                            --numLowScoreReads;
+                        }
                     }
                     // double  pseudoProb  = static_cast<double>(pseudoScore) / (static_cast<double>(curReadSeedmers.first.size() - duplicates));
                     assert(pseudoProb <= 1.0);
@@ -1094,6 +1099,10 @@ void scoreDFS(
                                 pseudoProb = std::numeric_limits<double>::min();
                             } else {
                                 pseudoProb = pow(errorRate, maxScore - static_cast<double>(pseudoScore)) * pow(1 - errorRate, static_cast<double>(pseudoScore));
+                                if (lowScoreReads[i]) {
+                                    lowScoreReads[i] = false;
+                                    --numLowScoreReads;
+                                }
                             }
                             assert(pseudoProb <= 1.0);
                             allScores[node->identifier][i] = {pseudoScore, pseudoProb};
@@ -1107,7 +1116,7 @@ void scoreDFS(
 
 
     for (Node *child : node->children) {
-        scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, numReadDuplicates, allScores, identicalPairs, child, T, maximumGap, minimumCount, minimumScore, errorRate);
+        scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, numReadDuplicates, lowScoreReads, allScores, identicalPairs, child, T, numLowScoreReads, maximumGap, minimumCount, minimumScore, errorRate);
     }
     revertSeedmers(seedmers, seedmersToRevert);
 }
@@ -1179,10 +1188,11 @@ void writeScores(
 void mgsr::scorePseudo(
     std::ifstream &indexFile, const std::string &reads1Path, const std::string &reads2Path,
     std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, 
-    std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
-    std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, int32_t& numReads, Tree *T,
+    std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates, std::vector<bool>& lowScoreReads,
+    std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
+    std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Tree *T,
     std::vector<std::vector<seeding::seed>>& readSeeds, std::vector<std::string>& readSequences, std::vector<std::string>& readQuals,
-    std::vector<std::string>& readNames, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate
+    std::vector<std::string>& readNames, std::atomic<size_t>& numLowScoreReads, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate
     ) {
     // get read seeds
     std::string line;
@@ -1256,15 +1266,15 @@ void mgsr::scorePseudo(
     std::cerr << "start initializing read seedmers" << std::endl; 
     initializeFastq(reads1Path, readSeedmers, numReadDuplicates, readSeeds, readSequences, readQuals, readNames, tempK, tempS, tempJ);
     assert(readSeedmers.size() == numReadDuplicates.size());
-    numReads = readSequences.size();
+    lowScoreReads.resize(readSeedmers.size(), true);
     std::cerr << "finished initializing read seedmers... total number of reads " << readSequences.size() << "\n" << std::endl;
 
     std::cerr << "start scoring DFS" << std::endl;
     mgsr::seedmers seedmers;
     size_t totalCount = 0;
     size_t redoCount = 0;
-    
-    scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, numReadDuplicates, allScores, identicalPairs, T->root, T, maximumGap, minimumCount, minimumScore, errorRate);
+    numLowScoreReads = readSeedmers.size();
+    scoreDFS(seedmers, seedmersIndex, coordsIndex, readSeedmers, numReadDuplicates, lowScoreReads, allScores, identicalPairs, T->root, T, numLowScoreReads, maximumGap, minimumCount, minimumScore, errorRate);
     std::cerr << "finished scoring DFS\n" << std::endl;
 
 
@@ -1436,9 +1446,56 @@ void squarem(
 
 void mgsr::squaremHelper(
     PangenomeMAT::Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
-    const int32_t& numReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    const std::vector<bool>& lowScoreReads, const int32_t& numReads, const size_t& numLowScoreReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
     Eigen::MatrixXd& probs, std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude
     ) {
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "starting to set up EM" << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "starting to set up EM excluding " << exclude << "\n";
+        std::cerr << msg.str();
+    }
+
+
+    if (!exclude.empty()) {
+        probs.resize(allScores.begin()->second.size() - numLowScoreReads, allScores.size() - leastRecentIdenticalAncestors.size() - 1);
+    } else {
+        probs.resize(allScores.begin()->second.size() - numLowScoreReads, allScores.size() - leastRecentIdenticalAncestors.size());
+    }
+    size_t colIndex = 0;
+    for (const auto& node : allScores) {
+        if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
+        if (!exclude.empty() && node.first == exclude) continue;
+        std::vector<double> curProbs;
+        size_t rowIndex = 0;
+        for (size_t i = 0; i < node.second.size(); ++i) {
+            if (!lowScoreReads[i]) {
+                const auto& score = node.second[i];
+                probs(rowIndex, colIndex) = score.second;
+                ++rowIndex;
+            }
+        }
+        nodes.push_back(node.first);
+        ++colIndex;
+    }
+
+    // std::cerr << "num nodes " << nodes.size() << std::endl;
+    props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
+    Eigen::VectorXd readDuplicates(allScores.begin()->second.size() - numLowScoreReads);
+    
+    size_t indexReadDuplicates = 0;
+    int32_t numHighScoreReads = 0;
+    for (size_t i = 0; i < numReadDuplicates.size(); ++i) {
+        if (!lowScoreReads[i]) {
+            readDuplicates(indexReadDuplicates) = numReadDuplicates[i].first;
+            numHighScoreReads += numReadDuplicates[i].first;
+            ++indexReadDuplicates;
+        }
+    }
+
     if (exclude.empty()) {
         std::stringstream msg;
         msg << "starting EM estimation of haplotype proportions" << "\n";
@@ -1449,38 +1506,10 @@ void mgsr::squaremHelper(
         std::cerr << msg.str();
     }
 
-
-    if (!exclude.empty()) {
-        probs.resize(allScores.begin()->second.size(), allScores.size() - leastRecentIdenticalAncestors.size() - 1);
-    } else {
-        probs.resize(allScores.begin()->second.size(), allScores.size() - leastRecentIdenticalAncestors.size());
-    }
-    size_t colIndex = 0;
-    for (const auto& node : allScores) {
-        if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
-        if (!exclude.empty() && node.first == exclude) continue;
-        std::vector<double> curProbs;
-        size_t rowIndex = 0;
-        for (const auto& score : node.second) {
-            probs(rowIndex, colIndex) = score.second;
-            ++rowIndex;
-        }
-        nodes.push_back(node.first);
-        ++colIndex;
-    }
-
-    // std::cerr << "num nodes " << nodes.size() << std::endl;
-    props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
-    Eigen::VectorXd readDuplicates(allScores.begin()->second.size());
-    for (size_t i = 0; i < numReadDuplicates.size(); ++i) {
-        readDuplicates(i) = numReadDuplicates[i].first;
-    }
-
-    
     int curit = 0;
     llh = getExp(probs, props, readDuplicates);
     // std::cerr << "iteration " << curit << ": " << llh << std::endl;
-    squarem(nodes, probs, identicalSets, readDuplicates, numReads, props, llh, curit);
+    squarem(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit);
 
     for (int32_t i = 0; i < roundsRemove; ++i) {
         std::vector<size_t> significantIndices;
@@ -1505,16 +1534,22 @@ void mgsr::squaremHelper(
         }
         Eigen::VectorXd sigProps = Eigen::VectorXd::Constant(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
         llh = getExp(sigProbs, sigProps, readDuplicates);
-        squarem(sigNodes, sigProbs, identicalSets, readDuplicates, numReads, sigProps, llh, curit);
+        squarem(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit);
         nodes = std::move(sigNodes);
         probs = std::move(sigProbs);
         props = std::move(sigProps);
     }
 
     if (!exclude.empty()) {
-        Eigen::VectorXd curProbs(numReads);
-        for (size_t i = 0; i < numReads; ++i) {
-            curProbs(i) = allScores.at(exclude)[i].second;
+        Eigen::VectorXd curProbs(allScores.begin()->second.size() - numLowScoreReads);
+        size_t indexCurProbs = 0;
+        const auto& curNode = allScores.at(exclude);
+        for (size_t i = 0; i < curNode.size(); ++i) {
+            if (!lowScoreReads[i]) {
+                const auto& score = curNode[i];
+                curProbs(indexCurProbs) = score.second;
+                ++indexCurProbs;
+            }
         }
 
         probs = probs, curProbs;
@@ -1538,31 +1573,22 @@ void mgsr::accio(
     const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
     const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs, const Eigen::VectorXd& props,
     const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
-    std::unordered_map<std::string, std::unordered_set<size_t>>& assignedReads
+    const std::vector<bool>& lowScoreReads, std::unordered_map<std::string, std::unordered_set<size_t>>& assignedReads
     ) {
-        for (size_t i = 0; i < probs.rows(); ++i) {
-            const Eigen::VectorXd& curprobs = probs.row(i);
-            double curmax = curprobs.maxCoeff();
-            // size_t numMax = 0;
-            // size_t maxIdx = std::numeric_limits<size_t>::max();
-            for (size_t j = 0; j < curprobs.size(); ++j) {
-                if (curmax == curprobs(j)) {
-                    // ++numMax;
-                    // maxIdx = j;
-                    for (size_t readIndex : numReadDuplicates[i].second) {
-                        assignedReads[nodes[j]].insert(readIndex);
-                    }
+    size_t rowindex = 0;
+    for (size_t i = 0; i < numReadDuplicates.size(); ++i) {
+        if (lowScoreReads[i]) continue;
+        const Eigen::VectorXd& curprobs = probs.row(rowindex);
+        ++rowindex;
+        double curmax = curprobs.maxCoeff();
+        for (size_t j = 0; j < curprobs.size(); ++j) {
+            if (curmax == curprobs(j)) {
+                for (size_t readIndex : numReadDuplicates[i].second) {
+                    assignedReads[nodes[j]].insert(readIndex);
                 }
             }
-            // assert(numMax >= 1);
-            // if (numMax == 1) {
-            //     for (size_t readIndex : numReadDuplicates[i].second) {
-            //         assignedReads[nodes[maxIdx]].second.insert(readIndex);
-            //     }
-            // }
-
         }
-
+    }
 }
 
 std::unordered_map<std::string, std::pair<double, double>> mgsr::getReadAssignmentAccuracy(

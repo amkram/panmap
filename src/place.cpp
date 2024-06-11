@@ -483,19 +483,31 @@ void place::placeAccio(
     std::vector<std::string> readQuals;
     std::vector<std::string> readNames;
     std::vector<std::vector<seeding::seed>> readSeeds;
+    std::vector<bool> lowScoreReads;
+    std::atomic<size_t> numLowScoreReads;
     std::ifstream seedmersIndex(defaultKmiPath);
-    int32_t numReads;
-    mgsr::scorePseudo(seedmersIndex, reads1File, reads2File, allScores, numReadDuplicates, leastRecentIdenticalAncestor, identicalSets, numReads, T, readSeeds, readSequences, readQuals, readNames, maximumGap, minimumCount, minimumScore, errorRate);       
+    mgsr::scorePseudo(seedmersIndex, reads1File, reads2File, allScores, numReadDuplicates, lowScoreReads, leastRecentIdenticalAncestor, identicalSets, T, readSeeds, readSequences, readQuals, readNames, numLowScoreReads, maximumGap, minimumCount, minimumScore, errorRate);       
+    size_t numLowScoreReadsTrue = 0;
+    for (const auto& low : lowScoreReads) {
+        if (low) ++numLowScoreReadsTrue;
+    }
+    size_t totalNumLowScoreReads = 0;
+    for (size_t i = 0; i < numReadDuplicates.size(); ++i) {
+        assert(numReadDuplicates[i].first == numReadDuplicates[i].second.size());
+        if (lowScoreReads[i]) continue;
+        totalNumLowScoreReads += numReadDuplicates[i].first;
+    }
+    size_t numReads = readSequences.size();
     Eigen::MatrixXd probs;
     Eigen::VectorXd props;
     std::vector<std::string> nodes;
     double llh;
-    mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
-
+    mgsr::squaremHelper(T, allScores, numReadDuplicates, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
     std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
     for (size_t i = 0; i < nodes.size(); ++i) {
         sortedOut.at(i) = {nodes[i], props(i)};
     }
+
     std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
         return a.second > b.second;
     });
@@ -509,7 +521,7 @@ void place::placeAccio(
                 Eigen::VectorXd curprops;
                 std::vector<std::string> curnodes;
                 double curllh;
-                mgsr::squaremHelper(T, allScores, numReadDuplicates, numReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
+                mgsr::squaremHelper(T, allScores, numReadDuplicates, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
                 exclllhs.at(i) = curllh;
                 llhdiffs.at(i) = llh - curllh;
             }
@@ -518,7 +530,7 @@ void place::placeAccio(
 
     std::unordered_map<std::string, std::unordered_set<size_t>> assignedReads;
     std::cerr << "\nStarting reads assignment" << std::endl;
-    mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, assignedReads);
+    mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, lowScoreReads, assignedReads);
     std::cerr << "Finished reads assignment" << std::endl;
     std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
     std::cerr << "Finished reads accuracy" << std::endl;
