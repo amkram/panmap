@@ -464,9 +464,12 @@ tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
 
     if (!blockExists[coord.blockId].first)
     {
-      // TODO jump down to prev block
-
-      coord = navigator.decrement(coord);
+      //Jump down to previous block
+      if(coord.blockId == 0){
+        return tupleCoord_t{0,0,0};
+      }else{
+        coord = tupleCoord_t{coord.blockId - 1, navigator.sequence[coord.blockId - 1].first.size() - 1, -1};
+      }
       
       continue;
     }
@@ -492,10 +495,23 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
   while (count < neededNongap && coord < tupleCoord_t{-1, -1, -1})
   {
 
-    if (!blockExists[coord.blockId].first) // TODO jump to next block 
+    if (!blockExists[coord.blockId].first)
     {
-      coord = navigator.increment(coord);
 
+      //Jump to next block
+      if(coord.blockId == navigator.sequence.size() - 1){
+        return tupleCoord_t{-1,-1,-1};
+      }else{
+
+        coord.blockId += 1;
+        coord.nucPos = 0;
+        coord.nucGapPos = 0;
+        if(navigator.sequence[coord.blockId].first[0].second.empty()) {
+          coord.nucGapPos = -1;
+        }
+
+      }
+      
       continue;
     }
 
