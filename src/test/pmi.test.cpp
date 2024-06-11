@@ -171,7 +171,7 @@ BOOST_AUTO_TEST_CASE(performance) {
 
     buildHelper2(index, T, T->root, pb_i, seedmersAlex);
 
-    //exit(0);
+    exit(0);
 
     for (auto &n : T->allNodes) {
       std::string node_idn = n.first;
