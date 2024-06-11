@@ -6,12 +6,13 @@
 #include "seeding.hpp"
 #include "tree.hpp"
 #include "index.pb.h"
+#include <unordered_map>
 
 using namespace PangenomeMAT;
 using namespace seeding;
 using namespace tree;
 
-typedef std::map<tupleCoord_t, std::string> seedMap_t;
+typedef std::unordered_map<tupleCoord_t, std::string, TupleHash> seedMap_t;
 
 namespace pmi { // functions and types for seed indexing
 
