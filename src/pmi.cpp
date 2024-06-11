@@ -38,7 +38,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
   // nucleotide is a gap list.
 
   // Block Mutations
-  
+
   for (auto mutation : node->blockMutation)
   {
 
@@ -456,7 +456,7 @@ void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
 tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
                         int neededNongap, blockExists_t &blockExists)
 {
-
+  
   int count = 0;
 
   while (count < neededNongap && coord > tupleCoord_t{0, 0, 0})
@@ -511,6 +511,9 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
   return coord;
 }
 
+
+
+
 // Merges each range with overlapping ranges after expanding left and right
 // by `neededNongap` non-gap nucleotides.
 std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
@@ -524,6 +527,7 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
 
   std::vector<tupleRange> merged;
 
+
   tupleRange current = {
       expandLeft(navigator, ranges[0].start, neededNongap, blockExists),
       expandRight(navigator, ranges[0].stop, neededNongap, blockExists),
@@ -531,6 +535,8 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
 
 
   for (size_t i = 1; i < ranges.size(); ++i) {
+
+    
     tupleRange expandedRange = {
         expandLeft(navigator, ranges[i].start, neededNongap, blockExists),
         expandRight(navigator, ranges[i].stop, neededNongap, blockExists),
@@ -548,6 +554,7 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
     }
   }
   merged.push_back(current);
+
 
   return merged;
 }
@@ -567,6 +574,9 @@ int64_t tupleToScalarCoord(const tupleCoord_t &coord,
   return globalCoords[coord.blockId].first[coord.nucPos].first;
 }
 
+
+int devious = 0;
+
 // Recursive function to build the seed index
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                  Tree *T, Node *node, globalCoords_t &globalCoords,
@@ -575,6 +585,10 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
   blockMutationInfo_t blockMutationInfo;
   mutationInfo_t mutationInfo;
+
+
+  std::cout << "deviosus is " << devious << std::endl;
+  devious++;
   
 
   // First, a range is made marking the start -> end
@@ -586,14 +600,27 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   
 
   std::sort(recompRanges.begin(), recompRanges.end());
+
+  std::cout << "BBBBBB" << recompRanges.size() << std::endl;
    
 
   std::vector<tupleCoord_t> seedsToClear; // seeds to clear from seedMap
   std::vector<std::pair<tupleCoord_t, std::string>> addSeeds;
   std::vector<std::pair<tupleCoord_t, std::string>> backtrack;
 
-  std::vector<tupleRange> merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists);
 
+  std::vector<tupleRange> merged;
+  merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists);
+
+  std::cout << "CCCCC " << merged.size() << std::endl;
+
+  /*
+  tupleCoord_t start = {0, 0, 0};
+  tupleCoord_t end = {-1, -1, -1};
+  tupleRange fullseqRange = {start, end};
+  merged.clear();
+  merged.push_back(fullseqRange);
+  */
   
 
 
@@ -606,11 +633,13 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   for (auto &range : std::ranges::reverse_view(merged))
   {
 
-    std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
 
+    std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
+    std::cout << "EEEEEE" << recomputeSeq.size() <<  std::endl;
     
     // Track the last downstream seed to stack k-mers into seedmers
     tupleCoord_t lastDownstreamSeedPos = range.stop;
+    /*
     auto boundItr = seedMap.upper_bound(range.stop);
     if (boundItr == seedMap.end())
     {
@@ -619,7 +648,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     else
     {
       lastDownstreamSeedPos = boundItr->first;
-    }
+    }*/
 
 
     
@@ -693,7 +722,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         }
       }
 
-      //TODO HERE
+      
       if (data.blockExists[currCoord.blockId].first && recomputeSeq[str_i] == '-' ||
                recomputeSeq[str_i] ==
                    'x')
@@ -799,7 +828,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   } 
 
 
-
+  
   for (const auto &pos : seedsToClear)
   {
     if (seedMap.find(pos) != seedMap.end())
@@ -808,16 +837,18 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     }
   }
 
-
+  
   for (const auto &seed : addSeeds) {
     seedMap[seed.first] = seed.second;
   }
 
   /* Recursive step */
   for (Node *child : node->children) {
+    
     buildHelper(data, seedMap, index, T, child, globalCoords, navigator);
   }
 
+  
   // undo seed mutations
   for (const auto &back : backtrack)
   {
@@ -846,7 +877,7 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
   index.set_k(k);
   index.set_s(s);
 
-  std::cout << "Building index\n";
+  std::cout << "Building index" << std::endl;
 
   // Stores seed(mer)s at positions where one exists (in tuple global coords).
   // At each node, seedMap is updated to contain seeds present in the node.
@@ -865,6 +896,9 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
   //       tuple coordinates is: {0,2,0}, {0,2,1}, {0,2,2}, {0,2,-1}, {0,3,-1}, {1,0,0}, ...
   //
   CoordNavigator navigator(data.sequence);
+
+
+  std::cout << "AAAAA" << std::endl;
 
   /* Recursive traversal of tree to build the index */
   buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator);
