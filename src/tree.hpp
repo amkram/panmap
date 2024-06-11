@@ -54,6 +54,21 @@ struct tupleCoord_t {
     bool operator>(const tupleCoord_t &rhs) const {
         return !(*this < rhs || *this == rhs);
     }
+
+};
+
+
+struct TupleHash { //TODO
+  std::size_t operator()(const tupleCoord_t& s) const noexcept {
+
+    std::size_t seed = 0;
+
+    seed ^= s.blockId + 0x9e3779b9 + (seed<<6) + (seed>>2);
+    seed ^= s.nucPos + 0x9e3779b9 + (seed<<6) + (seed>>2);
+    seed ^= s.nucGapPos + 0x9e3779b9 + (seed<<6) + (seed>>2);
+
+    return seed; // or use boost::hash_combine
+  }
 };
 
 
