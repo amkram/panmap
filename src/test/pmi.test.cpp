@@ -142,7 +142,7 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
 
 BOOST_AUTO_TEST_CASE(performance) {
 
-  std::string pmat = "sars2k.pmat";
+  std::string pmat = "sars_20000.pmat";
 
   std::ifstream ifs("../dev/examples/pmats/"+pmat);
   boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
