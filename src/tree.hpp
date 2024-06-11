@@ -162,7 +162,7 @@ public:
   }
 
 
-private:
+public:
   sequence_t &sequence;
 };
 
