@@ -11,6 +11,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range2d.h>
 #include <tbb/parallel_reduce.h>
+#include <tbb/global_control.h>
 #include "PangenomeMAT.hpp"
 #include "seeding.hpp"
 #include "mgsr.hpp"
@@ -1048,10 +1049,10 @@ void scoreDFS(
     std::vector<std::tuple<int32_t, int32_t, size_t, bool, int16_t>> seedmersToRevert;
     std::unordered_set<size_t> affectedSeedmers;
     mutateSeedmers(seedmers, seedmersIndex.find(node->identifier)->second, coordsIndex.find(node->identifier)->second, affectedSeedmers, seedmersToRevert);
-
+    size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
     if (node->identifier == T->root->identifier) {
         allScores[node->identifier].resize(readSeedmers.size());
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, readSeedmers.size(), 1000),
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, readSeedmers.size(), readSeedmers.size() / num_cpus),
             [&](const tbb::blocked_range<size_t>& range) {
                 for (size_t i = range.begin(); i < range.end(); ++i) {
                     const auto& curReadSeedmers = readSeedmers[i];
@@ -1084,7 +1085,7 @@ void scoreDFS(
             identicalPairs[node->identifier] = node->parent->identifier;
             allScores[node->identifier] = allScores[node->parent->identifier];
         } else {
-            tbb::parallel_for(tbb::blocked_range<size_t>(0, readSeedmers.size(), 1000),
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, readSeedmers.size(), readSeedmers.size() / num_cpus),
                 [&](const tbb::blocked_range<size_t>& range) {
                     for (size_t i = range.begin(); i < range.end(); ++i) {
                         const auto& curReadSeedmers = readSeedmers[i];
