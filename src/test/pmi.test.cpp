@@ -142,14 +142,20 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
 
 BOOST_AUTO_TEST_CASE(performance) {
 
-  std::string pmat = "sars_20000.pmat";
+  std::string pmat = "sars2k.pmat";
+  
+  std::cout << "Starting tests with " << pmat << std::endl;
 
   std::ifstream ifs("../dev/examples/pmats/"+pmat);
   boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
   b.push(boost::iostreams::gzip_decompressor());
   b.push(ifs);
   std::istream is(&b);
+
+  std::cout << "Parsing Tree" << std::endl;
+
   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
+
 
   std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
   //parameters = {{11, 4, 1}};
@@ -164,6 +170,9 @@ BOOST_AUTO_TEST_CASE(performance) {
 
     SeedmerIndex index;
     pmi::build(index, T, j, k, s);
+
+    //exit(0);
+
     std::ofstream fout("../dev/eval-performance/"+pmat+".pmi");
     index.SerializeToOstream(&fout);
     std::map<int32_t, std::string> seedmersAlex;
@@ -171,7 +180,7 @@ BOOST_AUTO_TEST_CASE(performance) {
 
     buildHelper2(index, T, T->root, pb_i, seedmersAlex);
 
-    exit(0);
+    //exit(0);
 
     for (auto &n : T->allNodes) {
       std::string node_idn = n.first;
