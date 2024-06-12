@@ -487,16 +487,6 @@ void place::placeAccio(
     std::atomic<size_t> numLowScoreReads;
     std::ifstream seedmersIndex(defaultKmiPath);
     mgsr::scorePseudo(seedmersIndex, reads1File, reads2File, allScores, numReadDuplicates, lowScoreReads, leastRecentIdenticalAncestor, identicalSets, T, readSeeds, readSequences, readQuals, readNames, numLowScoreReads, maximumGap, minimumCount, minimumScore, errorRate);       
-    size_t numLowScoreReadsTrue = 0;
-    for (const auto& low : lowScoreReads) {
-        if (low) ++numLowScoreReadsTrue;
-    }
-    size_t totalNumLowScoreReads = 0;
-    for (size_t i = 0; i < numReadDuplicates.size(); ++i) {
-        assert(numReadDuplicates[i].first == numReadDuplicates[i].second.size());
-        if (lowScoreReads[i]) continue;
-        totalNumLowScoreReads += numReadDuplicates[i].first;
-    }
     size_t numReads = readSequences.size();
     Eigen::MatrixXd probs;
     Eigen::VectorXd props;
@@ -514,6 +504,7 @@ void place::placeAccio(
 
     std::vector<double> llhdiffs(nodes.size());
     std::vector<double> exclllhs(nodes.size());
+    std::unordered_map<std::string, std::pair<double, double>> confidenceInfo;
     if (confidence) {
         tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes.size()), [&](const tbb::blocked_range<size_t>& range) {
             for (size_t i = range.begin(); i < range.end(); ++i) {
@@ -522,8 +513,7 @@ void place::placeAccio(
                 std::vector<std::string> curnodes;
                 double curllh;
                 mgsr::squaremHelper(T, allScores, numReadDuplicates, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
-                exclllhs.at(i) = curllh;
-                llhdiffs.at(i) = llh - curllh;
+                confidenceInfo[nodes[i]] = std::make_pair(curllh,llh - curllh);
             }
         });
     }
@@ -537,6 +527,11 @@ void place::placeAccio(
     std::string abundanceOutFile = prefix + ".abundance";
     std::ofstream abundanceOut(abundanceOutFile);
     abundanceOut << "@likelihood: " << llh << "\n";
+    if (confidence) {
+        abundanceOut << "nid\tprop\tnread\tllh\tconf\n";
+    } else {
+        abundanceOut << "nid\tprop\tnread\n";
+    }
     for (size_t i = 0; i < sortedOut.size(); ++i) {
         const auto& node = sortedOut[i];
         abundanceOut << node.first;
@@ -547,12 +542,16 @@ void place::placeAccio(
         }
         abundanceOut << "\t"
                   << node.second << "\t"
-                  << assignedReads[node.first].size() << "\t"
-                  << readAssignmentAccuracy[node.first].first << "\t"
-                  << readAssignmentAccuracy[node.first].second;
+                  << assignedReads[node.first].size();
+
+        if (confidence) {
+            abundanceOut << "\t" << confidenceInfo.at(node.first).first << "\t" << confidenceInfo.at(node.first).second;
+        }
         // std::cout << "\n";
 
         /* for assessing read assignment accuracy*/
+        abundanceOut << "\t" << readAssignmentAccuracy[node.first].first
+                     << "\t" << readAssignmentAccuracy[node.first].second;
         abundanceOut << "\t" << readAssignmentAccuracy[node.first].first / readAssignmentAccuracy[node.first].second << "\n";
     }
 
