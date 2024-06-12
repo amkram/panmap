@@ -596,7 +596,7 @@ int devious = 0;
 // Recursive function to build the seed index
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                  Tree *T, Node *node, globalCoords_t &globalCoords,
-                 CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId)
+                 CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds)
 {
 
   blockMutationInfo_t blockMutationInfo;
@@ -654,7 +654,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
 
     std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
-    std::cout << "EEEEEE" << recomputeSeq.size() <<  std::endl;
+    //std::cout << "EEEEEE" << recomputeSeq.size() <<  std::endl;
     
     // Track the last downstream seed to stack k-mers into seedmers
     tupleCoord_t lastDownstreamSeedPos = range.stop;
@@ -782,7 +782,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
           }
           k_pos++;
         }
-        
+      
         
         if (seedMap.find(str_i + startScalar) != seedMap.end())
         {
@@ -852,28 +852,42 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     if (seedMap.find(pos) != seedMap.end())
     {
       seedMap.erase(pos);
+
+      int blockId = scalarCoordToBlockId[pos];
+      BlocksToSeeds[blockId].erase(pos);
     }
   }
 
   
   for (const auto &seed : addSeeds) {
     seedMap[seed.first] = seed.second;
+
+
+    int blockId = scalarCoordToBlockId[seed.first];
+    BlocksToSeeds[blockId].insert(seed.first);
+
   }
 
   /* Recursive step */
   for (Node *child : node->children) {
     
-    buildHelper(data, seedMap, index, T, child, globalCoords, navigator, scalarCoordToBlockId);
+    buildHelper(data, seedMap, index, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds);
   }
 
   
   // undo seed mutations
   for (const auto &back : backtrack)
   {
+    int blockId = scalarCoordToBlockId[back.first];
+
     if(back.second == ""){
       seedMap.erase(back.first);
+
+      BlocksToSeeds[blockId].erase(back.first);
     }else{
       seedMap[back.first] = back.second;
+
+      BlocksToSeeds[blockId].insert(back.first);
     }
   }
 
@@ -929,8 +943,12 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
   }
 
 
-  std::cout << "AAAAA" << std::endl;
+  std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
+  std::cout << "SIZE " << data.sequence.size() << "\n";
+
+
+  //std::cout << "AAAAA" << std::endl;
 
   /* Recursive traversal of tree to build the index */
-  buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator, scalarCoordToBlockId);
+  buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds);
 }
