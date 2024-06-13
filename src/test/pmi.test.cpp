@@ -65,13 +65,11 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   // std::cout << "size " << index.per_node_mutations_size() << "\n";
 
 
-
-  NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_i);  //somthing bad
+  NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_i);
 
   // std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
 
   std::string node_idn = node->identifier;
-  bool is22 = (node->identifier == "OL776362.1");
 
 
   std::vector<std::pair<int32_t, std::string>> backtrack;
@@ -126,9 +124,6 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   }
   osdmfsAlex.close();
 
-    if(is22){
-      //exit(0);
-    }
   /* Recursive step */
   for (Node *child : node->children) {
     
@@ -146,12 +141,21 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
 }
 
 BOOST_AUTO_TEST_CASE(performance) {
-  std::ifstream ifs("../dev/examples/sars2k.pmat");
+
+  std::string pmat = "sars2k.pmat";
+  
+  std::cout << "Starting tests with " << pmat << std::endl;
+
+  std::ifstream ifs("../dev/examples/pmats/"+pmat);
   boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
   b.push(boost::iostreams::gzip_decompressor());
   b.push(ifs);
   std::istream is(&b);
+
+  std::cout << "Parsing Tree" << std::endl;
+
   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
+
 
   std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
   //parameters = {{11, 4, 1}};
@@ -166,19 +170,21 @@ BOOST_AUTO_TEST_CASE(performance) {
 
     SeedmerIndex index;
     pmi::build(index, T, j, k, s);
-    std::ofstream fout("../dev/eval-performance/sars2k.pmi");
+
+    //exit(0);
+
+    std::ofstream fout("../dev/eval-performance/"+pmat+".pmi");
     index.SerializeToOstream(&fout);
     std::map<int32_t, std::string> seedmersAlex;
     int32_t pb_i = 0;
 
     buildHelper2(index, T, T->root, pb_i, seedmersAlex);
 
-    exit(0);
+    //exit(0);
 
     for (auto &n : T->allNodes) {
       std::string node_idn = n.first;
       std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
-      std::string outSeedmersPathNico = dirName + node_idn + ".true.nico.pmi";
       Node *nod= n.second;
       
       std::string node_seq = tree::getStringAtNode(nod, T, true);
@@ -199,34 +205,6 @@ BOOST_AUTO_TEST_CASE(performance) {
                
       }
       osdmfs.close();
-
-      std::unordered_map<std::string, std::vector<int32_t>> NseedToRefPositions;
-      NseedToRefPositions = {};
-      findSyncmers(node_seq_nogap, k, s, NseedToRefPositions);
-
-      // Collecting reference Seeds
-      std::vector<seed> refSeeds;
-      for (auto kv : NseedToRefPositions) {
-        for (int32_t pos : kv.second) {
-          seed thisSeed;
-          thisSeed.seq = kv.first;
-          thisSeed.pos = pos;
-          refSeeds.push_back(thisSeed);
-        }
-      }
-
-      // Sorting ref seeds
-      sort(refSeeds.begin(), refSeeds.end(),
-           [](const seed &lhs, const seed &rhs) { return lhs.pos < rhs.pos; });
-
-      std::ofstream osdmfsNico(outSeedmersPathNico);
-      osdmfsNico << node_seq << std::endl;
-      osdmfsNico << node_seq_nogap << std::endl;
-
-      for (const auto &s : refSeeds) {
-        osdmfsNico << s.seq << "\t" << s.pos << std::endl;
-      }
-      osdmfsNico.close();
     }
   }
 }

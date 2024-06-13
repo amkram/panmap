@@ -51,24 +51,31 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
   // const auto &rotationIndexes = T->rotationIndexes;
   // const auto &sequenceInverted = T->sequenceInverted;
   // const auto &circularSequences = T->circularSequences;
-    std::string seq = "";
 
     if (end == tupleCoord_t{-1,-1,-1})
     {
       end= tupleCoord_t{sequence.size() - 1, sequence.back().first.size() - 1, -1};
     }
+
+    size_t size = tupleToScalarCoord(end, globalCoords) - tupleToScalarCoord(start, globalCoords) + 1;
+
+    std::string seq;
+    seq.resize(size);
+    int i = 0;
   
     for(auto currCoord = start; currCoord <= end; currCoord = navigator.increment(currCoord) ){
 
       if(blockExists[currCoord.blockId].first){
         if (currCoord.nucGapPos == -1){
-          seq += sequence[currCoord.blockId].first[currCoord.nucPos].first;
+          seq[i] = sequence[currCoord.blockId].first[currCoord.nucPos].first;
         }else{
-          seq += sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
+          seq[i] = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
         }
       }else{
-        seq += '-';
+        seq[i] = '-';
       }
+
+      i++;
     }
 
     return seq;

@@ -97,17 +97,16 @@ public:
   
   tupleCoord_t increment(tupleCoord_t &givencoord) {
     tupleCoord_t coord = givencoord;
-    //std::cout << "honda acoord.nucPos: " << coord.nucPos << std::endl;
+    
     if (coord.nucGapPos == -1){
       coord.nucPos++;
-      //std::cout << "coord.nucPos: " << coord.nucPos << std::endl;
 
       if(coord.nucPos >= sequence[coord.blockId].first.size()){
-        //std::cout << "yeah... that just happened....\n";
+        
         coord.blockId++;
-        //std::cout << "coord.blockId: " << coord.blockId << std::endl;
+        
         if(coord.blockId >= sequence.size()){
-          //std::cout << "yeah... that also just happened....\n";
+          
           return tupleCoord_t{-1,-1,-1};
         }
         coord.nucPos = 0;
@@ -162,7 +161,7 @@ public:
   }
 
 
-private:
+public:
   sequence_t &sequence;
 };
 
