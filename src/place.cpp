@@ -47,7 +47,7 @@ std::string reverseComplement(std::string dna_sequence) {
 
 
 // second value in pair in seedMap is the number of seed hits at the current node at the genomic position of the key
-void placeHelper(std::map<int64_t, std::pair<std::string, int32_t>> &seedMap, Tree *T, Node *node, std::map<std::string, int32_t> &scores, SeedmerIndex &index, int64_t &pb_idx, std::unordered_map<std::string, int32_t> &readSeedCounts) {
+void placeHelper(std::map<int64_t, std::pair<std::string, int32_t>> &seedMap, place::ScoringMethod scoringMethod, Tree *T, Node *node, std::map<std::string, int32_t> &scores, SeedmerIndex &index, int64_t &pb_idx, std::unordered_map<std::string, int32_t> &readSeedCounts) {
     /// This node's indexed seed mutations
     NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_idx);
     pb_idx++;
@@ -82,13 +82,21 @@ void placeHelper(std::map<int64_t, std::pair<std::string, int32_t>> &seedMap, Tr
     
     int32_t thisNodeScore = 0;
     for (const auto &p : seedMap) {
-        thisNodeScore += p.second.second;
+        switch (scoringMethod) {
+            case place::ScoringMethod::NUM_SEED_HITS:
+                thisNodeScore += p.second.second;
+                break;
+            case place::ScoringMethod::JACCARD:
+                /* Not implemented */
+                break;
+        }
     }
-    std::cout << "Node: " << node->identifier << "\tScore: " << thisNodeScore << std::endl;
+    
+    scores[node->identifier] = thisNodeScore;
 
     // Recursive step
     for (Node *child : node->children) {
-        placeHelper(seedMap, T, child, scores, index, pb_idx, readSeedCounts);
+        placeHelper(seedMap, scoringMethod, T, child, scores, index, pb_idx, readSeedCounts);
     }
 
     // Backtrack
@@ -215,25 +223,16 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     std::cout << "⋌⋋ Placing sample ... " << std::flush;
     std::map<std::string, int32_t> scores;
     seedmerIndex_t seedmerIndex;
-    enum class ScoringMethod {
-        NUM_SEED_HITS,
-        JACCARD
-    };
-    enum class NormalizationMethod {
-        NONE,
-        BY_GENOME_LEN,
-        BY_PHYLO_FREQ
-    };
+
 
     ScoringMethod scoringMethod = ScoringMethod::NUM_SEED_HITS;
-    NormalizationMethod normalizationMethod = NormalizationMethod::NONE;
     
     std::string bestMatch;
     if ( !use_root ) {
         int64_t pb_idx = 0;
         std::map<int64_t, std::pair<std::string, int32_t>> seedMap;
         
-        placeHelper(seedMap, T, T->root, scores, index, pb_idx, readSeedCounts);
+        placeHelper(seedMap, scoringMethod, T, T->root, scores, index, pb_idx, readSeedCounts);
 
         /* Setup target sequence and seeds */
         std::vector<std::pair<std::string, float>> targetNodes;
@@ -276,55 +275,59 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     std::vector<char *> samAlignments;
     std::string samHeader;
 
-    createSam(
-        readSeeds,
-        readSequences,
-        readQuals,
-        readNames,
-        bestMatchSequence,
-        seedToRefPositions,
-        samFileName,
-        index.k(),
-        pairedEndReads,
+    // createSam(
+    //     readSeeds,
+    //     readSequences,
+    //     readQuals,
+    //     readNames,
+    //     bestMatchSequence,
+    //     seedToRefPositions,
+    //     samFileName,
+    //     index.k(),
+    //     pairedEndReads,
 
-        samAlignments,
-        samHeader
-    );
-
-
-    //Convert to BAM
-    sam_hdr_t *header;
-    bam1_t **bamRecords;
-
-    createBam(
-        samAlignments,
-        samHeader,
-        bamFileName,
-
-        header,
-        bamRecords
-    );
+    //     samAlignments,
+    //     samHeader
+    // );
 
 
-    //Convert to Mplp
-    char *mplpString;
-
-    createMplp(
-        bestMatchSequence,
-        header,
-        bamRecords,
-        samAlignments.size(),
-        mpileupFileName,
-
-        mplpString
-    );
 
 
-    //Convert to VCF
-    createVcf(
-        mplpString,
-        mutMat,
-        vcfFileName
-    );
+    // //Convert to BAM
+    // sam_hdr_t *header;
+    // bam1_t **bamRecords;
+
+    // createBam(
+    //     samAlignments,
+    //     samHeader,
+    //     bamFileName,
+
+    //     header,
+    //     bamRecords
+    // );
+
+
+    // //Convert to Mplp
+    // char *mplpString;
+
+    // createMplp(
+    //     bestMatchSequence,
+    //     header,
+    //     bamRecords,
+    //     samAlignments.size(),
+    //     mpileupFileName,
+
+    //     mplpString
+    // );
+
+
+    // //Convert to VCF
+    // createVcf(
+    //     mplpString,
+    //     mutMat,
+    //     vcfFileName
+    // );
+
+
 
 }
