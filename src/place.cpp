@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <htslib/sam.h>
-#include <sys/_types/_int64_t.h>
+//#include <sys/_types/_int64_t.h>
 #include "place.hpp"
 #include "pmi.hpp"
 #include "util.hpp"
@@ -204,6 +204,9 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     std::vector<std::vector<seed>> readSeedsBwd;
     std::unordered_map<std::string, int32_t> readSeedCounts;
     seedsFromFastq(index, readSeedCounts, readSequences, readQuals, readNames, readSeedsFwd, readSeedsBwd, reads1Path, reads2Path);
+
+
+    int k = index.k();
     
     /* Collecting forward and backward seeds into one vector */
     std::vector<std::vector<seed>> readSeeds;
@@ -214,12 +217,12 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
 
         for(int j = 0; j < readSeedsFwd[i].size(); j++) {
             readSeedsFwd[i][j].reversed = false;
-            readSeedsFwd[i][j].pos = readSeedsFwd[i][j].pos + index.k() - 1; // Minimap standard
+            readSeedsFwd[i][j].pos = readSeedsFwd[i][j].pos + k - 1; // Minimap standard
             thisReadsSeeds.push_back(readSeedsFwd[i][j]);
         }
         for(int j = 0; j < readSeedsBwd[i].size(); j++) {
             readSeedsBwd[i][j].reversed = true;
-            readSeedsBwd[i][j].pos = readSeedsBwd[i][j].pos + index.k() - 1; // Minimap standard
+            readSeedsBwd[i][j].pos = readSeedsBwd[i][j].pos + k - 1; // Minimap standard
             thisReadsSeeds.push_back(readSeedsBwd[i][j]);
         }
         readSeeds.push_back(thisReadsSeeds);
@@ -254,10 +257,10 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     std::cout << "score: " << bestScore << " " << scores[bestNode->identifier] << std::endl;
     std::string bestMatchSequence = "";
     std::string gappedSeq = T->getStringFromReference(bestNode->identifier, true);
-    std::vector<int32_t> degapVec;
+    std::vector<int32_t> degap;
     for (int32_t i = 0; i < gappedSeq.size(); i ++) {
         char &c = gappedSeq[i];
-        degapVec.push_back(bestMatchSequence.size());
+        degap.push_back(bestMatchSequence.size());
         if (c != '-') {
             bestMatchSequence += c;
         }
@@ -274,7 +277,7 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     // path format {target}.*.fastq
     std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
     std::cerr << "\n" << targetId << "\t" << bestNode->identifier << std::endl;
-    std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
+    
 
     for (int i = 0; i < index.per_node_mutations_size(); i++) {
         const NodeSeedmerMutations muts = index.per_node_mutations(i);
@@ -284,65 +287,108 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
             seedmerIndex[muts.node_id()].insert({mut.pos(), (mut.is_deletion() ? '@' + mut.seq() : mut.seq())});
         }
     }
+
+
+    std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
+
+    
+    for (const auto &seedmer : bestNodeSeedMap) {
+        if (seedmer.second.first == "" ) {
+            continue;
+        }
+        int32_t refPos = seedmer.first;
+        std::string seed = seedmer.second.first.substr(0, k);
+        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
+            seedToRefPositions[seed] = {};
+        }
+        seedToRefPositions[seed].push_back(degap[refPos]);
+    }
+
+
+    std::cerr << "AAAAAAAAA\n";
+    
+    for (const auto &p : seedToRefPositions) {
+        std::cerr << p.first;
+        for(int i = 0; i < p.second.size(); i++){
+            std::cerr << " " << p.second[i];
+        }
+        std::cerr << "\n";
+    }
     
 
+
+
+
+
+
+    //Print out reference
+    if(refFileName.size() > 0){
+        std::ofstream outFile{refFileName};
+
+        if (outFile.is_open()) {
+            
+            outFile << ">ref\n";
+            outFile << bestMatchSequence << "\n";
+
+            std::cout << "Wrote reference fasta to " << refFileName << std::endl;
+        } else {
+            std::cerr << "Error: failed to write to file " << refFileName << std::endl;
+        }
+    }
+    
     //Create SAM
     std::vector<char *> samAlignments;
     std::string samHeader;
 
-    // createSam(
-    //     readSeeds,
-    //     readSequences,
-    //     readQuals,
-    //     readNames,
-    //     bestMatchSequence,
-    //     seedToRefPositions,
-    //     samFileName,
-    //     index.k(),
-    //     pairedEndReads,
-
-    //     samAlignments,
-    //     samHeader
-    // );
-
-
+    createSam(
+        readSeeds,
+        readSequences,
+        readQuals,
+        readNames,
+        bestMatchSequence,
+        seedToRefPositions,
+        samFileName,
+        k,
+        pairedEndReads,
+        
+        samAlignments,
+        samHeader
+    );
 
 
-    // //Convert to BAM
-    // sam_hdr_t *header;
-    // bam1_t **bamRecords;
+    //Convert to BAM
+    sam_hdr_t *header;
+    bam1_t **bamRecords;
 
-    // createBam(
-    //     samAlignments,
-    //     samHeader,
-    //     bamFileName,
+    createBam(
+        samAlignments,
+        samHeader,
+        bamFileName,
 
-    //     header,
-    //     bamRecords
-    // );
-
-
-    // //Convert to Mplp
-    // char *mplpString;
-
-    // createMplp(
-    //     bestMatchSequence,
-    //     header,
-    //     bamRecords,
-    //     samAlignments.size(),
-    //     mpileupFileName,
-
-    //     mplpString
-    // );
+        header,
+        bamRecords
+    );
 
 
-    // //Convert to VCF
-    // createVcf(
-    //     mplpString,
-    //     mutMat,
-    //     vcfFileName
-    // );
+    //Convert to Mplp
+    char *mplpString;
+
+    createMplp(
+        bestMatchSequence,
+        header,
+        bamRecords,
+        samAlignments.size(),
+        mpileupFileName,
+
+        mplpString
+    );
 
 
+    //Convert to VCF
+    createVcf(
+        mplpString,
+        mutMat,
+        vcfFileName
+    );
 
 }
