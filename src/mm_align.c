@@ -65,7 +65,6 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 	hash  = __ac_Wang_hash(hash);
 
 	
-	fprintf(stderr, "CCCC\n");
 	a = (mm128_t*)kmalloc(b->km, n_seeds * sizeof(mm128_t));
 	
 	for (i = 0; i < n_seeds; ++i){
@@ -167,7 +166,6 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 	}
 	b->frag_gap = max_chain_gap_ref;
 	b->rep_len = rep_len;
-	fprintf(stderr, "DDDDD\n");
 	
 	regs0 = mm_gen_regs(b->km, hash, qlen_sum, n_regs0, u, a, !!(opt->flag&MM_F_QSTRAND));
 	if (mi->n_alt) {
@@ -188,24 +186,18 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 		mm_set_mapq(b->km, n_regs0, regs0, opt->min_chain_score, opt->a, rep_len, is_sr);
 		n_regs[0] = n_regs0, regs[0] = regs0;
 	} else { // multi-segment
-		fprintf(stderr, "FFFF\n");
 		mm_seg_t *seg;
 		seg = mm_seg_gen(b->km, hash, num_reads, read_lengths, n_regs0, regs0, n_regs, regs, a); // split fragment chain to separate segment chains
 		free(regs0);
-		fprintf(stderr, "GGGG\n");
+		
 		for (i = 0; i < num_reads; ++i) {
-			fprintf(stderr, "Ga\n");
 			mm_set_parent(b->km, opt->mask_level, opt->mask_len, n_regs[i], regs[i], opt->a * 2 + opt->b, opt->flag&MM_F_HARD_MLEVEL, opt->alt_drop); // update mm_reg1_t::parent
-			fprintf(stderr, "Gb \n");
-
 			regs[i] = align_regs(opt, mi, b->km, read_lengths[i], read_seqs[i], &n_regs[i], regs[i], seg[i].a);
-			fprintf(stderr, "Gc\n");
 			mm_set_mapq(b->km, n_regs[i], regs[i], opt->min_chain_score, opt->a, rep_len, is_sr);
 		}
-		fprintf(stderr, "HHHHH\n");
+		
 		mm_seg_free(b->km, num_reads, seg);
 		if (num_reads == 2 && opt->pe_ori >= 0 && (opt->flag&MM_F_CIGAR)){
-			fprintf(stderr, "IIII\n");
 			mm_pair(b->km, max_chain_gap_ref, opt->pe_bonus, opt->a * 2 + opt->b, opt->a, read_lengths, n_regs, regs); // pairing
 		}
 	}
@@ -225,7 +217,6 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 			b->km = km_init();
 		}
 	}
-	fprintf(stderr, "EEEEE\n");
 }
 
 
@@ -273,14 +264,12 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 
 	mm_mapopt_update(&mopt, mi); // this sets the maximum minimizer occurrence;
 	mm_tbuf_t *tbuf = mm_tbuf_init(); // thread buffer; for multi-threading, allocate one tbuf for each thread
-
-	fprintf(stderr, "AAAA\n");
+	
 	if (pairedEndReads) {
 		for(int k = 0; k < n_reads/2; k++) {
 			
 			mm_reg1_t *reg[2] = {NULL,NULL};
 			int n_reg[2] = {0,0};
-			fprintf(stderr, "BBBB\n");
 			align_read_given_seeds(mi, 2, &(r_lens[k*2]), &(reads[k*2]), n_reg,  reg,  tbuf, &mopt, iopt.k, seed_counts[k*2],  seed_counts[k*2 + 1], ref_positions[k], qry_positions[k], reversed[k]);
 			mi->seq[0].name = "ref";
 
