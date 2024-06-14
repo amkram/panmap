@@ -3,15 +3,25 @@
 #include <stdio.h>
 #include <zlib.h>
 #include <math.h>
-#include <minimap2/map.h>
-#include <minimap2/kalloc.h>
-#include <minimap2/khash.h>
-#include "mm_align.h"
-#include <stdlib.h>
-#include <assert.h>
-#include <stdio.h>
-#include <zlib.h>
-#include <math.h>
+#include <stdbool.h>
+
+#include "3rdparty/minimap2/mmpriv.h"
+#include "3rdparty/minimap2/minimap.h"
+#include "3rdparty/minimap2/kseq.h"
+#include "3rdparty/minimap2/kalloc.h"
+#include "3rdparty/minimap2/khash.h"
+#include "3rdparty/minimap2/kvec.h"
+
+mm128_t *collect_seed_hits_heap(void *km, const mm_mapopt_t *opt, int max_occ, const mm_idx_t *mi, const char *qname, const mm128_v *mv, int qlen, int64_t *n_a, int *rep_len,
+								  int *n_mini_pos, uint64_t **mini_pos);
+mm128_t *collect_seed_hits(void *km, const mm_mapopt_t *opt, int max_occ, const mm_idx_t *mi, const char *qname, const mm128_v *mv, int qlen, int64_t *n_a, int *rep_len,
+								  int *n_mini_pos, uint64_t **mini_pos);
+void chain_post(const mm_mapopt_t *opt, int max_chain_gap_ref, const mm_idx_t *mi, void *km, int qlen, int n_segs, const int *qlens, int *n_regs, mm_reg1_t *regs, mm128_t *a);
+mm_reg1_t *align_regs(const mm_mapopt_t *opt, const mm_idx_t *mi, void *km, int qlen, const char *seq, int *n_regs, mm_reg1_t *regs, mm128_t *a);
+
+
+//#include "mm_align.h"
+
 
 
 // mi: holds reference info and alignment flags and options
@@ -55,9 +65,9 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 	hash  = __ac_Wang_hash(hash);
 
 	
-
+	fprintf(stderr, "CCCC\n");
 	a = (mm128_t*)kmalloc(b->km, n_seeds * sizeof(mm128_t));
-
+	
 	for (i = 0; i < n_seeds; ++i){
 		uint32_t qpos = (uint32_t)q_poss[i];            //query position, position on read coordinates, position of the END of the seed, including it. so if this is 6 and read[6] is A then A is the last character of the seed
 		uint32_t rpos = (uint32_t)r_poss[i];            //reference position of the END of the seed
@@ -95,7 +105,7 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 					i == 0? 0 : ((int32_t)a[i].y - (int32_t)a[i-1].y) - ((int32_t)a[i].x - (int32_t)a[i-1].x), a[i].x,a[i].y);
 	}
 
-
+	
 
 	// set max chaining gap on the query and the reference sequence
 	if (is_sr){
@@ -119,7 +129,7 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 						 chn_pen_gap, chn_pen_skip, is_splice, num_reads, n_seeds, a, &n_regs0, &u, b->km);
 	}
 
-
+	
 	if (opt->bw_long > opt->bw && (opt->flag & (MM_F_SPLICE|MM_F_SR|MM_F_NO_LJOIN)) == 0 && num_reads == 1 && n_regs0 > 1) { // re-chain/long-join for long sequences
 		int32_t st = (int32_t)a[0].y, en = (int32_t)a[(int32_t)u[0] - 1].y;
 		if (qlen_sum - (en - st) > opt->rmq_rescue_size || en - st > qlen_sum * opt->rmq_rescue_ratio) {
@@ -157,20 +167,20 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 	}
 	b->frag_gap = max_chain_gap_ref;
 	b->rep_len = rep_len;
-
-
+	fprintf(stderr, "DDDDD\n");
+	
 	regs0 = mm_gen_regs(b->km, hash, qlen_sum, n_regs0, u, a, !!(opt->flag&MM_F_QSTRAND));
 	if (mi->n_alt) {
 		mm_mark_alt(mi, n_regs0, regs0);
 		mm_hit_sort(b->km, &n_regs0, regs0, opt->alt_drop); // this step can be merged into mm_gen_regs(); will do if this shows up in profile
 	}
-
+	
 	chain_post(opt, max_chain_gap_ref, mi, b->km, qlen_sum, num_reads, read_lengths, &n_regs0, regs0, a);
 	if (!is_sr && !(opt->flag&MM_F_QSTRAND)) {
 		mm_est_err(mi, qlen_sum, n_regs0, regs0, a, n_mini_pos, mini_pos);
 		n_regs0 = mm_filter_strand_retained(n_regs0, regs0);
 	}
-
+	
 	
 	if (num_reads == 1) { // uni-segment
 		regs0 = align_regs(opt, mi, b->km, read_lengths[0], read_seqs[0], &n_regs0, regs0, a);
@@ -178,22 +188,28 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 		mm_set_mapq(b->km, n_regs0, regs0, opt->min_chain_score, opt->a, rep_len, is_sr);
 		n_regs[0] = n_regs0, regs[0] = regs0;
 	} else { // multi-segment
+		fprintf(stderr, "FFFF\n");
 		mm_seg_t *seg;
 		seg = mm_seg_gen(b->km, hash, num_reads, read_lengths, n_regs0, regs0, n_regs, regs, a); // split fragment chain to separate segment chains
-
 		free(regs0);
+		fprintf(stderr, "GGGG\n");
 		for (i = 0; i < num_reads; ++i) {
+			fprintf(stderr, "Ga\n");
 			mm_set_parent(b->km, opt->mask_level, opt->mask_len, n_regs[i], regs[i], opt->a * 2 + opt->b, opt->flag&MM_F_HARD_MLEVEL, opt->alt_drop); // update mm_reg1_t::parent
+			fprintf(stderr, "Gb \n");
+
 			regs[i] = align_regs(opt, mi, b->km, read_lengths[i], read_seqs[i], &n_regs[i], regs[i], seg[i].a);
+			fprintf(stderr, "Gc\n");
 			mm_set_mapq(b->km, n_regs[i], regs[i], opt->min_chain_score, opt->a, rep_len, is_sr);
 		}
+		fprintf(stderr, "HHHHH\n");
 		mm_seg_free(b->km, num_reads, seg);
 		if (num_reads == 2 && opt->pe_ori >= 0 && (opt->flag&MM_F_CIGAR)){
-			mm_pair(b->km, max_chain_gap_ref, opt->pe_bonus, opt->a * 2 + opt->b, opt->a, read_lengths, n_regs, regs); // pairing //TADA
+			fprintf(stderr, "IIII\n");
+			mm_pair(b->km, max_chain_gap_ref, opt->pe_bonus, opt->a * 2 + opt->b, opt->a, read_lengths, n_regs, regs); // pairing
 		}
 	}
-	 
-
+	
 	//kfree(b->km, mv.a);
 	kfree(b->km, a); 
 	kfree(b->km, u);
@@ -209,6 +225,7 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads, const int* read_l
 			b->km = km_init();
 		}
 	}
+	fprintf(stderr, "EEEEE\n");
 }
 
 
@@ -257,14 +274,14 @@ void align_reads(const char *reference, int n_reads, const char **reads, const c
 	mm_mapopt_update(&mopt, mi); // this sets the maximum minimizer occurrence;
 	mm_tbuf_t *tbuf = mm_tbuf_init(); // thread buffer; for multi-threading, allocate one tbuf for each thread
 
+	fprintf(stderr, "AAAA\n");
 	if (pairedEndReads) {
 		for(int k = 0; k < n_reads/2; k++) {
 			
 			mm_reg1_t *reg[2] = {NULL,NULL};
 			int n_reg[2] = {0,0};
-			
+			fprintf(stderr, "BBBB\n");
 			align_read_given_seeds(mi, 2, &(r_lens[k*2]), &(reads[k*2]), n_reg,  reg,  tbuf, &mopt, iopt.k, seed_counts[k*2],  seed_counts[k*2 + 1], ref_positions[k], qry_positions[k], reversed[k]);
-
 			mi->seq[0].name = "ref";
 
 			if(n_reg[0] == 0 || n_reg[1] == 0 || reg[0]->score <= 0 || reg[1]->score <= 0) {
