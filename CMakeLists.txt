@@ -65,8 +65,7 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libst.a
-    COMMAND src/3rdparty/samtools/configure --disable-bz2
-        --disable-largefile --disable-lzma --disable-libcurl
+    COMMAND src/3rdparty/samtools/configure --disable-bz2 --disable-largefile --disable-lzma --disable-libcurl
     COMMAND make -C src/3rdparty/samtools
     COMMAND mv src/3rdparty/samtools/libst.a ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
