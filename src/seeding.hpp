@@ -11,6 +11,7 @@
 #include <zlib.h>  
 #include <stdio.h>  
 #include <minimap2/kseq.h>
+#include <unordered_map>
 
 
 KSEQ_INIT(int, read)
