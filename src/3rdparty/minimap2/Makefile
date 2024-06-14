@@ -8,6 +8,8 @@ PROG=		minimap2
 PROG_EXTRA=	sdust minimap2-lite
 LIBS=		-lm -lz -lpthread
 
+
+#arm_neon=1
 ifneq ($(aarch64),)
 	arm_neon=1
 endif
