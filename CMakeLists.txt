@@ -12,7 +12,7 @@ option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PROFILE "Enable profiling." ON)
 # option(OPTION_TRACE "Enable tracing." ON)
 
-cmake_policy(SET CMP0135 NEW)
+#cmake_policy(SET CMP0135 NEW)
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
