@@ -68,10 +68,19 @@ add_custom_command(
     COMMAND src/3rdparty/samtools/configure --disable-bz2 --disable-largefile --disable-lzma --disable-libcurl
     COMMAND make -C src/3rdparty/samtools
     COMMAND mv src/3rdparty/samtools/libst.a ${CMAKE_CURRENT_BINARY_DIR}
-    COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
-    COMMAND rm -f src/3rdparty/samtools/*.o src/3rdparty/samtools/htslib-1.20/libhts.a
-    COMMAND rm -f src/3rdparty/samtools/*/*.o src/3rdparty/samtools/*/*/*.o
-    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
+    #COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
+    #COMMAND rm -f src/3rdparty/samtools/*.o src/3rdparty/samtools/htslib-1.20/libhts.a
+    #COMMAND rm -f src/3rdparty/samtools/*/*.o src/3rdparty/samtools/*/*/*.o
+    #BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
+    COMMAND src/3rdparty/htslib/configure --without-libdeflate --disable-bz2 --disable-largefile --disable-lzma --disable-libcurl
+    COMMAND make -C src/3rdparty/htslib
+    COMMAND mv src/3rdparty/htslib/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND rm -f src/3rdparty/htslib/*.o
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -79,6 +88,7 @@ add_custom_command(
 add_custom_target(build-deps DEPENDS
     libminimap2.a
     libst.a
+    libhts.a
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 add_library(minimap2 STATIC IMPORTED)
@@ -91,7 +101,7 @@ add_dependencies(samtools build-deps)
 
 add_library(htslib STATIC IMPORTED)
 set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libhts.a")
-add_dependencies(htslib samtools)
+add_dependencies(htslib build-deps)
 
 # panmat
 FetchContent_Declare(
