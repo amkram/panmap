@@ -92,7 +92,6 @@ void placeHelper(std::unordered_map<int64_t, std::pair<std::string, int32_t>> &s
         }
     }
     if (thisNodeScore > bestScore) {
-        std::cout << "better node: " << node->identifier << " " << thisNodeScore << std::endl;
         bestScore = thisNodeScore;
         *bestNode = node;
     }
@@ -271,10 +270,6 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     placeHelper(seedMap, scoringMethod, T, bestNode, scores, index, pb_idx, readSeedCounts, &bestNode, bestScore, true);
     std::unordered_map<int64_t, std::pair<std::string, int32_t>> bestNodeSeedMap = seedMap;
     std::cout << "seeds at target (" << bestNode->identifier << "): " << bestNodeSeedMap.size() << std::endl;
-    // for (const auto &p : bestNodeSeedMap) {
-    //     std::cerr << p.first << " " << p.second.first << " " << p.second.second << std::endl;
-    // }
-    // path format {target}.*.fastq
     std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
     std::cerr << "\n" << targetId << "\t" << bestNode->identifier << std::endl;
     
@@ -302,17 +297,6 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
             seedToRefPositions[seed] = {};
         }
         seedToRefPositions[seed].push_back(degap[refPos]);
-    }
-
-
-    std::cerr << "AAAAAAAAA\n";
-    
-    for (const auto &p : seedToRefPositions) {
-        std::cerr << p.first;
-        for(int i = 0; i < p.second.size(); i++){
-            std::cerr << " " << p.second[i];
-        }
-        std::cerr << "\n";
     }
     
 
