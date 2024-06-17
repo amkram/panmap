@@ -47,7 +47,7 @@ std::string reverseComplement(std::string dna_sequence) {
 
 
 // second value in pair in seedMap is the number of seed hits at the current node at the genomic position of the key
-void placeHelper(std::unordered_map<int64_t, std::pair<std::string, int32_t>> &seedMap, place::ScoringMethod scoringMethod, Tree *T, Node *node, std::unordered_map<std::string, int32_t> &scores, SeedmerIndex &index, int64_t &pb_idx, std::unordered_map<std::string, int32_t> &readSeedCounts, Node **bestNode, float &bestScore, bool returnTarget = false) { // if returnTarget, stop at bestNode and return
+void placeHelper(std::unordered_map<int64_t, std::pair<std::string, int32_t>> &seedMap, place::ScoringMethod scoringMethod, Tree *T, Node *node, std::unordered_map<std::string, int32_t> &scores, SeedmerIndex &index, int64_t &pb_idx, std::unordered_map<std::string, int32_t> &readSeedCounts, Node **bestNode, float &bestScore, bool returnTarget, bool &targetHit) { // if returnTarget, stop at bestNode and return
     /// This node's indexed seed mutations
     NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_idx);
     pb_idx++;
@@ -91,7 +91,7 @@ void placeHelper(std::unordered_map<int64_t, std::pair<std::string, int32_t>> &s
                 break;
         }
     }
-    if (thisNodeScore > bestScore) {
+    if (thisNodeScore > bestScore && !returnTarget) {
         bestScore = thisNodeScore;
         *bestNode = node;
     }
@@ -99,23 +99,27 @@ void placeHelper(std::unordered_map<int64_t, std::pair<std::string, int32_t>> &s
     scores[node->identifier] = thisNodeScore;
 
     if (returnTarget && node->identifier == (*bestNode)->identifier) {
+        targetHit = true;
         return; // seedMap is in target's state
     }
     // Recursive step
     for (Node *child : node->children) {
-        placeHelper(seedMap, scoringMethod, T, child, scores, index, pb_idx, readSeedCounts, bestNode, bestScore, returnTarget);
+        if(!targetHit){
+            placeHelper(seedMap, scoringMethod, T, child, scores, index, pb_idx, readSeedCounts, bestNode, bestScore, returnTarget, targetHit);
+        }
     }
 
-    // Backtrack
-      for (const auto &p : backtrack) {
-    if (p.second.first.size() > 0) {
-      seedMap[p.first].first = p.second.first;
-      seedMap[p.first].second = p.second.second;
-
-    } else {
-      seedMap.erase(p.first);
+    if(!targetHit){
+        // Backtrack
+        for (const auto &p : backtrack) {
+            if (p.second.first.size() > 0) {
+                seedMap[p.first].first = p.second.first;
+                seedMap[p.first].second = p.second.second;
+            } else {
+                seedMap.erase(p.first);
+            }
+        }
     }
-  }
 }
 void seedsFromFastq(SeedmerIndex &index, std::unordered_map<std::string, int32_t> &readSeedCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<std::vector<seed>> &readSeedsFwd, std::vector<std::vector<seed>> &readSeedsBwd,  const std::string &fastqPath1, const std::string &fastqPath2) {
     FILE *fp;
@@ -243,9 +247,9 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     int64_t pb_idx = 0;
     
     if ( !use_root ) {
-        
         // sets bestNode and bestScore
-        placeHelper(seedMap, scoringMethod, T, T->root, scores, index, pb_idx, readSeedCounts, &bestNode, bestScore);
+        bool nonce = false;
+        placeHelper(seedMap, scoringMethod, T, T->root, scores, index, pb_idx, readSeedCounts, &bestNode, bestScore, false, nonce);
         
     } else{
         bestNode = T->root;
@@ -267,11 +271,14 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     // second call to placeHelper returns early with seedMap in target node's state
     seedMap.clear();
     pb_idx = 0;
-    placeHelper(seedMap, scoringMethod, T, bestNode, scores, index, pb_idx, readSeedCounts, &bestNode, bestScore, true);
+    bool targetHit = false;
+    placeHelper(seedMap, scoringMethod, T, T->root, scores, index, pb_idx, readSeedCounts, &bestNode, bestScore, true, targetHit);
+
     std::unordered_map<int64_t, std::pair<std::string, int32_t>> bestNodeSeedMap = seedMap;
     std::cout << "seeds at target (" << bestNode->identifier << "): " << bestNodeSeedMap.size() << std::endl;
-    std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
-    std::cerr << "\n" << targetId << "\t" << bestNode->identifier << std::endl;
+    //std::string targetId = reads1Path.substr(0, reads1Path.find_first_of('.')) + ".1";
+    //std::cerr << "\n" << targetId << "\t" << bestNode->identifier << std::endl;
+    
     
 
     for (int i = 0; i < index.per_node_mutations_size(); i++) {
@@ -298,10 +305,6 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
         }
         seedToRefPositions[seed].push_back(degap[refPos]);
     }
-    
-
-
-
 
 
 
@@ -319,6 +322,8 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
             std::cerr << "Error: failed to write to file " << refFileName << std::endl;
         }
     }
+
+
     
     //Create SAM
     std::vector<char *> samAlignments;
