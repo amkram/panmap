@@ -97,7 +97,7 @@ void initializeMap(mgsr::seedmers& seedmersIndex, const std::vector<std::tuple<h
     }
 }
 
-void updateCurSeeds(std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges, const std::unordered_map<int32_t, int32_t>& syncmerGlobalEndCoorChanges) {
+void updateCurSeeds(std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, const std::vector<std::tuple<size_t, int32_t, int32_t, bool>>& syncmerChanges, const std::vector<std::pair<int32_t, int32_t>>& syncmerGlobalEndCoorChanges) {
     for (const auto& change : syncmerChanges) {
         auto [seedHash, seedBeg, seedEnd, seedDel] = change;
         if (seedDel) {
@@ -248,7 +248,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     /*testing*/
     // hash, beg, end, del
     std::vector<std::tuple<size_t, int32_t, int32_t, bool>> syncmerChanges;
-    std::unordered_map<int32_t, int32_t> syncmerGlobalEndCoorChanges;
+    std::vector<std::pair<int32_t, int32_t>>syncmerGlobalEndCoorChanges;
     /*testing*/
 
 
@@ -342,7 +342,7 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
                     // Is it still a seed?
                     seedMap[c].second = kmer;
                     if (seedMap[c].second == prevseedmer) {
-                        syncmerGlobalEndCoorChanges[c] = data.regap[data.degap[c] + k - 1];
+                        syncmerGlobalEndCoorChanges.emplace_back(std::make_pair(c, data.regap[data.degap[c] + k - 1]));
                         continue;
                     }
                     if (seedMap[c].second.size() == k) {
@@ -395,6 +395,10 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
         return std::get<1>(a) < std::get<1>(b);
     });
 
+    std::sort(syncmerGlobalEndCoorChanges.begin(), syncmerGlobalEndCoorChanges.end(), [](const auto &a, const auto &b) {
+        return a.first < b.first;
+    });
+
     if (seedmersIndex.seedmersMap.size() == 0) {
         /*build seedmer for root*/
         // std::cerr << "initializing" << node->identifier << std::endl;
@@ -416,7 +420,6 @@ void mgsr::buildSeedmerHelper(tree::mutableTreeData &data, seedMap_t seedMap, pm
     } else {
         // std::cerr << node->identifier << std::endl;
         updateCurSeeds(curSeeds, syncmerChanges, syncmerGlobalEndCoorChanges);
-
         seedmersOutStream << node->identifier << ":" << data.ungappedConsensus.size() << " ";
 
         std::unordered_set<int32_t> seenBegs;
