@@ -519,7 +519,7 @@ void buildMutationMatrices(mutationMatrices &mutMat, Tree *T, size_t window,
     size_t delLen = 0;
     std::pair<size_t, size_t> edgeCoor =
         tree::getMaskCoorsForMutmat(curSeq, parSeq, window, threshold);
-    assert(edgeCoor.second >= edgeCoor.first);
+    assert(edgeCoor.second >= edgeCoor.first)
     for (size_t i = edgeCoor.first; i < edgeCoor.second + 1; i++) {
       if (parSeq[i] == '-' && curSeq[i] == '-') {
         continue;
