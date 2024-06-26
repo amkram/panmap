@@ -59,6 +59,78 @@ struct read_t {
     std::string name; // read id
 };
 
+static size_t btn(char b) {
+    size_t n;
+    switch (b) {
+    case 'A': n = 0; break;
+    case 'a': n = 0; break;
+    case 'C': n = 1; break;
+    case 'c': n = 1; break;
+    case 'G': n = 2; break;
+    case 'g': n = 2; break;
+    case 'T': n = 3; break;
+    case 't': n = 3; break;
+    default:
+        throw std::invalid_argument("Kmer contains non canonical base");
+        break;
+    }
+    return n;
+}
+
+static size_t hash(const std::string& s) {
+    size_t h = 0;
+    if (s.empty()) {
+        return h;
+    } else if (s.size() == 1) {
+        h = btn(s[0]);
+        return h;
+    }
+
+    h = btn(s[0]);
+    for (size_t i = 1; i < s.size(); ++i) {
+        h = (h << 2) + btn(s[i]);
+    }
+    return h;
+}
+
+static char comp(char c) {
+    char compC;
+    switch (c) { 
+    case 'A': compC = 'T'; break;
+    case 'a': compC = 't'; break;
+    case 'C': compC = 'G'; break;
+    case 'c': compC = 'g'; break;
+    case 'G': compC = 'C'; break;
+    case 'g': compC = 'c'; break;
+    case 'T': compC = 'A'; break;
+    case 't': compC = 'a'; break;
+    default:  compC = 'N'; break;
+    }
+
+    return compC;
+}
+
+static std::string revcomp(const std::string& s) {
+    std::string cs = "";
+    for (int i = s.size() - 1; i > -1; --i) {
+        char c = s[i];
+        cs += comp(c);
+    }
+    return cs;
+}
+
+inline std::pair<size_t, bool> getHash(const std::string& s) {
+    try {
+        size_t u = hash(s);
+        size_t v = hash(revcomp(s));
+        if (u < v) return std::make_pair(u, true);
+        else if (v < u) return std::make_pair(v, true);
+        return std::make_pair(0, false);
+    } catch (std::invalid_argument) {
+        return std::make_pair(0, false); // skip strand ambiguous
+    }
+    return std::make_pair(0, false);
+}
 
 inline bool is_syncmer(const std::string &seq, const int s, const bool open) {
     if (seq.size() < s) {
