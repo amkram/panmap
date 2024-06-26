@@ -133,6 +133,15 @@ inline std::pair<size_t, bool> getHash(const std::string& s) {
 }
 
 inline bool is_syncmer(const std::string &seq, const int s, const bool open) {
+    int NsCount = 0;
+    for (size_t i = 0; i < seq.size(); i++) {
+        if (seq[i] == 'N'){
+            NsCount++;
+        }
+    }
+    if (NsCount > seq.size()/2){
+        return false;
+    }
     if (seq.size() < s) {
         return false;
     }
