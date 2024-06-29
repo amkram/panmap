@@ -10,6 +10,7 @@
 #include <string>
 //#include <sys/_types/_int32_t.h>
 //#include <sys/_types/_int64_t.h>
+#include <sys/_types/_int64_t.h>
 #include <unordered_set>
 
 using namespace seeding;
@@ -19,6 +20,36 @@ using namespace tree;
 
 /* Helpers */
 
+
+void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
+  int64_t start;
+  if (globalCoords[blockId].first[0].second.size() == 0) {
+    start = globalCoords[blockId].first[0].first;
+  } else {
+    start = globalCoords[blockId].first[0].second[0];
+  }
+  int64_t stop = globalCoords[blockId].first.back().first;
+  if (start < stop) {
+    for (int32_t i = globalCoords[blockId].first.size() - 1; i >= 0; i--) {
+      globalCoords[blockId].first[i].first = start;
+      start++;
+      for (int32_t j = globalCoords[blockId].first[i].second.size() - 1; j >= 0; j--) {
+        globalCoords[blockId].first[i].second[j] = start;
+        start++;
+      }
+    }
+  } else {
+    for (int32_t i = 0; i < globalCoords[blockId].first.size(); i++) {
+      for (int32_t j = 0; j < globalCoords[blockId].first[i].second.size(); j++) {
+        globalCoords[blockId].first[i].second[j] = stop;
+        stop++;
+      }
+      globalCoords[blockId].first[i].first = stop;
+      stop++;
+
+    }
+  } 
+}
 void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
                     blockMutationInfo_t &blockMutationInfo,
                     std::vector<tupleRange> &recompRanges,
@@ -46,6 +77,10 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
     int32_t secondaryBlockId = mutation.secondaryBlockId;
     bool type = mutation.blockMutInfo;
     bool inversion = mutation.inversion;
+
+    if (inversion) {
+      flipCoords(primaryBlockId, globalCoords);
+    }
 
     recompRanges.push_back({tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0},
                             tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1}});
@@ -126,7 +161,6 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
       blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, false, true));
     }
   }
-
   // Nuc mutations
   for (size_t i = 0; i < node->nucMutation.size(); i++)
   {
@@ -590,9 +624,6 @@ int64_t tupleToScalarCoord(const tupleCoord_t &coord,
   return globalCoords[coord.blockId].first[coord.nucPos].first;
 }
 
-
-
-
 // Recursive function to build the seed index
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                  Tree *T, Node *node, globalCoords_t &globalCoords,
@@ -601,7 +632,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
   blockMutationInfo_t blockMutationInfo;
   mutationInfo_t mutationInfo;
-  
 
   // First, a range is made marking the start -> end
   // of each block and nuc mutation. This is done while
@@ -613,22 +643,60 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
   std::sort(recompRanges.begin(), recompRanges.end());
 
-   
-
   std::vector<int> seedsToClear; // seeds to clear from seedMap
   std::vector<std::pair<int, std::string>> addSeeds;
   std::vector<std::pair<int, std::string>> backtrack;
 
-
   std::vector<tupleRange> merged;
   merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists);
-  
 
+  // REMOVE
+  tupleCoord_t start = {0, 0, 0};
+  tupleCoord_t end = {-1, -1, -1};
+  tupleRange fullseqRange = {start, end};
+  merged.clear();
+  merged.push_back(fullseqRange);
+    // YEAH
 
-  // Protobuf message for this node's mutations
+// Protobuf message for this node's mutations
   NodeSeedmerMutations *pb_node_mutations = index.add_per_node_mutations();
   pb_node_mutations->set_node_id(node->identifier);
 
+  std::cout << node->identifier  << std::endl;
+
+  if (node->identifier == "MT506703.1") {
+    std::cout << "MT506703.1" << std::endl;
+    for (int32_t i = 0; i < globalCoords.size(); i++) {
+      std::cout << "Block " << i << " ";
+      std::cout << "STRAND: " << data.blockStrand[i].first << "\n";
+      for (int32_t j = 0; j < globalCoords[i].first.size(); j++) {
+        for (int32_t k = 0; k < globalCoords[i].first[j].second.size(); k++) {
+          std::cout << globalCoords[i].first[j].second[k] << " ";
+        }
+        std::cout << globalCoords[i].first[j].first << " ";
+      }
+      std::cout << std::endl;
+    }
+
+    std::cout << std::endl;
+    std::cout << std::endl;
+    std::cout << "OLD INC\n\n";
+    int i = 0;
+    for(auto coord = start; coord < end; coord = navigator.increment(coord)) {
+      std::cout << "OLD INC " <<  coord.blockId << " " << coord.nucPos << " " << coord.nucGapPos << " " << tupleToScalarCoord(coord, globalCoords) << " " << i << std::endl;
+      i++;
+    }
+
+    std::cout << std::endl;
+    std::cout << std::endl;
+    std::cout << "New INC\n\n";
+    i = 0;
+    for(auto coord = start; coord < end; coord = navigator.newincrement(coord, data.blockStrand)) {
+      std::cout << "New INC " << coord.blockId << " " << coord.nucPos << " " << coord.nucGapPos << " " << tupleToScalarCoord(coord, globalCoords) << " " << i << std::endl;
+      i++;
+    }
+
+  }
 
   // Seed re-processing
   for (auto &range : std::ranges::reverse_view(merged))
@@ -639,7 +707,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     // Track the last downstream seed to stack k-mers into seedmers
     tupleCoord_t lastDownstreamSeedPos = range.stop;
 
-    
     bool atGlobalEnd = false;
     if (range.stop >= tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1})
     {
