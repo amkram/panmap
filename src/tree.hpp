@@ -161,6 +161,195 @@ public:
   }
 
 
+
+
+
+
+
+
+
+
+
+
+tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockStrand) {
+    tupleCoord_t coord = givencoord;
+    
+    if(blockStrand[coord.blockId].first){
+
+    
+
+    if (coord.nucGapPos == -1){
+      coord.nucPos++;
+
+      if(coord.nucPos >= sequence[coord.blockId].first.size()){
+        
+
+        //Jump to next block
+        coord.blockId++;
+        
+        if(coord.blockId >= sequence.size()){
+          
+          return tupleCoord_t{-1,-1,-1};
+        }
+        if(!blockStrand[coord.blockId].first){
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+          coord.nucGapPos = -1;
+          return coord;
+        }
+        coord.nucPos = 0;
+
+      }
+
+      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+        coord.nucGapPos = 0;
+      }
+      return coord;
+    }else{
+      coord.nucGapPos++;
+      if(coord.nucGapPos >= sequence[coord.blockId].first[coord.nucPos].second.size()){
+        coord.nucGapPos = -1;
+      }
+      return coord;
+    }
+
+
+
+    }else{
+
+
+    if (coord.nucGapPos == -1) {
+      if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+          coord.blockId--;
+          if(coord.blockId < 0){
+            return tupleCoord_t{0,0,0};
+          }
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+        }
+        return coord;
+      }else{
+        coord.nucGapPos = sequence[coord.blockId].first[coord.nucPos].second.size() - 1;
+        return coord;
+      }
+    }else{
+      coord.nucGapPos--;
+      if(coord.nucGapPos < 0){
+        coord.nucGapPos = -1;
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+
+          coord.blockId++;
+        
+          if(coord.blockId >= sequence.size()){
+            return tupleCoord_t{-1,-1,-1};
+          }
+          if(!blockStrand[coord.blockId].first){
+            coord.nucPos = sequence[coord.blockId].first.size() - 1;
+            coord.nucGapPos = -1;
+            return coord;
+          }
+          coord.nucPos = 0;
+          if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+            coord.nucGapPos = 0;
+          }
+          return coord;
+
+        }
+        return coord;
+      }
+      return coord;
+    }
+
+
+    }
+
+
+
+  }
+
+  tupleCoord_t newdecrement(tupleCoord_t &givencoord, const blockStrand_t &blockStrand) {
+    tupleCoord_t coord = givencoord;
+
+    if (coord.nucGapPos == -1) {
+      if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+          coord.blockId--;
+          if(coord.blockId < 0){
+            return tupleCoord_t{0,0,0};
+          }
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+        }
+        return coord;
+      }else{
+        coord.nucGapPos = sequence[coord.blockId].first[coord.nucPos].second.size() - 1;
+        return coord;
+      }
+    }else{
+      coord.nucGapPos--;
+      if(coord.nucGapPos < 0){
+        coord.nucGapPos = -1;
+        coord.nucPos--;
+        if(coord.nucPos < 0){
+          coord.blockId--;
+          if(coord.blockId < 0){
+            return tupleCoord_t{0,0,0};
+          }
+          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+        }
+        return coord;
+      }
+      return coord;
+    }
+
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public:
   sequence_t &sequence;
 };
