@@ -497,92 +497,7 @@ std::pair<size_t, size_t> tree::getMaskCoorsForMutmat(const std::string &s1,
   return std::make_pair<size_t, size_t>(getBeg(s1, s2, window, threshold),
                                         getEnd(s1, s2, window, threshold));
 }
-void buildMutationMatrices(mutationMatrices &mutMat, Tree *T, size_t window,
-                           double threshold) {
 
-  std::unordered_map<std::string, std::string> alignedSequences =
-      getAllNodeStrings(T);
-  for (const auto &sequence : alignedSequences) {
-    std::string parentId;
-    if (T->allNodes[sequence.first]->parent == nullptr ||
-        T->allNodes[sequence.first]->nucMutation.size() == 0) {
-      continue;
-    } else {
-      parentId = T->allNodes[sequence.first]->parent->identifier;
-    }
-
-    const std::string &curSeq = sequence.second;
-    const std::string &parSeq = alignedSequences[parentId];
-    size_t insLen = 0;
-    size_t delLen = 0;
-    std::pair<size_t, size_t> edgeCoor =
-        tree::getMaskCoorsForMutmat(curSeq, parSeq, window, threshold);
-    assert(edgeCoor.second >= edgeCoor.first);
-    for (size_t i = edgeCoor.first; i < edgeCoor.second + 1; i++) {
-      if (parSeq[i] == '-' && curSeq[i] == '-') {
-        continue;
-      } else if (parSeq[i] != '-' && curSeq[i] == '-') {
-        delLen++;
-        if (insLen > 0) {
-          if (insLen > mutMat.insmat.size() - 1) {
-            mutMat.insmat.resize(insLen + 1);
-          }
-          mutMat.insmat[insLen]++;
-          mutMat.total_insmut++;
-          insLen = 0;
-        }
-      } else if (parSeq[i] == '-' && curSeq[i] != '-') {
-        insLen++;
-        if (delLen > 0) {
-          if (delLen > mutMat.delmat.size() - 1) {
-            mutMat.delmat.resize(delLen + 1);
-          }
-          mutMat.delmat[delLen]++;
-          mutMat.total_delmut++;
-          delLen = 0;
-        }
-      } else {
-        if (insLen > mutMat.insmat.size() - 1) {
-          mutMat.insmat.resize(insLen + 1);
-        }
-        mutMat.insmat[insLen]++;
-        mutMat.total_insmut++;
-        insLen = 0;
-
-        if (delLen > mutMat.delmat.size() - 1) {
-          mutMat.delmat.resize(delLen + 1);
-        }
-        mutMat.delmat[delLen]++;
-        mutMat.total_delmut++;
-        delLen = 0;
-
-        int parNucIdx = getIndexFromNucleotide(parSeq[i]);
-        int curNucIdx = getIndexFromNucleotide(curSeq[i]);
-        if (parNucIdx > 3 || curNucIdx > 3) {
-          continue;
-        }
-        mutMat.submat[parNucIdx][curNucIdx]++;
-        mutMat.total_submuts[parNucIdx]++;
-      }
-    }
-  }
-
-  // insertion
-  for (auto i = 0; i < mutMat.insmat.size(); ++i) {
-    mutMat.insmat[i] = -10 * log10f(mutMat.insmat[i] / mutMat.total_insmut);
-  }
-  // deletion
-  for (auto i = 0; i < mutMat.delmat.size(); ++i) {
-    mutMat.delmat[i] = -10 * log10f(mutMat.delmat[i] / mutMat.total_delmut);
-  }
-  // substitution
-  for (auto i = 0; i < 4; i++) {
-    for (auto j = 0; j < 4; j++) {
-      mutMat.submat[i][j] =
-          -10 * log10f(mutMat.submat[i][j] / mutMat.total_submuts[i]);
-    }
-  }
-}
 void tree::writeMutationMatrices(const mutationMatrices &mutMat,
                                  std::ofstream &mmfout) {
   for (const std::vector<double> &row : mutMat.submat) {
@@ -601,9 +516,90 @@ void tree::writeMutationMatrices(const mutationMatrices &mutMat,
   mmfout << "\n";
 }
 
+void buildMutationMatricesHelper(mutationMatrices &mutMat, Tree *T, Node* node, size_t window,
+                           double threshold) {
+  if (node->parent != nullptr && node->nucMutation.size() > 0) {
+    const std::string &curSeq = getStringAtNode(node, T, true);
+    const std::string &parSeq = getStringAtNode(node->parent, T, true);
+    size_t insLen = 0;
+    size_t delLen = 0;
+    std::pair<size_t, size_t> edgeCoor = tree::getMaskCoorsForMutmat(curSeq, parSeq, window, threshold);
+    if (edgeCoor.second > edgeCoor.first) {
+      for (size_t i = edgeCoor.first; i < edgeCoor.second + 1; i++) {
+        if (parSeq[i] == '-' && curSeq[i] == '-') {
+          continue;
+        } else if (parSeq[i] != '-' && curSeq[i] == '-') {
+          delLen++;
+          if (insLen > 0) {
+            if (insLen > mutMat.insmat.size() - 1) {
+              mutMat.insmat.resize(insLen + 1);
+            }
+            mutMat.insmat[insLen]++;
+            mutMat.total_insmut++;
+            insLen = 0;
+          }
+        } else if (parSeq[i] == '-' && curSeq[i] != '-') {
+          insLen++;
+          if (delLen > 0) {
+            if (delLen > mutMat.delmat.size() - 1) {
+              mutMat.delmat.resize(delLen + 1);
+            }
+            mutMat.delmat[delLen]++;
+            mutMat.total_delmut++;
+            delLen = 0;
+          }
+        } else {
+          if (insLen > mutMat.insmat.size() - 1) {
+            mutMat.insmat.resize(insLen + 1);
+          }
+          mutMat.insmat[insLen]++;
+          mutMat.total_insmut++;
+          insLen = 0;
+
+          if (delLen > mutMat.delmat.size() - 1) {
+            mutMat.delmat.resize(delLen + 1);
+          }
+          mutMat.delmat[delLen]++;
+          mutMat.total_delmut++;
+          delLen = 0;
+
+          int parNucIdx = getIndexFromNucleotide(parSeq[i]);
+          int curNucIdx = getIndexFromNucleotide(curSeq[i]);
+          if (parNucIdx > 3 || curNucIdx > 3) {
+            continue;
+          }
+          mutMat.submat[parNucIdx][curNucIdx]++;
+          mutMat.total_submuts[parNucIdx]++;
+        }
+      }
+    }
+  }
+
+  for (Node *child : node->children) {
+    buildMutationMatricesHelper(mutMat, T, child, window, threshold);
+  }
+
+}
+
 void tree::fillMutationMatricesFromTree(mutationMatrices &mutMat, Tree *T,
                                         size_t window, double threshold) {
-  buildMutationMatrices(mutMat, T, window, threshold);
+  buildMutationMatricesHelper(mutMat, T, T->root, window, threshold);
+
+  // insertion
+  for (auto i = 0; i < mutMat.insmat.size(); ++i) {
+    mutMat.insmat[i] = -10 * log10f(mutMat.insmat[i] / mutMat.total_insmut);
+  }
+  // deletion
+  for (auto i = 0; i < mutMat.delmat.size(); ++i) {
+    mutMat.delmat[i] = -10 * log10f(mutMat.delmat[i] / mutMat.total_delmut);
+  }
+  // substitution
+  for (auto i = 0; i < 4; i++) {
+    for (auto j = 0; j < 4; j++) {
+      mutMat.submat[i][j] =
+          -10 * log10f(mutMat.submat[i][j] / mutMat.total_submuts[i]);
+    }
+  }
   mutMat.filled = true;
 }
 
