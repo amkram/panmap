@@ -140,74 +140,74 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   }
 }
 
-// BOOST_AUTO_TEST_CASE(performance) {
+BOOST_AUTO_TEST_CASE(performance) {
 
-//   std::string pmat = "sars2k.pmat";
+   std::string pmat = "rsv_5000.pmat";
   
-//   std::cout << "Starting tests with " << pmat << std::endl;
+   std::cout << "Starting tests with " << pmat << std::endl;
 
-//   std::ifstream ifs("../dev/examples/pmats/"+pmat);
-//   boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
-//   b.push(boost::iostreams::gzip_decompressor());
-//   b.push(ifs);
-//   std::istream is(&b);
+   std::ifstream ifs("../dev/examples/pmats/"+pmat);
+   boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
+   b.push(boost::iostreams::gzip_decompressor());
+   b.push(ifs);
+   std::istream is(&b);
 
-//   std::cout << "Parsing Tree" << std::endl;
+   std::cout << "Parsing Tree" << std::endl;
 
-//   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
+   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
 
 
-//   std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
-//   //parameters = {{11, 4, 1}};
+   std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
+   //parameters = {{11, 4, 1}};
 
-//   for (const auto &param : parameters) {
-//     auto k = std::get<0>(param);
-//     auto s = std::get<1>(param);
-//     auto j = std::get<2>(param);
+   for (const auto &param : parameters) {
+     auto k = std::get<0>(param);
+     auto s = std::get<1>(param);
+     auto j = std::get<2>(param);
 
-//     std::string dirName = std::string("../dev/eval-performance/");
-//     fs::create_directories(dirName);
+     std::string dirName = std::string("../dev/eval-performance/");
+     fs::create_directories(dirName);
 
-//     SeedmerIndex index;
-//     pmi::build(index, T, j, k, s);
+     SeedmerIndex index;
+     pmi::build(index, T, j, k, s);
 
-//     //exit(0);
+     //exit(0);
 
-//     std::ofstream fout("../dev/eval-performance/"+pmat+".pmi");
-//     index.SerializeToOstream(&fout);
-//     std::map<int32_t, std::string> seedmersAlex;
-//     int32_t pb_i = 0;
+     std::ofstream fout("../dev/eval-performance/"+pmat+".pmi");
+     index.SerializeToOstream(&fout);
+     std::map<int32_t, std::string> seedmersAlex;
+     int32_t pb_i = 0;
 
-//     buildHelper2(index, T, T->root, pb_i, seedmersAlex);
+     buildHelper2(index, T, T->root, pb_i, seedmersAlex);
 
-//     //exit(0);
+     exit(0);
 
-//     for (auto &n : T->allNodes) {
-//       std::string node_idn = n.first;
-//       std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
-//       Node *nod= n.second;
+     for (auto &n : T->allNodes) {
+       std::string node_idn = n.first;
+       std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
+       Node *nod= n.second;
       
-//       std::string node_seq = tree::getStringAtNode(nod, T, true);
-//        std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
+       std::string node_seq = tree::getStringAtNode(nod, T, true);
+        std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
 
-//       std::vector<std::tuple<std::string, int, int>> seedmers =
-//           extractSeedmers(node_seq, k, s, j, false);
-//       std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
-//           extractSeedmers(node_seq_nogap, k, s, j, false);
-//       std::ofstream osdmfs(outSeedmersPath);
-//       osdmfs << node_seq << std::endl;
-//       osdmfs << node_seq_nogap << std::endl;
+       std::vector<std::tuple<std::string, int, int>> seedmers =
+           extractSeedmers(node_seq, k, s, j, false);
+       std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
+           extractSeedmers(node_seq_nogap, k, s, j, false);
+       std::ofstream osdmfs(outSeedmersPath);
+       osdmfs << node_seq << std::endl;
+       osdmfs << node_seq_nogap << std::endl;
 
-//       for (int i = 0; i < seedmers.size(); i++) {
-//         osdmfs << std::get<0>(seedmers[i]) << "\t"
-//                << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
-//                 << std::endl;
+       for (int i = 0; i < seedmers.size(); i++) {
+         osdmfs << std::get<0>(seedmers[i]) << "\t"
+                << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
+                 << std::endl;
                
-//       }
-//       osdmfs.close();
-//     }
-//   }
-// }
+       }
+       osdmfs.close();
+     }
+   }
+ }
 
 static void mutateSeedmerMap(
     std::unordered_map<int32_t, std::string> &seedmers, const std::string &nid,

@@ -32,7 +32,7 @@ struct tupleCoord_t {
         if (blockId == -1 && nucPos == -1 && nucGapPos == -1) return false;
         if (rhs.blockId == -1 && rhs.nucPos == -1 && rhs.nucGapPos == -1) return true;
         if (blockId != rhs.blockId) return blockId < rhs.blockId;
-        if (nucPos != rhs.nucPos) return nucPos < rhs.nucPos;
+        if (nucPos != rhs.nucPos) return (nucPos < rhs.nucPos);
         //if (nucGapPos != -1 && rhs.nucGapPos != -1) return nucGapPos < rhs.nucGapPos;
         if (nucGapPos == -1 && rhs.nucGapPos != -1) return false;
         if (nucGapPos != -1 && rhs.nucGapPos == -1) return true;
@@ -549,7 +549,7 @@ void writeMutationMatrices(const mutationMatrices &mutMat,
                            std::ofstream &mmfout);
 
 std::string getNucleotideSequenceFromBlockCoordinates(
-    const tupleCoord_t &start, tupleCoord_t &end,
+    tupleCoord_t &start, tupleCoord_t &end,
     const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator);
