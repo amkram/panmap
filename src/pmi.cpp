@@ -10,7 +10,6 @@
 #include <string>
 //#include <sys/_types/_int32_t.h>
 //#include <sys/_types/_int64_t.h>
-#include <sys/_types/_int64_t.h>
 #include <unordered_set>
 
 using namespace seeding;
@@ -22,6 +21,9 @@ using namespace tree;
 
 
 void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
+
+  std::cout << "FLIPPED " << blockId << "\n";
+
   int64_t start;
   if (globalCoords[blockId].first[0].second.size() == 0) {
     start = globalCoords[blockId].first[0].first;
@@ -82,8 +84,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
       flipCoords(primaryBlockId, globalCoords);
     }
 
-    recompRanges.push_back({tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0},
-                            tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1}});
+    
 
     if (type == 1)
     {
@@ -160,6 +161,18 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
       }
       blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, false, true));
     }
+
+    //Push new recomb range, order depends on inversion
+    if(blockStrand[primaryBlockId].first){
+      recompRanges.push_back({tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0},
+                            tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1}});
+    }else{
+      recompRanges.push_back({tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1},
+      tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0}}
+      );
+    }
+    
+
   }
   // Nuc mutations
   for (size_t i = 0; i < node->nucMutation.size(); i++)
@@ -450,7 +463,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
 
 void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
                    const Node *node, const blockMutationInfo_t &blockMutationInfo,
-                   const mutationInfo_t &mutationInfo)
+                   const mutationInfo_t &mutationInfo, globalCoords_t &globalCoords )
 {
   auto &sequence = data.sequence;
   auto &blockExists = data.blockExists;
@@ -460,10 +473,20 @@ void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
         auto mutation = *it;
         if(std::get<1>(mutation) != -1) {
             blockExists[std::get<0>(mutation)].second[std::get<1>(mutation)] = std::get<2>(mutation);
-            blockStrand[std::get<0>(mutation)].second[std::get<1>(mutation)] = std::get<3>(mutation);
+
+            if(blockStrand[std::get<0>(mutation)].second[std::get<1>(mutation)] != std::get<3>(mutation)){
+              blockStrand[std::get<0>(mutation)].second[std::get<1>(mutation)] = std::get<3>(mutation);
+              flipCoords(std::get<0>(mutation),globalCoords);
+            }
+
         } else {
+
             blockExists[std::get<0>(mutation)].first = std::get<2>(mutation);
-            blockStrand[std::get<0>(mutation)].first = std::get<3>(mutation);
+
+            if(blockStrand[std::get<0>(mutation)].first != std::get<3>(mutation)){
+              blockStrand[std::get<0>(mutation)].first = std::get<3>(mutation);
+              flipCoords(std::get<0>(mutation),globalCoords);
+            }
         }
     }
 
@@ -488,10 +511,11 @@ void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
 
 // Go upstream until neededNongap nucleotides are seen and return the new coord.
 tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
-                        int neededNongap, blockExists_t &blockExists)
+                        int neededNongap, blockExists_t &blockExists,
+                                             blockStrand_t &blockStrand)
 {
   
-  int count = 0;
+  int count = -1; //TODO this doesnt feel right
 
   while (count < neededNongap && coord > tupleCoord_t{0, 0, 0})
   {
@@ -502,7 +526,20 @@ tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
       if(coord.blockId == 0){
         return tupleCoord_t{0,0,0};
       }else{
-        coord = tupleCoord_t{coord.blockId - 1, navigator.sequence[coord.blockId - 1].first.size() - 1, -1};
+        
+        if(blockStrand[coord.blockId - 1].first){
+          //not inverted, jump to top of next block
+          coord = tupleCoord_t{coord.blockId - 1, navigator.sequence[coord.blockId - 1].first.size() - 1, -1};
+        }else{
+          //inverted, jump to bottom of next block
+          coord.blockId -= 1;
+          coord.nucPos = 0;
+          coord.nucGapPos = 0;
+          if(navigator.sequence[coord.blockId].first[0].second.empty()) {
+            coord.nucGapPos = -1;
+          }
+        }
+        
       }
       
       continue;
@@ -513,7 +550,7 @@ tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
       count++;
     }
 
-    coord = navigator.decrement(coord);
+    coord = navigator.newdecrement(coord, blockStrand);
 
   }
   return coord;
@@ -521,10 +558,11 @@ tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
 
 // Go downstream until neededNongap nucleotides are seen and return the new coord.
 tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
-                         int neededNongap, blockExists_t &blockExists)
+                         int neededNongap, blockExists_t &blockExists,
+                                             blockStrand_t &blockStrand)
 {
 
-  int count = 0;
+  int count = -1;
 
   while (count < neededNongap && coord < tupleCoord_t{-1, -1, -1})
   {
@@ -537,11 +575,17 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
         return tupleCoord_t{-1,-1,-1};
       }else{
 
-        coord.blockId += 1;
-        coord.nucPos = 0;
-        coord.nucGapPos = 0;
-        if(navigator.sequence[coord.blockId].first[0].second.empty()) {
-          coord.nucGapPos = -1;
+        if( ! blockStrand[coord.blockId + 1].first){
+          //inverted, jump to top of next block
+          coord = tupleCoord_t{coord.blockId + 1, navigator.sequence[coord.blockId + 1].first.size() - 1, -1};
+        }else{
+          //not inverted, jump to bottom of next block
+          coord.blockId += 1;
+          coord.nucPos = 0;
+          coord.nucGapPos = 0;
+          if(navigator.sequence[coord.blockId].first[0].second.empty()) {
+            coord.nucGapPos = -1;
+          }
         }
 
       }
@@ -555,7 +599,7 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
     }
     
 
-    coord = navigator.increment(coord);
+    coord = navigator.newincrement(coord, blockStrand);
   }
 
   return coord;
@@ -569,7 +613,8 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
 std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
                                              std::vector<tupleRange> &ranges,
                                              int neededNongap,
-                                             blockExists_t &blockExists)
+                                             blockExists_t &blockExists,
+                                             blockStrand_t &blockStrand)
 {
 
   if (ranges.empty())
@@ -579,8 +624,8 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
 
 
   tupleRange current = {
-      expandLeft(navigator, ranges[0].start, neededNongap, blockExists),
-      expandRight(navigator, ranges[0].stop, neededNongap, blockExists),
+      expandLeft(navigator, ranges[0].start, neededNongap, blockExists, blockStrand),
+      expandRight(navigator, ranges[0].stop, neededNongap, blockExists, blockStrand),
   };
 
 
@@ -588,14 +633,28 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
 
     
     tupleRange expandedRange = {
-        expandLeft(navigator, ranges[i].start, neededNongap, blockExists),
-        expandRight(navigator, ranges[i].stop, neededNongap, blockExists),
+        expandLeft(navigator, ranges[i].start, neededNongap, blockExists, blockStrand),
+        expandRight(navigator, ranges[i].stop, neededNongap, blockExists, blockStrand),
     };
 
-    if (expandedRange.start <= current.stop) //Merge rangess
-    {
+    
+    bool replace = expandedRange.start <= current.stop;
 
-      current.stop = std::max(current.stop, expandedRange.stop);
+    //accounting for inversions
+    bool flip = expandedRange.start.blockId == current.stop.blockId && ! blockStrand[current.stop.blockId].first;
+    if(flip){
+      replace = expandedRange.start >= current.stop;
+    }
+
+    if (replace) //Merge ranges
+    {
+      flip = expandedRange.stop.blockId == current.stop.blockId && ! blockStrand[current.stop.blockId].first;
+
+      if(flip){
+        current.stop = std::min(current.stop, expandedRange.stop);
+      }else{
+        current.stop = std::max(current.stop, expandedRange.stop);
+      }
     }
     else
     {
@@ -648,55 +707,43 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   std::vector<std::pair<int, std::string>> backtrack;
 
   std::vector<tupleRange> merged;
-  merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists);
 
+  merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists, data.blockStrand);
+
+
+
+  
   // REMOVE
+  
   tupleCoord_t start = {0, 0, 0};
-  tupleCoord_t end = {-1, -1, -1};
-  tupleRange fullseqRange = {start, end};
+  tupleCoord_t end = tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1};
+
+  /*
+  tupleRange fullseqRange = {start, end}; //
   merged.clear();
   merged.push_back(fullseqRange);
-    // YEAH
+  */
+  // YEAH 
 
-// Protobuf message for this node's mutations
+
+
+  bool check = (node->identifier == "MZ515794.1");
+  check = false;
+  //check = (node->identifier == "KY967363.1");
+
+
+
+
+
+
+  // Protobuf message for this node's mutations
   NodeSeedmerMutations *pb_node_mutations = index.add_per_node_mutations();
   pb_node_mutations->set_node_id(node->identifier);
 
   std::cout << node->identifier  << std::endl;
 
-  if (node->identifier == "MT506703.1") {
-    std::cout << "MT506703.1" << std::endl;
-    for (int32_t i = 0; i < globalCoords.size(); i++) {
-      std::cout << "Block " << i << " ";
-      std::cout << "STRAND: " << data.blockStrand[i].first << "\n";
-      for (int32_t j = 0; j < globalCoords[i].first.size(); j++) {
-        for (int32_t k = 0; k < globalCoords[i].first[j].second.size(); k++) {
-          std::cout << globalCoords[i].first[j].second[k] << " ";
-        }
-        std::cout << globalCoords[i].first[j].first << " ";
-      }
-      std::cout << std::endl;
-    }
 
-    std::cout << std::endl;
-    std::cout << std::endl;
-    std::cout << "OLD INC\n\n";
-    int i = 0;
-    for(auto coord = start; coord < end; coord = navigator.increment(coord)) {
-      std::cout << "OLD INC " <<  coord.blockId << " " << coord.nucPos << " " << coord.nucGapPos << " " << tupleToScalarCoord(coord, globalCoords) << " " << i << std::endl;
-      i++;
-    }
 
-    std::cout << std::endl;
-    std::cout << std::endl;
-    std::cout << "New INC\n\n";
-    i = 0;
-    for(auto coord = start; coord < end; coord = navigator.newincrement(coord, data.blockStrand)) {
-      std::cout << "New INC " << coord.blockId << " " << coord.nucPos << " " << coord.nucGapPos << " " << tupleToScalarCoord(coord, globalCoords) << " " << i << std::endl;
-      i++;
-    }
-
-  }
 
   // Seed re-processing
   for (auto &range : std::ranges::reverse_view(merged))
@@ -704,6 +751,33 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
     std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
     
+
+
+
+
+    
+    //std::string orc = tree::getStringAtNode(node, T, true);
+
+    /*
+    //std::cout << ">" << node->identifier << "\n";
+    if(node->identifier == "MT506703.1"){
+      for (int i = 0; i < orc.size(); i += 100) {
+        std::string a = orc.substr(i, 100);
+        std::string b = recomputeSeq.substr(i, 100);
+        std::cout << a << "\n";
+        std::cout << b << "\n";
+        std::cout << "CHE" << (a==b) << "\n";
+      }
+    }
+    */
+    //std::cout << "Diff: " << (recomputeSeq == orc) << std::endl;
+    
+
+
+
+
+
+
     // Track the last downstream seed to stack k-mers into seedmers
     tupleCoord_t lastDownstreamSeedPos = range.stop;
 
@@ -719,9 +793,20 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     int32_t str_i = tupleToScalarCoord(range.stop, globalCoords) - tupleToScalarCoord(range.start, globalCoords);
     int32_t startScalar = tupleToScalarCoord(range.start, globalCoords);
 
+    if(check){
+      std::cout << "LOOKERE\n";
+      std::cout << str_i << " " << startScalar << "\n";
+    }
 
+  
     for ( ; str_i >= 0; str_i--)
     {
+      if(check){
+        std::cout << str_i << " thatsi\n";
+        std::cout << scalarCoordToBlockId[str_i + startScalar] << " thems the block\n";
+        std::cout << str_i + startScalar << " thems the coord\n";
+      }
+
       if (str_i < 0)
       {
         break;
@@ -731,6 +816,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
       if (!data.blockExists[scalarCoordToBlockId[str_i + startScalar]].first) //Block doesnt exist, remove seeds
       {
+        if(check){
+        std::cout <<  "removing\n";
+        }
 
         //Loop through the deleted seeds
         for (auto& pos: BlocksToSeeds[scalarCoordToBlockId[str_i + startScalar]]) {
@@ -746,7 +834,26 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         }
         
         if(scalarCoordToBlockId[str_i + startScalar] > 0){
-          str_i = tupleToScalarCoord(tupleCoord_t{scalarCoordToBlockId[str_i + startScalar] - 1, data.sequence[scalarCoordToBlockId[str_i + startScalar] - 1].first.size() - 1, -1}, globalCoords)  - startScalar;
+          if(check)
+          std::cout << "Jumping block " << scalarCoordToBlockId[str_i + startScalar] << " at " << str_i << " " << startScalar << " and a " << str_i + startScalar << "\n";
+
+          if(data.blockStrand[scalarCoordToBlockId[str_i + startScalar] - 1].first ){
+            str_i = tupleToScalarCoord(tupleCoord_t{scalarCoordToBlockId[str_i + startScalar] - 1, data.sequence[scalarCoordToBlockId[str_i + startScalar] - 1].first.size() - 1, -1}, globalCoords)  - startScalar;
+          }else{
+            //if(data.sequence[scalarCoordToBlockId[str_i + startScalar] -1].first[0].second)//check for this shit
+            
+            if(data.sequence[scalarCoordToBlockId[str_i + startScalar] - 1].first[0].second.size()){
+              str_i = tupleToScalarCoord(tupleCoord_t{scalarCoordToBlockId[str_i + startScalar] - 1,0, 0}, globalCoords)  - startScalar;
+            }else{
+              str_i = tupleToScalarCoord(tupleCoord_t{scalarCoordToBlockId[str_i + startScalar] - 1,0, -1}, globalCoords)  - startScalar;
+            }
+            
+          }
+
+          //str_i = tupleToScalarCoord(tupleCoord_t{scalarCoordToBlockId[str_i + startScalar] - 1, data.sequence[scalarCoordToBlockId[str_i + startScalar] - 1].first.size() - 1, -1}, globalCoords)  - startScalar;
+
+          //if(check)
+          // continue ? 
         }else{
           break;
         }
@@ -755,6 +862,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
       if (seen_non_gap < index.k()) 
       {
+        if(check){
+          std::cout  << "nonenough " << seen_non_gap << " " << recomputeSeq[str_i] << "\n";
+        }
         //Seed in map yet we dont have enough non-gaps for a seed, so we remove i
         if (atGlobalEnd && seedMap.find(str_i + startScalar) != seedMap.end())
         {
@@ -784,7 +894,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                recomputeSeq[str_i] ==
                    'x')
       { // block does exist but seq is a gap
-        
+        if(check){
+        std::cout <<  "issagap\n";
+      }
         if (seedMap.find(str_i + startScalar) != seedMap.end())
         {
           
@@ -804,7 +916,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       else if(data.blockExists[scalarCoordToBlockId[str_i + startScalar]].first)
       {
         // block exists and seq is not a gap at currCoord
-
+        if(check){
+        std::cout << "kramertime\n";
+      }
         std::string kmer = "";
         int64_t seen_k = 0;
         int64_t k_pos = str_i;
@@ -823,7 +937,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         {
           // non gap position and kmer is already a seed.
           //std::string prevseedmer = lastDownstreamSeedPos != tupleCoord_t{-1, -1, -1} ? seedMap[lastDownstreamSeedPos] : "";
-          
+          if(check){
+              std::cout << "im guessing this is the problem child??\n";
+            }
           if (seeding::is_syncmer(kmer, index.s(), false))
           {
             // Is it still a seed?
@@ -856,6 +972,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         }
         else
         {
+          if(check){
+        std::cout <<  "demon child\n";
+      }
           //  not in seed map, could be a seed now
           if (seeding::is_syncmer(kmer, index.s(), false))
           {
@@ -903,6 +1022,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
   }
 
+
+  if(check){
+    exit(0);
+  }
+
   /* Recursive step */
   for (Node *child : node->children) {
     
@@ -927,7 +1051,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   }
 
   /* Undo sequence mutations when backtracking */
-  undoMutations(data, index, T, node, blockMutationInfo, mutationInfo);
+  undoMutations(data, index, T, node, blockMutationInfo, mutationInfo, globalCoords);
 }
 
 /* implementation */
@@ -940,7 +1064,7 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
 
   tree::setup(data, globalCoords, T);
 
-
+  
 
   index.set_j(j);
   index.set_k(k);
@@ -965,6 +1089,27 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
   //       tuple coordinates is: {0,2,0}, {0,2,1}, {0,2,2}, {0,2,-1}, {0,3,-1}, {1,0,0}, ...
   //
   CoordNavigator navigator(data.sequence);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
   std::vector<int> scalarCoordToBlockId(globalCoords.back().first.back().first + 1);

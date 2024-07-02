@@ -44,37 +44,101 @@ std::string tree::getConsensus(Tree *T) {
 // Sequence includes both boundary coordinates
 //TODO be more efficient for non existant blocks
 std::string tree::getNucleotideSequenceFromBlockCoordinates(
-    const tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
+    tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
   // TODO handle these
   // const auto &rotationIndexes = T->rotationIndexes;
   // const auto &sequenceInverted = T->sequenceInverted;
   // const auto &circularSequences = T->circularSequences;
-
+    
     if (end == tupleCoord_t{-1,-1,-1})
     {
       end= tupleCoord_t{sequence.size() - 1, sequence.back().first.size() - 1, -1};
     }
 
-    size_t size = tupleToScalarCoord(end, globalCoords) - tupleToScalarCoord(start, globalCoords) + 1;
-
+    long size = tupleToScalarCoord(end, globalCoords) - tupleToScalarCoord(start, globalCoords) + 1;
+    if(size < 0){
+      size = -size;
+      auto temp = end;
+      end = start;
+      start = temp;
+    }
+    
     std::string seq;
     seq.resize(size);
     int i = 0;
     // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
-    for(auto currCoord = start; currCoord <= end; currCoord = navigator.increment(currCoord) ){
+    
+    for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
+     
       if(blockExists[currCoord.blockId].first){
+        
+        char c;
         if (currCoord.nucGapPos == -1){
-          seq[i] = sequence[currCoord.blockId].first[currCoord.nucPos].first;
+          
+          c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
         }else{
-          seq[i] = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
+          
+          c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
         }
+        
+        if(c == 'x') c = '-';
+        if(! blockStrand[currCoord.blockId].first){
+          switch(c){
+            case 'A':
+              c = 'T';
+              break;
+            case 'T':
+              c = 'A';
+              break;
+            case 'G':
+              c = 'C';
+              break;
+            case 'C':
+              c = 'G';
+              break;
+          }
+        }
+
+        seq[i] = c;
       }else{
         seq[i] = '-';
       }
       i++;
     }
+    
+    //Adding end character
+    if(blockExists[end.blockId].first){
+        char c;
+        if (end.nucGapPos == -1){
+          c = sequence[end.blockId].first[end.nucPos].first;
+        }else{
+          c = sequence[end.blockId].first[end.nucPos].second[end.nucGapPos];
+        }
+        if(c == 'x') c = '-';
+        if(! blockStrand[end.blockId].first){
+
+          switch(c){
+            case 'A':
+              c = 'T';
+              break;
+            case 'T':
+              c = 'A';
+              break;
+            case 'G':
+              c = 'C';
+              break;
+            case 'C':
+              c = 'G';
+              break;
+          }
+        }
+        seq[i] = c;
+      }else{
+        seq[i] = '-';
+      }
+    
 
     return seq;
 }
