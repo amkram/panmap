@@ -142,7 +142,7 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
 
 BOOST_AUTO_TEST_CASE(performance) {
 
-   std::string pmat = "rsv_5000.pmat";
+   std::string pmat = "tb_400.pmat";
   
    std::cout << "Starting tests with " << pmat << std::endl;
 
@@ -171,7 +171,7 @@ BOOST_AUTO_TEST_CASE(performance) {
      SeedmerIndex index;
      pmi::build(index, T, j, k, s);
 
-     //exit(0);
+     exit(0);
 
      std::ofstream fout("../dev/eval-performance/"+pmat+".pmi");
      index.SerializeToOstream(&fout);
