@@ -10,6 +10,8 @@ using namespace tree;
 
 std::chrono::time_point<std::chrono::high_resolution_clock> global_timer =
     std::chrono::high_resolution_clock::now();
+
+
 void time_stamp() {
   std::chrono::time_point<std::chrono::high_resolution_clock> newtime =
       std::chrono::high_resolution_clock::now();
@@ -17,6 +19,7 @@ void time_stamp() {
   std::cerr << "timing " << duration.count() << "\n\n";
   global_timer = newtime;
 }
+
 
 std::string tree::getConsensus(Tree *T) {
   std::string consensus = "";
@@ -52,6 +55,8 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
   // const auto &sequenceInverted = T->sequenceInverted;
   // const auto &circularSequences = T->circularSequences;
     
+    
+
     if (end == tupleCoord_t{-1,-1,-1})
     {
       end= tupleCoord_t{sequence.size() - 1, sequence.back().first.size() - 1, -1};
@@ -65,12 +70,15 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
       start = temp;
     }
     
+  
+    
     std::string seq;
     seq.resize(size);
     int i = 0;
     // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
     
     for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
+
      
       if(blockExists[currCoord.blockId].first){
         
@@ -97,6 +105,31 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               break;
             case 'C':
               c = 'G';
+              break;
+            
+            case 'Y':
+              c = 'R';
+              break;
+            case 'R':
+              c = 'Y';
+              break;
+            case 'K':
+              c = 'M';
+              break;
+            case 'M':
+              c = 'K';
+              break;
+            case 'D':
+              c = 'H';
+              break;
+            case 'H':
+              c = 'D';
+              break;
+            case 'V':
+              c = 'B';
+              break;
+            case 'B':
+              c = 'V';
               break;
           }
         }
@@ -131,6 +164,31 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
               break;
             case 'C':
               c = 'G';
+              break;
+
+            case 'Y':
+              c = 'R';
+              break;
+            case 'R':
+              c = 'Y';
+              break;
+            case 'K':
+              c = 'M';
+              break;
+            case 'M':
+              c = 'K';
+              break;
+            case 'D':
+              c = 'H';
+              break;
+            case 'H':
+              c = 'D';
+              break;
+            case 'V':
+              c = 'B';
+              break;
+            case 'B':
+              c = 'V';
               break;
           }
         }
