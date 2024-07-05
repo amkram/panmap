@@ -52,14 +52,23 @@ void findSyncmers(
   }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Recursive function to build the seed index
 void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
                  int32_t &pb_i, std::map<int32_t, std::string> &seedmersAlex) {
   // std::cout << "BH2 " << node->identifier << "\n";
-
-
-
-
 
   std::cout << "pbi " << pb_i << std::endl;
   // std::cout << "size " << index.per_node_mutations_size() << "\n";
@@ -140,9 +149,231 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
   }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Recursive function to build the seed index
+// This one also prints out alans seeds
+//
+void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
+                 int32_t &pb_i, std::map<int32_t, std::string> &seedmersAlex, const int k, const int s, const int j) {
+  // std::cout << " " << node->identifier << "\n";
+
+  std::cout << "pbi " << pb_i << std::endl;
+  // std::cout << "size " << index.per_node_mutations_size() << "\n";
+
+
+  NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_i);
+
+  // std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
+
+  std::string node_idn = node->identifier;
+
+
+  std::vector<std::pair<int32_t, std::string>> backtrack;
+  std::vector<int64_t> delSeeds;
+  std::vector<std::pair<int64_t, std::string>> addSeeds;
+  
+  for (int mut_i = 0; mut_i < pb_node_mutations.mutations_size(); mut_i++) {
+    const auto &mut = pb_node_mutations.mutations(mut_i);
+    int32_t pos = mut.pos();
+    if (mut.is_deletion()) {
+      backtrack.push_back({pos, seedmersAlex[pos]});
+      delSeeds.push_back(pos);
+    } else {
+      if (seedmersAlex.find(pos) != seedmersAlex.end()) {
+        backtrack.push_back({pos, seedmersAlex[pos]});
+      } else {
+        backtrack.push_back({pos, ""});
+      }
+      addSeeds.push_back({pos, mut.seq()});
+      
+    }
+  }
+  for (const auto &p : delSeeds) {
+    seedmersAlex.erase(p);
+  }
+  for (const auto &p : addSeeds) {
+    seedmersAlex[p.first] = p.second;
+  }
+
+  std::string node_seq = tree::getStringAtNode(node, T, true);
+  std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
+
+  std::unordered_map<int32_t, int32_t> degap;
+  int64_t pos = 0;
+  std::string ungapped = "";
+  for (int64_t i = 0; i < node_seq.size(); i++) {
+    char c = node_seq[i];
+    degap[i] = pos;
+    if (c != '-' && c != 'x') {
+      ungapped += c;
+      pos++;
+    }
+  }
+
+
+
+
+  //Print out Alex's Seeds
+  std::string dirName = std::string("../dev/eval-performance/");
+
+  std::ofstream osdmfsAlex(dirName + node_idn + ".true.alex.pmi");
+  //osdmfsAlex << node_seq << std::endl;
+  osdmfsAlex << node_seq_nogap << std::endl;
+  for (const auto &pair : seedmersAlex) {
+    osdmfsAlex << pair.second << "\t" << degap[pair.first] << "\t" << pair.first
+               << std::endl;
+  }
+  osdmfsAlex.close();
+
+
+
+
+  //Print out Alans seeds
+  std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
+
+  std::vector<std::tuple<std::string, int, int>> seedmers =
+    extractSeedmers(node_seq, k, s, j, false);
+  std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
+    extractSeedmers(node_seq_nogap, k, s, j, false);
+  std::ofstream osdmfs(outSeedmersPath);
+  //osdmfs << node_seq << std::endl;
+  osdmfs << node_seq_nogap << std::endl;
+
+  for (int i = 0; i < seedmers.size(); i++) {
+    osdmfs << std::get<0>(seedmers[i]) << "\t"
+      << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
+      << std::endl;
+  }
+  osdmfs.close();
+
+
+
+
+
+
+
+
+
+
+
+
+  /* Recursive step */
+  for (Node *child : node->children) {
+    
+    pb_i++;
+    buildHelper3(index, T, child, pb_i, seedmersAlex, k, s, j);
+  }
+  // undo seed mutations
+  for (const auto &p : backtrack) {
+    if (p.second.size() > 0) {
+      seedmersAlex[p.first] = p.second;
+    } else {
+      seedmersAlex.erase(p.first);
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 BOOST_AUTO_TEST_CASE(performance) {
 
-   std::string pmat = "tb_400.pmat";
+   std::string pmat = "sars2k.pmat";
   
    std::cout << "Starting tests with " << pmat << std::endl;
 
@@ -171,14 +402,18 @@ BOOST_AUTO_TEST_CASE(performance) {
      SeedmerIndex index;
      pmi::build(index, T, j, k, s);
 
-     exit(0);
+     //exit(0);
+    
+     std::ofstream fout("../dev/eval-performance/"+pmat+".pmi", std::ios::binary);
+     if (!index.SerializeToOstream(&fout)) {
+        std::cerr << "Failed to write index." << std::endl;
+    }
 
-     std::ofstream fout("../dev/eval-performance/"+pmat+".pmi");
-     index.SerializeToOstream(&fout);
      std::map<int32_t, std::string> seedmersAlex;
      int32_t pb_i = 0;
 
-     buildHelper2(index, T, T->root, pb_i, seedmersAlex);
+     //buildHelper2(index, T, T->root, pb_i, seedmersAlex);
+     buildHelper3(index, T, T->root, pb_i, seedmersAlex, k, s, j);
 
      exit(0);
 

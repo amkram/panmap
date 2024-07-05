@@ -659,7 +659,7 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
                                              std::vector<tupleRange> &ranges,
                                              int neededNongap,
                                              blockExists_t &blockExists,
-                                             blockStrand_t &blockStrand)
+                                             blockStrand_t &blockStrand, const globalCoords_t &globalCoords)
 {
 
   if (ranges.empty())
@@ -667,17 +667,141 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
 
   std::vector<tupleRange> merged;
 
-  
+  //TODO: first merge without expanding
 
-  tupleRange current = {
-      expandLeft(navigator, ranges[0].start, neededNongap, blockExists, blockStrand),
-      expandRight(navigator, ranges[0].stop, neededNongap, blockExists, blockStrand),
-  };
+
+
+  tupleRange current = ranges[0];
+
+  //std::cout << "Merged first\n";
+  //time_stamp();
 
   
 
 
   for (size_t i = 1; i < ranges.size(); ++i) {
+    //if((i - 2) % 10 == 0){
+      //std::cout << "Merging range " << i << " current:\n";
+      //std::cout << current.start.blockId << " " << current.start.nucPos << " " << current.start.nucGapPos << "\n";
+      //std::cout << current.stop.blockId << " " << current.stop.nucPos << " " << current.stop.nucGapPos << "\n";
+      //time_stamp();
+
+    
+    bool replace = ranges[i].start <= current.stop;
+
+    //accounting for inversions
+    //THIS CAN BE MADE SIMPLER:
+    bool flip = ranges[i].start.blockId == current.stop.blockId && ! blockStrand[current.stop.blockId].first;
+    if(flip){
+      replace = ranges[i].start >= current.stop;
+    }
+
+    if (replace) //Merge ranges
+    {
+      flip = ranges[i].stop.blockId == current.stop.blockId && ! blockStrand[current.stop.blockId].first;
+
+      if(flip){
+        current.stop = std::min(current.stop, ranges[i].stop);
+      }else{
+        current.stop = std::max(current.stop, ranges[i].stop);
+      }
+    }
+    else
+    {
+      merged.push_back(current);
+      current = ranges[i];
+    }
+  }
+  merged.push_back(current);
+
+
+  ranges = merged;
+
+  merged.clear();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  //std::cout << "Starting to merge\n";
+  //time_stamp();
+
+  current = {
+      expandLeft(navigator, ranges[0].start, neededNongap, blockExists, blockStrand),
+      expandRight(navigator, ranges[0].stop, neededNongap, blockExists, blockStrand),
+  };
+
+  //std::cout << "Merged first\n";
+  //time_stamp();
+
+  
+
+
+  for (size_t i = 1; i < ranges.size(); ++i) {
+    //if((i - 2) % 10 == 0){
+      //std::cout << "LMerging range " << i << " current:\n";
+      //std::cout << current.start.blockId << " " << current.start.nucPos << " " << current.start.nucGapPos << "\n";
+      //std::cout << current.stop.blockId << " " << current.stop.nucPos << " " << current.stop.nucGapPos << "\n";
+      //time_stamp();
+    //}
+    
+    
+    tupleRange toPlace = {
+        current.stop,
+        current.stop,
+    };
+    //Search for first range that is beyond current range
+
+    auto it = std::lower_bound(ranges.begin(), ranges.end(), toPlace, [&blockStrand](const tupleRange& A, const tupleRange& B) {
+      if (A.start.blockId == B.start.blockId && !blockStrand[A.start.blockId].first) {
+          return B < A; // Use B < A if blocks are inverted 
+      }
+      return A < B; // Default comparison
+    });
+
+
+    // Get the index from the range vector
+    int index = std::distance(ranges.begin(), it);
+    //std::cout << "indexed TO  " << index << "\n";
+    if(i < index - 1)
+      i = index - 1;
+
+    //std::cout << "JUMPED TO  " << i << "\n";
+    
+    
+    /*
+    if(tupleToScalarCoord(current.stop,globalCoords) + neededNongap >= tupleToScalarCoord(ranges[i].start,globalCoords)){
+      std::cout << "THIS happened "<< tupleToScalarCoord(ranges[i].stop,globalCoords) <<"\n";
+      time_stamp();
+      ranges[i].stop = expandRight(navigator, ranges[i].stop, neededNongap, blockExists, blockStrand);
+      std::cout << "THAT happened "<< tupleToScalarCoord(ranges[i].stop,globalCoords) <<"\n";
+      time_stamp();
+      bool flip = ranges[i].stop.blockId == current.stop.blockId && ! blockStrand[current.stop.blockId].first;
+      
+
+      if(flip){
+        current.stop = std::min(current.stop, ranges[i].stop);
+      }else{
+        current.stop = std::max(current.stop, ranges[i].stop);
+      }
+      continue;
+    }*/
+
+
 
     
     tupleRange expandedRange = {
@@ -690,6 +814,7 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
     bool replace = expandedRange.start <= current.stop;
 
     //accounting for inversions
+    //THIS CAN BE MADE SIMPLER:
     bool flip = expandedRange.start.blockId == current.stop.blockId && ! blockStrand[current.stop.blockId].first;
     if(flip){
       replace = expandedRange.start >= current.stop;
@@ -740,6 +865,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
   blockMutationInfo_t blockMutationInfo;
   mutationInfo_t mutationInfo;
+  std::cout << "Entering buildhelper\n";
+  time_stamp();
 
   // First, a range is made marking the start -> end
   // of each block and nuc mutation. This is done while
@@ -747,7 +874,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   std::vector<tupleRange> recompRanges;
   applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
                  globalCoords, index, navigator);
-  
+  std::cout << "Applied Mutations "<< recompRanges.size() <<"\n";
+  time_stamp();
   /*
   ...
   if A.start.blockId == B.start.blockID and ! data.blockStrand[A.start.blockID].first 
@@ -761,7 +889,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     }
     return A < B; // Default comparison
   });
-
+  std::cout << "Sorted Ranges\n";
+  time_stamp();
   /*
   for(int i = 0; i < data.blockExists.size() ; i++){
     if(data.blockExists[i].first) {
@@ -775,8 +904,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     std::cout << "range " << i << "\n";
     std::cout << recompRanges[i].start.blockId << " " << recompRanges[i].start.nucPos << " " << recompRanges[i].start.nucGapPos << "\n";
     std::cout << recompRanges[i].stop.blockId << " " << recompRanges[i].stop.nucPos << " " << recompRanges[i].stop.nucGapPos << "\n";
-  }
-  */
+  }*/
+  
   
 
   std::vector<int> seedsToClear; // seeds to clear from seedMap
@@ -785,17 +914,19 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
   std::vector<tupleRange> merged;
 
-  merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists, data.blockStrand);
+  merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists, data.blockStrand, globalCoords);
+  std::cout << "Merged Ranges"<<merged.size()<<"\n";
+  time_stamp();
 
-
+  
   /*
   for(int i = 0; i < merged.size(); i++){
     std::cout << "merge " << i << "\n";
     std::cout << merged[i].start.blockId << " " << merged[i].start.nucPos << " " << merged[i].start.nucGapPos << "\n";
     std::cout << merged[i].stop.blockId << " " << merged[i].stop.nucPos << " " << merged[i].stop.nucGapPos << "\n";
-  }
-  exit(0);
-  */
+  }*/
+  //exit(0);
+  
   
   
   
@@ -805,7 +936,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   }
   tupleCoord_t end = tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1};
 
-  
+  std::cout << "Merged Ranges\n";
+  time_stamp();
   
 
 
@@ -849,14 +981,16 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   
 
   //exit(0);
-
+  std::cout << "Add to  Protobuf Message\n";
+  time_stamp();
 
   // Protobuf message for this node's mutations
   NodeSeedmerMutations *pb_node_mutations = index.add_per_node_mutations();
   pb_node_mutations->set_node_id(node->identifier);
 
-  //std::cout << "BEGIN\n";
-  //std::cout << node->identifier  << std::endl;
+  std::cout << "BEGIN\n";
+  std::cout << node->identifier  << std::endl;
+  time_stamp();
 
 
 
@@ -864,11 +998,12 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   // Seed re-processing
   for (auto &range : std::ranges::reverse_view(merged))
   {
-    
+    std::cout << "AAA\n";
+    time_stamp();
     std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
+    std::cout << "BBB\n";
+
     
-
-
 
 
     std::string orc;
@@ -917,6 +1052,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       std::cout << "LOOKERE\n";
       std::cout << str_i << " " << startScalar << "\n";
     }
+
+
+    std::string kramer = "";
 
   
     for ( ; str_i >= 0; str_i--)
@@ -1001,11 +1139,16 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
         if (recomputeSeq[str_i] != '-' && recomputeSeq[str_i] != 'x') {
           seen_non_gap++;
+
+          if(seen_non_gap < index.k())
+            kramer = recomputeSeq[str_i] + kramer;
         }
         
         if (seen_non_gap < index.k() && str_i > 0) {
-                                 
+            
           continue; 
+        }else{
+
         }
       }
 
@@ -1039,10 +1182,17 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         if(check){
           std::cout << "kramertime\n"; 
         }
+        kramer = recomputeSeq[str_i] + kramer.substr(0,index.k()-1);
 
         std::string kmer = "";
         int64_t seen_k = 0;
         int64_t k_pos = str_i;
+
+        //THIS IS STUPID
+        //no wonder its slow
+
+        kmer = kramer;
+        /*
         while (seen_k < index.k() && k_pos < recomputeSeq.size())
         {
           if (recomputeSeq[k_pos] != '-' && recomputeSeq[k_pos] != 'x')
@@ -1051,10 +1201,16 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
             seen_k++;
           }
           k_pos++;
-        }
+        }*/
 
-        if(check)
+        if(check){
           std::cout << kmer << "\n";
+          std::cout << kramer << "\n";
+        }
+        
+        if(kmer != kramer){
+          std::cout << "MISSMATCH\n";
+        }
       
         
         if (seedMap.find(str_i + startScalar) != seedMap.end())
@@ -1182,12 +1338,15 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 /* implementation */
 void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
 {
-
+  std::cout << "Starting to build" << std::endl;
+  time_stamp();
   // Setup for seed indexing
   tree::mutableTreeData data;
   tree::globalCoords_t globalCoords;
 
   tree::setup(data, globalCoords, T);
+  std::cout << "Set up tree" << std::endl;
+  time_stamp();
 
   
 
@@ -1196,6 +1355,7 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
   index.set_s(s);
 
   std::cout << "Building index" << std::endl;
+  time_stamp();
 
   // Stores seed(mer)s at positions where one exists (in tuple global coords).
   // At each node, seedMap is updated to contain seeds present in the node.
@@ -1215,6 +1375,8 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
   //
   CoordNavigator navigator(data.sequence);
 
+  std::cout << "Created Navigator" << std::endl;
+  time_stamp();
 
 
 
@@ -1235,7 +1397,8 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
 
 
 
-
+  std::vector<int> BlockSizes(data.sequence.size(),0);
+  for(int)
 
   std::vector<int> scalarCoordToBlockId(globalCoords.back().first.back().first + 1);
   auto currCoord = tupleCoord_t{0,0,0};
@@ -1243,15 +1406,26 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
     currCoord.nucGapPos = -1;
   }
 
+
+
+
   for(int i = 0; i < scalarCoordToBlockId.size(); i++){
     
     scalarCoordToBlockId[i] = currCoord.blockId;
-
+    BlockSizes[currCoord.blockId] ++; 
     currCoord = navigator.newincrement(currCoord, data.blockStrand);
   }
+  std::cout << "Made scalarCoordToBlockId" << std::endl;
+  time_stamp();
 
 
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
+
+
+
+  
+
+
 
   /* Recursive traversal of tree to build the index */
   buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds);
