@@ -78,7 +78,6 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
     // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
     
     for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
-
      
       if(blockExists[currCoord.blockId].first){
         
