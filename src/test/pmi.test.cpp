@@ -373,7 +373,7 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
 
 BOOST_AUTO_TEST_CASE(performance) {
 
-   std::string pmat = "sars2k.pmat";
+   std::string pmat = "rsv_5000.pmat";
   
    std::cout << "Starting tests with " << pmat << std::endl;
 
