@@ -910,6 +910,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
             
           }
 
+          str_i++;
+          continue;
+
           
         }else{
           break;
@@ -950,9 +953,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       }
 
       
-      if (data.blockExists[scalarCoordToBlockId[str_i + startScalar]].first && recomputeSeq[str_i] == '-' ||
+      if (data.blockExists[scalarCoordToBlockId[str_i + startScalar]].first && (recomputeSeq[str_i] == '-' ||
                recomputeSeq[str_i] ==
-                   'x')
+                   'x'))
       { // block does exist but seq is a gap
         
         if (seedMap.find(str_i + startScalar) != seedMap.end())
@@ -1025,8 +1028,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
           {
             backtrack.push_back(std::make_pair(str_i + startScalar, ""));
             
-            //std::string prevseedmer = lastDownstreamSeedPos != tupleCoord_t{-1, -1, -1} ? seedMap[lastDownstreamSeedPos] : "";
-
+            //std::string prevseedmer = lastDownstreamSeedPos != tupleCoord_t{-1, -1, -1} ? seedMap[lastDownstreamSeedPos] : ""; 
             addSeeds.push_back(std::make_pair(str_i + startScalar, kmer));
             //seedMap[currCoord] = kmer + prevseedmer.substr(0, (index.j() - 1) * index.k());
             if (kmer.size() == index.k())
@@ -1050,6 +1052,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   {
     if (seedMap.find(pos) != seedMap.end())
     {
+
       seedMap.erase(pos);
 
       int blockId = scalarCoordToBlockId[pos];
@@ -1060,7 +1063,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   
   for (const auto &seed : addSeeds) {
     seedMap[seed.first] = seed.second;
-
 
     int blockId = scalarCoordToBlockId[seed.first];
     BlocksToSeeds[blockId].insert(seed.first);
