@@ -789,7 +789,7 @@ int64_t tupleToScalarCoord(const tupleCoord_t &coord,
 // Recursive function to build the seed index
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                  Tree *T, Node *node, globalCoords_t &globalCoords,
-                 CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds)
+                 CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes)
 {
 
   blockMutationInfo_t blockMutationInfo;
@@ -836,8 +836,10 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   NodeSeedmerMutations *pb_node_mutations = index.add_per_node_mutations();
   pb_node_mutations->set_node_id(node->identifier);
 
-
-
+  //std::cout << "BEGIN: " << node->identifier << "\n";
+  bool check = node->identifier == "OL948956.1";
+  check = false;
+  //check= true;
 
   // Seed re-processing
   for (auto &range : std::ranges::reverse_view(merged))
@@ -845,6 +847,10 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
    
     std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
     
+    //std::cout << "RANGE\n";
+    //std::cout << range.start.blockId << " " << range.start.nucPos << " " << range.start.nucGapPos << " "<< tupleToScalarCoord(range.start, globalCoords)<<"\n";
+    //std::cout << range.stop.blockId << " " << range.stop.nucPos << " " << range.stop.nucGapPos << " "<< tupleToScalarCoord(range.stop, globalCoords) <<"\n";
+  
 
 
 
@@ -863,7 +869,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     
     int32_t seen_non_gap = 0;
     int32_t str_i = tupleToScalarCoord(range.stop, globalCoords) - tupleToScalarCoord(range.start, globalCoords);
+    str_i = recomputeSeq.size() -1;
     int32_t startScalar = tupleToScalarCoord(range.start, globalCoords);
+    startScalar = tupleToScalarCoord(range.stop, globalCoords) - str_i;
 
 
 
@@ -872,12 +880,20 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   
     for ( ; str_i >= 0; str_i--)
     {
+      if(check){
+        std::cout << "START " << str_i << " " << startScalar << " " << str_i+startScalar << "\n";
+        std::cout << scalarCoordToBlockId[str_i+startScalar] << " " << data.blockExists[scalarCoordToBlockId[str_i+startScalar]].first << " "<< data.blockStrand[scalarCoordToBlockId[str_i+startScalar]].first<< "\n";
+        std::cout << scalarCoordToBlockId[str_i+startScalar + 1] << "\n";
+        std::cout << scalarCoordToBlockId[str_i+startScalar - 1] << "\n";
+      }
 
       if (str_i < 0)
       {
         break;
       }
       char nt = recomputeSeq[str_i];
+      if(check)
+        std::cout << nt << "\n";
 
 
       if (!data.blockExists[scalarCoordToBlockId[str_i + startScalar]].first) //Block doesnt exist, remove seeds
@@ -897,7 +913,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         }
         
         if(scalarCoordToBlockId[str_i + startScalar] > 0){
+
+          //std::cout << "FBLOCK " << scalarCoordToBlockId[str_i + startScalar] << " " << BlockSizes[scalarCoordToBlockId[str_i + startScalar]] << "\n";
           
+          
+          /*
           if(data.blockStrand[scalarCoordToBlockId[str_i + startScalar] - 1].first ){
             str_i = tupleToScalarCoord(tupleCoord_t{scalarCoordToBlockId[str_i + startScalar] - 1, data.sequence[scalarCoordToBlockId[str_i + startScalar] - 1].first.size() - 1, -1}, globalCoords)  - startScalar;
           }else{
@@ -908,9 +928,15 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
               str_i = tupleToScalarCoord(tupleCoord_t{scalarCoordToBlockId[str_i + startScalar] - 1,0, -1}, globalCoords)  - startScalar;
             }
             
-          }
+          }*/
 
-          str_i++;
+          
+          startScalar -= BlockSizes[scalarCoordToBlockId[str_i + startScalar]] - 1;
+          //str_i++;
+
+          //std::cout << "JBLOCK " << scalarCoordToBlockId[str_i + startScalar -1] << " " << BlockSizes[scalarCoordToBlockId[str_i + startScalar-1]] << "\n";
+          //std::cout << str_i << " " << startScalar << " " << str_i + startScalar << "\n";
+          
           continue;
 
           
@@ -1069,13 +1095,15 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
   }
 
-
+  if(check){
+    exit(0);
+  }
 
 
   /* Recursive step */
   for (Node *child : node->children) {
     
-    buildHelper(data, seedMap, index, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds);
+    buildHelper(data, seedMap, index, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes);
   }
 
   
@@ -1098,6 +1126,10 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   /* Undo sequence mutations when backtracking */
   undoMutations(data, index, T, node, blockMutationInfo, mutationInfo, globalCoords);
 }
+
+
+
+
 
 /* implementation */
 void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
@@ -1168,5 +1200,5 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
 
 
   /* Recursive traversal of tree to build the index */
-  buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds);
+  buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes);
 }
