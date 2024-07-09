@@ -229,12 +229,14 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
   std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
 
   std::unordered_map<int32_t, int32_t> degap;
+  std::unordered_map<int32_t, int32_t> regap;
   int64_t pos = 0;
   std::string ungapped = "";
   for (int64_t i = 0; i < node_seq.size(); i++) {
     char c = node_seq[i];
     degap[i] = pos;
     if (c != '-' && c != 'x') {
+      regap[pos] = i;
       ungapped += c;
       pos++;
     }
@@ -261,17 +263,17 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
   //Print out Alans seeds
   std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
 
-  std::vector<std::tuple<std::string, int, int>> seedmers =
-    extractSeedmers(node_seq, k, s, j, false);
+  //std::vector<std::tuple<std::string, int, int>> seedmers = extractSeedmers(node_seq, k, s, j, false);
+  
   std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
     extractSeedmers(node_seq_nogap, k, s, j, false);
   std::ofstream osdmfs(outSeedmersPath);
   //osdmfs << node_seq << std::endl;
   osdmfs << node_seq_nogap << std::endl;
 
-  for (int i = 0; i < seedmers.size(); i++) {
-    osdmfs << std::get<0>(seedmers[i]) << "\t"
-      << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
+  for (int i = 0; i < seedmers_nogap.size(); i++) {
+    osdmfs << std::get<0>(seedmers_nogap[i]) << "\t"
+      << std::get<1>(seedmers_nogap[i]) << "\t" << regap[std::get<1>(seedmers_nogap[i])]
       << std::endl;
   }
   osdmfs.close();
@@ -373,7 +375,7 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
 
 BOOST_AUTO_TEST_CASE(performance) {
 
-   std::string pmat = "rsv_5000.pmat";
+   std::string pmat = "sars_20000.pmat";
   
    std::cout << "Starting tests with " << pmat << std::endl;
 
@@ -400,7 +402,9 @@ BOOST_AUTO_TEST_CASE(performance) {
      fs::create_directories(dirName);
 
      SeedmerIndex index;
+     time_stamp();
      pmi::build(index, T, j, k, s);
+     time_stamp();
 
      //exit(0);
     
