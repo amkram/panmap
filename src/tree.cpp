@@ -71,14 +71,18 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
     }
     
   
-    
+    bool check = false;
+
+
     std::string seq;
     seq.resize(size);
     int i = 0;
     // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
     
     for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
-     
+      if(check){
+          std::cout << i << " start " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
+      }
       if(blockExists[currCoord.blockId].first){
         
         char c;
@@ -89,6 +93,7 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
           
           c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
         }
+        
         
         if(c == 'x') c = '-';
         if(! blockStrand[currCoord.blockId].first){
@@ -136,6 +141,64 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
         seq[i] = c;
       }else{
         seq[i] = '-';
+
+        //TODO maybe I jump to the end of this block?
+
+        //jump to start of next block
+        if( blockStrand[currCoord.blockId].first){
+            //not inverted, jump to top of this block
+            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
+          }else{
+            //inverted, jump to bottom of this block
+            //currCoord.blockId += 1;
+            currCoord.nucPos = 0;
+            currCoord.nucGapPos = 0;
+            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+              currCoord.nucGapPos = -1;
+            }
+        }
+        
+        if(currCoord.blockId < navigator.sequence.size() - 1 && currCoord.blockId != end.blockId){
+          
+          //jump to start of next block
+          /*
+          if( ! blockStrand[currCoord.blockId + 1].first){
+            //inverted, jump to top of next block
+            currCoord = tupleCoord_t{currCoord.blockId + 1, navigator.sequence[currCoord.blockId + 1].first.size() - 1, -1};
+          }else{
+            //not inverted, jump to bottom of next block
+            currCoord.blockId += 1;
+            currCoord.nucPos = 0;
+            currCoord.nucGapPos = 0;
+            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+              currCoord.nucGapPos = -1;
+            }
+          }*/
+
+        }else{
+          break;
+        }
+
+        //Jump to end of this block
+        /*
+        if( blockStrand[currCoord.blockId].first){
+            //not inverted, jump to top of this block
+            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
+          }else{
+            //inverted, jump to bottom of this block
+            //currCoord.blockId += 1;
+            currCoord.nucPos = 0;
+            currCoord.nucGapPos = 0;
+            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+              currCoord.nucGapPos = -1;
+            }
+        }*/
+        
+
+
+      }
+      if(check){
+        std::cout << i << " " << seq[i] << " " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
       }
       i++;
     }
@@ -196,6 +259,9 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
         seq[i] = '-';
       }
     
+
+    seq.resize(i +1);
+
 
     return seq;
 }
