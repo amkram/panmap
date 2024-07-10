@@ -113,16 +113,14 @@ void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
 
   std::unordered_map<int32_t, int32_t> degap;
   int64_t pos = 0;
-  std::string ungapped = "";
   for (int64_t i = 0; i < node_seq.size(); i++) {
     char c = node_seq[i];
     degap[i] = pos;
     if (c != '-' && c != 'x') {
-      ungapped += c;
       pos++;
     }
   }
-  std::string dirName = std::string("../dev/eval-performance/");
+  std::string dirName = std::string("../dev/neval-performance/");
 
   std::ofstream osdmfsAlex(dirName + node_idn + ".true.alex.pmi");
   osdmfsAlex << node_seq << std::endl;
@@ -231,13 +229,11 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
   std::unordered_map<int32_t, int32_t> degap;
   std::unordered_map<int32_t, int32_t> regap;
   int64_t pos = 0;
-  std::string ungapped = "";
   for (int64_t i = 0; i < node_seq.size(); i++) {
     char c = node_seq[i];
     degap[i] = pos;
     if (c != '-' && c != 'x') {
       regap[pos] = i;
-      ungapped += c;
       pos++;
     }
   }
@@ -246,7 +242,7 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
 
 
   //Print out Alex's Seeds
-  std::string dirName = std::string("../dev/eval-performance/");
+  std::string dirName = std::string("../dev/neval-performance/");
 
   std::ofstream osdmfsAlex(dirName + node_idn + ".true.alex.pmi");
   //osdmfsAlex << node_seq << std::endl;
@@ -282,11 +278,12 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
 
 
 
-
-
-
-
-
+  // clear large structures before recursion
+  node_seq = "";
+  node_seq_nogap = "";
+  degap.clear();
+  regap.clear();
+  seedmers_nogap.clear();
 
 
   /* Recursive step */
@@ -374,8 +371,8 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
 
 
 BOOST_AUTO_TEST_CASE(performance) {
-
-   std::string pmat = "sars_20000.pmat";
+  
+   std::string pmat = "tb_400.pmat";
   
    std::cout << "Starting tests with " << pmat << std::endl;
 
@@ -398,7 +395,7 @@ BOOST_AUTO_TEST_CASE(performance) {
      auto s = std::get<1>(param);
      auto j = std::get<2>(param);
 
-     std::string dirName = std::string("../dev/eval-performance/");
+     std::string dirName = std::string("../dev/neval-performance/");
      fs::create_directories(dirName);
 
      SeedmerIndex index;
@@ -406,9 +403,10 @@ BOOST_AUTO_TEST_CASE(performance) {
      pmi::build(index, T, j, k, s);
      time_stamp();
 
-     //exit(0);
+     exit(0);
+
     
-     std::ofstream fout("../dev/eval-performance/"+pmat+".pmi", std::ios::binary);
+     std::ofstream fout("../dev/neval-performance/"+pmat+".pmi", std::ios::binary);
      if (!index.SerializeToOstream(&fout)) {
         std::cerr << "Failed to write index." << std::endl;
     }
