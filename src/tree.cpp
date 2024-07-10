@@ -71,7 +71,9 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
     }
     
   
-    bool check = false;
+
+    bool check = node->identifier == "CP089776.1";
+    check = false;
 
 
     std::string seq;
