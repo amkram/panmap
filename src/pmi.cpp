@@ -840,8 +840,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                  CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes)
 {
 
-  std::cerr << "AAAA\n";
-  time_stamp();
+  //std::cerr << "AAAA\n";
+  //time_stamp();
 
   blockMutationInfo_t blockMutationInfo;
   mutationInfo_t mutationInfo;
@@ -854,8 +854,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
                  globalCoords, index, navigator);
 
                 
-  std::cerr << "BBBB\n";
-  time_stamp();
+  //std::cerr << "BBBB\n";
+  //time_stamp();
 
   //std::sort(recompRanges.begin(), recompRanges.end());
   std::sort(recompRanges.begin(), recompRanges.end(), [&data](const tupleRange& A, const tupleRange& B) {
@@ -865,8 +865,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     return A < B; // Default comparison
   });
   
-  std::cerr << "CCCCC\n";
-  time_stamp();
+  //std::cerr << "CCCCC\n";
+  //time_stamp();
 
   std::vector<int> seedsToClear; // seeds to clear from seedMap
   std::vector<std::pair<int, std::string>> addSeeds;
@@ -876,7 +876,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
 
 
-   std::cout << "BEGIN: " << node->identifier << "\n";
+  //std::cout << "BEGIN: " << node->identifier << "\n";
   check = node->identifier == "CP046309.1";
   check = false;
   //check = true;
@@ -904,8 +904,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   }
   }
 
-  std::cerr << "DDDD\n";
-  time_stamp();
+  //std::cerr << "DDDD\n";
+  //time_stamp();
   
   tupleCoord_t start = {0, 0, 0};
   if(data.sequence[0].first[0].second.size() == 0){
@@ -920,7 +920,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   pb_node_mutations->set_node_id(node->identifier);
 
  
-  std::cout << "ALLOW\n";
+  //std::cout << "ALLOW\n";
   // Seed re-processing
   for (auto &range : std::ranges::reverse_view(merged))
   {
@@ -929,11 +929,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     std::cout << range.start.blockId << " " << range.start.nucPos << " " << range.start.nucGapPos << " "<< tupleToScalarCoord(range.start, globalCoords)<<"\n";
     std::cout << range.stop.blockId << " " << range.stop.nucPos << " " << range.stop.nucGapPos << " "<< tupleToScalarCoord(range.stop, globalCoords) <<"\n";
     }
-    std::cerr << "EEEE\n";
-  time_stamp();
+    //std::cerr << "EEEE\n";
+    //time_stamp();
     std::string recomputeSeq = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
-    std::cerr << "FFFF\n";
-  time_stamp();
+    //std::cerr << "FFFF\n";
+    //time_stamp();
     
 
 
@@ -959,7 +959,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
 
 
-    std::string kmer(index.k());
+    std::string kmer = "";
 
   
     for ( ; str_i >= 0; str_i--)
@@ -999,7 +999,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         if(scalarCoordToBlockId[str_i + startScalar] > 0){
 
           if(check)
-          std::cout << "FBLOCK " << scalarCoordToBlockId[str_i + startScalar] << " " << BlockSizes[scalarCoordToBlockId[str_i + startScalar]] << "\n";
+            std::cout << "FBLOCK " << scalarCoordToBlockId[str_i + startScalar] << " " << BlockSizes[scalarCoordToBlockId[str_i + startScalar]] << "\n";
           
           
           /*
@@ -1090,6 +1090,9 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         // block exists and seq is not a gap at currCoord
         
         kmer = nt + kmer.substr(0,index.k()-1);
+        //std::rotate(kmer.begin(), kmer.begin() + 1, kmer.end());
+        //kmer[0] = nt;
+
 
         int64_t seen_k = 0;
         int64_t k_pos = str_i;
@@ -1157,8 +1160,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     } 
   } 
 
-  std::cerr << "GGGG\n";
-  time_stamp();
+  //std::cerr << "GGGG\n";
+  //time_stamp();
   
   for (const auto &pos : seedsToClear)
   {
@@ -1172,8 +1175,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     }
   }
 
-  std::cerr << "HHHH\n";
-  time_stamp();
+  //std::cerr << "HHHH\n";
+  //time_stamp();
   
   for (const auto &seed : addSeeds) {
     seedMap[seed.first] = seed.second;
@@ -1188,8 +1191,8 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     exit(0);
   }
 
-  std::cerr << "IIIII\n";
-  time_stamp();
+  //std::cerr << "IIIII\n";
+  //time_stamp();
 
 
   /* Recursive step */

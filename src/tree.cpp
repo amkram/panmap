@@ -45,12 +45,11 @@ std::string tree::getConsensus(Tree *T) {
 
 // coords (blockId, nucPosition, nucGapPosition)
 // Sequence includes both boundary coordinates
-//TODO be more efficient for non existant blocks
 std::string tree::getNucleotideSequenceFromBlockCoordinates(
     tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
-  // TODO handle these
+  
   // const auto &rotationIndexes = T->rotationIndexes;
   // const auto &sequenceInverted = T->sequenceInverted;
   // const auto &circularSequences = T->circularSequences;
@@ -267,6 +266,300 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
 
     return seq;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// coords (blockId, nucPosition, nucGapPosition)
+// Sequence includes both boundary coordinates
+//Sequence, scalarCoords of sequence, scalarCoords of Gaps, dead blocks
+std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tree::newgetNucleotideSequenceFromBlockCoordinates(
+    tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
+    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
+    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
+    
+    
+    
+
+    if (end == tupleCoord_t{-1,-1,-1})
+    {
+      end= tupleCoord_t{sequence.size() - 1, sequence.back().first.size() - 1, -1};
+    }
+
+
+    long size = tupleToScalarCoord(end, globalCoords) - tupleToScalarCoord(start, globalCoords) + 1;
+    if(size < 0){
+      size = -size;
+      auto temp = end;
+      end = start;
+      start = temp;
+    }
+    
+  
+
+    bool check = node->identifier == "CP089776.1";
+    check = false;
+
+
+    std::string seq;
+    seq.resize(size);
+    std::vector<int> a;
+    a.reserve(size);
+    int i = 0;
+
+    std::vector<int> b;
+    b.reserve(size);
+
+    int g = 0;
+    std::vector<int> c;
+
+
+
+
+    // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
+    
+    for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
+      if(check){
+          std::cout << i << " start " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
+      }
+      if(blockExists[currCoord.blockId].first){
+        
+        char c;
+        if (currCoord.nucGapPos == -1){
+          
+          c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
+        }else{
+          
+          c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
+        }
+        
+        
+        if(c == 'x') c = '-';
+        if(! blockStrand[currCoord.blockId].first){
+          switch(c){
+            case 'A':
+              c = 'T';
+              break;
+            case 'T':
+              c = 'A';
+              break;
+            case 'G':
+              c = 'C';
+              break;
+            case 'C':
+              c = 'G';
+              break;
+            
+            case 'Y':
+              c = 'R';
+              break;
+            case 'R':
+              c = 'Y';
+              break;
+            case 'K':
+              c = 'M';
+              break;
+            case 'M':
+              c = 'K';
+              break;
+            case 'D':
+              c = 'H';
+              break;
+            case 'H':
+              c = 'D';
+              break;
+            case 'V':
+              c = 'B';
+              break;
+            case 'B':
+              c = 'V';
+              break;
+          }
+        }
+
+        seq[i] = c;
+      }else{
+        seq[i] = '-';
+
+        //TODO maybe I jump to the end of this block?
+
+        //jump to start of next block
+        if( blockStrand[currCoord.blockId].first){
+            //not inverted, jump to top of this block
+            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
+          }else{
+            //inverted, jump to bottom of this block
+            //currCoord.blockId += 1;
+            currCoord.nucPos = 0;
+            currCoord.nucGapPos = 0;
+            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+              currCoord.nucGapPos = -1;
+            }
+        }
+        
+        if(currCoord.blockId < navigator.sequence.size() - 1 && currCoord.blockId != end.blockId){
+          
+          //jump to start of next block
+          /*
+          if( ! blockStrand[currCoord.blockId + 1].first){
+            //inverted, jump to top of next block
+            currCoord = tupleCoord_t{currCoord.blockId + 1, navigator.sequence[currCoord.blockId + 1].first.size() - 1, -1};
+          }else{
+            //not inverted, jump to bottom of next block
+            currCoord.blockId += 1;
+            currCoord.nucPos = 0;
+            currCoord.nucGapPos = 0;
+            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+              currCoord.nucGapPos = -1;
+            }
+          }*/
+
+        }else{
+          break;
+        }
+
+        //Jump to end of this block
+        /*
+        if( blockStrand[currCoord.blockId].first){
+            //not inverted, jump to top of this block
+            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
+          }else{
+            //inverted, jump to bottom of this block
+            //currCoord.blockId += 1;
+            currCoord.nucPos = 0;
+            currCoord.nucGapPos = 0;
+            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+              currCoord.nucGapPos = -1;
+            }
+        }*/
+        
+
+
+      }
+      if(check){
+        std::cout << i << " " << seq[i] << " " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
+      }
+      i++;
+    }
+    
+    //Adding end character
+    if(blockExists[end.blockId].first){
+        char c;
+        if (end.nucGapPos == -1){
+          c = sequence[end.blockId].first[end.nucPos].first;
+        }else{
+          c = sequence[end.blockId].first[end.nucPos].second[end.nucGapPos];
+        }
+        if(c == 'x') c = '-';
+        if(! blockStrand[end.blockId].first){
+
+          switch(c){
+            case 'A':
+              c = 'T';
+              break;
+            case 'T':
+              c = 'A';
+              break;
+            case 'G':
+              c = 'C';
+              break;
+            case 'C':
+              c = 'G';
+              break;
+
+            case 'Y':
+              c = 'R';
+              break;
+            case 'R':
+              c = 'Y';
+              break;
+            case 'K':
+              c = 'M';
+              break;
+            case 'M':
+              c = 'K';
+              break;
+            case 'D':
+              c = 'H';
+              break;
+            case 'H':
+              c = 'D';
+              break;
+            case 'V':
+              c = 'B';
+              break;
+            case 'B':
+              c = 'V';
+              break;
+          }
+        }
+        seq[i] = c;
+      }else{
+        seq[i] = '-';
+      }
+    
+
+    seq.resize(i +1);
+    
+
+    return std::make_tuple(seq, a, b,c);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
