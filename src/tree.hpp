@@ -554,6 +554,14 @@ std::string getNucleotideSequenceFromBlockCoordinates(
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator);
 
+
+std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> newgetNucleotideSequenceFromBlockCoordinates(
+    tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
+    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
+    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator);
+
+
+
 std::string getStringAtNode(Node *node, Tree *T, bool aligned);
 
 } // namespace tree
