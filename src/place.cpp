@@ -8,6 +8,9 @@
 #include "tree.hpp"
 #include "genotype.hpp"
 #include "conversion.hpp"
+#include "mgsr.hpp"
+#include <tbb/parallel_for.h>
+
 
 using namespace PangenomeMAT;
 using namespace tree;
@@ -374,10 +377,210 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
 
 
     //Convert to VCF
+    std::vector<std::tuple<size_t, std::string, std::string>> variantsToApply;
+
     createVcf(
         mplpString,
         mutMat,
+        variantsToApply,
         vcfFileName
     );
 
+}
+
+void place::placeMetagenomics(
+    PangenomeMAT::Tree *T, const tree::mutationMatrices& mutMat, const int32_t& accioK,
+    const int32_t& accioS, const int32_t& accioL, const std::string& defaultKmiPath,
+    const std::string& reads1File, const std::string& reads2File, std::string &samFileName,
+    std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName,
+    std::string &refFileName, const std::string& prefix, const int& maximumGap,
+    const int& minimumCount, const int& minimumScore, const double& errorRate,
+    const bool& confidence,const int32_t& roundsRemove, const double& removeThreshold
+    ) {
+    bool pairedEndReads = reads2File.size();
+    std::cerr << "reads 1 file: " << reads1File << std::endl;
+    if (pairedEndReads) {
+        std::cerr << "reads 2 file: " << reads2File << std::endl;
+    }
+    std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>> allScores;
+    std::vector<std::pair<int32_t, std::vector<size_t>>> numReadDuplicates;
+    std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
+    std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
+    std::vector<std::string> readSequences;
+    std::vector<std::string> readQuals;
+    std::vector<std::string> readNames;
+    std::vector<std::vector<seeding::seed>> readSeeds;
+    std::vector<bool> lowScoreReads;
+    std::atomic<size_t> numLowScoreReads;
+    std::ifstream seedmersIndex(defaultKmiPath);
+    mgsr::scorePseudo(seedmersIndex, reads1File, reads2File, allScores, numReadDuplicates, lowScoreReads, leastRecentIdenticalAncestor, identicalSets, T, readSeeds, readSequences, readQuals, readNames, numLowScoreReads, maximumGap, minimumCount, minimumScore, errorRate);       
+    size_t numReads = readSequences.size();
+    Eigen::MatrixXd probs;
+    Eigen::VectorXd props;
+    std::vector<std::string> nodes;
+    double llh;
+    mgsr::squaremHelper(T, allScores, numReadDuplicates, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
+    std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        sortedOut.at(i) = {nodes[i], props(i)};
+    }
+
+    std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
+        return a.second > b.second;
+    });
+
+    std::vector<double> llhdiffs(nodes.size());
+    std::vector<double> exclllhs(nodes.size());
+    std::unordered_map<std::string, std::pair<double, double>> confidenceInfo;
+    if (confidence) {
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes.size()), [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t i = range.begin(); i < range.end(); ++i) {
+                Eigen::MatrixXd curprobs;
+                Eigen::VectorXd curprops;
+                std::vector<std::string> curnodes;
+                double curllh;
+                mgsr::squaremHelper(T, allScores, numReadDuplicates, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, curprobs, curnodes, curprops, curllh, roundsRemove, removeThreshold, nodes[i]);
+                confidenceInfo[nodes[i]] = std::make_pair(curllh,llh - curllh);
+            }
+        });
+    }
+
+    std::unordered_map<std::string, std::unordered_set<size_t>> assignedReads;
+    std::cerr << "\nStarting reads assignment" << std::endl;
+    mgsr::accio(allScores, nodes, probs, props, numReadDuplicates, lowScoreReads, assignedReads);
+    std::cerr << "Finished reads assignment" << std::endl;
+    std::unordered_map<std::string, std::pair<double, double>> readAssignmentAccuracy = mgsr::getReadAssignmentAccuracy(assignedReads, nodes, readNames, leastRecentIdenticalAncestor);
+    std::cerr << "Finished reads accuracy" << std::endl;
+    std::string abundanceOutFile = prefix + ".abundance";
+    std::ofstream abundanceOut(abundanceOutFile);
+    abundanceOut << "@likelihood: " << llh << "\n";
+    if (confidence) {
+        abundanceOut << "nid\tprop\tnread\tllh\tconf\n";
+    } else {
+        abundanceOut << "nid\tprop\tnread\n";
+    }
+    for (size_t i = 0; i < sortedOut.size(); ++i) {
+        const auto& node = sortedOut[i];
+        abundanceOut << node.first;
+        if (identicalSets.find(node.first) != identicalSets.end()) {
+            for (const auto& identicalNode : identicalSets.at(node.first)) {
+                abundanceOut << "," << identicalNode;
+            }
+        }
+        abundanceOut << "\t"
+                  << node.second << "\t"
+                  << assignedReads[node.first].size();
+
+        if (confidence) {
+            abundanceOut << "\t" << confidenceInfo.at(node.first).first << "\t" << confidenceInfo.at(node.first).second;
+        }
+        // std::cout << "\n";
+
+        /* for assessing read assignment accuracy*/
+        abundanceOut << "\t" << readAssignmentAccuracy[node.first].first
+                     << "\t" << readAssignmentAccuracy[node.first].second;
+        abundanceOut << "\t" << readAssignmentAccuracy[node.first].first / readAssignmentAccuracy[node.first].second << "\n";
+    }
+
+    std::cerr << "Wrote abundance estimates and reads assignment data to " << abundanceOutFile << std::endl;
+
+    for (const auto& node : sortedOut) {
+        const std::string& nodeName = node.first;
+        std::string nodeSeq = tree::getStringAtNode(T->allNodes[nodeName], T, false);
+        std::vector<std::vector<seeding::seed>> assignedReadSeeds;
+        std::vector<std::string> assignedReadSequences;
+        std::vector<std::string> assignedReadQuals;
+        std::vector<std::string> assignedReadNames;
+        assignedReadSeeds.reserve(assignedReads[nodeName].size());
+        for (const size_t& readIdx : assignedReads[nodeName]) {
+            assignedReadSeeds.push_back(readSeeds[readIdx]);
+            assignedReadSequences.push_back(readSequences[readIdx]);
+            assignedReadQuals.push_back(readQuals[readIdx]);
+            assignedReadNames.push_back(readNames[readIdx]);
+        }
+        std::unordered_map<std::string, std::vector<int32_t>> seedToRefPositions;
+        for (size_t i = 0; i < nodeSeq.size() - accioK + 1; ++i) {
+            std::string kmer = nodeSeq.substr(i, accioK);
+            if (seeding::is_syncmer(kmer, accioS, false)) {
+                seedToRefPositions[kmer].push_back(i);
+            }
+        }
+
+        //Create SAM
+        std::vector<char *> samAlignments;
+        std::string samHeader;
+
+        createSam(
+            assignedReadSeeds,
+            assignedReadSequences,
+            assignedReadQuals,
+            assignedReadNames,
+            nodeSeq,
+            seedToRefPositions,
+            samFileName,
+            accioK,
+            pairedEndReads,
+            
+            samAlignments,
+            samHeader
+        );
+
+
+        //Convert to BAM
+        sam_hdr_t *header;
+        bam1_t **bamRecords;
+
+        createBam(
+            samAlignments,
+            samHeader,
+            bamFileName,
+
+            header,
+            bamRecords
+        );
+
+
+        //Convert to Mplp
+        char *mplpString;
+
+        createMplp(
+            nodeSeq,
+            header,
+            bamRecords,
+            samAlignments.size(),
+            mpileupFileName,
+
+            mplpString
+        );
+
+
+        //Convert to VCF
+        
+        std::vector<std::tuple<size_t, std::string, std::string>> variantsToApply;
+
+        createVcf(
+            mplpString,
+            mutMat,
+            variantsToApply,
+            vcfFileName
+        );
+
+        // Make subconsensus fasta
+        std::string subconsensus;
+        if (variantsToApply.empty()) {
+            subconsensus = nodeSeq;
+        } else {
+            genotype::applyVariants(subconsensus, nodeSeq, variantsToApply);
+        }
+
+        if(true){
+            std::ofstream outFASTA(prefix + "_" + nodeName + "_consensus.fa");
+            size_t lineSize = 80;
+            outFASTA << '>' <<  nodeName << "_consensus\n";
+            for(size_t i = 0; i < subconsensus.size(); i+=lineSize) {
+                outFASTA << subconsensus.substr(i, std::min(lineSize, subconsensus.size() - i)) << '\n';
+            }
+        }
+        
+    }
 }

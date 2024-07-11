@@ -6,6 +6,7 @@
 #include "seeding.hpp"
 #include "tree.hpp"
 #include "index.pb.h"
+#include "mgsr.hpp"
 #include <unordered_map>
 
 using namespace PangenomeMAT;
@@ -19,6 +20,8 @@ namespace pmi { // functions and types for seed indexing
 
 /* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
 void build(SeedmerIndex &index, Tree *T, int j, int k, int s);
+
+void buildSeedmers(SeedmerIndex &index, Tree *T, int j, int k, int s, std::stringstream& seedmersOutStream);
 
 } // namespace pmi
 
@@ -52,5 +55,8 @@ tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
 std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator, std::vector<tupleRange> &ranges, int neededNongap, blockExists_t &blockExists);
 int64_t tupleToScalarCoord(const tupleCoord_t &coord, const globalCoords_t &globalCoords);
 
+void buildSeedmersHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index, mgsr::seedmers& seedmersIndex,
+                 std::map<int32_t, std::pair<int32_t, size_t>>& curSeeds, Tree *T, Node *node, globalCoords_t &globalCoords, CoordNavigator &navigator,
+                 std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds, std::stringstream& seedmersOutStream, const std::vector<std::pair<size_t, size_t>>& blocksEndCoords, size_t& parentUngappedSeqSize, std::map<int32_t, int32_t>& parentCoordsIndex);
 
 #endif

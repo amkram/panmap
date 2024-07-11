@@ -407,7 +407,7 @@ pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(st
     return make_pair(candidateVariants, maskRange);
 }
 
-static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
+static void printVCFLine(const VariationSite& site, std::ofstream& fout, std::vector<std::tuple<size_t, std::string, std::string>>& variantsToApply) {
     size_t position  = site.ref_position + 1;
     int ref_nuc_idx  = site.site_info >> 3;
     size_t readDepth = 0;
@@ -500,6 +500,10 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
         indelIdx += 1;
     }
 
+    if (refAllele != altAlleles[gt-1]) {
+        variantsToApply.emplace_back(std::make_tuple(position - 1, refAllele,  altAlleles[gt-1]));
+    }
+
     fout << "ref" << "\t"                              // #CHROM
          << position << "\t"                           // POS
          << "." << "\t"                                // ID
@@ -527,7 +531,7 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     fout << pl[pl.size() - 1] << endl;
 }
 
-void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices& mutMat, bool variantOnly, size_t maskSize, std::ofstream& fout) {
+void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices& mutMat, bool variantOnly, size_t maskSize, std::ofstream& fout, std::vector<std::tuple<size_t, std::string, std::string>>& variantsToApply) {
     pair< vector<VariationSite>, pair<size_t, size_t> > variantSites = getVariantSites(fin, mutMat);
     const vector<VariationSite> candidateVariants = variantSites.first;
     if (candidateVariants.empty()) {
@@ -562,7 +566,35 @@ void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices
         }
 
         if (curSite.ref_position >= variantSites.second.first + maskSize && curSite.ref_position <= variantSites.second.second - maskSize) {
-            printVCFLine(curSite, fout);
+            printVCFLine(curSite, fout, variantsToApply);
         }
     }
+}
+
+void genotype::applyVariants(std::string& subconsensus, const std::string& nodeSeq, const std::vector<std::tuple<size_t, std::string, std::string>>& variantsToApply) {
+    assert(!variantsToApply.empty());
+    std::stringstream subconsensusSS;
+    auto [prvpos, prvref, prvalt] = variantsToApply.front();
+
+    if (prvpos > 0) subconsensusSS << nodeSeq.substr(0, prvpos);
+    assert(nodeSeq.substr(prvpos, prvref.size()) == prvref);
+    subconsensusSS << prvalt;
+    for (size_t i = 1; i < variantsToApply.size(); ++i) {
+        auto [curpos, curref, curalt] = variantsToApply[i];
+
+        subconsensusSS << nodeSeq.substr(prvpos + prvref.size(), curpos - prvpos - prvref.size());
+        assert(nodeSeq.substr(curpos, curref.size()) == curref);
+        subconsensusSS << curalt;
+
+        prvpos = curpos;
+        prvref = curref;
+        prvalt = curalt;
+    }
+
+    assert(prvpos + prvref.size() <= nodeSeq.size());
+    if (prvpos + prvref.size() < nodeSeq.size()) {
+        subconsensusSS << nodeSeq.substr(prvpos + prvref.size(), nodeSeq.size() - prvpos - prvref.size());
+    }
+
+    subconsensus = subconsensusSS.str();
 }

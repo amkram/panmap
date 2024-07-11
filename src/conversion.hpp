@@ -44,5 +44,6 @@ void createMplp(
 void createVcf(
     char *mplpString,
     const tree::mutationMatrices& mutMat,
+    std::vector<std::tuple<size_t, std::string, std::string>>& variantsToApply,
     std::string &vcfFileName
 );

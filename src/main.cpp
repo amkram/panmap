@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string>
 #include "index.pb.h"
+#include <tbb/global_control.h>
 
 
 using namespace pmi;
@@ -144,6 +145,10 @@ int main(int argc, char *argv[]) {
         "g",
         "Use root as reference, do not place") // FIXME for debugging purposes,
                                                // remove for release
+        ("mam", "Accio!")(
+        "prefix", po::value<std::string>(), "output prefix")(
+        "accioParams", po::value<std::vector<int32_t>>()->multitoken(), "Accio parameters --accioParams k s l")(
+        "cpus", po::value<size_t>()->default_value(1), "cpus to use")
         ;
 
     po::positional_options_description p;
@@ -175,7 +180,8 @@ int main(int argc, char *argv[]) {
     std::cout << "\nUsing tree: \e[3;1m" << pmatFile << "\e[0m  ("
               << T->allNodes.size() << " nodes)" << std::endl;
 
-    std::string indexFile = "";
+    std::string prefix     = "";
+    std::string indexFile  = "";
     std::string mutmatFile = "";
     std::string reads1File = "";
     std::string reads2File = "";
@@ -185,79 +191,8 @@ int main(int argc, char *argv[]) {
     if (vm.count("reads2")) {
       reads2File = vm["reads2"].as<std::string>();
     }
-
-    int32_t k = -1;
-    int32_t s = -1;
-    bool prompt = !vm.count("f");
-    bool use_root = vm.count("g");
-
-    if (vm.count("params")) {
-      auto k_s_values = vm["params"].as<std::vector<int32_t>>();
-      if (k_s_values.size() != 2) {
-        std::cerr << "× Error: -r/--reindex requires two integer values (k and "
-                     "s), e.g. -r 13,8."
-                  << std::endl;
-        return 1;
-      } else {
-        k = k_s_values[0];
-        s = k_s_values[1];
-      }
-    } else if (vm.count("index")) {
-      indexFile = vm["index"].as<std::string>();
-      std::cout << "Using seed index: \e[3;1m" << indexFile << "\e[0m"
-                << std::endl;
-    } else {
-      bool keep = false;
-      std::string defaultIndexPath = pmatFile + ".pmi";
-      std::string inp;
-      if (boost::filesystem::exists(defaultIndexPath)) {
-        if (prompt) {
-          std::cout << "Use existing index? [Y/n]";
-          getline(std::cin, inp);
-          if (inp == "Y" || inp == "y" || inp == "") {
-            keep = true;
-          }
-        } else {
-          keep = true;
-        }
-      } else {
-        std::cout << "\nNo index found." << std::endl;
-      }
-      if (!keep) {
-        promptAndIndex(T, prompt, defaultIndexPath);
-      }
-      indexFile = defaultIndexPath;
-    }
-
-    // Mutation matrix (mm) file
-    tree::mutationMatrices mutMat = tree::mutationMatrices();
-    std::string defaultMutmatPath = pmatFile + ".mm";
-    if (vm.count("mutmat")) {
-      mutmatFile =
-          fs::canonical(fs::path(vm["mutmat"].as<std::string>())).string();
-      std::ifstream mminf(mutmatFile);
-      tree::fillMutationMatricesFromFile(mutMat, mminf);
-      mminf.close();
-      std::cout << "Using mutation matrix file: " << mutmatFile << std::endl;
-    } else if (fs::exists(defaultMutmatPath)) {
-      std::ifstream mminf(defaultMutmatPath);
-      tree::fillMutationMatricesFromFile(mutMat, mminf);
-      mminf.close();
-      std::cout << "Mutation matrix file detected, using mutation matrix file: "
-                << defaultMutmatPath << std::endl;
-    } else {
-      std::cout
-          << "No mutation matrix file detected, building mutation matrix ..."
-          << std::endl;
-      // build mutation matrix
-      tree::fillMutationMatricesFromTree(mutMat, T, vm["window"].as<size_t>(),
-                                         vm["percent_identity"].as<double>());
-      // write to file
-      std::cout << "Writing to " << defaultMutmatPath << " ..." << std::endl;
-      std::ofstream mmfout(defaultMutmatPath);
-      tree::writeMutationMatrices(mutMat, mmfout);
-      mmfout.close();
-      mutmatFile = defaultMutmatPath;
+    if (vm.count("prefix")) {
+      prefix = vm["prefix"].as<std::string>();
     }
 
     // TODO, add some sort of error if all of these are empty, cus then why are
@@ -283,10 +218,117 @@ int main(int argc, char *argv[]) {
       refFileName = vm["r"].as<std::string>();
     }
 
-    promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File,
-                   samFileName, bamFileName, mpileupFileName, vcfFileName,
-                   refFileName, prompt, use_root);
+    // Mutation matrix (mm) file
+    tree::mutationMatrices mutMat = tree::mutationMatrices();
+    std::string defaultMutmatPath = pmatFile + ".mm";
+    if (vm.count("mutmat")) {
+      mutmatFile =
+          fs::canonical(fs::path(vm["mutmat"].as<std::string>())).string();
+      std::ifstream mminf(mutmatFile);
+      tree::fillMutationMatricesFromFile(mutMat, mminf);
+      mminf.close();
+      std::cout << "Using mutation matrix file: " << mutmatFile << std::endl;
+    } else if (fs::exists(defaultMutmatPath)) {
+      std::ifstream mminf(defaultMutmatPath);
+      tree::fillMutationMatricesFromFile(mutMat, mminf);
+      mminf.close();
+      std::cout << "Mutation matrix file detected, using mutation matrix file: "
+                << defaultMutmatPath << std::endl;
+    } else {
+      std::cout
+          << "No mutation matrix file detected, building mutation matrix ..."
+          << std::endl;
+      // build mutation matrix
+      tree::fillMutationMatricesFromTree(mutMat, T, vm["window"].as<size_t>(),
+                                        vm["percent_identity"].as<double>());
+      // write to file
+      std::cout << "Writing to " << defaultMutmatPath << " ..." << std::endl;
+      std::ofstream mmfout(defaultMutmatPath);
+      tree::writeMutationMatrices(mutMat, mmfout);
+      mmfout.close();
+      mutmatFile = defaultMutmatPath;
+    }
 
+    if (vm.count("mam")) {
+      tbb::global_control c(tbb::global_control::max_allowed_parallelism, vm["cpus"].as<size_t>());            
+      int32_t accioK = 10;
+      int32_t accioS = 5;
+      int32_t accioL = 3;
+      if (vm.count("accioParams")) {
+          auto accioParamValues = vm["accioParams"].as<std::vector<int32_t>>();
+          int32_t accioK = accioParamValues[0];
+          int32_t accioS = accioParamValues[1];
+          int32_t accioL = accioParamValues[2];
+      }
+      std::string defaultKmiPath = pmatFile + "." + std::to_string(accioK) + "_" + std::to_string(accioS) + "_" + std::to_string(accioL) + ".kmi";
+      if (!fs::exists(defaultKmiPath)) {
+          std::cerr << "kmi file not detected... building kmi file using input parameters" << std::endl;
+          std::stringstream seedmersOutStream;
+          SeedmerIndex index;
+          pmi::buildSeedmers(index, T, accioL, accioK, accioS, seedmersOutStream);
+          std::cerr << "Writing to " << defaultKmiPath << "..." << std::endl;
+          std::ofstream smfout(defaultKmiPath);
+          smfout << seedmersOutStream.str();
+      }
+      int maximumGap = 10;
+      int minimumCount = 0;
+      int minimumScore = 0;
+      double errorRate = 0.005;
+      bool confidence = false;
+      int32_t roundsRemove = 2;
+      double removeThreshold = 0.005;
+      place::placeMetagenomics(T, mutMat, accioK, accioS, accioL, defaultKmiPath, reads1File,
+        reads2File, samFileName, bamFileName, mpileupFileName, vcfFileName,
+        refFileName, prefix, maximumGap, minimumCount, minimumScore, errorRate,
+        confidence, roundsRemove, removeThreshold);
+    } else {
+      int32_t k = -1;
+      int32_t s = -1;
+      bool prompt = !vm.count("f");
+      bool use_root = vm.count("g");
+
+      if (vm.count("params")) {
+        auto k_s_values = vm["params"].as<std::vector<int32_t>>();
+        if (k_s_values.size() != 2) {
+          std::cerr << "× Error: -r/--reindex requires two integer values (k and "
+                      "s), e.g. -r 13,8."
+                    << std::endl;
+          return 1;
+        } else {
+          k = k_s_values[0];
+          s = k_s_values[1];
+        }
+      } else if (vm.count("index")) {
+        indexFile = vm["index"].as<std::string>();
+        std::cout << "Using seed index: \e[3;1m" << indexFile << "\e[0m"
+                  << std::endl;
+      } else {
+        bool keep = false;
+        std::string defaultIndexPath = pmatFile + ".pmi";
+        std::string inp;
+        if (boost::filesystem::exists(defaultIndexPath)) {
+          if (prompt) {
+            std::cout << "Use existing index? [Y/n]";
+            getline(std::cin, inp);
+            if (inp == "Y" || inp == "y" || inp == "") {
+              keep = true;
+            }
+          } else {
+            keep = true;
+          }
+        } else {
+          std::cout << "\nNo index found." << std::endl;
+        }
+        if (!keep) {
+          promptAndIndex(T, prompt, defaultIndexPath);
+        }
+        indexFile = defaultIndexPath;
+      }
+
+      promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File,
+                    samFileName, bamFileName, mpileupFileName, vcfFileName,
+                    refFileName, prompt, use_root); 
+    }
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << std::endl;
     return 1;
