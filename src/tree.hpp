@@ -548,14 +548,9 @@ void fillMutationMatricesFromFile(mutationMatrices &mutMat, std::ifstream &inf);
 void writeMutationMatrices(const mutationMatrices &mutMat,
                            std::ofstream &mmfout);
 
-std::string getNucleotideSequenceFromBlockCoordinates(
-    tupleCoord_t &start, tupleCoord_t &end,
-    const sequence_t &sequence,
-    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator);
 
 
-std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> newgetNucleotideSequenceFromBlockCoordinates(
+std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> getNucleotideSequenceFromBlockCoordinates(
     tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator);

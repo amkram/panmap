@@ -65,91 +65,6 @@ void findSyncmers(
 
 
 
-// Recursive function to build the seed index
-void buildHelper2(SeedmerIndex &index, Tree *T, Node *node,
-                 int32_t &pb_i, std::map<int32_t, std::string> &seedmersAlex) {
-  // std::cout << "BH2 " << node->identifier << "\n";
-
-  std::cout << "pbi " << pb_i << std::endl;
-  // std::cout << "size " << index.per_node_mutations_size() << "\n";
-
-
-  NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_i);
-
-  // std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
-
-  std::string node_idn = node->identifier;
-
-
-  std::vector<std::pair<int32_t, std::string>> backtrack;
-  std::vector<int64_t> delSeeds;
-  std::vector<std::pair<int64_t, std::string>> addSeeds;
-  
-  for (int mut_i = 0; mut_i < pb_node_mutations.mutations_size(); mut_i++) {
-    const auto &mut = pb_node_mutations.mutations(mut_i);
-    int32_t pos = mut.pos();
-    if (mut.is_deletion()) {
-      backtrack.push_back({pos, seedmersAlex[pos]});
-      delSeeds.push_back(pos);
-    } else {
-      if (seedmersAlex.find(pos) != seedmersAlex.end()) {
-        backtrack.push_back({pos, seedmersAlex[pos]});
-      } else {
-        backtrack.push_back({pos, ""});
-      }
-      addSeeds.push_back({pos, mut.seq()});
-      
-    }
-  }
-  for (const auto &p : delSeeds) {
-    seedmersAlex.erase(p);
-  }
-  for (const auto &p : addSeeds) {
-    seedmersAlex[p.first] = p.second;
-  }
-
-  std::string node_seq = tree::getStringAtNode(node, T, true);
-  std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
-
-  std::unordered_map<int32_t, int32_t> degap;
-  int64_t pos = 0;
-  for (int64_t i = 0; i < node_seq.size(); i++) {
-    char c = node_seq[i];
-    degap[i] = pos;
-    if (c != '-' && c != 'x') {
-      pos++;
-    }
-  }
-  std::string dirName = std::string("../dev/neval-performance/");
-
-  std::ofstream osdmfsAlex(dirName + node_idn + ".true.alex.pmi");
-  osdmfsAlex << node_seq << std::endl;
-  osdmfsAlex << node_seq_nogap << std::endl;
-  for (const auto &pair : seedmersAlex) {
-    osdmfsAlex << pair.second << "\t" << degap[pair.first] << "\t" << pair.first
-               << std::endl;
-  }
-  osdmfsAlex.close();
-
-  /* Recursive step */
-  for (Node *child : node->children) {
-    
-    pb_i++;
-    buildHelper2(index, T, child, pb_i, seedmersAlex);
-  }
-  // undo seed mutations
-  for (const auto &p : backtrack) {
-    if (p.second.size() > 0) {
-      seedmersAlex[p.first] = p.second;
-    } else {
-      seedmersAlex.erase(p.first);
-    }
-  }
-}
-
-
-
-
 
 
 
@@ -186,6 +101,9 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
   // std::cout << " " << node->identifier << "\n";
 
   std::cout << "pbi " << pb_i << std::endl;
+  if(pb_i > 100){
+    //exit(0);
+  }
   // std::cout << "size " << index.per_node_mutations_size() << "\n";
 
 
@@ -242,7 +160,7 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
 
 
   //Print out Alex's Seeds
-  std::string dirName = std::string("../dev/neval-performance/");
+  std::string dirName = std::string("../dev/eval-performance/");
 
   std::ofstream osdmfsAlex(dirName + node_idn + ".true.alex.pmi");
   //osdmfsAlex << node_seq << std::endl;
@@ -388,14 +306,14 @@ BOOST_AUTO_TEST_CASE(performance) {
 
 
    std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
-   //parameters = {{11, 4, 1}};
+   //parameters = {{15, 1, 1}};
 
    for (const auto &param : parameters) {
      auto k = std::get<0>(param);
      auto s = std::get<1>(param);
      auto j = std::get<2>(param);
 
-     std::string dirName = std::string("../dev/neval-performance/");
+     std::string dirName = std::string("../dev/eval-performance/");
      fs::create_directories(dirName);
 
      SeedmerIndex index;
@@ -406,7 +324,7 @@ BOOST_AUTO_TEST_CASE(performance) {
      //exit(0);
 
     
-     std::ofstream fout("../dev/neval-performance/"+pmat+".pmi", std::ios::binary);
+     std::ofstream fout(dirName+pmat+".pmi", std::ios::binary);
      if (!index.SerializeToOstream(&fout)) {
         std::cerr << "Failed to write index." << std::endl;
     }
@@ -420,7 +338,13 @@ BOOST_AUTO_TEST_CASE(performance) {
      exit(0);
 
      for (auto &n : T->allNodes) {
-       std::string node_idn = n.first;
+       std::string node_idn;
+    
+        for (char c : n.first) {
+            if (isalnum(c) || c == '_' || c == '.' || c == '-') {
+                node_idn += c;
+            }
+        }
        std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
        Node *nod= n.second;
       
