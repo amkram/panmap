@@ -43,244 +43,6 @@ std::string tree::getConsensus(Tree *T) {
   return consensus;
 }
 
-// coords (blockId, nucPosition, nucGapPosition)
-// Sequence includes both boundary coordinates
-std::string tree::getNucleotideSequenceFromBlockCoordinates(
-    tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
-    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
-  
-  // const auto &rotationIndexes = T->rotationIndexes;
-  // const auto &sequenceInverted = T->sequenceInverted;
-  // const auto &circularSequences = T->circularSequences;
-    
-    
-
-    if (end == tupleCoord_t{-1,-1,-1})
-    {
-      end= tupleCoord_t{sequence.size() - 1, sequence.back().first.size() - 1, -1};
-    }
-
-    long size = tupleToScalarCoord(end, globalCoords) - tupleToScalarCoord(start, globalCoords) + 1;
-    if(size < 0){
-      size = -size;
-      auto temp = end;
-      end = start;
-      start = temp;
-    }
-    
-  
-
-    bool check = node->identifier == "CP089776.1";
-    check = false;
-
-
-    std::string seq;
-    seq.resize(size);
-    int i = 0;
-    // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
-    
-    for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
-      if(check){
-          std::cout << i << " start " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
-      }
-      if(blockExists[currCoord.blockId].first){
-        
-        char c;
-        if (currCoord.nucGapPos == -1){
-          
-          c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
-        }else{
-          
-          c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
-        }
-        
-        
-        if(c == 'x') c = '-';
-        if(! blockStrand[currCoord.blockId].first){
-          switch(c){
-            case 'A':
-              c = 'T';
-              break;
-            case 'T':
-              c = 'A';
-              break;
-            case 'G':
-              c = 'C';
-              break;
-            case 'C':
-              c = 'G';
-              break;
-            
-            case 'Y':
-              c = 'R';
-              break;
-            case 'R':
-              c = 'Y';
-              break;
-            case 'K':
-              c = 'M';
-              break;
-            case 'M':
-              c = 'K';
-              break;
-            case 'D':
-              c = 'H';
-              break;
-            case 'H':
-              c = 'D';
-              break;
-            case 'V':
-              c = 'B';
-              break;
-            case 'B':
-              c = 'V';
-              break;
-          }
-        }
-
-        seq[i] = c;
-      }else{
-        seq[i] = '-';
-
-        //TODO maybe I jump to the end of this block?
-
-        //jump to start of next block
-        if( blockStrand[currCoord.blockId].first){
-            //not inverted, jump to top of this block
-            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
-          }else{
-            //inverted, jump to bottom of this block
-            //currCoord.blockId += 1;
-            currCoord.nucPos = 0;
-            currCoord.nucGapPos = 0;
-            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
-              currCoord.nucGapPos = -1;
-            }
-        }
-        
-        if(currCoord.blockId < navigator.sequence.size() - 1 && currCoord.blockId != end.blockId){
-          
-          //jump to start of next block
-          /*
-          if( ! blockStrand[currCoord.blockId + 1].first){
-            //inverted, jump to top of next block
-            currCoord = tupleCoord_t{currCoord.blockId + 1, navigator.sequence[currCoord.blockId + 1].first.size() - 1, -1};
-          }else{
-            //not inverted, jump to bottom of next block
-            currCoord.blockId += 1;
-            currCoord.nucPos = 0;
-            currCoord.nucGapPos = 0;
-            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
-              currCoord.nucGapPos = -1;
-            }
-          }*/
-
-        }else{
-          break;
-        }
-
-        //Jump to end of this block
-        /*
-        if( blockStrand[currCoord.blockId].first){
-            //not inverted, jump to top of this block
-            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
-          }else{
-            //inverted, jump to bottom of this block
-            //currCoord.blockId += 1;
-            currCoord.nucPos = 0;
-            currCoord.nucGapPos = 0;
-            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
-              currCoord.nucGapPos = -1;
-            }
-        }*/
-        
-
-
-      }
-      if(check){
-        std::cout << i << " " << seq[i] << " " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
-      }
-      i++;
-    }
-    
-    //Adding end character
-    if(blockExists[end.blockId].first){
-        char c;
-        if (end.nucGapPos == -1){
-          c = sequence[end.blockId].first[end.nucPos].first;
-        }else{
-          c = sequence[end.blockId].first[end.nucPos].second[end.nucGapPos];
-        }
-        if(c == 'x') c = '-';
-        if(! blockStrand[end.blockId].first){
-
-          switch(c){
-            case 'A':
-              c = 'T';
-              break;
-            case 'T':
-              c = 'A';
-              break;
-            case 'G':
-              c = 'C';
-              break;
-            case 'C':
-              c = 'G';
-              break;
-
-            case 'Y':
-              c = 'R';
-              break;
-            case 'R':
-              c = 'Y';
-              break;
-            case 'K':
-              c = 'M';
-              break;
-            case 'M':
-              c = 'K';
-              break;
-            case 'D':
-              c = 'H';
-              break;
-            case 'H':
-              c = 'D';
-              break;
-            case 'V':
-              c = 'B';
-              break;
-            case 'B':
-              c = 'V';
-              break;
-          }
-        }
-        seq[i] = c;
-      }else{
-        seq[i] = '-';
-      }
-    
-
-    seq.resize(i +1);
-
-
-    return seq;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -292,11 +54,10 @@ std::string tree::getNucleotideSequenceFromBlockCoordinates(
 // coords (blockId, nucPosition, nucGapPosition)
 // Sequence includes both boundary coordinates
 //Sequence, scalarCoords of sequence, scalarCoords of Gaps, dead blocks
-std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tree::newgetNucleotideSequenceFromBlockCoordinates(
+std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tree::getNucleotideSequenceFromBlockCoordinates(
     tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
-    
     
     
 
@@ -314,34 +75,27 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
       start = temp;
     }
     
-  
-
-    bool check = node->identifier == "CP089776.1";
-    check = false;
 
 
     std::string seq;
-    seq.resize(size);
-    std::vector<int> a;
-    a.reserve(size);
+    std::vector<int> coords;
     int i = 0;
 
-    std::vector<int> b;
-    b.reserve(size);
+    std::vector<int> gaps;
+    int j = 0;
 
-    int g = 0;
-    std::vector<int> c;
 
+    std::vector<int> deadBlocks;
 
 
 
     // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
     
     for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
-      if(check){
-          std::cout << i << " start " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
-      }
-      if(blockExists[currCoord.blockId].first){
+      
+      int scalar = tupleToScalarCoord(currCoord, globalCoords);
+
+      if (blockExists[currCoord.blockId].first) {
         
         char c;
         if (currCoord.nucGapPos == -1){
@@ -395,12 +149,16 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
               break;
           }
         }
-
-        seq[i] = c;
+        if(c != '-'){
+          seq.push_back(c);
+          coords.push_back(scalar);
+          i++;
+        }else{
+          gaps.push_back(scalar);
+          j++;
+        }
       }else{
-        seq[i] = '-';
-
-        //TODO maybe I jump to the end of this block?
+        deadBlocks.push_back(currCoord.blockId);
 
         //jump to start of next block
         if( blockStrand[currCoord.blockId].first){
@@ -416,50 +174,16 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
             }
         }
         
-        if(currCoord.blockId < navigator.sequence.size() - 1 && currCoord.blockId != end.blockId){
-          
-          //jump to start of next block
-          /*
-          if( ! blockStrand[currCoord.blockId + 1].first){
-            //inverted, jump to top of next block
-            currCoord = tupleCoord_t{currCoord.blockId + 1, navigator.sequence[currCoord.blockId + 1].first.size() - 1, -1};
-          }else{
-            //not inverted, jump to bottom of next block
-            currCoord.blockId += 1;
-            currCoord.nucPos = 0;
-            currCoord.nucGapPos = 0;
-            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
-              currCoord.nucGapPos = -1;
-            }
-          }*/
-
-        }else{
+        if(currCoord.blockId == navigator.sequence.size() - 1 || currCoord.blockId == end.blockId){
           break;
         }
 
-        //Jump to end of this block
-        /*
-        if( blockStrand[currCoord.blockId].first){
-            //not inverted, jump to top of this block
-            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
-          }else{
-            //inverted, jump to bottom of this block
-            //currCoord.blockId += 1;
-            currCoord.nucPos = 0;
-            currCoord.nucGapPos = 0;
-            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
-              currCoord.nucGapPos = -1;
-            }
-        }*/
-        
-
-
       }
-      if(check){
-        std::cout << i << " " << seq[i] << " " << currCoord.blockId << " " << currCoord.nucPos << " " << currCoord.nucGapPos << " is " << tupleToScalarCoord(currCoord, globalCoords) <<"\n";
-      }
-      i++;
+
     }
+
+
+    int scalar = tupleToScalarCoord(end, globalCoords);
     
     //Adding end character
     if(blockExists[end.blockId].first){
@@ -512,16 +236,22 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
               break;
           }
         }
-        seq[i] = c;
-      }else{
-        seq[i] = '-';
-      }
-    
 
-    seq.resize(i +1);
-    
+        if(c != '-'){
+          seq.push_back(c);
+          coords.push_back(scalar);
+          i++;
+        }else{
+          gaps.push_back(scalar);
+          j++;
+        }
 
-    return std::make_tuple(seq, a, b,c);
+    }else{
+      deadBlocks.push_back(end.blockId);
+    }
+
+    
+    return std::make_tuple(seq, coords, gaps, deadBlocks);
 }
 
 
