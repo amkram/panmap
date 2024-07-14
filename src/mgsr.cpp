@@ -1037,3 +1037,293 @@ std::unordered_map<std::string, std::pair<double, double>> mgsr::getReadAssignme
 
     return readAssignmentAccuracy;
 }
+
+
+
+// squaremHelper_test_1: remove haplotype whose abundance is estimated to be at std::numeric_limits<double>::min() for more than m iterations in n iterations
+// default to 5 iterations rn
+
+
+
+void updateInsigCounts(const Eigen::VectorXd& props, std::vector<size_t>& insigCounts, size_t totalNodes) {
+    double insigProp =  (1.0 / static_cast<double>(totalNodes)) / 10;
+    for (int i = 0; i < props.size(); ++i) {
+        if (props(i) <= insigProp) {
+            ++insigCounts[i];
+        } else {
+            insigCounts[i] = 0;
+        }
+    }
+}
+
+void squarem_test_1(
+    const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs,
+    const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    const Eigen::VectorXd& numReadDuplicates, const int32_t& numReads, 
+    Eigen::VectorXd& props, double& llh, int& curit, bool& converged, size_t iterations, std::vector<size_t>& insigCounts, size_t totalNodes
+    ) {
+    assert(nodes.size() == probs.cols());
+    assert(nodes.size() == props.size());
+    size_t curIteration = 1;
+    while (true) {
+        // std::cerr << "it " << curit << std::endl;
+        Eigen::VectorXd theta1 = getMax(probs, props, numReadDuplicates, numReads);
+        normalize(theta1);
+        Eigen::VectorXd theta2 = getMax(probs, theta1, numReadDuplicates, numReads);
+        normalize(theta2);
+
+        Eigen::VectorXd r = theta1 - props;
+        Eigen::VectorXd v = theta2 - theta1 - r;
+        double r_norm = r.norm();
+        double v_norm = v.norm();
+
+        double alpha;
+        if (r_norm == 0 || v_norm == 0) {
+            alpha = 0;
+        } else {
+            alpha = - r_norm / v_norm;
+        }
+        double newllh;
+
+        
+        Eigen::VectorXd theta_p;
+        if (alpha > -1) {
+            alpha = -1;
+            theta_p = props - 2 * alpha * r + alpha * alpha * v;
+            props = getMax(probs, theta_p, numReadDuplicates, numReads);
+            normalize(props);
+            newllh = getExp(probs, props, numReadDuplicates);
+        } else {
+            theta_p = props - 2 * alpha * r + alpha * alpha * v;
+            auto newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
+            normalize(newProps);
+            newllh = getExp(probs, newProps, numReadDuplicates);
+            if (newllh >= llh) {
+                props = std::move(newProps);
+            } else {
+                while (llh - newllh > 0.00001) {
+                    // std::cerr << "alpha " << alpha << std::endl;
+                    alpha = (alpha - 1) / 2;
+                    theta_p = props - 2 * alpha * r + alpha * alpha * v;
+                    newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
+                    normalize(newProps);
+                    newllh   = getExp(probs, newProps, numReadDuplicates);
+                }
+                props = std::move(newProps);
+            }
+        }
+
+        updateInsigCounts(props, insigCounts, totalNodes);
+        if (newllh - llh < 0.00001) {
+            llh = newllh;
+            converged = true;
+            break;
+        } else if (curIteration == iterations) {
+            llh = newllh;
+            break;
+        }
+        llh = newllh;
+        ++curit;
+        ++curIteration;
+    }
+    ++curit;
+}
+
+void mgsr::squaremHelper_test_1(
+    PangenomeMAT::Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::pair<int32_t, std::vector<size_t>>>& numReadDuplicates,
+    const std::vector<bool>& lowScoreReads, const int32_t& numReads, const size_t& numLowScoreReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    Eigen::MatrixXd& probs, std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude
+    ) {
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "starting to set up EM" << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "starting to set up EM excluding " << exclude << "\n";
+        std::cerr << msg.str();
+    }
+
+
+    if (!exclude.empty()) {
+        probs.resize(allScores.begin()->second.size() - numLowScoreReads, allScores.size() - leastRecentIdenticalAncestors.size() - 1);
+    } else {
+        probs.resize(allScores.begin()->second.size() - numLowScoreReads, allScores.size() - leastRecentIdenticalAncestors.size());
+    }
+    size_t colIndex = 0;
+    for (const auto& node : allScores) {
+        if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
+        if (!exclude.empty() && node.first == exclude) continue;
+        std::vector<double> curProbs;
+        size_t rowIndex = 0;
+        for (size_t i = 0; i < node.second.size(); ++i) {
+            if (!lowScoreReads[i]) {
+                const auto& score = node.second[i];
+                probs(rowIndex, colIndex) = score.second;
+                ++rowIndex;
+            }
+        }
+        nodes.push_back(node.first);
+        ++colIndex;
+    }
+
+    // std::cerr << "num nodes " << nodes.size() << std::endl;
+    props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
+    size_t totalNodes = nodes.size();
+    Eigen::VectorXd readDuplicates(allScores.begin()->second.size() - numLowScoreReads);
+    
+    size_t indexReadDuplicates = 0;
+    int32_t numHighScoreReads = 0;
+    for (size_t i = 0; i < numReadDuplicates.size(); ++i) {
+        if (!lowScoreReads[i]) {
+            readDuplicates(indexReadDuplicates) = numReadDuplicates[i].first;
+            numHighScoreReads += numReadDuplicates[i].first;
+            ++indexReadDuplicates;
+        }
+    }
+
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "starting EM estimation of haplotype proportions" << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "starting EM estimation of haplotype proportions excluding " << exclude << "\n";
+        std::cerr << msg.str();
+    }
+
+    int curit = 0;
+    llh = getExp(probs, props, readDuplicates);
+    // std::cerr << "iteration " << curit << ": " << llh << std::endl;
+    // bool& converged, size_t iterations, std::vector<size_t>& insigCounts
+    bool converged = false;
+    size_t iterations = 20;
+    size_t remove_count = 20;
+    for (size_t i = 0; i < 3; ++i) {
+        std::cerr << "Here" << std::endl;
+        std::vector<size_t> insigCounts(nodes.size());
+        squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, iterations, insigCounts, totalNodes);
+        if (converged) {
+            break;
+        }
+        
+        std::vector<size_t> significantIndices;
+        std::vector<std::string> sigNodes;
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            if (insigCounts[i] < remove_count) {
+                significantIndices.push_back(i);
+            }
+        }
+
+        if (significantIndices.size() == nodes.size()) continue;
+        for (size_t idx : significantIndices) {
+            sigNodes.push_back(nodes[idx]);
+        }
+
+        Eigen::MatrixXd sigProbs(probs.rows(), significantIndices.size());
+        for (size_t i = 0; i < significantIndices.size(); ++i) {
+            sigProbs.col(i) = probs.col(significantIndices[i]);
+        }
+        Eigen::VectorXd sigProps = Eigen::VectorXd::Constant(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
+        std::cerr << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
+        nodes = std::move(sigNodes);
+        probs = std::move(sigProbs);
+        props = std::move(sigProps);
+    }
+
+    if (!converged) {
+        std::vector<size_t> insigCounts(nodes.size());
+        squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), insigCounts, totalNodes);
+        assert(converged == true);
+    }
+
+    for (int32_t i = 0; i < roundsRemove; ++i) {
+        std::vector<size_t> significantIndices;
+        std::vector<std::string> sigNodes;
+
+        for (size_t i = 0; i < props.size(); ++i) {
+            if (props(i) >= removeThreshold) {
+                significantIndices.push_back(i);
+            }
+        }
+        if (significantIndices.size() == nodes.size()) break;
+        std::cerr << "remove round " << i + 1 << std::endl;
+
+        for (size_t idx : significantIndices) {
+            sigNodes.push_back(nodes[idx]);
+        }
+
+        Eigen::MatrixXd sigProbs(probs.rows(), significantIndices.size());
+        sigProbs.resize(probs.rows(), significantIndices.size());
+        for (size_t i = 0; i < significantIndices.size(); ++i) {
+            sigProbs.col(i) = probs.col(significantIndices[i]);
+        }
+        Eigen::VectorXd sigProps = Eigen::VectorXd::Constant(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
+        llh = getExp(sigProbs, sigProps, readDuplicates);
+        bool converged = false;
+        size_t iterations = std::numeric_limits<size_t>::max();
+        std::vector<size_t> insigCounts(sigNodes.size());
+        squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, iterations, insigCounts, totalNodes);
+        assert(converged);
+        nodes = std::move(sigNodes);
+        probs = std::move(sigProbs);
+        props = std::move(sigProps);
+    }
+
+    if (!exclude.empty()) {
+        Eigen::VectorXd curProbs(allScores.begin()->second.size() - numLowScoreReads);
+        size_t indexCurProbs = 0;
+        const auto& curNode = allScores.at(exclude);
+        for (size_t i = 0; i < curNode.size(); ++i) {
+            if (!lowScoreReads[i]) {
+                const auto& score = curNode[i];
+                curProbs(indexCurProbs) = score.second;
+                ++indexCurProbs;
+            }
+        }
+
+        probs = probs, curProbs;
+        props = props, 0.0;
+        llh = getExp(probs, props, readDuplicates);
+    }
+
+    if (exclude.empty()) {
+        std::stringstream msg;
+        msg << "Finished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
+        std::cerr << msg.str();
+    } else {
+        std::stringstream msg;
+        msg << "Finished EM estimation of haplotype proportions excluding " << exclude << ". Total EM iterations: " << curit<< "\n";
+        std::cerr << msg.str();
+    }
+}
+
+/*
+normalize:
+    if prop = 0:
+        low_sig_freq += 1
+        ...
+    else:
+        if low_sig_freq > 0
+        low_sig_freq = 0
+        ...
+    ...
+
+squarem:
+    ...
+    if curit == 50:
+        return;
+    else if meet  convergence criteria:
+        converged = true
+        return;
+    ...
+
+squaremHelper:
+    bool converged = false
+    int n = 50
+    while not converged:
+        low_sig_freq = []  //keep track of how many times a node has been at low freq
+        squarem(params, converged, n, low_sig_freq)
+        remove low_sig_freq nodes from props and probs
+
+*/

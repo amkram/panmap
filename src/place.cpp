@@ -419,7 +419,7 @@ void place::placeMetagenomics(
     Eigen::VectorXd props;
     std::vector<std::string> nodes;
     double llh;
-    mgsr::squaremHelper(T, allScores, numReadDuplicates, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
+    mgsr::squaremHelper_test_1(T, allScores, numReadDuplicates, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
     std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
     for (size_t i = 0; i < nodes.size(); ++i) {
         sortedOut.at(i) = {nodes[i], props(i)};
