@@ -168,10 +168,10 @@ void seedsFromFastq(SeedmerIndex &index, std::unordered_map<std::string, int32_t
         std::string name = readNames[i];
         std::string rc = reverseComplement(seq);
 
-        std::vector<seed> syncmers = syncmerize(seq, index.k(), index.s(), false, true, 0);
+        std::vector<seed> syncmers = syncmerize(seq, index.k(), index.s(), false, false, 0);
         readSeedsFwd.push_back(syncmers);
 
-        std::vector<seed> syncmersReverse = syncmerize(rc, index.k(), index.s(), false, true, 0);
+        std::vector<seed> syncmersReverse = syncmerize(rc, index.k(), index.s(), false, false, 0);
         readSeedsBwd.push_back(syncmersReverse);
 
         std::vector<seedmer> seedmers = seedmerize(syncmers, index.j());
@@ -206,8 +206,9 @@ void place::placeIsolate(SeedmerIndex &index, const tree::mutationMatrices& mutM
     std::vector<std::vector<seed>> readSeedsFwd;
     std::vector<std::vector<seed>> readSeedsBwd;
     std::unordered_map<std::string, int32_t> readSeedCounts;
+    
     seedsFromFastq(index, readSeedCounts, readSequences, readQuals, readNames, readSeedsFwd, readSeedsBwd, reads1Path, reads2Path);
-
+    
 
     int k = index.k();
     
