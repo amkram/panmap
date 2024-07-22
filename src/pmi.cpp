@@ -901,7 +901,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
 
 
     //Loop through sequence and build up seeds as we go
-    
     if(seq.size() >= index.k()){
 
       //Check first k bp for smers
