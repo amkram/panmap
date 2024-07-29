@@ -14,12 +14,85 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-#include "index.pb.h"
+#include "docopt.h"
+#include "index.capnp.h"
+#include <capnp/message.h>
+#include <capnp/serialize-packed.h>
+#include <fcntl.h>
 
 
 using namespace pmi;
 namespace po = boost::program_options;
 namespace fs = boost::filesystem;
+
+static const char USAGE[] = 
+R"(panmap -- v0.0 ⟗ ⟗
+
+Assemble haplotypes from reads and a pangenome guide tree.
+
+Default outputs (see -o for more options):
+    - BAM alignment to the reference selected by panmap (panmap.bam)
+    - VCF of variant calls (panmap.vcf)
+    - FASTA of the assembled consensus haplotype (panmap.fasta)
+    - Log of the panmap run (panmap.log)
+
+Usage:
+  panmap <guide.pmat> [<reads1.fastq>] [<reads2.fastq>] [options]
+
+<guide.pmat>    Path to pangenome reference tree (pan-MAT file).
+<reads1.fastq>  [Optional] Path to first FASTQ file.
+<reads2.fastq>  [Optional] Path to second FASTQ file (for paired-end reads).
+
+Preset options:
+  --fast                    Equivalent to --subsample-reads 5.0 --subsample-seeds 0.8
+  --superfast               Equivalent to --subsample-reads 0.5 --subsample-seeds 0.5
+  --accurate                Equivalent to --subsample-reads 100.0 --subsample-seeds 1.0
+
+Input/output options:
+  -p --prefix <prefix>      Prefix for output files. [default: panmap]
+  -o <outputs>              List of outputs to generate.
+                              Accepted values:
+                                  placement / p:  Save phylogenetic placement results to <prefix>.placement
+                                  assembly / a:   Save consensus assembly to <prefix>.assembly.fa
+                                  reference / r:  Save panmap's selected reference to <prefix>.reference.fa
+                                  spectrum / c:   Save mutation spectrum matrix to <prefix>.mm
+                                  mpileup / m:    Save read pileup to <prefix>.mpileup
+                                  sam / s:        Save aligned reads to <prefix>.sam
+                                  bam / b:        Save aligned reads to <prefix>.bam
+                                  vcf / v:        Save variant calls and likelihoods to <prefix>.vcf
+                                  all / A:        Save all possible outputs, each to <prefix>.<ext>
+                              [default: bam,vcf,assembly]
+
+  -i --index <path>         Provide a precomputed panmap index. If not specified, index
+                                is loaded from <guide.pmat>.pmi, if it exists, otherwise
+                                it is built with parameters <k> and <s> (see below). [default: ]
+
+Seeding/alignment options:
+  -k <k>                             Length of k-mer seeds. [default: 19]
+  -s <s>                             Length of s-mers for seed (syncmer) selection. [default: 8]
+  -R --subsample-reads <coverage>    Subsample reads for placement to approximately <coverage> depth. [default: 20.0]
+  -S --subsample-seeds <proportion>  Use only <proportion> of total seeds for placement. [default: 1.0]
+  -P --prior                         Compute and use a mutation spectrum prior for genotyping.
+  -f --reindex                       Don't load index from disk, build it from scratch.
+
+  -M --mutmat <path>                 Provide a mutation spectrum matrix instead of computing.
+                                       one from the tree. Overrides --prior. [default: ]
+  -I --identity-threshold <cutoff>   Identity cutoff for mutation spectrum, effective with --prior. [default: 0.80]
+Other options:
+  -x --stop-after <stage>        Stop after the specified stage. Accepted values:
+                                    indexing / i:   Stop after seed indexing
+                                    placement / p:  Stop after placement
+                                    mapping / m:    Stop after read mapping
+                                    genotyping / g: Stop after computing genotype likelihoods
+                                    assembly / a:   Stop after consensus assembly
+                                 [default: ]
+  -Q <seed>                 Integer seed for random number generation. [default: 42]
+  -V --version              Show version.
+  -h --help                 Show this screen.
+  -D --dump                 Dump all seeds to file.
+  -X --dump-real            Dump true seeds to file.
+)";
+
 
 void readFromProtoFile(const std::string &filename, SeedmerIndex &index) {
     std::ifstream input(filename, std::ios::binary);
@@ -87,209 +160,124 @@ void promptAndPlace(Tree *T, const tree::mutationMatrices &mutMat,
 using namespace std;
 
 
-void promptAndIndex(Tree *T, const bool prompt, const std::string &indexFile) {
-
-  using namespace std;
-  int32_t k, s, j;
-  cout << "Syncmer parameter k: ";
-  cin >> k;
-  cout << "Syncmer parameter s: ";
-  cin >> s;
-  cout << "Seed-mer parameter j: ";
-  cin >> j;
-  cout << "Building (" << k << ", " << s << ", " << j << ") index ..."
-       << std::endl;
-       
-  SeedmerIndex index;
-
-  /* Main index construction */
-  pmi::build(index, T, j, k, s);
-
-  /* Write protobuf index to disk */
-  std::cout << "Writing to " << indexFile << "..." << std::endl;
-  writeIndex(indexFile, index);
+void writeCapnp(::capnp::MallocMessageBuilder &message, std::string &filename) {
+  int fd = open(filename.c_str(), O_WRONLY | O_CREAT, 0644);
+  capnp::writePackedMessageToFd(fd, message);
 }
 
+void readCapnp(std::string &filename) {
+  int fd = open(filename.c_str(), O_RDONLY);
+  ::capnp::ReaderOptions options = {(uint64_t) -1, 64}; 
+  ::capnp::PackedFdMessageReader message(fd, options);
 
-/* Parse command line input and run logic */
-int main(int argc, char *argv[]) {
+  Index::Reader index = message.getRoot<Index>();
+  std::cout << "k: " << index.getK() << std::endl;
+  std::cout << "s: " << index.getS() << std::endl;
+  std::cout << "width: " << index.getWidth() << std::endl;
+  
+}
 
-  try {
-    po::options_description desc("Options");
-    desc.add_options()("panmat", po::value<std::string>()->required(),
-                       "Path to tree.pmat file (required)")(
-        "reads1", po::value<std::string>(),
-        "Path to first (or single-end) fastq file (optional)")(
-        "reads2", po::value<std::string>(),
-        "Path to second paired-end fastq file (optional)")(
-        "index,i", po::value<std::string>(), "Path to index file")(
-        "mutmat,u", po::value<std::string>(), "Path to mutation matrix file")(
-        "params,p", po::value<std::vector<int32_t>>()->multitoken(),
-        "Specify syncmer parameters k,s for indexing (e.g. for k=13, s=8 use "
-        "-p 13,8)")("f", "Proceed without prompting for confirmation. Applies "
-                         "to index construction if -p is specified or no index "
-                         "is found at ( /path/to/pmat.pmi ). Applies to sample "
-                         "placement if reads are provided.")(
-        "window,w", po::value<size_t>()->default_value(20),
-        "Mutation Matrix Build Specific: window size for selecting starting "
-        "and end sequence positions for building mutation spectrum")(
-        "percent_identity", po::value<double>()->default_value(0.80),
-        "Mutation Matrix Build Specific: percent identity threshold for "
-        "selecting starting and end sequence positions for building mutation "
-        "spectrum")("s", po::value<std::string>(), "Path to sam output")(
-        "b", po::value<std::string>(), "Path to bam output")(
-        "m", po::value<std::string>(), "Path to mpileup output")(
-        "v", po::value<std::string>(), "Path to vcf output")(
-        "r", po::value<std::string>(), "Path to reference fasta output")(
-        "g",
-        "Use root as reference, do not place") // FIXME for debugging purposes,
-                                               // remove for release
-        ;
-
-    po::positional_options_description p;
-    p.add("panmat", 1);
-    p.add("reads1", 1);
-    p.add("reads2", 1);
-    po::variables_map vm;
-    po::store(
-        po::command_line_parser(argc, argv).options(desc).positional(p).run(),
-        vm);
-    po::notify(vm);
-
-    fs::path pmatFilePathObject = fs::path(vm["panmat"].as<std::string>());
-    std::string pmatFile = fs::canonical(pmatFilePathObject).string();
-
-    std::cout << "   ┏━┳━●\033[36;1m\033[1m pan \033[0m" << std::endl;
-    std::cout << "  ━┫ ┗━━━●\033[36;1m\033[1m map\033[0m\033[32;1m\033[0m"
-              << std::endl;
-    std::cout << "   ┗━\033[36;1m v0.0\033[0m ━●\033[32;1m\033[0m" << std::endl;
-
+PangenomeMAT::Tree* loadPanmat(const std::string &pmatFile) {
     std::ifstream ifs(pmatFile);
     boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
     b.push(boost::iostreams::gzip_decompressor());
     b.push(ifs);
     std::istream is(&b);
+    return new PangenomeMAT::Tree(is);
+}
 
-    auto T = new PangenomeMAT::Tree(is);
+void log(const std::string& message) {
+    std::ofstream logFile("panmap.log", std::ios_base::app);
+    logFile << message << std::endl;
+    std::cout << message << std::endl;
+}
 
-    std::cout << "\nUsing tree: \e[3;1m" << pmatFile << "\e[0m  ("
-              << T->allNodes.size() << " nodes)" << std::endl;
+int main(int argc, const char** argv) {
+    std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
 
-    std::string indexFile = "";
-    std::string mutmatFile = "";
-    std::string reads1File = "";
-    std::string reads2File = "";
-    if (vm.count("reads1")) {
-      reads1File = vm["reads1"].as<std::string>();
-    }
-    if (vm.count("reads2")) {
-      reads2File = vm["reads2"].as<std::string>();
-    }
+    std::string guide = args["<guide.pmat>"].asString();
+    std::string reads1 = args["<reads1.fastq>"] ? args["<reads1.fastq>"].asString() : "";
+    std::string reads2 = args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";
+    std::string prefix = args["--prefix"] ? args["--prefix"].asString() : "panmap";
+    std::string outputs = args["-o"] && args["-o"].isString() ? args["-o"].asString() : "bam,vcf,assembly";
 
-    int32_t k = -1;
-    int32_t s = -1;
-    bool prompt = !vm.count("f");
-    bool use_root = vm.count("g");
+    double subsample_reads = std::stod(args["--subsample-reads"].asString());
+    double subsample_seeds = std::stod(args["--subsample-seeds"].asString());
+    bool reindex = args["--reindex"] && args["--reindex"].isBool() ? args["--reindex"].asBool() : false;
+    bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
+  
+    int k = std::stoi(args["-k"].asString());
+    int s = std::stoi(args["-s"].asString());
+    std::string index_path = args["--index"] ? args["--index"].asString() : "";
+    std::cout << std::endl;
+    std::cout << "   ┏━┳━● pan" << std::endl;
+    std::cout << "  ━┫ ┗━━━● map" << std::endl;
+    std::cout << "   ┗━ v0.0 ━●" << std::endl << std::endl;
 
-    if (vm.count("params")) {
-      auto k_s_values = vm["params"].as<std::vector<int32_t>>();
-      if (k_s_values.size() != 2) {
-        std::cerr << "× Error: -r/--reindex requires two integer values (k and "
-                     "s), e.g. -r 13,8."
-                  << std::endl;
-        return 1;
-      } else {
-        k = k_s_values[0];
-        s = k_s_values[1];
-      }
-    } else if (vm.count("index")) {
-      indexFile = vm["index"].as<std::string>();
-      std::cout << "Using seed index: \e[3;1m" << indexFile << "\e[0m"
-                << std::endl;
+    PangenomeMAT::Tree *T = loadPanmat(guide);
+
+    log("--- Settings ---");
+    log("Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");
+    if (!reads1.empty()) {
+      log("Reads: " + reads1 + (reads2.empty() ? "" : " + " + reads2));
     } else {
-      bool keep = false;
-      std::string defaultIndexPath = pmatFile + ".pmi";
-      std::string inp;
-      if (boost::filesystem::exists(defaultIndexPath)) {
-        if (prompt) {
-          std::cout << "Use existing index? [Y/n]";
-          getline(std::cin, inp);
-          if (inp == "Y" || inp == "y" || inp == "") {
-            keep = true;
-          }
-        } else {
-          keep = true;
-        }
-      } else {
-        std::cout << "\nNo index found." << std::endl;
-      }
-      if (!keep) {
-        promptAndIndex(T, prompt, defaultIndexPath);
-      }
-      indexFile = defaultIndexPath;
+      log("Reads: <none>");
     }
-
-    // Mutation matrix (mm) file
-    tree::mutationMatrices mutMat = tree::mutationMatrices();
-    std::string defaultMutmatPath = pmatFile + ".mm";
-    if (vm.count("mutmat")) {
-      mutmatFile =
-          fs::canonical(fs::path(vm["mutmat"].as<std::string>())).string();
-      std::ifstream mminf(mutmatFile);
-      tree::fillMutationMatricesFromFile(mutMat, mminf);
-      mminf.close();
-      std::cout << "Using mutation matrix file: " << mutmatFile << std::endl;
-    } else if (fs::exists(defaultMutmatPath)) {
-      std::ifstream mminf(defaultMutmatPath);
-      tree::fillMutationMatricesFromFile(mutMat, mminf);
-      mminf.close();
-      std::cout << "Mutation matrix file detected, using mutation matrix file: "
-                << defaultMutmatPath << std::endl;
+    log("Output prefix: " + prefix);
+    log("Outputs: " + outputs);
+    log("Subsample reads: " + std::to_string(subsample_reads));
+    log("Subsample seeds: " + std::to_string(subsample_seeds));
+    log("Reindex: " + std::to_string(reindex));
+    log("k-mer length: " + std::to_string(k));
+    log("s-mer length: " + std::to_string(s));
+    if (!index_path.empty() && !reindex) {
+      log("Index path: " + index_path);
     } else {
-      std::cout
-          << "No mutation matrix file detected, building mutation matrix ..."
-          << std::endl;
-      // build mutation matrix
-      tree::fillMutationMatricesFromTree(mutMat, T, vm["window"].as<size_t>(),
-                                         vm["percent_identity"].as<double>());
-      // write to file
-      std::cout << "Writing to " << defaultMutmatPath << " ..." << std::endl;
-      std::ofstream mmfout(defaultMutmatPath);
-      tree::writeMutationMatrices(mutMat, mmfout);
-      mmfout.close();
-      mutmatFile = defaultMutmatPath;
+      std::string default_index_path = guide + ".pmi";
+      if (!reindex && fs::exists(default_index_path)) {
+        log("Index loaded from: " + default_index_path);
+      } else if (reindex) {
+        log("Reindexing.");
+      } else {
+        log("Index not found at: " + default_index_path + ", will build.");
+      }
     }
+    if (args["--stop-after"]) {
+        std::string stop_after = args["--stop-after"].asString();
+        log("Will stop after stage: " + stop_after);
+    }
+    log("");
+    log("--- Run ---");
+    log("Indexing...");
 
-    // TODO, add some sort of error if all of these are empty, cus then why are
-    // we placing
-    std::string samFileName = "";
-    std::string bamFileName = "";
-    std::string mpileupFileName = "";
-    std::string vcfFileName = "";
-    std::string refFileName = "";
-    if (vm.count("s")) {
-      samFileName = vm["s"].as<std::string>();
-    }
-    if (vm.count("b")) {
-      bamFileName = vm["b"].as<std::string>();
-    }
-    if (vm.count("m")) {
-      mpileupFileName = vm["m"].as<std::string>();
-    }
-    if (vm.count("v")) {
-      vcfFileName = vm["v"].as<std::string>();
-    }
-    if (vm.count("r")) {
-      refFileName = vm["r"].as<std::string>();
-    }
+    // capnp index object
+    ::capnp::MallocMessageBuilder message;
+    Index::Builder index = message.initRoot<Index>();
+    
+    index.setK(k);
+    index.setS(s);
 
-    promptAndPlace(T, mutMat, k, s, indexFile, pmatFile, reads1File, reads2File,
-                   samFileName, bamFileName, mpileupFileName, vcfFileName,
-                   refFileName, prompt, use_root);
+    pmi::build(T, index);
 
-  } catch (const std::exception &e) {
-    std::cerr << "Error: " << e.what() << std::endl;
-    return 1;
-  }
+    std::string tst = "atest.pmi";
+    writeCapnp(message, tst);
+
+    // Placement
+    log("Reading...");
+    // Placement logic here
+    readCapnp(tst);
+    // Mapping
+    log("Mapping...");
+    // Mapping logic here
+
+    // Genotyping
+    log("Genotyping...");
+    // Genotyping logic here
+
+    // Assembly
+    log("Assembly...");
+    // Assembly logic here
+
+    log("panmap run completed.");
   return 0;
 }

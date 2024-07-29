@@ -62,25 +62,24 @@ add_custom_command(
     COMMAND rm src/3rdparty/minimap2/*.o
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
-
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libst.a
-    COMMAND src/3rdparty/samtools/configure --disable-bz2 --disable-largefile --disable-lzma --disable-libcurl
-    COMMAND make -C src/3rdparty/samtools
-    COMMAND mv src/3rdparty/samtools/libst.a ${CMAKE_CURRENT_BINARY_DIR}
-    #COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
-    #COMMAND rm -f src/3rdparty/samtools/*.o src/3rdparty/samtools/htslib-1.20/libhts.a
-    #COMMAND rm -f src/3rdparty/samtools/*/*.o src/3rdparty/samtools/*/*/*.o
-    #BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+# FetchContent for bzip2
+FetchContent_Declare(
+    bzip2
+    GIT_REPOSITORY https://github.com/libarchive/bzip2.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
 )
 
+
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
-    COMMAND src/3rdparty/htslib/configure --without-libdeflate --disable-bz2 --disable-largefile --disable-lzma --disable-libcurl
-    COMMAND make -C src/3rdparty/htslib
-    COMMAND mv src/3rdparty/htslib/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
-    COMMAND rm -f src/3rdparty/htslib/*.o
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libst.a ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
+    COMMAND cd src/3rdparty/samtools && autoheader && autoconf && ./configure --disable-lzma --disable-bz2 --disable-libcurl --enable-configure-htslib
+    COMMAND make -C src/3rdparty/samtools
+    COMMAND mv src/3rdparty/samtools/libst.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
+    #COMMAND rm -f src/3rdparty/samtools/*.o src/3rdparty/samtools/htslib-1.20/libhts.a
+    #COMMAND rm -f src/3rdparty/samtools/*/*.o src/3rdparty/samtools/*/*/*.o
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -88,7 +87,6 @@ add_custom_command(
 add_custom_target(build-deps DEPENDS
     libminimap2.a
     libst.a
-    libhts.a
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 add_library(minimap2 STATIC IMPORTED)
@@ -101,7 +99,6 @@ add_dependencies(samtools build-deps)
 
 add_library(htslib STATIC IMPORTED)
 set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libhts.a")
-add_dependencies(htslib build-deps)
 
 # panmat
 FetchContent_Declare(
@@ -112,6 +109,16 @@ FetchContent_Declare(
     )
 
 FetchContent_MakeAvailable(panmat)
+# FetchContent for docopt
+FetchContent_Declare(
+    docopt
+    GIT_REPOSITORY https://github.com/docopt/docopt.cpp.git
+    GIT_TAG v0.6.3
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(docopt)
+
 
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -127,11 +134,55 @@ target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
 #    #include <htslib/sam.h>    
 #    ...
 
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/capnp ${CMAKE_CURRENT_BINARY_DIR}/capnpc-c++ ${CMAKE_CURRENT_BINARY_DIR}/.libs/libcapnp.a
+    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++ && autoupdate && autoheader && autoconf && ./configure
+    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++ check
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/capnp ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/capnpc-c++ ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND cp -r ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/.libs/ ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Compiling capnproto"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_library(capnp STATIC IMPORTED)
+set_target_properties(capnp PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/.libs/libcapnp.a")
+set_target_properties(capnp PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/src")
+
+add_library(kj STATIC IMPORTED)
+set_target_properties(kj PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/.libs/libkj.a")
+set_target_properties(kj PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/src")
+
+set(CAPNP_SRCS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.c++)
+set(CAPNP_HDRS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.h)
+
+
+add_custom_command(
+    OUTPUT ${CAPNP_SRCS} ${CAPNP_HDRS}
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/capnp compile -o ${CMAKE_CURRENT_BINARY_DIR}/capnpc-c++ ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp --src-prefix ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++ ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.c++
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.h
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp ${CMAKE_CURRENT_BINARY_DIR}/capnp ${CMAKE_CURRENT_BINARY_DIR}/capnpc-c++
+    COMMENT "Compiling index.capnp"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Add the generated capnp sources to the target
+target_sources(panmap PRIVATE ${CAPNP_SRCS})
+target_sources(tests PRIVATE ${CAPNP_SRCS})
+
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
 find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
 target_link_libraries(tests panmat minimap2 samtools htslib
                       ${Boost_FILESYSTEM_LIBRARY}
                       ${Boost_SYSTEM_LIBRARY}
                         ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+                        docopt
+                        capnp
+                        kj
                       )
 
 # run protoc compiler
@@ -145,7 +196,8 @@ target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
 
 protobuf_generate(TARGET panmap)
 
-target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib)
+
+target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib docopt capnp kj)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(panmap PRIVATE -lm -lpthread -lz)
 
@@ -153,8 +205,8 @@ target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(tests PRIVATE -lm -lpthread -lz)
 
 if (OPTION_DEBUG)
-    target_compile_options(panmap PRIVATE -g -O0 -ggdb -glldb)
-    target_compile_options(tests PRIVATE -g -O0 -ggdb -glldb)
+    target_compile_options(panmap PRIVATE -g -O0 -ggdb)
+    target_compile_options(tests PRIVATE -g -O0 -ggdb)
 else()
     target_compile_options(panmap PRIVATE -g -O3)
     target_compile_options(tests PRIVATE -g -O3)
