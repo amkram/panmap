@@ -54,7 +54,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
                     blockMutationInfo_t &blockMutationInfo,
                     std::vector<tupleRange> &recompRanges,
                     mutationInfo_t &mutationInfo, Tree *T, Node *node,
-                    globalCoords_t &globalCoords, SeedmerIndex &index, CoordNavigator &navigator)
+                    globalCoords_t &globalCoords, ::capnp::List<Mutations>::Builder &indexedMutations, CoordNavigator &navigator)
 {
   blockExists_t &blockExists = data.blockExists;
   blockStrand_t &blockStrand = data.blockStrand;
@@ -493,7 +493,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
   }
 }
 
-void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
+void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &indexedMutations, Tree *T,
                    const Node *node, const blockMutationInfo_t &blockMutationInfo,
                    const mutationInfo_t &mutationInfo, globalCoords_t &globalCoords )
 {
@@ -788,12 +788,45 @@ int64_t tupleToScalarCoord(const tupleCoord_t &coord,
   return globalCoords[coord.blockId].first[coord.nucPos].first;
 }
 
-// Recursive function to build the seed index
-void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
-                 Tree *T, Node *node, globalCoords_t &globalCoords,
-                 CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes)
-{
+inline uint16_t setBit(uint16_t number, uint16_t n) {
+    return number | ((uint16_t)1 << n);
+}
 
+std::vector<std::tuple<std::string, int, int>>
+extractSeedmers(const std::string &seq, const int k, const int s,
+                const bool open) {
+  std::vector<std::tuple<std::string, int, int>> syncmers;
+  std::unordered_map<int32_t, int32_t> degap;
+  int64_t pos = 0;
+  std::string ungapped = "";
+  for (int64_t i = 0; i < seq.size(); i++) {
+    char c = seq[i];
+    degap[pos] = i;
+    if (c != '-' && c != 'x') {
+      ungapped += c;
+      pos++;
+    }
+  }
+  if (ungapped.size() < k + 1) {
+    return syncmers;
+  }
+  for (size_t i = 0; i < ungapped.size() - k + 1; ++i) {
+    std::string kmer = ungapped.substr(i, k);
+    if (seeding::is_syncmer(kmer, s, open)) {
+      syncmers.emplace_back(std::make_tuple(kmer, degap[i], degap[i + k - 1]));
+    }
+  }
+
+  return syncmers;
+}
+
+
+// Recursive function to build the seed index
+void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutations>::Builder &indexedMutations, int32_t &seedK, int32_t &seedS,
+                 Tree *T, Node *node, globalCoords_t &globalCoords,
+                 CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes,
+                 int64_t &dfsIndex, posWidth &width)
+{
 
   blockMutationInfo_t blockMutationInfo;
   mutationInfo_t mutationInfo;
@@ -803,8 +836,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   // applying mutations to the sequence object.
   std::vector<tupleRange> recompRanges;
   applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
-                 globalCoords, index, navigator);
-
+                 globalCoords, indexedMutations, navigator);
   
 
   //std::sort(recompRanges.begin(), recompRanges.end());
@@ -816,19 +848,40 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   });
 
 
+  // std::string node_seq = tree::getStringAtNode(node, T, true);
+  // std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
+
+  // std::unordered_map<int32_t, int32_t> degap;
+  // std::unordered_map<int32_t, int32_t> regap;
+  // int64_t pos = 0;
+  // for (int64_t i = 0; i < node_seq.size(); i++) {
+  //   char c = node_seq[i];
+  //   degap[i] = pos;
+  //   if (c != '-' && c != 'x') {
+  //     regap[pos] = i;
+  //     pos++;
+  //   }
+  // }
+  // std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
+  //   extractSeedmers(node_seq_nogap, seedK, seedS, false);
+  // std::ofstream osdmfs("osdmfs.txt");
+
+  // for (int i = 0; i < seedmers_nogap.size(); i++) {
+  //   osdmfs << std::get<0>(seedmers_nogap[i]) << "\t"
+  //     << std::get<1>(seedmers_nogap[i]) << "\t" << regap[std::get<1>(seedmers_nogap[i])]
+  //     << std::endl;
+  // }
+  // for (auto &p : seedMap) {
+  //   std::cout << p.first << "\t" << p.second << std::endl;
+  // }
+
   std::vector<int> seedsToClear; // seeds to clear from seedMap
   std::vector<std::pair<int, std::string>> addSeeds;
   std::vector<std::pair<int, std::string>> backtrack;
 
   std::vector<tupleRange> merged;
 
-  
-
-
-  merged = expandAndMergeRanges(navigator, recompRanges, index.k(), data.blockExists, data.blockStrand, globalCoords);
-  
-
-
+  merged = expandAndMergeRanges(navigator, recompRanges, seedK, data.blockExists, data.blockStrand, globalCoords);
   
   tupleCoord_t start = {0, 0, 0};
   if(data.sequence[0].first[0].second.size() == 0){
@@ -836,13 +889,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   }
   tupleCoord_t end = tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1};
 
-
-
-  // Protobuf message for this node's mutations
-  NodeSeedmerMutations *pb_node_mutations = index.add_per_node_mutations();
-  pb_node_mutations->set_node_id(node->identifier);
-
- 
   //std::cout << "ALLOW\n";
   // Seed re-processing
   for (auto &range : std::ranges::reverse_view(merged))
@@ -854,12 +900,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       atGlobalEnd = true;
       range.stop = tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1};
     }
-
-    
-    
-
     //Get mutated sequence to re calculate seeds 
-
     auto answer = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
     std::string seq = std::get<0>(answer);
     std::vector<int> coords = std::get<1>(answer);
@@ -873,13 +914,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       for (auto& pos: BlocksToSeeds[deadBlocks[i]]) {
         backtrack.push_back(std::make_pair(pos, seedMap[pos]));
         seedsToClear.push_back(pos);
-        if (seedMap[pos].size() == index.k())
-          {
-            SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
-            pb_mut->set_is_deletion(true);
-            pb_mut->set_pos(pos);
-            pb_mut->set_seq(seedMap[pos]);
-        }
       }
     }
 
@@ -887,30 +921,22 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
     //Loop through seeds that now start as gaps and delete them
     for(int i = 0; i < gaps.size(); i++){
       if (seedMap.find(gaps[i]) != seedMap.end()){
-        SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
-        pb_mut->set_is_deletion(true);
-        pb_mut->set_pos(gaps[i]);
-        pb_mut->set_seq(seedMap[gaps[i]]);
-
         backtrack.push_back(std::make_pair(gaps[i], seedMap[gaps[i]]));
         seedsToClear.push_back(gaps[i]);
       }
     }
 
-
-
-
     //Loop through sequence and build up seeds as we go
-    if(seq.size() >= index.k()){
+    if(seq.size() >= seedK){
 
       //Check first k bp for smers
-      std::string min_s = seq.substr(0,index.s());
+      std::string min_s = seq.substr(0,seedS);
       int first_min_coord = 0;
       int last_min_coord = 0;
       int Ns = seq[0] == 'N';
       
-      for(int i = 1; i < index.k() - index.s() + 1; i++){
-        std::string smer = seq.substr(i,index.s());
+      for(int i = 1; i < seedK - seedS + 1; i++){
+        std::string smer = seq.substr(i,seedS);
         if(seq[i]=='N')
           Ns++;
         
@@ -923,114 +949,83 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
         }
         
       }
-      for(int i = index.k() - index.s() + 1; i < index.k() ; i++){
+      for(int i = seedK - seedS + 1; i < seedK ; i++){
         if(seq[i]=='N')
           Ns++;
       }
 
-      
-
       //Check the rest for smers and kmer seeds
-      for(int i = index.k(); i < seq.size() + 1; i++) {
+      for(int i = seedK; i < seq.size() + 1; i++) {
         
         //Processing kmer starting at i - k in seq
-
-        bool inMap = (seedMap.find(coords[i - index.k()]) != seedMap.end());
-        bool isSeed = (first_min_coord == i - index.k() || last_min_coord == i - index.s()) && Ns <= index.k()/2;
-
+        bool inMap = (seedMap.find(coords[i - seedK]) != seedMap.end());
+        bool isSeed = (first_min_coord == i - seedK || last_min_coord == i - seedS) && Ns <= seedK/2;
 
         if(!inMap && isSeed){
           //Add seed
-          std::string kmer = seq.substr(i - index.k(), index.k());
+          std::string kmer = seq.substr(i - seedK, seedK);
 
-          backtrack.push_back(std::make_pair(coords[i - index.k()], ""));
-          addSeeds.push_back(std::make_pair(coords[i - index.k()], kmer));
+          backtrack.push_back(std::make_pair(coords[i - seedK], ""));
+          addSeeds.push_back(std::make_pair(coords[i - seedK], kmer));
           
-          SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
-          pb_mut->set_is_deletion(false);
-          pb_mut->set_pos(coords[i - index.k()]);
-          pb_mut->set_seq(kmer);
 
         }else if(inMap && !isSeed){
           //Remove Seed
 
-          backtrack.push_back(std::make_pair(coords[i - index.k()], seedMap[coords[i - index.k()]]));
-          seedsToClear.push_back(coords[i - index.k()]);
-
-          SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
-          pb_mut->set_is_deletion(true);
-          pb_mut->set_pos(coords[i - index.k()]);
-          pb_mut->set_seq(seedMap[coords[i - index.k()]]);    
+          backtrack.push_back(std::make_pair(coords[i - seedK], seedMap[coords[i - seedK]]));
+          seedsToClear.push_back(coords[i - seedK]);
 
         }else if(inMap && isSeed){
           //Changed Seed
-          std::string kmer = seq.substr(i - index.k(), index.k());
-          if(kmer != seedMap[coords[i - index.k()]]){
-
-          backtrack.push_back(std::make_pair(coords[i - index.k()], seedMap[coords[i - index.k()]]));
-          addSeeds.push_back(std::make_pair(coords[i - index.k()], kmer));
-
-          SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
-          pb_mut->set_is_deletion(false);
-          pb_mut->set_pos(coords[i - index.k()]);
-          pb_mut->set_seq(kmer);
+          std::string kmer = seq.substr(i - seedK, seedK);
+          if(kmer != seedMap[coords[i - seedK]]){
+            backtrack.push_back(std::make_pair(coords[i - seedK], seedMap[coords[i - seedK]]));
+            addSeeds.push_back(std::make_pair(coords[i - seedK], kmer));
           }
 
         }
 
-        
-        //Updating smers for kmer starting at i - index.k() + 1
+        //Updating smers for kmer starting at i - seedK + 1
         if(i < seq.size()){
           if(seq[i] == 'N')
             Ns++;
-          if(seq[i - index.k()] == 'N')
+          if(seq[i - seedK] == 'N')
             Ns--;
 
-          if(first_min_coord == i - index.k()){
+          if(first_min_coord == i - seedK){
             // Were losing the lowest smer, Re search for lowest
-            min_s = seq.substr(i - index.k() + 1,index.s());
-            first_min_coord = i - index.k() + 1;
+            min_s = seq.substr(i - seedK + 1,seedS);
+            first_min_coord = i - seedK + 1;
 
-            for(int j = 1; j < index.k() - index.s() + 1; j++){
-              std::string smer = seq.substr(i - index.k() + 1 + j,index.s());
+            for(int j = 1; j < seedK - seedS + 1; j++){
+              std::string smer = seq.substr(i - seedK + 1 + j,seedS);
               if(smer < min_s){
                 min_s = smer;
-                first_min_coord = i - index.k() + 1 + j;
+                first_min_coord = i - seedK + 1 + j;
                 last_min_coord = first_min_coord;
               }else if(smer == min_s){
-                last_min_coord = i - index.k() + 1 + j;
+                last_min_coord = i - seedK + 1 + j;
               }
             }
-
           }else{
             //Test new smer to see if its the lowest
-            std::string smer = seq.substr(i - index.s() + 1,index.s());
+            std::string smer = seq.substr(i - seedS + 1,seedS);
             if(smer < min_s){
               min_s = smer;
-              first_min_coord = i - index.s() + 1;
-              last_min_coord = i - index.s() + 1;
+              first_min_coord = i - seedS + 1;
+              last_min_coord = i - seedS + 1;
             }else if(smer == min_s){
-              last_min_coord = i - index.s() + 1;
+              last_min_coord = i - seedS + 1;
             }
           }
         }
-
       }
-
     }
 
-
-    
-    
-
     //If our range reaches the end of the genome, remove seeds that aren't long enough at the end
-    if(atGlobalEnd && (int)coords.size() - (int)index.k() + 1 >= 0){
-      for(int i = (int)coords.size() - (int)index.k() + 1; i < (int)coords.size(); i++){
+    if(atGlobalEnd && (int)coords.size() - (int)seedK + 1 >= 0){
+      for(int i = (int)coords.size() - (int)seedK + 1; i < (int)coords.size(); i++){
         if (seedMap.find(coords[i]) != seedMap.end()){
-          SeedmerMutation *pb_mut = pb_node_mutations->add_mutations();
-          pb_mut->set_is_deletion(true);
-          pb_mut->set_pos(coords[i]);
-          pb_mut->set_seq(seedMap[coords[i]]);
 
           backtrack.push_back(std::make_pair(coords[i], seedMap[coords[i]]));
           seedsToClear.push_back(coords[i]);
@@ -1038,40 +1033,103 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
       }
     }
 
+  }
+  std::vector<int32_t> capnpDelNormal;
+  std::vector<std::pair<int32_t, std::bitset<64>>> capnpDelOffset;
+  size_t i = 0;
+  size_t n = seedsToClear.size();
 
+  while (i < n) {
+    int pos = seedsToClear[i];
+    std::bitset<64> downstream(0);
+    i++; 
+    if (i >= n) {
+      break; 
+    }
 
-  } 
+    int curr = seedsToClear[i]; 
+    std::vector<int32_t> downstreamPos;
 
-  
-  for (const auto &pos : seedsToClear)
-  {
-    if (seedMap.find(pos) != seedMap.end())
-    {
+    while (curr < pos + 64 && i < n) {
+      downstream[curr - pos] = 1; 
+      downstreamPos.emplace_back(curr); 
+      i++; 
 
-      seedMap.erase(pos);
+      if (i < n) {
+        curr = seedsToClear[i]; 
+      }
+    }
 
-      int blockId = scalarCoordToBlockId[pos];
-      BlocksToSeeds[blockId].erase(pos);
+    if (downstream.none()) {
+      for (int j = 0; j < downstreamPos.size(); j++) {
+        capnpDelNormal.emplace_back(downstreamPos[j]); 
+      }
+    } else {
+      capnpDelOffset.emplace_back(std::make_pair(pos, downstream)); 
     }
   }
 
-  
-  
-  for (const auto &seed : addSeeds) {
-    seedMap[seed.first] = seed.second;
+  std::sort(addSeeds.begin(), addSeeds.end());
+  std::vector<int32_t> capnpAddNormal;
+  std::vector<std::pair<int32_t, std::bitset<64>>> capnpAddOffset;
+  i = 0;
+  n = addSeeds.size();
 
-    int blockId = scalarCoordToBlockId[seed.first];
-    BlocksToSeeds[blockId].insert(seed.first);
+  while (i < n) {
+    int64_t pos = addSeeds[i].first;
+    std::bitset<64> downstream(0);
+    i++; 
+    if (i >= n) {
+      break; 
+    }
 
+    int64_t curr = addSeeds[i].first; 
+    std::vector<int32_t> downstreamPos;
+
+    while (curr < pos + 64 && i < n) {
+      downstream[curr - pos] = 1;
+      downstreamPos.emplace_back(curr); 
+      i++; 
+
+      if (i < n) {
+        curr = addSeeds[i].first; 
+      }
+    }
+
+    if (downstream.none()) {
+      for (int32_t j = 0; j < downstreamPos.size(); j++) {
+        capnpAddNormal.emplace_back(downstreamPos[j]); 
+      }
+    } else {
+      capnpAddOffset.emplace_back(std::make_pair(pos, downstream)); 
+    }
   }
 
-  
 
+  ::capnp::List<InsertionWithOffset>::Builder insertionsOffset = indexedMutations[dfsIndex].initInsertionsWithOffset(capnpAddOffset.size());
+  ::capnp::List<DeletionWithOffset>::Builder deletionsOffset = indexedMutations[dfsIndex].initDeletionsWithOffset(capnpDelOffset.size());
+  ::capnp::List<Insertion>::Builder insertions = indexedMutations[dfsIndex].initInsertions(capnpAddNormal.size());
+  ::capnp::List<Deletion>::Builder deletions = indexedMutations[dfsIndex].initDeletions(capnpDelNormal.size());
+  for (int32_t i = 0; i < capnpDelOffset.size(); i++) {
+    deletionsOffset[i].setBitset(capnpDelOffset[i].second.to_ullong());
+    deletionsOffset[i].initPos().setPos32(capnpDelOffset[i].first);
+  }
+  for (int32_t i = 0; i < capnpAddOffset.size(); i++) {
+    insertionsOffset[i].setBitset(capnpAddOffset[i].second.to_ullong());
+    insertionsOffset[i].initPos().setPos32(capnpAddOffset[i].first);
+  }
+  for (int32_t i = 0; i < capnpDelNormal.size(); i++) {
+    deletions[i].initPos().setPos32(capnpDelNormal[i]);
+  }
+  for (int32_t i = 0; i < capnpAddNormal.size(); i++) {
+    insertions[i].initPos().setPos32(capnpAddNormal[i]);
+  }
 
+  dfsIndex++;
   /* Recursive step */
   for (Node *child : node->children) {
     
-    buildHelper(data, seedMap, index, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes);
+    buildHelper(data, seedMap, indexedMutations, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width);
   }
 
   
@@ -1092,15 +1150,12 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
   }
 
   /* Undo sequence mutations when backtracking */
-  undoMutations(data, index, T, node, blockMutationInfo, mutationInfo, globalCoords);
+  undoMutations(data, indexedMutations, T, node, blockMutationInfo, mutationInfo, globalCoords);
 }
 
 
-
-
-
 /* implementation */
-void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
+void pmi::build(Tree *T, Index::Builder &index)
 {
   
   // Setup for seed indexing
@@ -1109,13 +1164,8 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
 
   tree::setup(data, globalCoords, T);
   
-
-  
-
-  index.set_j(j);
-  index.set_k(k);
-  index.set_s(s);
-
+  int32_t k = index.getK();
+  int32_t s = index.getS();
 
   // Stores seed(mer)s at positions where one exists (in tuple global coords).
   // At each node, seedMap is updated to contain seeds present in the node.
@@ -1135,30 +1185,36 @@ void pmi::build(SeedmerIndex &index, Tree *T, int j, int k, int s)
   //
   CoordNavigator navigator(data.sequence);
 
-
-
-
   std::vector<int> BlockSizes(data.sequence.size(),0);
   
-
   std::vector<int> scalarCoordToBlockId(globalCoords.back().first.back().first + 1);
   auto currCoord = tupleCoord_t{0,0,0};
   if(navigator.sequence[0].first[0].second.empty()) {
     currCoord.nucGapPos = -1;
   }
 
-
   for(int i = 0; i < scalarCoordToBlockId.size(); i++){
-    
     scalarCoordToBlockId[i] = currCoord.blockId;
     BlockSizes[currCoord.blockId] ++; 
     currCoord = navigator.newincrement(currCoord, data.blockStrand);
   }
   
-
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
-  
+  ::capnp::List<Mutations>::Builder indexedMutations = index.initPerNodeMutations(T->allNodes.size());
+  posWidth width = globalCoords.back().first.back().first < 4294967296 
+      ? posWidth::pos32 
+      : posWidth::pos64;
+
+  switch(width){
+    case posWidth::pos32:
+      index.setWidth(32);
+      break;
+    case posWidth::pos64:
+      index.setWidth(64);
+      break;
+  }
 
   /* Recursive traversal of tree to build the index */
-  buildHelper(data, seedMap, index, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes);
+  int64_t dfsIndex = 0; 
+  buildHelper(data, seedMap, indexedMutations, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width);
 }
