@@ -5,7 +5,7 @@
 #pragma once
 #include "seeding.hpp"
 #include "tree.hpp"
-#include "index.pb.h"
+#include "index.capnp.h"
 #include <unordered_map>
 
 using namespace PangenomeMAT;
@@ -14,12 +14,13 @@ using namespace tree;
 
 
 typedef std::unordered_map<int, std::string> seedMap_t;
-//typedef std::map<int, std::string> seedMap_t;
+
+enum posWidth {pos16, pos32, pos64};
 
 namespace pmi { // functions and types for seed indexing
 
 /* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
-void build(SeedmerIndex &index, Tree *T, int j, int k, int s);
+    void build(Tree *T, Index::Builder &index);
 
 } // namespace pmi
 
@@ -27,16 +28,16 @@ void build(SeedmerIndex &index, Tree *T, int j, int k, int s);
  * applyMutations for now */
 using namespace pmi;
 
-void buildHelper(mutableTreeData &data, seedMap_t &seedMap, SeedmerIndex &index,
+void buildHelper(mutableTreeData &data, seedMap_t &seedMap, int32_t &k, int32_t &s, ::capnp::List<Mutations>::Builder &mutations,
                  Tree *T, const Node *node, const globalCoords_t &globalCoords,
-                 CoordNavigator &navigator);
+                 CoordNavigator &navigator, int64_t &dfsIndex, posWidth &width);
 void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
                     blockMutationInfo_t &blockMutData,
                     std::vector<tupleRange> &recompRanges,
                     mutationInfo_t &nucMutData, Tree *T, const Node *node,
-                    globalCoords_t &globalCoords, const SeedmerIndex &index);
-void undoMutations(mutableTreeData &data, SeedmerIndex &index, Tree *T,
-                   const Node *node, const blockMutationInfo_t &blockMutData,
+                    globalCoords_t &globalCoords, const ::capnp::List<Mutations>::Builder &mutations);
+void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &mutations, Tree *T,
+                    Node *node, const blockMutationInfo_t &blockMutData,
                    const mutationInfo_t &nucMutData);
 
 
@@ -46,7 +47,7 @@ tupleCoord_t expandLeft(const CoordNavigator &navigator, tupleCoord_t coord,
 
 // Go downstream until neededNongap nucleotides are seen and return the new coord.
 tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
-                         int neededNongap, blockExists_t &blockExists);
+                         int neededNongap, blockExists_t &blockExists, blockStrand_t &blockStrand);
 
 // Merges each range with overlapping ranges after expanding left and right
 // by `neededNongap` non-gap nucleotides.

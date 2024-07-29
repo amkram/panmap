@@ -57,6 +57,9 @@ struct tupleCoord_t {
 
 };
 
+static inline bool compareNucMuts(const PangenomeMAT::NucMut &a, const PangenomeMAT::NucMut &b) {
+  return tupleCoord_t{a.primaryBlockId, a.nucPosition, a.nucGapPosition} < tupleCoord_t{b.primaryBlockId, b.nucPosition, b.nucGapPosition};
+}
 
 struct TupleHash { //TODO
   std::size_t operator()(const tupleCoord_t& s) const noexcept {
