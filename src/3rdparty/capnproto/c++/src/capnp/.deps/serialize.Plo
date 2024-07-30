@@ -1,0 +1,111 @@
+src/capnp/serialize.lo: src/capnp/serialize.c++ \
+ /usr/include/stdc-predef.h src/capnp/serialize.h src/capnp/message.h \
+ src/kj/common.h /usr/lib/gcc/x86_64-linux-gnu/11/include/stddef.h \
+ /usr/include/c++/11/cstring \
+ /usr/include/x86_64-linux-gnu/c++/11/bits/c++config.h \
+ /usr/include/x86_64-linux-gnu/c++/11/bits/os_defines.h \
+ /usr/include/features.h /usr/include/features-time64.h \
+ /usr/include/x86_64-linux-gnu/bits/wordsize.h \
+ /usr/include/x86_64-linux-gnu/bits/timesize.h \
+ /usr/include/x86_64-linux-gnu/sys/cdefs.h \
+ /usr/include/x86_64-linux-gnu/bits/long-double.h \
+ /usr/include/x86_64-linux-gnu/gnu/stubs.h \
+ /usr/include/x86_64-linux-gnu/gnu/stubs-64.h \
+ /usr/include/x86_64-linux-gnu/c++/11/bits/cpu_defines.h \
+ /usr/include/c++/11/pstl/pstl_config.h /usr/include/string.h \
+ /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
+ /usr/include/x86_64-linux-gnu/bits/types/locale_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h \
+ /usr/include/strings.h \
+ /usr/include/x86_64-linux-gnu/bits/strings_fortified.h \
+ /usr/include/x86_64-linux-gnu/bits/string_fortified.h \
+ /usr/include/c++/11/initializer_list src/kj/memory.h src/kj/mutex.h \
+ src/kj/debug.h src/kj/string.h src/kj/array.h src/kj/exception.h \
+ src/kj/windows-sanity.h /usr/include/inttypes.h \
+ /usr/lib/gcc/x86_64-linux-gnu/11/include/stdint.h /usr/include/stdint.h \
+ /usr/include/x86_64-linux-gnu/bits/types.h \
+ /usr/include/x86_64-linux-gnu/bits/typesizes.h \
+ /usr/include/x86_64-linux-gnu/bits/time64.h \
+ /usr/include/x86_64-linux-gnu/bits/wchar.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-intn.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h src/kj/time.h \
+ src/kj/units.h src/kj/source-location.h src/kj/one-of.h src/kj/vector.h \
+ src/capnp/common.h src/capnp/layout.h src/capnp/blob.h \
+ src/capnp/endian.h src/capnp/any.h src/capnp/pointer-helpers.h \
+ src/capnp/list.h src/capnp/orphan.h src/kj/hash.h src/kj/io.h \
+ /usr/include/c++/11/exception /usr/include/c++/11/bits/exception.h \
+ /usr/include/c++/11/bits/exception_ptr.h \
+ /usr/include/c++/11/bits/exception_defines.h \
+ /usr/include/c++/11/bits/cxxabi_init_exception.h \
+ /usr/include/c++/11/typeinfo /usr/include/c++/11/bits/hash_bytes.h \
+ /usr/include/c++/11/new /usr/include/c++/11/bits/move.h \
+ /usr/include/c++/11/type_traits \
+ /usr/include/c++/11/bits/nested_exception.h
+/usr/include/stdc-predef.h:
+src/capnp/serialize.h:
+src/capnp/message.h:
+src/kj/common.h:
+/usr/lib/gcc/x86_64-linux-gnu/11/include/stddef.h:
+/usr/include/c++/11/cstring:
+/usr/include/x86_64-linux-gnu/c++/11/bits/c++config.h:
+/usr/include/x86_64-linux-gnu/c++/11/bits/os_defines.h:
+/usr/include/features.h:
+/usr/include/features-time64.h:
+/usr/include/x86_64-linux-gnu/bits/wordsize.h:
+/usr/include/x86_64-linux-gnu/bits/timesize.h:
+/usr/include/x86_64-linux-gnu/sys/cdefs.h:
+/usr/include/x86_64-linux-gnu/bits/long-double.h:
+/usr/include/x86_64-linux-gnu/gnu/stubs.h:
+/usr/include/x86_64-linux-gnu/gnu/stubs-64.h:
+/usr/include/x86_64-linux-gnu/c++/11/bits/cpu_defines.h:
+/usr/include/c++/11/pstl/pstl_config.h:
+/usr/include/string.h:
+/usr/include/x86_64-linux-gnu/bits/libc-header-start.h:
+/usr/include/x86_64-linux-gnu/bits/types/locale_t.h:
+/usr/include/x86_64-linux-gnu/bits/types/__locale_t.h:
+/usr/include/strings.h:
+/usr/include/x86_64-linux-gnu/bits/strings_fortified.h:
+/usr/include/x86_64-linux-gnu/bits/string_fortified.h:
+/usr/include/c++/11/initializer_list:
+src/kj/memory.h:
+src/kj/mutex.h:
+src/kj/debug.h:
+src/kj/string.h:
+src/kj/array.h:
+src/kj/exception.h:
+src/kj/windows-sanity.h:
+/usr/include/inttypes.h:
+/usr/lib/gcc/x86_64-linux-gnu/11/include/stdint.h:
+/usr/include/stdint.h:
+/usr/include/x86_64-linux-gnu/bits/types.h:
+/usr/include/x86_64-linux-gnu/bits/typesizes.h:
+/usr/include/x86_64-linux-gnu/bits/time64.h:
+/usr/include/x86_64-linux-gnu/bits/wchar.h:
+/usr/include/x86_64-linux-gnu/bits/stdint-intn.h:
+/usr/include/x86_64-linux-gnu/bits/stdint-uintn.h:
+src/kj/time.h:
+src/kj/units.h:
+src/kj/source-location.h:
+src/kj/one-of.h:
+src/kj/vector.h:
+src/capnp/common.h:
+src/capnp/layout.h:
+src/capnp/blob.h:
+src/capnp/endian.h:
+src/capnp/any.h:
+src/capnp/pointer-helpers.h:
+src/capnp/list.h:
+src/capnp/orphan.h:
+src/kj/hash.h:
+src/kj/io.h:
+/usr/include/c++/11/exception:
+/usr/include/c++/11/bits/exception.h:
+/usr/include/c++/11/bits/exception_ptr.h:
+/usr/include/c++/11/bits/exception_defines.h:
+/usr/include/c++/11/bits/cxxabi_init_exception.h:
+/usr/include/c++/11/typeinfo:
+/usr/include/c++/11/bits/hash_bytes.h:
+/usr/include/c++/11/new:
+/usr/include/c++/11/bits/move.h:
+/usr/include/c++/11/type_traits:
+/usr/include/c++/11/bits/nested_exception.h:
