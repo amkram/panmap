@@ -464,8 +464,6 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
       recompRanges.push_back(newRange);
 
 
-
-
       if (type == PangenomeMAT::NucMutationType::NSNPS)
       {
         // SNP Substitution
@@ -1107,6 +1105,7 @@ extractSeedmers(const std::string &seq, const int k, const int s,
 }
 
 bool debug = false;
+bool gappity = true;
 // Recursive function to build the seed index
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutations>::Builder &indexedSeedMutations, ::capnp::List<Deltas>::Builder &indexedGapMutations,
                  int32_t &seedK, int32_t &seedS,
@@ -1141,47 +1140,49 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
   // }
   
   // apply gapRunUpdates to GapMap
-  updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks);
+    std::vector<std::pair<bool, std::pair<int, int>>> gapRunOffBlocksBacktracks;
+    std::vector<std::pair<bool, std::pair<int, int>>> gapRunOffBlocksUpdates;
+    std::map<int64_t, int64_t> coordIndex;
 
-  std::vector<std::pair<bool, std::pair<int, int>>> gapRunOffBlocksBacktracks;
-  std::vector<std::pair<bool, std::pair<int, int>>> gapRunOffBlocksUpdates;
-  for (int i = 0; i < data.blockExists.size(); i++) {
-    if (!data.blockExists[i].first) {
-      int64_t start = globalCoords[i].first[0].first;
-      int64_t end = globalCoords[i].first.back().first;
-      gapRunOffBlocksUpdates.emplace_back(true, std::make_pair(start, end));
+  if (gappity) {
+    updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks);
+
+    for (int i = 0; i < data.blockExists.size(); i++) {
+      if (!data.blockExists[i].first) {
+        int64_t start = globalCoords[i].first[0].first;
+        int64_t end = globalCoords[i].first.back().first;
+        gapRunOffBlocksUpdates.emplace_back(true, std::make_pair(start, end));
+      }
     }
-  }
-  updateGapMap(gapMap, gapRunOffBlocksUpdates, gapRunOffBlocksBacktracks);
-
+    updateGapMap(gapMap, gapRunOffBlocksUpdates, gapRunOffBlocksBacktracks);
   //       --AAACC----TTA
   //       (2,2) (11,6)
-  //       first po of a nuc run, number of gaps before this position
-  //       localCoord = globalcoord - coordIndex.some_bound->second
-  std::map<int64_t, int64_t> coordIndex;
+    //       first po of a nuc run, number of gaps before this position
+    //       localCoord = globalcoord - coordIndex.some_bound->second
 
-  int64_t totalGapSize = 0;
-  if (gapMap.empty() || gapMap.begin()->first > 0) {
-    coordIndex[0] == totalGapSize;
-  }
-  for (auto &gap : gapMap) {
-    int64_t gapStart = gap.first;
-    int64_t gapEnd = gap.second;
-    int64_t gapSize = gapEnd - gapStart + 1;
-    totalGapSize += gapSize;
-    coordIndex[gapEnd+1] = totalGapSize;
-  }
+    int64_t totalGapSize = 0;
+    if (gapMap.empty() || gapMap.begin()->first > 0) {
+      coordIndex[0] == totalGapSize;
+    }
+    for (auto &gap : gapMap) {
+      int64_t gapStart = gap.first;
+      int64_t gapEnd = gap.second;
+      int64_t gapSize = gapEnd - gapStart + 1;
+      totalGapSize += gapSize;
+      coordIndex[gapEnd+1] = totalGapSize;
+    }
 
-  // should this be here?
-  for (auto it = gapRunOffBlocksBacktracks.rbegin(); it != gapRunOffBlocksBacktracks.rend(); ++it) {
-    const auto& [del, range] = *it;
-    if (del) {
-      gapMap.erase(range.first);
-    } else {
-      gapMap[range.first] = range.second;
+    // should this be here?
+    for (auto it = gapRunOffBlocksBacktracks.rbegin(); it != gapRunOffBlocksBacktracks.rend(); ++it) {
+      const auto& [del, range] = *it;
+      if (del) {
+        gapMap.erase(range.first);
+      } else {
+        gapMap[range.first] = range.second;
+      }
     }
   }
-  
+
   std::sort(recompRanges.begin(), recompRanges.end(), [&data](const tupleRange& A, const tupleRange& B) {
     if (A.start.blockId == B.start.blockId && !data.blockStrand[A.start.blockId].first) {
         return B < A; // Use B < A if blocks are inverted 
@@ -1444,15 +1445,16 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
       capnpAddOffset.emplace_back(std::make_pair(pos, downstream)); 
     }
   }
-
-  std::vector<std::pair<int64_t, std::optional<int64_t>>> delta = encodeDelta(parentGapMap, gapMap);
-
-  ::capnp::List<Delta>::Builder deltas = indexedGapMutations[dfsIndex].initChanges(delta.size());
-  for (int32_t i = 0; i < delta.size(); i++) {
-    if (delta[i].second.has_value()) {
-      deltas[i].initOptional().setValue(delta[i].second.value());
-    } else {
-      deltas[i].initOptional().setVoid();
+  std::vector<std::pair<int64_t, std::optional<int64_t>>> delta;
+  if (gappity) {
+    delta = encodeDelta(parentGapMap, gapMap);
+    ::capnp::List<Delta>::Builder deltas = indexedGapMutations[dfsIndex].initChanges(delta.size());
+    for (int32_t i = 0; i < delta.size(); i++) {
+      if (delta[i].second.has_value()) {
+        deltas[i].initOptional().setValue(delta[i].second.value());
+      } else {
+        deltas[i].initOptional().setVoid();
+      }
     }
   }
 
@@ -1512,13 +1514,15 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
       BlocksToSeeds[blockId].insert(back.first);
     }
   }
-   // undo gapMap updates
-  for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
-    const auto& [del, range] = *it;
-    if (del) {
-      gapMap.erase(range.first);
-    } else {
-      gapMap[range.first] = range.second;
+  if (gappity) {
+    // undo gapMap updates
+    for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
+      const auto& [del, range] = *it;
+      if (del) {
+        gapMap.erase(range.first);
+      } else {
+        gapMap[range.first] = range.second;
+      }
     }
   }
 
