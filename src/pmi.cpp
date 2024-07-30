@@ -19,6 +19,90 @@ using namespace tree;
 
 /* Helpers */
 
+/*
+if (pos == 0) {
+    if (newValOneBack == '-') {
+        gapRuns[pos + 1] = curIt->second - 1;
+    }
+    gapRuns.erase(curIt);
+} else if (pos == globalCoords.back().first.back().first - 1) {
+    if (oldValOneForward == '-') {
+        auto prevIt = std::prev(curIt);
+        --(prevIt->second);
+    } else {
+        gapRuns.erase(curIt);
+    }
+} else {
+    if (newValOneBack != '-' && oldValOneForward == '-') {
+        // At start of gap run
+        gapRuns[pos + 1] = curIt->second - 1;
+        gapRuns.erase(curIt);
+    } else if (newValOneBack == '-' && oldValOneForward != '-') {
+        // At end of gap run
+        auto prevIt = std::prev(curIt);
+        --(prevIt->second);
+    } else if (newValOneBack == '-' && oldValOneForward == '-') {
+        // In middle of gap run
+        auto prevIt = std::prev(curIt);
+        int leftGapRunLen = pos - prevIt->first;
+        int rightGapRunLen = prevIt->second - leftGapRunLen - 1;
+        prevIt->second = leftGapRunLen;
+        gapRuns[pos + 1] = rightGapRunLen;
+    } else {
+        // Single base
+        gapRuns.erase(curIt);
+    }
+}
+
+for (const auto& change : nucChange) {
+    int pos = change.pos;
+    auto curit = gapRuns.lower_bound(pos);
+
+    if (old[pos] == '-' && new[pos] != '-') {
+        if (curit != gapRuns.end() && curit->first == pos) {
+            // Exact match with the start of a gap run
+            if (curit->second == 1) {
+                // Single gap, remove the run
+                gapRuns.erase(curit);
+            } else {
+                // Start of the run, reduce the run length
+                int newStart = pos + 1;
+                int newLength = curit->second - 1;
+                gapRuns.erase(curit);
+                gapRuns[newStart] = newLength;
+            }
+        } else {
+            // Inside or at the end of a gap run
+            auto previt = std::prev(curit);
+            int start = previt->first;
+            int length = previt->second;
+
+            if (start <= pos && pos < start + length) {
+                // The gap is within a run
+                int leftGapRunLen = pos - start;
+                int rightGapRunLen = length - leftGapRunLen - 1;
+
+                if (leftGapRunLen == 0) {
+                    // At the beginning of a gap run
+                    if (rightGapRunLen > 0) {
+                        // Update the start of the gap run
+                        gapRuns[pos + 1] = rightGapRunLen;
+                    }
+                    gapRuns.erase(previt);
+                } else if (rightGapRunLen == 0) {
+                    // At the end of a gap run
+                    previt->second = leftGapRunLen;
+                } else {
+                    // In the middle of a gap run, split the run
+                    previt->second = leftGapRunLen;
+                    gapRuns[pos + 1] = rightGapRunLen;
+                }
+            }
+        }
+    }
+}
+*/
+
 void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
 
   int64_t start;
@@ -54,7 +138,9 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
                     blockMutationInfo_t &blockMutationInfo,
                     std::vector<tupleRange> &recompRanges,
                     mutationInfo_t &mutationInfo, Tree *T, Node *node,
-                    globalCoords_t &globalCoords, ::capnp::List<Mutations>::Builder &indexedMutations, CoordNavigator &navigator)
+                    globalCoords_t &globalCoords, ::capnp::List<Mutations>::Builder &indexedMutations,
+                    CoordNavigator &navigator, std::vector<std::pair<bool, std::pair<int, int>>> &gapRunUpdates,
+                    std::vector<std::pair<bool, std::pair<int, int>>> &gapRunBacktracks)
 {
   blockExists_t &blockExists = data.blockExists;
   blockStrand_t &blockStrand = data.blockStrand;
@@ -80,7 +166,6 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
 
     bool startingStrand = blockStrand[primaryBlockId].first;
 
-    
 
     if (type == 1)
     {
@@ -175,10 +260,6 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
     if (startingStrand != blockStrand[primaryBlockId].first) {
       flipCoords(primaryBlockId, globalCoords);
     }
-
-
-
-
   }
 
   // Nuc mutations
@@ -491,7 +572,32 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
       }
     }
   }
-}
+  for (auto &mutation : mutationInfo) {
+    int blockId = std::get<0>(mutation);
+    int nucPos = std::get<2>(mutation);
+    int nucGapPos = std::get<3>(mutation);
+    char parChar = std::get<4>(mutation);
+    char curChar = std::get<5>(mutation);
+    int64_t scalar = tupleToScalarCoord(tupleCoord_t{blockId, nucPos, nucGapPos}, globalCoords);
+    // std::cout << "parChar: " << parChar << " curChar: " << curChar << std::endl;
+    if (parChar != '-' && curChar == '-') {
+      // nuc to gap
+        if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true && gapRunUpdates.back().second.second + 1 == scalar) {
+          gapRunUpdates.back().second.second += 1;
+        }
+        else {
+          gapRunUpdates.emplace_back(true, std::make_pair(scalar, scalar)); 
+        }
+      } else if (parChar == '-' && curChar != '-') {
+        // gap to nuc
+        if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false && gapRunUpdates.back().second.second + 1 == scalar) {
+          gapRunUpdates.back().second.second += 1;
+        } else {
+          gapRunUpdates.emplace_back(false, std::make_pair(scalar, scalar));
+        }
+      }
+    }
+  }
 
 void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &indexedMutations, Tree *T,
                    const Node *node, const blockMutationInfo_t &blockMutationInfo,
@@ -657,6 +763,155 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
 }
 
 
+void updateGapMap(std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<bool, std::pair<int, int>>>& updates, std::vector<std::pair<bool, std::pair<int, int>>>& backtrack) {
+  for (const auto& update : updates) {
+    bool toGap = update.first;
+    int start = update.second.first;
+    int end = update.second.second;
+    auto rightIt = gapMap.upper_bound(start);
+    auto leftIt = (rightIt == gapMap.begin()) ? gapMap.end() : std::prev(rightIt);
+
+    if (toGap) {
+      // add gap range
+      if (gapMap.empty()) {
+        gapMap[start] = end;
+        backtrack.emplace_back(true, std::make_pair(start, end));
+        return;
+      }
+      
+      decltype(rightIt) curIt;
+
+      // curIt starts outside of any range
+      if (leftIt == gapMap.end() || (rightIt == gapMap.end() && start > leftIt->second) || (leftIt != gapMap.end() && start > leftIt->second && rightIt != gapMap.end() && end < rightIt->first)) {
+        if (leftIt != gapMap.end() && start == leftIt->second + 1) {
+          // 1 base after left range and merge with left
+          curIt = leftIt;
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          curIt->second = end;
+        } else {
+          // insert new range
+          auto tmpIt = gapMap.emplace(start, end);
+          curIt = tmpIt.first;
+          backtrack.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+        }
+      } else {
+        curIt = leftIt;
+        backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+        curIt->second = end;
+      }
+
+      auto nextIt = std::next(curIt);
+      while (true) {
+        if (nextIt == gapMap.end()) {
+          break;
+        }
+
+        if (nextIt->second <= curIt->second) {
+          auto tmpIt = nextIt;
+          nextIt = std::next(nextIt);
+          backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
+          gapMap.erase(tmpIt);
+        } else if (nextIt->first <= end + 1) {
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          curIt->second = nextIt->second;
+          backtrack.emplace_back(false, std::make_pair(nextIt->first, nextIt->second));
+          gapMap.erase(nextIt);
+          break;
+        } else {
+          break;
+        }
+      }
+    } else {
+      // remove gap range
+      if (gapMap.empty() || (leftIt == gapMap.end() && end < leftIt->first) || (rightIt == gapMap.end() && start > leftIt->second)) {
+        return;
+      }
+
+      decltype(rightIt) curIt;
+      decltype(rightIt) nextIt;
+      if (leftIt == gapMap.end() || (leftIt != gapMap.end() && start > leftIt->second && rightIt != gapMap.end() && start < rightIt->first)) {
+        // curIt starts outside of any range
+        curIt = rightIt;
+
+        // ends within the curIt range
+        if (end <= curIt->second) {
+          if (end == curIt->second) {
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            gapMap.erase(curIt);
+          } else {
+            gapMap[end+1] = curIt->second;
+            backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            gapMap.erase(curIt);
+          }
+          return;
+        } else {
+          nextIt = std::next(curIt);
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          gapMap.erase(curIt);
+        }
+        
+      } else {
+        // curIt starts inside of a range
+        curIt = leftIt;
+        
+        if (end <= curIt->second) {
+          // contained in the curIt range
+          if (start == curIt->first && end == curIt->second) {
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            gapMap.erase(curIt);
+          } else if (start == curIt->first) {
+            gapMap[end + 1] = curIt->second;
+            backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            gapMap.erase(curIt);
+          } else if (end == curIt->second) {
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            curIt->second = start - 1;
+          } else {
+            gapMap[end + 1] = curIt->second;
+            backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            curIt->second = start - 1;
+          }
+          return;
+        } else {
+          if (start == curIt->first) {
+            nextIt = std::next(curIt);
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            gapMap.erase(curIt);
+          } else {
+            backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+            curIt->second = start - 1;
+            nextIt = std::next(curIt);
+          }
+        }
+      }
+
+      
+      while (true) {
+        if (nextIt == gapMap.end()) {
+          break;
+        }
+
+        if (nextIt->first > end) {
+          break;
+        } else if (nextIt->second <= end) {
+          auto tmpIt = nextIt;
+          nextIt = std::next(nextIt);
+          backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
+          gapMap.erase(tmpIt);
+        } else {
+          gapMap[end + 1] = nextIt->second;
+          backtrack.emplace_back(true, std::make_pair(end+1, nextIt->second));
+          backtrack.emplace_back(false, std::make_pair(nextIt->first, nextIt->second));
+          gapMap.erase(nextIt);
+          break;
+        }
+      }
+    }
+  }
+}
 
 
 // Merges each range with overlapping ranges after expanding left and right
@@ -825,7 +1080,7 @@ extractSeedmers(const std::string &seq, const int k, const int s,
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutations>::Builder &indexedMutations, int32_t &seedK, int32_t &seedS,
                  Tree *T, Node *node, globalCoords_t &globalCoords,
                  CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes,
-                 int64_t &dfsIndex, posWidth &width)
+                 int64_t &dfsIndex, posWidth &width, std::map<int64_t, int64_t> &gapMap)
 {
 
   blockMutationInfo_t blockMutationInfo;
@@ -834,46 +1089,75 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
   // First, a range is made marking the start -> end
   // of each block and nuc mutation. This is done while
   // applying mutations to the sequence object.
-  std::vector<tupleRange> recompRanges;
-  applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
-                 globalCoords, indexedMutations, navigator);
-  
 
-  //std::sort(recompRanges.begin(), recompRanges.end());
+  //          std::pair<nucToGap, std::pair<beg, end>>
+  std::vector<std::pair<bool, std::pair<int, int>>> gapRunUpdates;
+  //          std::pair<del,  std::pair<beg, end>>
+  std::vector<std::pair<bool, std::pair<int, int>>> gapRunBacktracks;
+  std::vector<tupleRange> recompRanges;
+
+  sequence_t parentSequence = data.sequence;
+  CoordNavigator parentNavigator(parentSequence);
+
+  blockExists_t parentBlockExists = data.blockExists;
+  blockStrand_t parentBlockStrand = data.blockStrand;
+
+  applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
+                 globalCoords, indexedMutations, navigator, gapRunUpdates, gapRunBacktracks);
+  
+  // std::cout << "gapRunUpdates: " << gapRunUpdates.size() << std::endl;
+  // for (auto &update : gapRunUpdates) {
+  //   std::cout << update.first << " " << update.second.first << " " << update.second.second << std::endl;
+  // }
+  
+  // apply gapRunUpdates to GapMap
+  updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks);
+
+  std::vector<std::pair<bool, std::pair<int, int>>> gapRunOffBlocksBacktracks;
+  std::vector<std::pair<bool, std::pair<int, int>>> gapRunOffBlocksUpdates;
+  for (int i = 0; i < data.blockExists.size(); i++) {
+    if (!data.blockExists[i].first) {
+      int64_t start = globalCoords[i].first[0].first;
+      int64_t end = globalCoords[i].first.back().first;
+      gapRunOffBlocksUpdates.emplace_back(true, std::make_pair(start, end));
+    }
+  }
+  updateGapMap(gapMap, gapRunOffBlocksUpdates, gapRunOffBlocksBacktracks);
+
+  //       --AAACC----TTA
+  //       (2,2) (11,6)
+  //       first po of a nuc run, number of gaps before this position
+  //       localCoord = globalcoord - coordIndex.some_bound->second
+  std::map<int64_t, int64_t> coordIndex;
+
+  int64_t totalGapSize = 0;
+  if (gapMap.empty() || gapMap.begin()->first > 0) {
+    coordIndex[0] == totalGapSize;
+  }
+  for (auto &gap : gapMap) {
+    int64_t gapStart = gap.first;
+    int64_t gapEnd = gap.second;
+    int64_t gapSize = gapEnd - gapStart + 1;
+    totalGapSize += gapSize;
+    coordIndex[gapEnd+1] = totalGapSize;
+  }
+
+  for (auto it = gapRunOffBlocksBacktracks.rbegin(); it != gapRunOffBlocksBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
+
+  
   std::sort(recompRanges.begin(), recompRanges.end(), [&data](const tupleRange& A, const tupleRange& B) {
     if (A.start.blockId == B.start.blockId && !data.blockStrand[A.start.blockId].first) {
         return B < A; // Use B < A if blocks are inverted 
     }
     return A < B; // Default comparison
   });
-
-
-  // std::string node_seq = tree::getStringAtNode(node, T, true);
-  // std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
-
-  // std::unordered_map<int32_t, int32_t> degap;
-  // std::unordered_map<int32_t, int32_t> regap;
-  // int64_t pos = 0;
-  // for (int64_t i = 0; i < node_seq.size(); i++) {
-  //   char c = node_seq[i];
-  //   degap[i] = pos;
-  //   if (c != '-' && c != 'x') {
-  //     regap[pos] = i;
-  //     pos++;
-  //   }
-  // }
-  // std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
-  //   extractSeedmers(node_seq_nogap, seedK, seedS, false);
-  // std::ofstream osdmfs("osdmfs.txt");
-
-  // for (int i = 0; i < seedmers_nogap.size(); i++) {
-  //   osdmfs << std::get<0>(seedmers_nogap[i]) << "\t"
-  //     << std::get<1>(seedmers_nogap[i]) << "\t" << regap[std::get<1>(seedmers_nogap[i])]
-  //     << std::endl;
-  // }
-  // for (auto &p : seedMap) {
-  //   std::cout << p.first << "\t" << p.second << std::endl;
-  // }
 
   std::vector<int> seedsToClear; // seeds to clear from seedMap
   std::vector<std::pair<int, std::string>> addSeeds;
@@ -1105,6 +1389,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
     }
   }
 
+  // std::cout << node->identifier << " gapruns: " << gapMap.size() << " = ";
+  // for (const auto& pair : gapMap) {
+  //   std::cout << "(" << pair.first << ", " << pair.second << ")" << " ";
+  // }
+  // std::cout << std::endl;
 
   ::capnp::List<InsertionWithOffset>::Builder insertionsOffset = indexedMutations[dfsIndex].initInsertionsWithOffset(capnpAddOffset.size());
   ::capnp::List<DeletionWithOffset>::Builder deletionsOffset = indexedMutations[dfsIndex].initDeletionsWithOffset(capnpDelOffset.size());
@@ -1129,7 +1418,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
   /* Recursive step */
   for (Node *child : node->children) {
     
-    buildHelper(data, seedMap, indexedMutations, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width);
+    buildHelper(data, seedMap, indexedMutations, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width, gapMap);
   }
 
   
@@ -1146,6 +1435,15 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
       seedMap[back.first] = back.second;
 
       BlocksToSeeds[blockId].insert(back.first);
+    }
+  }
+   // undo gapMap updates
+  for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
     }
   }
 
@@ -1201,7 +1499,7 @@ void pmi::build(Tree *T, Index::Builder &index)
   
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
   ::capnp::List<Mutations>::Builder indexedMutations = index.initPerNodeMutations(T->allNodes.size());
-  posWidth width = globalCoords.back().first.back().first < 4294967296 
+  posWidth width = globalCoords.back().first.back().first < 4294967296
       ? posWidth::pos32 
       : posWidth::pos64;
 
@@ -1215,6 +1513,26 @@ void pmi::build(Tree *T, Index::Builder &index)
   }
 
   /* Recursive traversal of tree to build the index */
+  std::map<int64_t, int64_t> gapMap;
+
+  tupleCoord_t coordItr = {0,0,0};
+
+  auto curIt = gapMap.end();
+  while (coordItr < tupleCoord_t{-1,-1,-1}) {
+    char c = coordItr.nucGapPos == -1 ? data.sequence[coordItr.blockId].first[coordItr.nucPos].first : data.sequence[coordItr.blockId].first[coordItr.nucPos].second[coordItr.nucGapPos];
+    int64_t scalar = tupleToScalarCoord(coordItr, globalCoords);
+
+    if (c == '-') {
+      if (!gapMap.empty() && curIt->second + 1 == scalar) {
+        ++curIt->second;
+      } else {
+        auto tmpIt = gapMap.emplace(scalar, scalar);
+        curIt = tmpIt.first;
+      }
+    }
+    coordItr = navigator.newincrement(coordItr, data.blockStrand);
+  }
+  
   int64_t dfsIndex = 0; 
-  buildHelper(data, seedMap, indexedMutations, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width);
+  buildHelper(data, seedMap, indexedMutations, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width, gapMap);
 }

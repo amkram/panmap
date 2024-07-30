@@ -20,7 +20,6 @@
 #include <capnp/serialize-packed.h>
 #include <fcntl.h>
 
-
 using namespace pmi;
 namespace po = boost::program_options;
 namespace fs = boost::filesystem;
@@ -171,10 +170,7 @@ void readCapnp(std::string &filename) {
   ::capnp::PackedFdMessageReader message(fd, options);
 
   Index::Reader index = message.getRoot<Index>();
-  std::cout << "k: " << index.getK() << std::endl;
-  std::cout << "s: " << index.getS() << std::endl;
-  std::cout << "width: " << index.getWidth() << std::endl;
-  
+  // pmi::read(index);
 }
 
 PangenomeMAT::Tree* loadPanmat(const std::string &pmatFile) {
