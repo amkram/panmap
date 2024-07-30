@@ -1075,7 +1075,7 @@ extractSeedmers(const std::string &seq, const int k, const int s,
   return syncmers;
 }
 
-
+bool debug = false;
 // Recursive function to build the seed index
 void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutations>::Builder &indexedMutations, int32_t &seedK, int32_t &seedS,
                  Tree *T, Node *node, globalCoords_t &globalCoords,
@@ -1104,6 +1104,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
 
   applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
                  globalCoords, indexedMutations, navigator, gapRunUpdates, gapRunBacktracks);
+  
   
   // std::cout << "gapRunUpdates: " << gapRunUpdates.size() << std::endl;
   // for (auto &update : gapRunUpdates) {
@@ -1316,8 +1317,39 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
         }
       }
     }
-
   }
+
+  if (debug) {
+    std::cout << "- real -" << std::endl;
+    std::string thisNode = tree::getStringAtNode(node, T, true);
+    auto syncmers = seeding::syncmerize(thisNode, seedK, seedS, false, true, 0);
+    for (int i = 0; i < syncmers.size(); i++) {
+      std::cout << syncmers[i].pos << " " << syncmers[i].seq << std::endl;
+    }
+    std::cout << "- MY seedMap -" << std::endl;
+    for (auto &seed : seedMap) {
+      std::cout << seed.first << " " << seed.second << std::endl;
+    } 
+  }
+  
+  for (const auto &pos : seedsToClear)
+  {
+    if (seedMap.find(pos) != seedMap.end())
+    {
+      seedMap.erase(pos);
+      int blockId = scalarCoordToBlockId[pos];
+      BlocksToSeeds[blockId].erase(pos);
+    }
+  }
+
+  for (const auto &seed : addSeeds) {
+    seedMap[seed.first] = seed.second;
+    int blockId = scalarCoordToBlockId[seed.first];
+    BlocksToSeeds[blockId].insert(seed.first);
+  }
+
+  
+  
   std::vector<int32_t> capnpDelNormal;
   std::vector<std::pair<int32_t, std::bitset<64>>> capnpDelOffset;
   size_t i = 0;
