@@ -1,0 +1,11 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: KJ Test Framework
+Description: Basic utility library called KJ (test part)
+Version: 1.1-dev
+Libs: -L${libdir} -lkj-test   
+Requires: kj = 1.1-dev
+Cflags: -I${includedir}   
