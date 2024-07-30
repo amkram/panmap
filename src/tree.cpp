@@ -58,8 +58,6 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
     tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
     const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
-    
-    
 
     if (end == tupleCoord_t{-1,-1,-1})
     {
@@ -97,7 +95,7 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
 
       if (blockExists[currCoord.blockId].first) {
         
-        char c;
+        char c = '-';
         if (currCoord.nucGapPos == -1){
           
           c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
@@ -187,7 +185,7 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
     
     //Adding end character
     if(blockExists[end.blockId].first){
-        char c;
+        char c = '-';
         if (end.nucGapPos == -1){
           c = sequence[end.blockId].first[end.nucPos].first;
         }else{
@@ -234,6 +232,7 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
             case 'B':
               c = 'V';
               break;
+            
           }
         }
 
