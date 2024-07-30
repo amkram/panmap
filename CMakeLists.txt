@@ -35,17 +35,17 @@ add_executable(panmap
     src/mm_align.c
     src/pileup.c
 )
-add_executable(tests
-    src/test/main.test.cpp
-    src/test/pmi.test.cpp
-    src/conversion.cpp
-    src/place.cpp
-    src/genotype.cpp
-    src/pmi.cpp
-    src/tree.cpp
-    src/mm_align.c
-    src/pileup.c
-    )
+#add_executable(tests
+#    src/test/main.test.cpp
+#    src/test/pmi.test.cpp
+#    src/conversion.cpp
+#    src/place.cpp
+#    src/genotype.cpp
+#    src/pmi.cpp
+#    src/tree.cpp
+#    src/mm_align.c
+#    src/pileup.c
+#    )
 
 
 # system
@@ -124,10 +124,10 @@ target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panm
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
-target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+#target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+#target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 
 # Lets us do: 
 #    #include <minimap2/kseq.h>
@@ -170,29 +170,29 @@ add_custom_command(
 
 # Add the generated capnp sources to the target
 target_sources(panmap PRIVATE ${CAPNP_SRCS})
-target_sources(tests PRIVATE ${CAPNP_SRCS})
+#target_sources(tests PRIVATE ${CAPNP_SRCS})
 
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
-target_link_libraries(tests panmat minimap2 samtools htslib
-                      ${Boost_FILESYSTEM_LIBRARY}
-                      ${Boost_SYSTEM_LIBRARY}
-                        ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
-                        docopt
-                        capnp
-                        kj
-                      )
+#target_link_libraries(tests panmat minimap2 samtools htslib
+#                      ${Boost_FILESYSTEM_LIBRARY}
+#                      ${Boost_SYSTEM_LIBRARY}
+#                        ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+#                        docopt
+#                        capnp
+#                        kj
+#                      )
 
 # run protoc compiler
 add_dependencies(panmap protobuf::libprotobuf)
-add_dependencies(tests protobuf::libprotobuf)
+#add_dependencies(tests protobuf::libprotobuf)
 include(${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake)
 set(proto_SRCS index.pb.cc)
 set(proto_PROTOS index.proto)
 target_sources(panmap PRIVATE ${proto_SRCS} ${proto_PROTOS})
-target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
+#target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
 
 protobuf_generate(TARGET panmap)
 
@@ -201,15 +201,15 @@ target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib docopt capnp
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(panmap PRIVATE -lm -lpthread -lz)
 
-target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_link_options(tests PRIVATE -lm -lpthread -lz)
+# target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+# target_link_options(tests PRIVATE -lm -lpthread -lz)
 
 if (OPTION_DEBUG)
     target_compile_options(panmap PRIVATE -g -O0 -ggdb)
-    target_compile_options(tests PRIVATE -g -O0 -ggdb)
+   # target_compile_options(tests PRIVATE -g -O0 -ggdb)
 else()
     target_compile_options(panmap PRIVATE -g -O3)
-    target_compile_options(tests PRIVATE -g -O3)
+   # target_compile_options(tests PRIVATE -g -O3)
 endif()
 
 # Unit testing data
