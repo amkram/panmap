@@ -576,8 +576,8 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
     int blockId = std::get<0>(mutation);
     int nucPos = std::get<2>(mutation);
     int nucGapPos = std::get<3>(mutation);
-    char parChar = std::get<4>(mutation);
-    char curChar = std::get<5>(mutation);
+    char parChar = std::get<4>(mutation) == 'x' ? '-' : std::get<4>(mutation);
+    char curChar = std::get<5>(mutation) == 'x' ? '-' : std::get<5>(mutation);
     int64_t scalar = tupleToScalarCoord(tupleCoord_t{blockId, nucPos, nucGapPos}, globalCoords);
     // std::cout << "parChar: " << parChar << " curChar: " << curChar << std::endl;
     if (parChar != '-' && curChar == '-') {
@@ -1515,14 +1515,16 @@ void pmi::build(Tree *T, Index::Builder &index)
   /* Recursive traversal of tree to build the index */
   std::map<int64_t, int64_t> gapMap;
 
-  tupleCoord_t coordItr = {0,0,0};
-
+  tupleCoord_t coord = {0,0,data.sequence.front().second.size() == 0 ? -1 : 0};
   auto curIt = gapMap.end();
-  while (coordItr < tupleCoord_t{-1,-1,-1}) {
-    char c = coordItr.nucGapPos == -1 ? data.sequence[coordItr.blockId].first[coordItr.nucPos].first : data.sequence[coordItr.blockId].first[coordItr.nucPos].second[coordItr.nucGapPos];
-    int64_t scalar = tupleToScalarCoord(coordItr, globalCoords);
 
-    if (c == '-') {
+  while (coord < tupleCoord_t{-1, -1, -1})
+  {
+
+    char c = coord.nucGapPos == -1 ? data.sequence[coord.blockId].first[coord.nucPos].first : data.sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
+    int64_t scalar = tupleToScalarCoord(coord, globalCoords);
+
+    if (c == '-' || c == 'x') {
       if (!gapMap.empty() && curIt->second + 1 == scalar) {
         ++curIt->second;
       } else {
@@ -1530,8 +1532,30 @@ void pmi::build(Tree *T, Index::Builder &index)
         curIt = tmpIt.first;
       }
     }
-    coordItr = navigator.newincrement(coordItr, data.blockStrand);
+    if (!data.blockExists[coord.blockId].first)
+    {
+      if(coord.blockId == navigator.sequence.size() - 1){
+        break;
+      } else {
+        if( ! data.blockStrand[coord.blockId + 1].first){
+          coord = tupleCoord_t{coord.blockId + 1, navigator.sequence[coord.blockId + 1].first.size() - 1, -1};
+        }else{
+          coord.blockId += 1;
+          coord.nucPos = 0;
+          coord.nucGapPos = 0;
+          if(navigator.sequence[coord.blockId].first[0].second.empty()) {
+            coord.nucGapPos = -1;
+          }
+        }
+      }
+      continue;
+    }
+    coord = navigator.newincrement(coord, data.blockStrand);
   }
+  if(coord.blockId != -1 && !data.blockExists[coord.blockId].first){
+    coord = navigator.newdecrement(coord, data.blockStrand);
+  }
+
   
   int64_t dfsIndex = 0; 
   buildHelper(data, seedMap, indexedMutations, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width, gapMap);
