@@ -138,7 +138,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
                     blockMutationInfo_t &blockMutationInfo,
                     std::vector<tupleRange> &recompRanges,
                     mutationInfo_t &mutationInfo, Tree *T, Node *node,
-                    globalCoords_t &globalCoords, ::capnp::List<Mutations>::Builder &indexedMutations,
+                    globalCoords_t &globalCoords, ::capnp::List<Mutations>::Builder &indexedSeedMutations,
                     CoordNavigator &navigator, std::vector<std::pair<bool, std::pair<int, int>>> &gapRunUpdates,
                     std::vector<std::pair<bool, std::pair<int, int>>> &gapRunBacktracks)
 {
@@ -599,7 +599,7 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
     }
   }
 
-void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &indexedMutations, Tree *T,
+void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &indexedSeedMutations, Tree *T,
                    const Node *node, const blockMutationInfo_t &blockMutationInfo,
                    const mutationInfo_t &mutationInfo, globalCoords_t &globalCoords )
 {
@@ -1027,6 +1027,37 @@ std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
 
   return merged;
 }
+std::vector<std::pair<int64_t, std::optional<int64_t>>> encodeDelta(
+    const std::map<int64_t, int64_t>& map1,
+    const std::map<int64_t, int64_t>& map2) 
+{
+    std::vector<std::pair<int64_t, std::optional<int64_t>>> delta;
+
+    // Iterate through the first map
+    for (const auto& [key, value] : map1) {
+        auto it = map2.find(key);
+        if (it != map2.end()) {
+            // Key exists in both maps
+            if (it->second != value) {
+                // Values are different (update scenario)
+                delta.emplace_back(key, value);
+            }
+        } else {
+            // Key only exists in map1 (deletion scenario)
+            delta.emplace_back(key, std::nullopt); // Use nullopt to indicate deletion
+        }
+    }
+
+    // Iterate through the second map to find additions
+    for (const auto& [key, value] : map2) {
+        if (map1.find(key) == map1.end()) {
+            // Key only exists in map2 (addition scenario)
+            delta.emplace_back(key, value);
+        }
+    }
+
+    return delta;
+}
 
 // Get a single integer representing a position in the MSA from a tupleCoord_t = {blockId, nucPos, nucGapPos}
 int64_t tupleToScalarCoord(const tupleCoord_t &coord,
@@ -1077,7 +1108,8 @@ extractSeedmers(const std::string &seq, const int k, const int s,
 
 bool debug = false;
 // Recursive function to build the seed index
-void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutations>::Builder &indexedMutations, int32_t &seedK, int32_t &seedS,
+void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutations>::Builder &indexedSeedMutations, ::capnp::List<Deltas>::Builder &indexedGapMutations,
+                 int32_t &seedK, int32_t &seedS,
                  Tree *T, Node *node, globalCoords_t &globalCoords,
                  CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId, std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes,
                  int64_t &dfsIndex, posWidth &width, std::map<int64_t, int64_t> &gapMap)
@@ -1096,14 +1128,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
   std::vector<std::pair<bool, std::pair<int, int>>> gapRunBacktracks;
   std::vector<tupleRange> recompRanges;
 
-  sequence_t parentSequence = data.sequence;
-  CoordNavigator parentNavigator(parentSequence);
 
-  blockExists_t parentBlockExists = data.blockExists;
-  blockStrand_t parentBlockStrand = data.blockStrand;
+  std::map<int64_t, int64_t> parentGapMap = gapMap;
 
   applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
-                 globalCoords, indexedMutations, navigator, gapRunUpdates, gapRunBacktracks);
+                 globalCoords, indexedSeedMutations, navigator, gapRunUpdates, gapRunBacktracks);
   
   
   // std::cout << "gapRunUpdates: " << gapRunUpdates.size() << std::endl;
@@ -1143,6 +1172,7 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
     coordIndex[gapEnd+1] = totalGapSize;
   }
 
+  // should this be here?
   for (auto it = gapRunOffBlocksBacktracks.rbegin(); it != gapRunOffBlocksBacktracks.rend(); ++it) {
     const auto& [del, range] = *it;
     if (del) {
@@ -1151,7 +1181,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
       gapMap[range.first] = range.second;
     }
   }
-
   
   std::sort(recompRanges.begin(), recompRanges.end(), [&data](const tupleRange& A, const tupleRange& B) {
     if (A.start.blockId == B.start.blockId && !data.blockStrand[A.start.blockId].first) {
@@ -1178,7 +1207,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
   // Seed re-processing
   for (auto &range : std::ranges::reverse_view(merged))
   {
-
     bool atGlobalEnd = false;
     if (range.stop >= tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1})
     {
@@ -1195,13 +1223,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
 
     //Loop through the seeds currently in dead block and delete them
     for(int i = 0; i < deadBlocks.size(); i++){
-
       for (auto& pos: BlocksToSeeds[deadBlocks[i]]) {
         backtrack.push_back(std::make_pair(pos, seedMap[pos]));
         seedsToClear.push_back(pos);
       }
     }
-
 
     //Loop through seeds that now start as gaps and delete them
     for(int i = 0; i < gaps.size(); i++){
@@ -1347,8 +1373,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
     int blockId = scalarCoordToBlockId[seed.first];
     BlocksToSeeds[blockId].insert(seed.first);
   }
-
-  
   
   std::vector<int32_t> capnpDelNormal;
   std::vector<std::pair<int32_t, std::bitset<64>>> capnpDelOffset;
@@ -1421,16 +1445,22 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
     }
   }
 
-  // std::cout << node->identifier << " gapruns: " << gapMap.size() << " = ";
-  // for (const auto& pair : gapMap) {
-  //   std::cout << "(" << pair.first << ", " << pair.second << ")" << " ";
-  // }
-  // std::cout << std::endl;
+  std::vector<std::pair<int64_t, std::optional<int64_t>>> delta = encodeDelta(parentGapMap, gapMap);
 
-  ::capnp::List<InsertionWithOffset>::Builder insertionsOffset = indexedMutations[dfsIndex].initInsertionsWithOffset(capnpAddOffset.size());
-  ::capnp::List<DeletionWithOffset>::Builder deletionsOffset = indexedMutations[dfsIndex].initDeletionsWithOffset(capnpDelOffset.size());
-  ::capnp::List<Insertion>::Builder insertions = indexedMutations[dfsIndex].initInsertions(capnpAddNormal.size());
-  ::capnp::List<Deletion>::Builder deletions = indexedMutations[dfsIndex].initDeletions(capnpDelNormal.size());
+  ::capnp::List<Delta>::Builder deltas = indexedGapMutations[dfsIndex].initChanges(delta.size());
+  for (int32_t i = 0; i < delta.size(); i++) {
+    if (delta[i].second.has_value()) {
+      deltas[i].initOptional().setValue(delta[i].second.value());
+    } else {
+      deltas[i].initOptional().setVoid();
+    }
+  }
+
+  ::capnp::List<InsertionWithOffset>::Builder insertionsOffset = indexedSeedMutations[dfsIndex].initInsertionsWithOffset(capnpAddOffset.size());
+  ::capnp::List<DeletionWithOffset>::Builder deletionsOffset = indexedSeedMutations[dfsIndex].initDeletionsWithOffset(capnpDelOffset.size());
+  ::capnp::List<Insertion>::Builder insertions = indexedSeedMutations[dfsIndex].initInsertions(capnpAddNormal.size());
+  ::capnp::List<Deletion>::Builder deletions = indexedSeedMutations[dfsIndex].initDeletions(capnpDelNormal.size());
+  
   for (int32_t i = 0; i < capnpDelOffset.size(); i++) {
     deletionsOffset[i].setBitset(capnpDelOffset[i].second.to_ullong());
     deletionsOffset[i].initPos().setPos32(capnpDelOffset[i].first);
@@ -1446,11 +1476,24 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
     insertions[i].initPos().setPos32(capnpAddNormal[i]);
   }
 
+  delta.clear();
+  capnpAddOffset.clear();
+  capnpAddNormal.clear();
+  capnpDelOffset.clear();
+  capnpDelNormal.clear();
+  seedsToClear.clear();
+  addSeeds.clear();
+  merged.clear();
+  recompRanges.clear();
+  coordIndex.clear();
+  parentGapMap.clear();
+  gapRunUpdates.clear();
+
   dfsIndex++;
   /* Recursive step */
   for (Node *child : node->children) {
     
-    buildHelper(data, seedMap, indexedMutations, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width, gapMap);
+    buildHelper(data, seedMap, indexedSeedMutations, indexedGapMutations, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width, gapMap);
   }
 
   
@@ -1480,14 +1523,12 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
   }
 
   /* Undo sequence mutations when backtracking */
-  undoMutations(data, indexedMutations, T, node, blockMutationInfo, mutationInfo, globalCoords);
+  undoMutations(data, indexedSeedMutations, T, node, blockMutationInfo, mutationInfo, globalCoords);
 }
-
 
 /* implementation */
 void pmi::build(Tree *T, Index::Builder &index)
 {
-  
   // Setup for seed indexing
   tree::mutableTreeData data;
   tree::globalCoords_t globalCoords;
@@ -1530,7 +1571,6 @@ void pmi::build(Tree *T, Index::Builder &index)
   }
   
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
-  ::capnp::List<Mutations>::Builder indexedMutations = index.initPerNodeMutations(T->allNodes.size());
   posWidth width = globalCoords.back().first.back().first < 4294967296
       ? posWidth::pos32 
       : posWidth::pos64;
@@ -1584,11 +1624,13 @@ void pmi::build(Tree *T, Index::Builder &index)
     }
     coord = navigator.newincrement(coord, data.blockStrand);
   }
+  
   if(coord.blockId != -1 && !data.blockExists[coord.blockId].first){
     coord = navigator.newdecrement(coord, data.blockStrand);
   }
 
-  
+  ::capnp::List<Mutations>::Builder indexedSeedMutations = index.initPerNodeSeedMutations(T->allNodes.size());
+  ::capnp::List<Deltas>::Builder indexedGapMutations = index.initPerNodeGapMutations(T->allNodes.size());
   int64_t dfsIndex = 0; 
-  buildHelper(data, seedMap, indexedMutations, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width, gapMap);
+  buildHelper(data, seedMap, indexedSeedMutations, indexedGapMutations, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, dfsIndex, width, gapMap);
 }
