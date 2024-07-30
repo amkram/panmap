@@ -36,9 +36,21 @@ struct Mutations {
     deletionsWithOffset @3 :List(DeletionWithOffset);
 }
 
+struct Delta {
+  optional :union {
+    value @0 :Int64;
+    void @1 :Void; 
+  }
+}
+
+struct Deltas {
+    changes @0 :List(Delta);
+}
+
 struct Index {
     k @0 :Int32;
     s @1 :Int32;
     width @2 :Int16;
-    perNodeMutations @3 :List(Mutations);
+    perNodeSeedMutations @3 :List(Mutations);
+    perNodeGapMutations @4 :List(Deltas);
 }
