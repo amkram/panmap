@@ -52,64 +52,13 @@ void findSyncmers(
   }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Recursive function to build the seed index
 // This one also prints out alans seeds
 //
-void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
+void buildHelper3(::capnp::List<Mutations>::Reader &indexedSeedMutations, Tree *T, Node *node,
                  int32_t &pb_i, std::map<int32_t, std::string> &seedmersAlex, const int k, const int s, const int j) {
   // std::cout << " " << node->identifier << "\n";
 
-  std::cout << "pbi " << pb_i << std::endl;
-  if(pb_i > 100){
-    //exit(0);
-  }
-  // std::cout << "size " << index.per_node_mutations_size() << "\n";
-
-
-  NodeSeedmerMutations pb_node_mutations = index.per_node_mutations(pb_i);
-
-  // std::cout << "other " << pb_node_mutations.mutations_size() << "\n";
 
   std::string node_idn = node->identifier;
 
@@ -118,10 +67,34 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
   std::vector<int64_t> delSeeds;
   std::vector<std::pair<int64_t, std::string>> addSeeds;
   
-  for (int mut_i = 0; mut_i < pb_node_mutations.mutations_size(); mut_i++) {
-    const auto &mut = pb_node_mutations.mutations(mut_i);
-    int32_t pos = mut.pos();
-    if (mut.is_deletion()) {
+  for (int mut_i = 0; mut_i < indexedSeedMutations.size(); mut_i++) {
+    const Mutations::Reader mut = indexedSeedMutations[mut_i];
+    const auto insertions = mut.getInsertions();
+    const auto deletions = mut.getDeletions();
+    const auto insertionsWithOffset = mut.getInsertionsWithOffset();
+    const auto deletionsWithOffset = mut.getDeletionsWithOffset();
+    for (int ins_i = 0; ins_i < insertionsWithOffset.size(); ins_i++) {
+      int64_t basePos = insertionsWithOffset[ins_i].getPos();
+      std::bitset<64> bs = insertionsWithOffset[ins_i].getBitset();
+      std::string seq = "";
+      for (int8_t bit = 0; bit < 64; ++bit) {
+        if (bs.test(bit)) {
+          basePos + 1; // is a seed
+        }
+      }
+      addSeeds.push_back({basePos, seq});
+    }
+
+    for (int ins_i = 0; ins_i < insertions.size(); ins_i++) {
+      int32_t pos = insertions[ins_i];
+      if (seedmersAlex.find(pos) != seedmersAlex.end()) {
+        delSeeds.push_back(pos);
+      }
+    }
+
+    for (int del_i = 0; del_i < deletions.size(); del_i++) {
+      int32_t pos = deletions[del_i];
+      if (seedmersAlex.find(pos) != seedmersAlex.end()) {
       backtrack.push_back({pos, seedmersAlex[pos]});
       delSeeds.push_back(pos);
     } else {
@@ -220,90 +193,88 @@ void buildHelper3(SeedmerIndex &index, Tree *T, Node *node,
   }
 }
 
-
-// BOOST_AUTO_TEST_CASE(performance) {
+BOOST_AUTO_TEST_CASE(performance) {
   
-//    std::string pmat = "sars2k.pmat";
+  std::string pmat = "sars2k.pmat";
+  std::cout << "Starting tests with " << pmat << std::endl;
+
+  std::ifstream ifs("../dev/examples/pmats/"+pmat);
+  boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
+  b.push(boost::iostreams::gzip_decompressor());
+  b.push(ifs);
+  std::istream is(&b);
+
+  PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
+
+  std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
+ 
   
-//    std::cout << "Starting tests with " << pmat << std::endl;
-
-//    std::ifstream ifs("../dev/examples/pmats/"+pmat);
-//    boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
-//    b.push(boost::iostreams::gzip_decompressor());
-//    b.push(ifs);
-//    std::istream is(&b);
-
-//    std::cout << "Parsing Tree" << std::endl;
-
-//    PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
-
-
-//    std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
-//    //parameters = {{15, 1, 1}};
-
-//    for (const auto &param : parameters) {
-//      auto k = std::get<0>(param);
-//      auto s = std::get<1>(param);
-//      auto j = std::get<2>(param);
-
-//      std::string dirName = std::string("../dev/eval-performance/");
-//      fs::create_directories(dirName);
-
-//      Index::Builder index;
-//      index.setK(k);
-//      index.setS(s);
-//      time_stamp();
-//      pmi::build(T, index);
-//      time_stamp();
-
-//      //exit(0);
-
+  for (const auto &param : parameters) {
+  
+    tree::mutableTreeData data;
+    tree::globalCoords_t globalCoords;
+    tree::setup(data, globalCoords, T);
+    seedMap_t seedMap;
     
-//      std::ofstream fout(dirName+pmat+".pmi", std::ios::binary);
-//      if (!index.SerializeToOstream(&fout)) {
-//         std::cerr << "Failed to write index." << std::endl;
-//     }
+    CoordNavigator navigator(data.sequence);
+    auto k = std::get<0>(param);
+    auto s = std::get<1>(param);
+    auto j = std::get<2>(param);
 
-//      std::map<int32_t, std::string> seedmersAlex;
-//      int32_t pb_i = 0;
+     std::string dirName = std::string("../dev/eval-performance/");
+     fs::create_directories(dirName);
 
-//      //buildHelper2(index, T, T->root, pb_i, seedmersAlex);
-//      buildHelper3(index, T, T->root, pb_i, seedmersAlex, k, s, j);
+     Index::Builder index;
+     index.setK(k);
+     index.setS(s);
+     time_stamp();
+     pmi::build(T, index);
+     time_stamp();
 
-//      exit(0);
+     int wfd = open(dirName+pmat+".capnp.pmi", O_WRONLY | O_CREAT, 0644);
+     capnp::writePackedMessageToFd(wfd, message);
+     
+     int32_t pb_i = 0;
+     int rfd = open(dirName+pmat+".capnp.pmi", O_RDONLY);
+     ::capnp::ReaderOptions options = {(uint64_t) -1, 64}; 
+     ::capnp::PackedFdMessageReader message(rfd, options);
 
-//      for (auto &n : T->allNodes) {
-//        std::string node_idn;
-    
-//         for (char c : n.first) {
-//             if (isalnum(c) || c == '_' || c == '.' || c == '-') {
-//                 node_idn += c;
-//             }
-//         }
-//        std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
-//        Node *nod= n.second;
+     Index::Reader index = message.getRoot<Index>();
+     ::capnp::List<Mutations>::Reader indexedSeedMutations = index.getPerNodeSeeMutations();
+
+     buildHelper3(data, indexedSeedMutations, T, T->root, pb_i, seedMap, k, s, j);
+
+     for (auto &n : T->allNodes) {
+       std::string node_idn;
+        for (char c : n.first) {
+            if (isalnum(c) || c == '_' || c == '.' || c == '-') {
+                node_idn += c;
+            }
+        }
+       std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
+       Node *nod= n.second;
       
-//        std::string node_seq = tree::getStringAtNode(nod, T, true);
-//         std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
+       std::string node_seq = tree::getStringAtNode(nod, T, true);
+        std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
 
-//        std::vector<std::tuple<std::string, int, int>> seedmers =
-//            extractSeedmers(node_seq, k, s, j, false);
-//        std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
-//            extractSeedmers(node_seq_nogap, k, s, j, false);
-//        std::ofstream osdmfs(outSeedmersPath);
-//        osdmfs << node_seq << std::endl;
-//        osdmfs << node_seq_nogap << std::endl;
+       std::vector<std::tuple<std::string, int, int>> seedmers =
+           extractSeedmers(node_seq, k, s, j, false);
+       std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
+           extractSeedmers(node_seq_nogap, k, s, j, false);
+       std::ofstream osdmfs(outSeedmersPath);
+       osdmfs << node_seq << std::endl;
+       osdmfs << node_seq_nogap << std::endl;
 
-//        for (int i = 0; i < seedmers.size(); i++) {
-//          osdmfs << std::get<0>(seedmers[i]) << "\t"
-//                 << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
-//                  << std::endl;
+       for (int i = 0; i < seedmers.size(); i++) {
+         osdmfs << std::get<0>(seedmers[i]) << "\t"
+                << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
+                 << std::endl;
                
-//        }
-//        osdmfs.close();
-//      }
-//    }
-//  }
+       }
+       osdmfs.close();
+     }
+   }
+ }
 
 
 
