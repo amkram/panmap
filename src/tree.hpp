@@ -24,9 +24,13 @@ struct tupleCoord_t {
     int blockId, nucPos, nucGapPos;
 
     // Constructor
-    tupleCoord_t(const int32_t &blockId, const int32_t &nucPos,
-                 const int32_t &nucGapPos)
+    tupleCoord_t(const int64_t &blockId, const int64_t &nucPos,
+                 const int64_t &nucGapPos)
         : blockId(blockId), nucPos(nucPos), nucGapPos(nucGapPos) {}
+
+    // Default constructor
+    tupleCoord_t() : blockId(-1), nucPos(-1), nucGapPos(-1) {}
+    tupleCoord_t(const tupleCoord_t &other) : blockId(other.blockId), nucPos(other.nucPos), nucGapPos(other.nucGapPos) {}
 
     bool operator<(const tupleCoord_t &rhs) const {
         if (blockId == -1 && nucPos == -1 && nucGapPos == -1) return false;
@@ -476,8 +480,8 @@ namespace tree {
 using namespace PangenomeMAT;
 
 typedef std::vector<
-    std::pair<std::vector<std::pair<int, std::vector<int>>>,
-              std::vector<std::vector<std::pair<int, std::vector<int>>>>>>
+    std::pair<std::vector<std::pair<int64_t, std::vector<int64_t>>>,
+              std::vector<std::vector<std::pair<int64_t, std::vector<int64_t>>>>>>
     globalCoords_t;
 typedef std::vector<std::tuple<int32_t, int32_t, bool, bool, bool, bool>> blockMutationInfo_t;
 typedef std::vector<
@@ -495,6 +499,7 @@ struct mutableTreeData {
   std::unordered_map<std::string, bool> variableSeeds;         // seeds in the consensus that mutate at least once
   blockExists_t blockExists; // tracks if blocks are "on" at a node
   blockStrand_t blockStrand; // tracks strand of blocks
+  std::unordered_map<int64_t, tupleCoord_t> scalarToTupleCoord;
 };
 
 struct mutationMatrices {
@@ -536,7 +541,14 @@ void setupGlobalCoordinates(
     int64_t &ctr, globalCoords_t &globalCoords,
     const BlockGapList &blockGaps, const std::vector<Block> &blocks,
     const std::vector<GapList> &gaps,
-    const sequence_t &sequence);
+    const sequence_t &sequence,
+    std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord);
+
+std::string getSeedAt(const int64_t &pos, Tree *T, int32_t &k,
+    std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
+    const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
+    const globalCoords_t &globalCoords, CoordNavigator &navigator,
+    std::map<int64_t, int64_t> &gapRuns);
 
 // Fill mutation matrices from tree or file
 std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string &s1,

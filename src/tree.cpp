@@ -43,13 +43,94 @@ std::string tree::getConsensus(Tree *T) {
   return consensus;
 }
 
+std::string tree::getSeedAt(const int64_t &pos, Tree *T, int32_t &k,
+    std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
+    const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
+    const globalCoords_t &globalCoords, CoordNavigator &navigator,
+    std::map<int64_t, int64_t> &gapRuns) {
+    tupleCoord_t currCoord = scalarToTupleCoord[pos];
+    std::string seq;
+    while (currCoord < tupleCoord_t{-1,-1,-1}){
+      if (blockExists[currCoord.blockId].first) {
+        char c = '-';
+        if (currCoord.nucGapPos == -1){
+          c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
+        }else{
+          c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
+        }
+        if(c == 'x') c = '-';
+        if(! blockStrand[currCoord.blockId].first){
+          switch(c){
+            case 'A':
+              c = 'T';
+              break;
+            case 'T':
+              c = 'A';
+              break;
+            case 'G':
+              c = 'C';
+              break;
+            case 'C':
+              c = 'G';
+              break;
+            
+            case 'Y':
+              c = 'R';
+              break;
+            case 'R':
+              c = 'Y';
+              break;
+            case 'K':
+              c = 'M';
+              break;
+            case 'M':
+              c = 'K';
+              break;
+            case 'D':
+              c = 'H';
+              break;
+            case 'H':
+              c = 'D';
+              break;
+            case 'V':
+              c = 'B';
+              break;
+            case 'B':
+              c = 'V';
+              break;
+          }
+        }
+        if(c != '-'){
+          seq.push_back(c);
+        }else{
+          int scalar = tupleToScalarCoord(currCoord, globalCoords);
+          if (scalarToTupleCoord.find(gapRuns[scalar]+1) != scalarToTupleCoord.end()) {
+            currCoord = scalarToTupleCoord[gapRuns[scalar]];
+          } else {
+            currCoord = tupleCoord_t{-1, -1, -1};
+          }
+        }
+      } else {
+        if( blockStrand[currCoord.blockId].first){
+            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
+          }else{
+            currCoord.nucPos = 0;
+            currCoord.nucGapPos = 0;
+            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+              currCoord.nucGapPos = -1;
+            }
+        }
+        if(currCoord.blockId == navigator.sequence.size() - 1){
+          break;
+        }
 
+      }
+      navigator.newincrement(currCoord, blockStrand);
+    }    
 
-
-
-
-
-
+    return seq;
+  }  
+    
 
 // coords (blockId, nucPosition, nucGapPosition)
 // Sequence includes both boundary coordinates
@@ -436,7 +517,8 @@ void tree::setupGlobalCoordinates(int64_t &ctr, globalCoords_t &globalCoords,
                                   const BlockGapList &blockGaps,
                                   const std::vector<Block> &blocks,
                                   const std::vector<GapList> &gaps,
-                                  const sequence_t &sequence) {
+                                  const sequence_t &sequence,
+                                  std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord) {
 
   globalCoords.resize(blocks.size() + 1);
   // Assigning block gaps
@@ -484,9 +566,11 @@ void tree::setupGlobalCoordinates(int64_t &ctr, globalCoords_t &globalCoords,
     for (j = 0; j < globalCoords[i].first.size(); j++) {
       for (k = 0; k < globalCoords[i].first[j].second.size(); k++) {
         globalCoords[i].first[j].second[k] = ctr;
+        scalarToTupleCoord[ctr] = {i, j, k};
         ctr++;
       }
       globalCoords[i].first[j].first = ctr;
+      scalarToTupleCoord[ctr] = {i, j, -1};
       ctr++;
     }
   }
@@ -556,7 +640,7 @@ void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords,
   data.blockExists = blockExists;
   data.blockStrand = blockStrand;
   setupGlobalCoordinates(data.maxGlobalCoordinate, globalCoords, blockGaps,
-                         blocks, gaps, sequence);
+                         blocks, gaps, sequence, data.scalarToTupleCoord);
 }
 int64_t tree::getGlobalCoordinate(const int blockId, const int nucPosition,
                                   const int nucGapPosition,
