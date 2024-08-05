@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 # Project options
 
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
-option(OPTION_BUILD_TESTS "Build tests." ON)
+option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PROFILE "Enable profiling." ON)
 # option(OPTION_TRACE "Enable tracing." ON)
@@ -24,7 +24,6 @@ set(FETCHCONTENT_QUIET OFF)
 #     )
 # FetchContent_MakeAvailable(easy_profiler)
 
-
 add_executable(panmap
     src/main.cpp
     src/conversion.cpp
@@ -35,17 +34,19 @@ add_executable(panmap
     src/mm_align.c
     src/pileup.c
 )
-#add_executable(tests
-#    src/test/main.test.cpp
-#    src/test/pmi.test.cpp
-#    src/conversion.cpp
-#    src/place.cpp
-#    src/genotype.cpp
-#    src/pmi.cpp
-#    src/tree.cpp
-#    src/mm_align.c
-#    src/pileup.c
-#    )
+if (OPTION_BUILD_TESTS)
+add_executable(tests
+   src/test/main.test.cpp
+   src/test/pmi.test.cpp
+   src/conversion.cpp
+   src/place.cpp
+   src/genotype.cpp
+   src/pmi.cpp
+   src/tree.cpp
+   src/mm_align.c
+   src/pileup.c
+   )
+endif()
 
 
 # system
@@ -70,6 +71,13 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+FetchContent_Declare(
+    bm
+    GIT_REPOSITORY https://github.com/tlk00/BitMagic.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(bm)
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libst.a ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
@@ -121,14 +129,18 @@ FetchContent_MakeAvailable(docopt)
 
 
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/bm-src/src)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
-#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
-#target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-#target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 
+if (OPTION_BUILD_TESTS)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/bm-build)
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+endif()
 # Lets us do: 
 #    #include <minimap2/kseq.h>
 #    #include <htslib/sam.h>    
@@ -170,29 +182,17 @@ add_custom_command(
 
 # Add the generated capnp sources to the target
 target_sources(panmap PRIVATE ${CAPNP_SRCS})
-#target_sources(tests PRIVATE ${CAPNP_SRCS})
 
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
-#target_link_libraries(tests panmat minimap2 samtools htslib
-#                      ${Boost_FILESYSTEM_LIBRARY}
-#                      ${Boost_SYSTEM_LIBRARY}
-#                        ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
-#                        docopt
-#                        capnp
-#                        kj
-#                      )
 
 # run protoc compiler
 add_dependencies(panmap protobuf::libprotobuf)
-#add_dependencies(tests protobuf::libprotobuf)
 include(${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake)
 set(proto_SRCS index.pb.cc)
 set(proto_PROTOS index.proto)
 target_sources(panmap PRIVATE ${proto_SRCS} ${proto_PROTOS})
-#target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
 
 protobuf_generate(TARGET panmap)
 
@@ -201,15 +201,29 @@ target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib docopt capnp
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(panmap PRIVATE -lm -lpthread -lz)
 
-# target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-# target_link_options(tests PRIVATE -lm -lpthread -lz)
+
+if (OPTION_BUILD_TESTS)
+target_sources(tests PRIVATE ${CAPNP_SRCS})
+target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
+target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(tests panmat minimap2 samtools htslib
+                     ${Boost_FILESYSTEM_LIBRARY}
+                     ${Boost_SYSTEM_LIBRARY}
+                       ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+                       docopt
+                       capnp
+                       kj
+                     )
+add_dependencies(tests protobuf::libprotobuf)
+target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+target_link_options(tests PRIVATE -lm -lpthread -lz)
+target_compile_options(tests PRIVATE -g -O3 -ggdb)
+endif()
 
 if (OPTION_DEBUG)
     target_compile_options(panmap PRIVATE -g -O1 -ggdb)
-   # target_compile_options(tests PRIVATE -g -O1 -ggdb)
 else()
     target_compile_options(panmap PRIVATE -g -O3)
-   # target_compile_options(tests PRIVATE -g -O3)
 endif()
 
 # Unit testing data
@@ -218,3 +232,8 @@ configure_file(src/test/data/test.nwk test.nwk COPYONLY)
 configure_file(src/test/data/test.json test.json COPYONLY)
 configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
+
+install(TARGETS panmap DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/index.capnp DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/index.pb.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/index.pb.cc DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)

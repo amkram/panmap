@@ -52,123 +52,119 @@ void findSyncmers(
   }
 }
 
+
+
+
+void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &indexedSeedMutations, Tree *T,
+                   const Node *node, const blockMutationInfo_t &blockMutationInfo,
+                   const mutationInfo_t &mutationInfo, globalCoords_t &globalCoords);
 // Recursive function to build the seed index
 // This one also prints out alans seeds
 //
 void buildHelper3(::capnp::List<Mutations>::Reader &indexedSeedMutations, Tree *T, Node *node,
-                 int32_t &pb_i, std::map<int32_t, std::string> &seedmersAlex, const int k, const int s, const int j) {
-  // std::cout << " " << node->identifier << "\n";
-
+                 int32_t &pb_i, std::map<int32_t, std::string> &seedMap, int32_t k, int32_t s, int32_t j,
+                 mutableTreeData &data, globalCoords_t &globalCoords, CoordNavigator &navigator, std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord, std::unordered_map<int64_t, int64_t> &gapRuns) {
 
   std::string node_idn = node->identifier;
 
-
-  std::vector<std::pair<int32_t, std::string>> backtrack;
-  std::vector<int64_t> delSeeds;
+  std::vector<std::pair<int64_t, std::string>> delSeeds;
   std::vector<std::pair<int64_t, std::string>> addSeeds;
   
   for (int mut_i = 0; mut_i < indexedSeedMutations.size(); mut_i++) {
     const Mutations::Reader mut = indexedSeedMutations[mut_i];
+    
     const auto insertions = mut.getInsertions();
     const auto deletions = mut.getDeletions();
     const auto insertionsWithOffset = mut.getInsertionsWithOffset();
     const auto deletionsWithOffset = mut.getDeletionsWithOffset();
+
     for (int ins_i = 0; ins_i < insertionsWithOffset.size(); ins_i++) {
-      int64_t basePos = insertionsWithOffset[ins_i].getPos();
+      int64_t basePos = insertionsWithOffset[ins_i].getPos().getPos64();
+      addSeeds.push_back({basePos, getSeedAt(basePos, T, k, scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapRuns)});
       std::bitset<64> bs = insertionsWithOffset[ins_i].getBitset();
-      std::string seq = "";
       for (int8_t bit = 0; bit < 64; ++bit) {
         if (bs.test(bit)) {
-          basePos + 1; // is a seed
+          addSeeds.push_back({basePos + 1 + bit, getSeedAt(basePos+1+bit, T, k, scalarToTupleCoord, data, globalCoords, navigator, gapRuns)});
         }
       }
-      addSeeds.push_back({basePos, seq});
     }
-
+    for (int del_i = 0; del_i < deletionsWithOffset.size(); del_i++) {
+      int64_t basePos = deletionsWithOffset[del_i].getPos().getPos64();
+      delSeeds.push_back({basePos, getSeedAt(basePos, T, k, scalarToTupleCoord, data, globalCoords, navigator, gapRuns)});
+      std::bitset<64> bs = deletionsWithOffset[del_i].getBitset();
+      for (int8_t bit = 0; bit < 64; ++bit) {
+        if (bs.test(bit)) {
+          delSeeds.push_back({basePos + 1 + bit, getSeedAt(basePos+1+bit, T, k, scalarToTupleCoord, data, globalCoords, navigator, gapRuns)});
+        }
+      }
+    }
     for (int ins_i = 0; ins_i < insertions.size(); ins_i++) {
-      int32_t pos = insertions[ins_i];
-      if (seedmersAlex.find(pos) != seedmersAlex.end()) {
-        delSeeds.push_back(pos);
+      int64_t pos = insertions[ins_i].getPos().getPos64();
+      if (seedMap.find(pos) != seedMap.end()) {
+        addSeeds.push_back({pos, getSeedAt(pos, T, k, scalarToTupleCoord, data, globalCoords, navigator, gapRuns)});
       }
     }
-
     for (int del_i = 0; del_i < deletions.size(); del_i++) {
-      int32_t pos = deletions[del_i];
-      if (seedmersAlex.find(pos) != seedmersAlex.end()) {
-      backtrack.push_back({pos, seedmersAlex[pos]});
-      delSeeds.push_back(pos);
-    } else {
-      if (seedmersAlex.find(pos) != seedmersAlex.end()) {
-        backtrack.push_back({pos, seedmersAlex[pos]});
-      } else {
-        backtrack.push_back({pos, ""});
+      int64_t pos = deletions[del_i].getPos().getPos64();
+      if (seedMap.find(pos) != seedMap.end()) {
+        delSeeds.push_back({pos, getSeedAt(pos, T, k, scalarToTupleCoord, data, globalCoords, navigator, gapRuns)});
       }
-      addSeeds.push_back({pos, mut.seq()});
-      
-    }
+    }      
   }
   for (const auto &p : delSeeds) {
-    seedmersAlex.erase(p);
+    seedMap.erase(p);
   }
   for (const auto &p : addSeeds) {
-    seedmersAlex[p.first] = p.second;
+    seedMap[p.first] = p.second;
   }
 
-  std::string node_seq = tree::getStringAtNode(node, T, true);
-  std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
+  // std::string node_seq = tree::getStringAtNode(node, T, true);
+  // std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
 
-  std::unordered_map<int32_t, int32_t> degap;
-  std::unordered_map<int32_t, int32_t> regap;
-  int64_t pos = 0;
-  for (int64_t i = 0; i < node_seq.size(); i++) {
-    char c = node_seq[i];
-    degap[i] = pos;
-    if (c != '-' && c != 'x') {
-      regap[pos] = i;
-      pos++;
-    }
-  }
+  // std::unordered_map<int32_t, int32_t> degap;
+  // std::unordered_map<int32_t, int32_t> regap;
+  // int64_t pos = 0;
+  // for (int64_t i = 0; i < node_seq.size(); i++) {
+  //   char c = node_seq[i];
+  //   degap[i] = pos;
+  //   if (c != '-' && c != 'x') {
+  //     regap[pos] = i;
+  //     pos++;
+  //   }
+  // // }
 
+  // //Print out Alex's Seeds
+  // std::string dirName = std::string("../dev/eval-performance/");
 
-
-
-  //Print out Alex's Seeds
-  std::string dirName = std::string("../dev/eval-performance/");
-
-  std::ofstream osdmfsAlex(dirName + node_idn + ".true.alex.pmi");
-  //osdmfsAlex << node_seq << std::endl;
-  osdmfsAlex << node_seq_nogap << std::endl;
-  for (const auto &pair : seedmersAlex) {
-    osdmfsAlex << pair.second << "\t" << degap[pair.first] << "\t" << pair.first
-               << std::endl;
-  }
-  osdmfsAlex.close();
+  // std::ofstream osdmfsAlex(dirName + node_idn + ".true.alex.pmi");
+  // //osdmfsAlex << node_seq << std::endl;
+  // osdmfsAlex << node_seq_nogap << std::endl;
+  // for (const auto &pair : seedMap) {
+  //   osdmfsAlex << pair.second << "\t" << degap[pair.first] << "\t" << pair.first
+  //              << std::endl;
+  // }
+  // osdmfsAlex.close();
 
 
 
 
-  //Print out Alans seeds
-  std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
+  // //Print out Alans seeds
+  // std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
 
-  //std::vector<std::tuple<std::string, int, int>> seedmers = extractSeedmers(node_seq, k, s, j, false);
+  // //std::vector<std::tuple<std::string, int, int>> seedmers = extractSeedmers(node_seq, k, s, j, false);
   
-  std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
-    extractSeedmers(node_seq_nogap, k, s, j, false);
-  std::ofstream osdmfs(outSeedmersPath);
-  //osdmfs << node_seq << std::endl;
-  osdmfs << node_seq_nogap << std::endl;
+  // std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
+  //   extractSeedmers(node_seq_nogap, k, s, j, false);
+  // std::ofstream osdmfs(outSeedmersPath);
+  // //osdmfs << node_seq << std::endl;
+  // osdmfs << node_seq_nogap << std::endl;
 
-  for (int i = 0; i < seedmers_nogap.size(); i++) {
-    osdmfs << std::get<0>(seedmers_nogap[i]) << "\t"
-      << std::get<1>(seedmers_nogap[i]) << "\t" << regap[std::get<1>(seedmers_nogap[i])]
-      << std::endl;
-  }
-  osdmfs.close();
-
-
-
-
-
+  // for (int i = 0; i < seedmers_nogap.size(); i++) {
+  //   osdmfs << std::get<0>(seedmers_nogap[i]) << "\t"
+  //     << std::get<1>(seedmers_nogap[i]) << "\t" << regap[std::get<1>(seedmers_nogap[i])]
+  //     << std::endl;
+  // }
+  // osdmfs.close();
   // clear large structures before recursion
   node_seq = "";
   node_seq_nogap = "";
@@ -181,100 +177,116 @@ void buildHelper3(::capnp::List<Mutations>::Reader &indexedSeedMutations, Tree *
   for (Node *child : node->children) {
     
     pb_i++;
-    buildHelper3(index, T, child, pb_i, seedmersAlex, k, s, j);
+    buildHelper3(indexedSeedMutations, T, child, pb_i, seedMap, k, s, j, data, globalCoords, navigator, scalarToTupleCoord, gapRuns);
   }
-  // undo seed mutations
-  for (const auto &p : backtrack) {
-    if (p.second.size() > 0) {
-      seedmersAlex[p.first] = p.second;
-    } else {
-      seedmersAlex.erase(p.first);
+  for (const auto &p : delSeeds)
+  {
+    int blockId = scalarCoordToBlockId[p.first];
+    if(p.second == ""){
+      seedMap.erase(p.first);
+      BlocksToSeeds[blockId].erase(p.first);
+      }else{
+        seedMap[p.first] = p.second;
+      BlocksToSeeds[blockId].insert(p.first);
     }
   }
+
+    /* Undo sequence mutations when backtracking */
+    undoMutations(data, indexedSeedMutations, T, node, blockMutationInfo, mutationInfo, globalCoords);
+
 }
 
-BOOST_AUTO_TEST_CASE(performance) {
+// BOOST_AUTO_TEST_CASE(performance) {
   
-  std::string pmat = "sars2k.pmat";
-  std::cout << "Starting tests with " << pmat << std::endl;
+//   std::string pmat = "sars2k.pmat";
+//   std::cout << "Starting tests with " << pmat << std::endl;
 
-  std::ifstream ifs("../dev/examples/pmats/"+pmat);
-  boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
-  b.push(boost::iostreams::gzip_decompressor());
-  b.push(ifs);
-  std::istream is(&b);
+//   std::ifstream ifs("../dev/examples/pmats/"+pmat);
+//   boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
+//   b.push(boost::iostreams::gzip_decompressor());
+//   b.push(ifs);
+//   std::istream is(&b);
 
-  PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
+//   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
 
-  std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
+//   std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
  
   
-  for (const auto &param : parameters) {
+//   for (const auto &param : parameters) {
   
-    tree::mutableTreeData data;
-    tree::globalCoords_t globalCoords;
-    tree::setup(data, globalCoords, T);
-    seedMap_t seedMap;
+//     tree::mutableTreeData data;
+//     tree::globalCoords_t globalCoords;
+//     std::unordered_map<int64_t, tupleCoord_t> scalarToTupleCoord;
+//     std::unordered_map<int64_t, int64_t> gapRuns;
+//     tree::setup(data, globalCoords, T, scalarToTupleCoord);
+//     seedMap_t seedMap;
     
-    CoordNavigator navigator(data.sequence);
-    auto k = std::get<0>(param);
-    auto s = std::get<1>(param);
-    auto j = std::get<2>(param);
+//     CoordNavigator navigator(data.sequence);
+//     auto k = std::get<0>(param);
+//     auto s = std::get<1>(param);
+//     auto j = std::get<2>(param);
 
-     std::string dirName = std::string("../dev/eval-performance/");
-     fs::create_directories(dirName);
+//      std::string dirName = std::string("../dev/eval-performance/");
+//      fs::create_directories(dirName);
 
-     Index::Builder index;
-     index.setK(k);
-     index.setS(s);
-     time_stamp();
-     pmi::build(T, index);
-     time_stamp();
+//      Index::Builder index;
+//      index.setK(k);
+//      index.setS(s);
+//      time_stamp();
+//      pmi::build(T, index);
+//      time_stamp();
 
-     int wfd = open(dirName+pmat+".capnp.pmi", O_WRONLY | O_CREAT, 0644);
-     capnp::writePackedMessageToFd(wfd, message);
+//      int wfd = open(dirName+pmat+".capnp.pmi", O_WRONLY | O_CREAT, 0644);
+//      capnp::writePackedMessageToFd(wfd, message);
      
-     int32_t pb_i = 0;
-     int rfd = open(dirName+pmat+".capnp.pmi", O_RDONLY);
-     ::capnp::ReaderOptions options = {(uint64_t) -1, 64}; 
-     ::capnp::PackedFdMessageReader message(rfd, options);
+//      int32_t pb_i = 0;
+//      int rfd = open(dirName+pmat+".capnp.pmi", O_RDONLY);
+//      ::capnp::ReaderOptions options = {(uint64_t) -1, 64}; 
+//      ::capnp::PackedFdMessageReader message(rfd, options);
 
-     Index::Reader index = message.getRoot<Index>();
-     ::capnp::List<Mutations>::Reader indexedSeedMutations = index.getPerNodeSeeMutations();
+//      Index::Reader index = message.getRoot<Index>();
+//      ::capnp::List<Mutations>::Reader indexedSeedMutations = index.getPerNodeSeeMutations();
+//      ::capnp::List<Deltas>::Reader indexedGapMutations = index.getPerNodeGapMutations();
 
-     buildHelper3(data, indexedSeedMutations, T, T->root, pb_i, seedMap, k, s, j);
+//      std::unordered_map<int64_t, int64_t> gapMap;
 
-     for (auto &n : T->allNodes) {
-       std::string node_idn;
-        for (char c : n.first) {
-            if (isalnum(c) || c == '_' || c == '.' || c == '-') {
-                node_idn += c;
-            }
-        }
-       std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
-       Node *nod= n.second;
+
+
+//      buildHelper3(indexedSeedMutations, T, T->root, pb_i, seedMap, k, s, j, data, globalCoords, navigator, scalarToTupleCoord, gapRuns);
+
+//      for (auto &n : T->allNodes) {
+//        std::string node_idn;
+//         for (char c : n.first) {
+//             if (isalnum(c) || c == '_' || c == '.' || c == '-') {
+//                 node_idn += c;
+//             }
+//         }
+//        std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
+//        Node *nod= n.second;
       
-       std::string node_seq = tree::getStringAtNode(nod, T, true);
-        std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
+//        std::string node_seq = tree::getStringAtNode(nod, T, true);
+//         std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
 
-       std::vector<std::tuple<std::string, int, int>> seedmers =
-           extractSeedmers(node_seq, k, s, j, false);
-       std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
-           extractSeedmers(node_seq_nogap, k, s, j, false);
-       std::ofstream osdmfs(outSeedmersPath);
-       osdmfs << node_seq << std::endl;
-       osdmfs << node_seq_nogap << std::endl;
+//        std::vector<std::tuple<std::string, int, int>> seedmers =
+//            extractSeedmers(node_seq, k, s, j, false);
+//        std::vector<std::tuple<std::string, int, int>> seedmers_nogap =
+//            extractSeedmers(node_seq_nogap, k, s, j, false);
+//        std::ofstream osdmfs(outSeedmersPath);
+//        osdmfs << node_seq << std::endl;
+//        osdmfs << node_seq_nogap << std::endl;
 
-       for (int i = 0; i < seedmers.size(); i++) {
-         osdmfs << std::get<0>(seedmers[i]) << "\t"
-                << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
-                 << std::endl;
+//        for (int i = 0; i < seedmers.size(); i++) {
+//          osdmfs << std::get<0>(seedmers[i]) << "\t"
+//                 << std::get<1>(seedmers_nogap[i]) << "\t" << std::get<1>(seedmers[i])
+//                  << std::endl;
                
-       }
-       osdmfs.close();
-     }
-   }
- }
+//        }
+//        osdmfs.close();
+//      }
+//    }
+//  }
+
+
 
 
 
