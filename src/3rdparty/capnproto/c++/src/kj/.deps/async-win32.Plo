@@ -1,0 +1,2 @@
+src/kj/async-win32.lo: src/kj/async-win32.c++ /usr/include/stdc-predef.h
+/usr/include/stdc-predef.h:

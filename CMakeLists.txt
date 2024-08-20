@@ -1,94 +1,216 @@
-cmake_minimum_required (VERSION 3.26 FATAL_ERROR) 
+cmake_minimum_required (VERSION 3.20)
 
 project(panmap)
 
+set(CMAKE_CXX_STANDARD 20)
+
 # Project options
-option(OPTION_DEBUG "Compile with debug symbols and no optimizations." ON)
+
+option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." ON)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
+option(OPTION_PROFILE "Enable profiling." ON)
+# option(OPTION_TRACE "Enable tracing." ON)
 
-# Compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++20 ") 
-if(OPTION_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wno-unused-function -Wno-deprecated-declarations -Wno-deprecated-volatile -g -ggdb3") 
-else(OPTION_DEBUG)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3") 
-endif(OPTION_DEBUG)
-
-# Cmake options
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+#cmake_policy(SET CMP0135 NEW)
 
 include(FetchContent)
-FetchContent_Declare(docopt
+set(FETCHCONTENT_QUIET OFF)
+# find_package(Qt5 COMPONENTS Widgets REQUIRED)
+# FetchContent_Declare(easy_profiler
+#     GIT_REPOSITORY https://github.com/yse/easy_profiler
+#     GIT_TAG develop
+#     GIT_SHALLOW TRUE
+#     )
+# FetchContent_MakeAvailable(easy_profiler)
+
+
+add_executable(panmap
+    src/main.cpp
+    src/conversion.cpp
+    src/place.cpp
+    src/genotype.cpp
+    src/pmi.cpp
+    src/tree.cpp
+    src/mm_align.c
+    src/pileup.c
+)
+#add_executable(tests
+#    src/test/main.test.cpp
+#    src/test/pmi.test.cpp
+#    src/conversion.cpp
+#    src/place.cpp
+#    src/genotype.cpp
+#    src/pmi.cpp
+#    src/tree.cpp
+#    src/mm_align.c
+#    src/pileup.c
+#    )
+
+
+# system
+include(cmake/detect-arch.cmake)
+detect_host_arch()
+message("neon: ${HAS_NEON}")
+message("Third party dependencies...")
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libminimap2.a
+    COMMAND make -C src/3rdparty/minimap2 $<$<BOOL:${HAS_NEON}>:aarch64=1>
+    COMMAND mv src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND mv src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND rm src/3rdparty/minimap2/*.o
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+# FetchContent for bzip2
+FetchContent_Declare(
+    bzip2
+    GIT_REPOSITORY https://github.com/libarchive/bzip2.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+)
+
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libst.a ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
+    COMMAND cd src/3rdparty/samtools && autoheader && autoconf && ./configure --disable-lzma --disable-bz2 --disable-libcurl --enable-configure-htslib
+    COMMAND make -C src/3rdparty/samtools
+    COMMAND mv src/3rdparty/samtools/libst.a ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND mv src/3rdparty/samtools/htslib-1.20/libhts.a ${CMAKE_CURRENT_BINARY_DIR}
+    #COMMAND rm -f src/3rdparty/samtools/*.o src/3rdparty/samtools/htslib-1.20/libhts.a
+    #COMMAND rm -f src/3rdparty/samtools/*/*.o src/3rdparty/samtools/*/*/*.o
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/libhts.a
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+
+add_custom_target(build-deps DEPENDS
+    libminimap2.a
+    libst.a
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+add_library(minimap2 STATIC IMPORTED)
+set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libminimap2.a")
+add_dependencies(minimap2 build-deps)
+
+add_library(samtools STATIC IMPORTED)
+set_target_properties(samtools PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libst.a")
+add_dependencies(samtools build-deps)
+
+add_library(htslib STATIC IMPORTED)
+set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libhts.a")
+
+# panmat
+FetchContent_Declare(
+    panmat
+    GIT_REPOSITORY https://github.com/TurakhiaLab/pangenome-mat
+    GIT_TAG 1a05d22f4e0922e0cf98f0589d0e7bf06c6de92f # testing-cmake branch
+    GIT_SHALLOW TRUE
+    )
+
+FetchContent_MakeAvailable(panmat)
+# FetchContent for docopt
+FetchContent_Declare(
+    docopt
     GIT_REPOSITORY https://github.com/docopt/docopt.cpp.git
-    GIT_TAG v0.6.3)
-FetchContent_Populate(docopt)
-include(CMakePrintHelpers)
-cmake_print_variables(docopt_SOURCE_DIR)
-cmake_print_variables(docopt_BINARY_DIR)
-
-add_library(remote-deps ${docopt_SOURCE_DIR}/docopt.cpp)
-
-# Dependency: panmat-utils
-find_package(libpanmat REQUIRED)
-include_directories(${libpanmat_DIR}/include ${libpanmat_DIR}/oneTBB-2019_U9/include)
-
-
-# Dependency: Boost
-find_package(Boost COMPONENTS system filesystem program_options unit_test_framework iostreams date_time REQUIRED)
-include_directories(${Boost_INCLUDE_DIRS})
-
-# Dependency: minimap2
-add_custom_target(libminimap2.a
-   COMMAND make arm_neon=1 aarch64=1 libminimap2.a
-   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/minimap2_src/
-)
-add_custom_target(clean-minimap
-    COMMAND make clean
-	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/minimap2_src/
+    GIT_TAG v0.6.3
+    GIT_SHALLOW TRUE
 )
 
-# Dependency: samtools
-add_custom_target(sample.o
-   COMMAND make arm_neon=1 aarch64=1 sample.o bedidx.o sam_opts.o bam_plbuf.o sam_utils.o version.h
-   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/samtools_src/
+FetchContent_MakeAvailable(docopt)
+
+
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
+#target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+#target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+
+# Lets us do: 
+#    #include <minimap2/kseq.h>
+#    #include <htslib/sam.h>    
+#    ...
+
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/capnp ${CMAKE_CURRENT_BINARY_DIR}/capnpc-c++ ${CMAKE_CURRENT_BINARY_DIR}/.libs/libcapnp.a
+    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++ && autoupdate && autoheader && autoconf && ./configure
+    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++ check
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/capnp ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/capnpc-c++ ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND cp -r ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/.libs/ ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Compiling capnproto"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Dependency: htslib
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/include)
+add_library(capnp STATIC IMPORTED)
+set_target_properties(capnp PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/.libs/libcapnp.a")
+set_target_properties(capnp PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/src")
+
+add_library(kj STATIC IMPORTED)
+set_target_properties(kj PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/.libs/libkj.a")
+set_target_properties(kj PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/src")
+
+set(CAPNP_SRCS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.c++)
+set(CAPNP_HDRS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.h)
 
 
-file(GLOB PANMAP_SRCS "src/*.c*" "src/*.h*" "src/minimap2_src/libminimap2.a" "src/samtools_src/sample.c" "src/samtools_src/bedidx.c" "src/samtools_src/sam_opts.c" "src/samtools_src/bam_plbuf.c" "src/samtools_src/sam_utils.c" "${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.a")
-add_executable(panmap ${PANMAP_SRCS})
-add_dependencies(panmap libminimap2.a)
-add_dependencies(panmap sample.o)
+add_custom_command(
+    OUTPUT ${CAPNP_SRCS} ${CAPNP_HDRS}
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/capnp compile -o ${CMAKE_CURRENT_BINARY_DIR}/capnpc-c++ ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp --src-prefix ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++ ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.c++
+    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.h
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp ${CMAKE_CURRENT_BINARY_DIR}/capnp ${CMAKE_CURRENT_BINARY_DIR}/capnpc-c++
+    COMMENT "Compiling index.capnp"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Add the generated capnp sources to the target
+target_sources(panmap PRIVATE ${CAPNP_SRCS})
+#target_sources(tests PRIVATE ${CAPNP_SRCS})
+
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+#target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
+#target_link_libraries(tests panmat minimap2 samtools htslib
+#                      ${Boost_FILESYSTEM_LIBRARY}
+#                      ${Boost_SYSTEM_LIBRARY}
+#                        ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+#                        docopt
+#                        capnp
+#                        kj
+#                      )
+
+# run protoc compiler
+add_dependencies(panmap protobuf::libprotobuf)
+#add_dependencies(tests protobuf::libprotobuf)
+include(${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake)
+set(proto_SRCS index.pb.cc)
+set(proto_PROTOS index.proto)
+target_sources(panmap PRIVATE ${proto_SRCS} ${proto_PROTOS})
+#target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
+
+protobuf_generate(TARGET panmap)
 
 
-if(OPTION_BUILD_TESTS)
-    get_filename_component(main_src src/panmap.cpp ABSOLUTE)
-    list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
-    add_executable(tests ${PANMAP_SRCS} "src/test/main.test.cpp" "src/test/pmi.test.cpp" "src/test/seed.test.cpp" "src/test/tree.test.cpp" "src/test/genotype.test.cpp" "src/test/conversions.test.cpp") 
-    add_dependencies(tests libminimap2.a)
-    add_dependencies(tests sample.o)
-endif(OPTION_BUILD_TESTS)
-
-if(OPTION_BUILD_SIMULATE)
-    get_filename_component(main_src src/panmap.cpp ABSOLUTE)
-    list(REMOVE_ITEM PANMAP_SRCS "${main_src}")
-    add_executable(simulate ${PANMAP_SRCS} "src/test/simulate.cpp")
-    add_dependencies(simulate libminimap2.a)
-    add_dependencies(simulate sample.o)
-endif(OPTION_BUILD_SIMULATE)
-
-
-
-target_link_libraries(panmap PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
-target_link_libraries(simulate PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} remote-deps libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
-target_link_libraries(tests PRIVATE stdc++ ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} libpanmat ${CMAKE_SOURCE_DIR}/src/minimap2_src/libminimap2.a z ${CMAKE_CURRENT_SOURCE_DIR}/build/htslib_install/lib/libhts.dylib)
+target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib docopt capnp kj)
 target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_compile_options(simulate PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-set_directory_properties(PROPERTIES ADDITIONAL_MAKE_CLEAN_FILES ${CMAKE_BINARY_DIR}/clean-minimap)
+target_link_options(panmap PRIVATE -lm -lpthread -lz)
+
+# target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+# target_link_options(tests PRIVATE -lm -lpthread -lz)
+
+if (OPTION_DEBUG)
+    target_compile_options(panmap PRIVATE -g -O1 -ggdb)
+   # target_compile_options(tests PRIVATE -g -O1 -ggdb)
+else()
+    target_compile_options(panmap PRIVATE -g -O3)
+   # target_compile_options(tests PRIVATE -g -O3)
+endif()
 
 # Unit testing data
 configure_file(src/test/data/test.aligned.fa test.aligned.fa COPYONLY)

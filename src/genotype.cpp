@@ -168,24 +168,36 @@ vector<double> genotype_posteriors(
 
     size_t insertion_idx = 0;
     for (const auto& insertion : insertions) {
-        if (insertion.first.size() > mutmat.insmat.size() - 1) {
-            posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.insmat.back());
+      int64_t insSize = insertion.first.size();
+
+      if (mutmat.insmat.find(insertion.first.size()) != mutmat.insmat.end()) {
+        if (mutmat.insmat[insSize] > mutmat.maxInsLogProb) {
+          posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.maxInsLogProb);
         } else {
-            posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.insmat[insertion.first.size()]);
+          posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.insmat[insSize]);
         }
-        
-        insertion_idx++; 
+      } else {
+        posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.maxInsLogProb);
+      }
+
+      insertion_idx++; 
     }
 
     size_t deletion_idx = 0;
     for (const auto& deletion : deletions) {
-        if (deletion.first.size() > mutmat.delmat.size() - 1) {
-            posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.delmat.back());
-        } else {
-            posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.delmat[deletion.first.size()]);
-        }
+      int64_t delSize = deletion.first.size();
 
-        insertion_idx++;
+      if (mutmat.delmat.find(delSize) != mutmat.delmat.end()) {
+        if (mutmat.delmat[delSize] > mutmat.maxDelLogProb) {
+          posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.maxDelLogProb);
+        } else {
+          posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.delmat[delSize]);
+        }
+      } else {
+        posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.maxDelLogProb);
+      }
+
+      insertion_idx++;
     }
 
     double min_score = *min_element(posteriors.begin(), posteriors.end());
