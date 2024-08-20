@@ -43,11 +43,11 @@ RANLIB = ranlib
 CPPFLAGS = 
 CFLAGS   =  -Wall -g -O2 -fvisibility=hidden
 LDFLAGS  =  -fvisibility=hidden
-VERSION_SCRIPT_LDFLAGS = 
-LIBS     = -lz 
+VERSION_SCRIPT_LDFLAGS = -Wl,-version-script,$(srcprefix)htslib.map
+LIBS     = -lz -lm 
 
-PLATFORM   = Darwin
-PLUGIN_EXT = .bundle
+PLATFORM   = default
+PLUGIN_EXT = .so
 
 # The default Makefile enables some of the optional files, but we blank
 # them so they can be controlled by configure instead.
@@ -115,6 +115,6 @@ LIBS += $(noplugin_LIBS)
 endif
 
 # Extra CFLAGS for specific files
-HTS_CFLAGS_AVX2 = 
-HTS_CFLAGS_AVX512 = 
-HTS_CFLAGS_SSE4 = 
+HTS_CFLAGS_AVX2 = -mavx2 -mpopcnt
+HTS_CFLAGS_AVX512 = -mavx512f -mpopcnt
+HTS_CFLAGS_SSE4 = -msse4.1 -mssse3 -mpopcnt

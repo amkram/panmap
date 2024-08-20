@@ -593,10 +593,6 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
         scalar = blockRanges[blockId].first + blockRanges[blockId].second - scalar;
       }
 
-      if (node->identifier == "KJ627733.1") {
-        std::cout << scalar << " " << parChar << " " << curChar << std::endl;
-      }
-
       if (parChar != '-' && curChar == '-') {
         // nuc to gap
         if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true && gapRunUpdates.back().second.second + 1 == scalar) {
@@ -615,9 +611,6 @@ void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
       }
     }
   }
-
-
-
 }
 
 void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &indexedSeedMutations, Tree *T,
@@ -1282,7 +1275,6 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
   applyMutations(data, seedMap, blockMutationInfo, recompRanges, mutationInfo, T, node,
                  globalCoords, indexedSeedMutations, navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists, oldBlockStrand);
   
-  
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
   std::map<int64_t, int64_t> coordIndex;
 
@@ -1351,11 +1343,11 @@ void buildHelper(mutableTreeData &data, seedMap_t &seedMap, ::capnp::List<Mutati
 
     makeCoordIndex(coordIndex, gapMap, blockRanges);
     
-    std::cout << node->identifier << " coordIndex: ";
-    for (const auto& index : coordIndex) {
-      std::cout << index.first << "," << index.second << " ";
-    }
-    std::cout << "\n" << std::endl;
+    // std::cout << node->identifier << " coordIndex: ";
+    // for (const auto& index : coordIndex) {
+    //   std::cout << index.first << "," << index.second << " ";
+    // }
+    // std::cout << "\n" << std::endl;
 
     for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
       const auto& [del, range] = *it;
@@ -1763,10 +1755,6 @@ void pmi::build(Tree *T, Index::Builder &index)
     int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
     int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
     blockRanges[i] = std::make_pair(start, end);
-  }
-
-  for (size_t i = 0; i < blockRanges.size(); ++i) {
-    std::cout << "Block " << i << " -> " << blockRanges[i].first << " - " << blockRanges[i].second << std::endl;
   }
   
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
