@@ -34,7 +34,7 @@ bindir       = ${exec_prefix}/bin
 datarootdir  = ${prefix}/share
 mandir       = ${datarootdir}/man
 
-AWK      = awk
+AWK      = gawk
 CC       = gcc
 CPPFLAGS = 
 CFLAGS   =  -Wall -g -O2
@@ -52,4 +52,4 @@ HTSLIB_CPPFLAGS = -Ihtslib-1.20
 #HTSLIB_LDFLAGS = -Lhtslib-1.20
 #HTSLIB_LIB = -lhts
 
-CURSES_LIB = -lncurses
+CURSES_LIB = -lncursesw

@@ -27,14 +27,11 @@ uname -v = #117-Ubuntu SMP Fri Apr 26 12:26:49 UTC 2024
 /usr/bin/oslevel       = unknown
 /bin/universe          = unknown
 
-PATH: /home/alex/.juliaup/bin/
-PATH: /home/alex/micromamba/condabin/
-PATH: /home/alex/.cargo/bin/
-PATH: /home/alex/.rbenv/shims/
-PATH: /home/alex/.rbenv/bin/
-PATH: /home/alex/.cursor-server/cli/servers/Stable-1252dd54bee0d8caa777cd58df6ab01192a69c30/server/bin/remote-cli/
-PATH: /scratch1/alex/pmw/emsdk/
-PATH: /scratch1/alex/pmw/emsdk/upstream/emscripten/
+PATH: /home/alan/.cursor-server/cli/servers/Stable-39ded7305e8d625076ebbbf98510c53152232660/server/bin/remote-cli/
+PATH: /home/alan/.local/bin/
+PATH: /home/alan/miniforge3/bin/
+PATH: /home/alan/miniforge3/condabin/
+PATH: /home/alan/.local/bin/
 PATH: /usr/local/sbin/
 PATH: /usr/local/bin/
 PATH: /usr/sbin/
@@ -44,260 +41,36 @@ PATH: /bin/
 PATH: /usr/games/
 PATH: /usr/local/games/
 PATH: /snap/bin/
-PATH: /home/alex/java/jdk-17.0.5+8/bin/
 
 
 ## ----------- ##
 ## Core tests. ##
 ## ----------- ##
 
-configure:4510: $? = 0
 configure:3023: looking for aux files: ltmain.sh config.guess config.sub compile missing install-sh
-configure:4560: result: yes
 configure:3036:  trying ./build-aux/
-configure:4563: checking for C compiler default output file name
 configure:3065:   ./build-aux/ltmain.sh found
-configure:4565: result: a.out
 configure:3065:   ./build-aux/config.guess found
 configure:3065:   ./build-aux/config.sub found
 configure:3065:   ./build-aux/compile found
 configure:3065:   ./build-aux/missing found
 configure:3047:   ./build-aux/install-sh found
-configure:4571: checking for suffix of executables
-configure:4578: gcc -o conftest -O2 -DNDEBUG   conftest.c  >&5
 configure:3212: checking for a BSD-compatible install
-cc1: fatal error: conftest.c: No such file or directory
-compilation terminated.
-configure:4582: $? = 1
-configure:4599: error: in `/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++':
-configure:4601: error: cannot compute suffix of executables: cannot compile and link
-See `config.log' for more details
-
-## ---------------- ##
-## Cache variables. ##
-## ---------------- ##
-
 configure:3285: result: /usr/bin/install -c
 configure:3296: checking whether build environment is sane
 configure:3351: result: yes
-ac_cv_env_CCC_set=
-ac_cv_env_CCC_value=
-ac_cv_env_CC_set=
-ac_cv_env_CC_value=
-ac_cv_env_CFLAGS_set=
-ac_cv_env_CFLAGS_value=
-ac_cv_env_CPPFLAGS_set=
-ac_cv_env_CPPFLAGS_value=
-ac_cv_env_CXXCPP_set=
-ac_cv_env_CXXCPP_value=
-ac_cv_env_CXXFLAGS_set=
-ac_cv_env_CXXFLAGS_value=
-ac_cv_env_CXX_set=
-ac_cv_env_CXX_value=
-ac_cv_env_LDFLAGS_set=
-ac_cv_env_LDFLAGS_value=
-ac_cv_env_LIBS_set=
-ac_cv_env_LIBS_value=
-ac_cv_env_LT_SYS_LIBRARY_PATH_set=
-ac_cv_env_LT_SYS_LIBRARY_PATH_value=
-ac_cv_env_build_alias_set=
-ac_cv_env_build_alias_value=
-ac_cv_env_host_alias_set=
-ac_cv_env_host_alias_value=
-ac_cv_env_target_alias_set=
-ac_cv_env_target_alias_value=
-ac_cv_path_install='/usr/bin/install -c'
-ac_cv_path_mkdir=/usr/bin/mkdir
-ac_cv_prog_AWK=gawk
-ac_cv_prog_ac_ct_CC=gcc
-ac_cv_prog_make_make_set=yes
-am_cv_make_support_nested_variables=yes
-am_cv_prog_tar_ustar=gnutar
 configure:3510: checking for a race-free mkdir -p
-
-## ----------------- ##
-## Output variables. ##
-## ----------------- ##
-
 configure:3554: result: /usr/bin/mkdir -p
 configure:3561: checking for gawk
 configure:3582: found /usr/bin/gawk
 configure:3593: result: gawk
 configure:3604: checking whether make sets $(MAKE)
 configure:3627: result: yes
-ACLOCAL='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' aclocal-1.16'
-AMDEPBACKSLASH=''
-AMDEP_FALSE=''
-AMDEP_TRUE=''
-AMTAR='$${TAR-tar}'
-AM_BACKSLASH='\'
-AM_DEFAULT_V='$(AM_DEFAULT_VERBOSITY)'
-AM_DEFAULT_VERBOSITY='1'
-AM_V='$(V)'
-AR=''
-ASYNC_LIBS=''
-AUTOCONF='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' autoconf'
-AUTOHEADER='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' autoheader'
-AUTOMAKE='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' automake-1.16'
-AWK='gawk'
-BUILD_KJ_GZIP_FALSE=''
-BUILD_KJ_GZIP_TRUE=''
-BUILD_KJ_TLS_FALSE=''
-BUILD_KJ_TLS_TRUE=''
-CAPNP=''
-CAPNPC_CXX=''
-CAPNP_CMAKE_CONFIG_FILES=''
-CAPNP_LITE_FLAG=''
-CAPNP_PKG_CONFIG_FILES=''
-CC='gcc'
-CCDEPMODE=''
-CFLAGS='-O2 -DNDEBUG'
-CMAKE_SIZEOF_VOID_P=''
-CPPFLAGS=''
-CSCOPE='cscope'
-CTAGS='ctags'
-CXX=''
-CXXCPP=''
-CXXDEPMODE=''
-CXXFLAGS='-O2 -DNDEBUG'
-CYGPATH_W='echo'
-DEFS=''
-DEPDIR=''
-DLLTOOL=''
-DSYMUTIL=''
-DUMPBIN=''
-ECHO_C=''
-ECHO_N='-n'
-ECHO_T=''
-EGREP=''
-ETAGS='etags'
-EXEEXT=''
-FGREP=''
-GREP=''
-HAS_FUZZING_ENGINE_FALSE=''
-HAS_FUZZING_ENGINE_TRUE=''
-INSTALL_DATA='${INSTALL} -m 644'
-INSTALL_PROGRAM='${INSTALL}'
-INSTALL_SCRIPT='${INSTALL}'
-INSTALL_STRIP_PROGRAM='$(install_sh) -c -s'
-LD=''
-LDFLAGS=''
-LIBOBJS=''
-LIBS=''
-LIBTOOL=''
-LIPO=''
-LITE_MODE_FALSE=''
-LITE_MODE_TRUE=''
-LN_S=''
-LTLIBOBJS=''
-LT_SYS_LIBRARY_PATH=''
-MAKEINFO='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' makeinfo'
-MANIFEST_TOOL=''
-MKDIR_P='/usr/bin/mkdir -p'
-NM=''
-NMEDIT=''
-OBJDUMP=''
-OBJEXT=''
-OTOOL64=''
-OTOOL=''
-PACKAGE='capnproto-c++'
-PACKAGE_BUGREPORT='capnproto@googlegroups.com'
-PACKAGE_CMAKE_INSTALL_FULL_INCLUDEDIR=''
-PACKAGE_INIT=''
-PACKAGE_NAME='Capn Proto'
-PACKAGE_STRING='Capn Proto 1.1-dev'
-PACKAGE_TARNAME='capnproto-c++'
-PACKAGE_URL=''
-PACKAGE_VERSION='1.1-dev'
-PATH_SEPARATOR=':'
-PTHREAD_CC=''
-PTHREAD_CFLAGS=''
-PTHREAD_LIBS=''
-RANLIB=''
-SED=''
-SET_MAKE=''
-SHELL='/bin/bash'
-SO_VERSION=''
-STDLIB_FLAG=''
-STRIP=''
-USE_EXTERNAL_CAPNP_FALSE=''
-USE_EXTERNAL_CAPNP_TRUE=''
-VERSION='1.1-dev'
-WITH_OPENSSL=''
-_WITH_LIBUCONTEXT=''
-ac_ct_AR=''
-ac_ct_CC='gcc'
-ac_ct_CXX=''
-ac_ct_DUMPBIN=''
-acx_pthread_config=''
-am__EXEEXT_FALSE=''
-am__EXEEXT_TRUE=''
-am__fastdepCC_FALSE=''
-am__fastdepCC_TRUE=''
-am__fastdepCXX_FALSE=''
-am__fastdepCXX_TRUE=''
-am__include=''
-am__isrc=''
-am__leading_dot='.'
-am__nodep=''
-am__quote=''
-am__tar='tar --format=ustar -chf - "$$tardir"'
-am__untar='tar -xf -'
-bindir='${exec_prefix}/bin'
-build=''
-build_alias=''
-build_cpu=''
-build_os=''
-build_vendor=''
-datadir='${datarootdir}'
-datarootdir='${prefix}/share'
-docdir='${datarootdir}/doc/${PACKAGE_TARNAME}'
-dvidir='${docdir}'
-exec_prefix='NONE'
-host=''
-host_alias=''
-host_cpu=''
-host_os=''
-host_vendor=''
-htmldir='${docdir}'
-includedir='${prefix}/include'
-infodir='${datarootdir}/info'
-install_sh='${SHELL} /scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/install-sh'
-libdir='${exec_prefix}/lib'
-libexecdir='${exec_prefix}/libexec'
-localedir='${datarootdir}/locale'
-localstatedir='${prefix}/var'
-mandir='${datarootdir}/man'
-mkdir_p='$(MKDIR_P)'
-oldincludedir='/usr/include'
-pdfdir='${docdir}'
-prefix='NONE'
-program_transform_name='s,x,x,'
-psdir='${docdir}'
-runstatedir='${localstatedir}/run'
-sbindir='${exec_prefix}/sbin'
-sharedstatedir='${prefix}/com'
-sysconfdir='${prefix}/etc'
-target_alias=''
-
-## ----------- ##
-## confdefs.h. ##
-## ----------- ##
-
 configure:3657: checking whether make supports nested variables
-/* confdefs.h */
-#define PACKAGE_NAME "Capn Proto"
-#define PACKAGE_TARNAME "capnproto-c++"
-#define PACKAGE_VERSION "1.1-dev"
-#define PACKAGE_STRING "Capn Proto 1.1-dev"
-#define PACKAGE_BUGREPORT "capnproto@googlegroups.com"
-#define PACKAGE_URL ""
-
-configure: exit 1
 configure:3675: result: yes
-configure:3760: checking whether UID '1015' is supported by ustar format
+configure:3760: checking whether UID '1024' is supported by ustar format
 configure:3763: result: yes
-configure:3770: checking whether GID '1017' is supported by ustar format
+configure:3770: checking whether GID '1027' is supported by ustar format
 configure:3773: result: yes
 configure:3781: checking how to create a ustar tar archive
 configure:3792: tar --version
@@ -396,8 +169,8 @@ configure:5024: $? = 0
 configure:5036: result: yes
 configure:5056: checking whether make supports the include directive
 configure:5071: make -f confmf.GNU && cat confinc.out
-make[3]: Entering directory '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++'
-make[3]: Leaving directory '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++'
+make[3]: Entering directory '/home/alan/panmap/src/3rdparty/capnproto/c++'
+make[3]: Leaving directory '/home/alan/panmap/src/3rdparty/capnproto/c++'
 this is the am__doit target
 configure:5074: $? = 0
 configure:5093: result: yes (GNU style)
@@ -448,14 +221,14 @@ configure:5504: result: yes
 configure:5524: checking for g++ option to enable C++11 features
 configure:5539: g++  -c -O2 -DNDEBUG  conftest.cpp >&5
 conftest.cpp: In function 'int main(int, char**)':
-conftest.cpp:170:25: warning: empty parentheses were disambiguated as a function declaration [-Wvexing-parse]
-  170 |   cxx11test::delegate d2();
+conftest.cpp:177:25: warning: empty parentheses were disambiguated as a function declaration [-Wvexing-parse]
+  177 |   cxx11test::delegate d2();
       |                         ^~
-conftest.cpp:170:25: note: remove parentheses to default-initialize a variable
-  170 |   cxx11test::delegate d2();
+conftest.cpp:177:25: note: remove parentheses to default-initialize a variable
+  177 |   cxx11test::delegate d2();
       |                         ^~
       |                         --
-conftest.cpp:170:25: note: or replace parentheses with braces to value-initialize a variable
+conftest.cpp:177:25: note: or replace parentheses with braces to value-initialize a variable
 configure:5539: $? = 0
 configure:5557: result: none needed
 configure:5623: checking dependency style of g++
@@ -475,24 +248,24 @@ configure:6123: result: x86_64-pc-linux-gnu
 configure:6327: checking for the pthreads library -lpthreads
 configure:6360: gcc -o conftest -O2 -DNDEBUG    conftest.c -lpthreads  >&5
 conftest.c: In function 'main':
-conftest.c:9:22: warning: argument 1 null where non-null expected [-Wnonnull]
-    9 |                      pthread_attr_init(0); pthread_cleanup_push(0, 0);
+conftest.c:16:22: warning: argument 1 null where non-null expected [-Wnonnull]
+   16 |                      pthread_attr_init(0); pthread_cleanup_push(0, 0);
       |                      ^~~~~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:285:12: note: in a call to function 'pthread_attr_init' declared 'nonnull'
   285 | extern int pthread_attr_init (pthread_attr_t *__attr) __THROW __nonnull ((1));
       |            ^~~~~~~~~~~~~~~~~
-conftest.c:10:22: warning: argument 1 null where non-null expected [-Wnonnull]
-   10 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:22: warning: argument 1 null where non-null expected [-Wnonnull]
+   17 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |                      ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
-conftest.c:10:22: warning: argument 3 null where non-null expected [-Wnonnull]
-   10 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:22: warning: argument 3 null where non-null expected [-Wnonnull]
+   17 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |                      ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
@@ -500,6 +273,13 @@ In file included from conftest.c:4:
 collect2: error: ld returned 1 exit status
 configure:6360: $? = 1
 configure: failed program was:
+| /* confdefs.h */
+| #define PACKAGE_NAME "Capn Proto"
+| #define PACKAGE_TARNAME "capnproto-c++"
+| #define PACKAGE_VERSION "1.1-dev"
+| #define PACKAGE_STRING "Capn Proto 1.1-dev"
+| #define PACKAGE_BUGREPORT "capnproto@googlegroups.com"
+| #define PACKAGE_URL ""
 | #define PACKAGE "capnproto-c++"
 | #define VERSION "1.1-dev"
 | /* end confdefs.h.  */
@@ -517,24 +297,24 @@ configure:6370: result: no
 configure:6267: checking whether pthreads work without any flags
 configure:6360: gcc -o conftest -O2 -DNDEBUG    conftest.c   >&5
 conftest.c: In function 'main':
-conftest.c:9:22: warning: argument 1 null where non-null expected [-Wnonnull]
-    9 |                      pthread_attr_init(0); pthread_cleanup_push(0, 0);
+conftest.c:16:22: warning: argument 1 null where non-null expected [-Wnonnull]
+   16 |                      pthread_attr_init(0); pthread_cleanup_push(0, 0);
       |                      ^~~~~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:285:12: note: in a call to function 'pthread_attr_init' declared 'nonnull'
   285 | extern int pthread_attr_init (pthread_attr_t *__attr) __THROW __nonnull ((1));
       |            ^~~~~~~~~~~~~~~~~
-conftest.c:10:22: warning: argument 1 null where non-null expected [-Wnonnull]
-   10 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:22: warning: argument 1 null where non-null expected [-Wnonnull]
+   17 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |                      ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
-conftest.c:10:22: warning: argument 3 null where non-null expected [-Wnonnull]
-   10 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:22: warning: argument 3 null where non-null expected [-Wnonnull]
+   17 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |                      ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
@@ -553,24 +333,24 @@ configure:6546: result: yes
 configure:6552: checking whether -pthread is sufficient with -shared
 configure:6567: gcc -o conftest -shared -fPIC -Wl,-z,defs -O2 -DNDEBUG    conftest.c   >&5
 conftest.c: In function 'main':
-conftest.c:9:15: warning: argument 1 null where non-null expected [-Wnonnull]
-    9 |               pthread_attr_init(0); pthread_cleanup_push(0, 0);
+conftest.c:16:15: warning: argument 1 null where non-null expected [-Wnonnull]
+   16 |               pthread_attr_init(0); pthread_cleanup_push(0, 0);
       |               ^~~~~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:285:12: note: in a call to function 'pthread_attr_init' declared 'nonnull'
   285 | extern int pthread_attr_init (pthread_attr_t *__attr) __THROW __nonnull ((1));
       |            ^~~~~~~~~~~~~~~~~
-conftest.c:10:15: warning: argument 1 null where non-null expected [-Wnonnull]
-   10 |               pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:15: warning: argument 1 null where non-null expected [-Wnonnull]
+   17 |               pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |               ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
-conftest.c:10:15: warning: argument 3 null where non-null expected [-Wnonnull]
-   10 |               pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:15: warning: argument 3 null where non-null expected [-Wnonnull]
+   17 |               pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |               ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
@@ -579,24 +359,24 @@ configure:6575: result: yes
 configure:6685: checking whether pthread flag is sufficient with -nostdlib
 configure:6700: gcc -o conftest -O2 -DNDEBUG    conftest.c -nostdlib   -lc >&5
 conftest.c: In function 'main':
-conftest.c:9:22: warning: argument 1 null where non-null expected [-Wnonnull]
-    9 |                      pthread_attr_init(0); pthread_cleanup_push(0, 0);
+conftest.c:16:22: warning: argument 1 null where non-null expected [-Wnonnull]
+   16 |                      pthread_attr_init(0); pthread_cleanup_push(0, 0);
       |                      ^~~~~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:285:12: note: in a call to function 'pthread_attr_init' declared 'nonnull'
   285 | extern int pthread_attr_init (pthread_attr_t *__attr) __THROW __nonnull ((1));
       |            ^~~~~~~~~~~~~~~~~
-conftest.c:10:22: warning: argument 1 null where non-null expected [-Wnonnull]
-   10 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:22: warning: argument 1 null where non-null expected [-Wnonnull]
+   17 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |                      ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
-conftest.c:10:22: warning: argument 3 null where non-null expected [-Wnonnull]
-   10 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
+conftest.c:17:22: warning: argument 3 null where non-null expected [-Wnonnull]
+   17 |                      pthread_create(0,0,0,0); pthread_cleanup_pop(0);
       |                      ^~~~~~~~~~~~~~
-In file included from conftest.c:4:
+In file included from conftest.c:11:
 /usr/include/pthread.h:202:12: note: in a call to function 'pthread_create' declared 'nonnull'
   202 | extern int pthread_create (pthread_t *__restrict __newthread,
       |            ^~~~~~~~~~~~~~
@@ -770,12 +550,19 @@ configure:14749: checking how to run the C++ preprocessor
 configure:14771: g++ -E  conftest.cpp
 configure:14771: $? = 0
 configure:14786: g++ -E  conftest.cpp
-conftest.cpp:17:10: fatal error: ac_nonexistent.h: No such file or directory
-   17 | #include <ac_nonexistent.h>
+conftest.cpp:24:10: fatal error: ac_nonexistent.h: No such file or directory
+   24 | #include <ac_nonexistent.h>
       |          ^~~~~~~~~~~~~~~~~~
 compilation terminated.
 configure:14786: $? = 1
 configure: failed program was:
+| /* confdefs.h */
+| #define PACKAGE_NAME "Capn Proto"
+| #define PACKAGE_TARNAME "capnproto-c++"
+| #define PACKAGE_VERSION "1.1-dev"
+| #define PACKAGE_STRING "Capn Proto 1.1-dev"
+| #define PACKAGE_BUGREPORT "capnproto@googlegroups.com"
+| #define PACKAGE_URL ""
 | #define PACKAGE "capnproto-c++"
 | #define VERSION "1.1-dev"
 | #define HAVE_PTHREAD 1
@@ -797,12 +584,19 @@ configure:14813: result: g++ -E
 configure:14827: g++ -E  conftest.cpp
 configure:14827: $? = 0
 configure:14842: g++ -E  conftest.cpp
-conftest.cpp:17:10: fatal error: ac_nonexistent.h: No such file or directory
-   17 | #include <ac_nonexistent.h>
+conftest.cpp:24:10: fatal error: ac_nonexistent.h: No such file or directory
+   24 | #include <ac_nonexistent.h>
       |          ^~~~~~~~~~~~~~~~~~
 compilation terminated.
 configure:14842: $? = 1
 configure: failed program was:
+| /* confdefs.h */
+| #define PACKAGE_NAME "Capn Proto"
+| #define PACKAGE_TARNAME "capnproto-c++"
+| #define PACKAGE_VERSION "1.1-dev"
+| #define PACKAGE_STRING "Capn Proto 1.1-dev"
+| #define PACKAGE_BUGREPORT "capnproto@googlegroups.com"
+| #define PACKAGE_URL ""
 | #define PACKAGE "capnproto-c++"
 | #define VERSION "1.1-dev"
 | #define HAVE_PTHREAD 1
@@ -905,28 +699,29 @@ generated by GNU Autoconf 2.71.  Invocation command line was
 
 on silverbullet
 
-config.status:1180: creating Makefile
-config.status:1180: creating pkgconfig/capnp.pc
-config.status:1180: creating pkgconfig/capnpc.pc
-config.status:1180: creating pkgconfig/capnp-rpc.pc
-config.status:1180: creating pkgconfig/capnp-json.pc
-config.status:1180: creating pkgconfig/capnp-websocket.pc
-config.status:1180: creating pkgconfig/kj.pc
-config.status:1180: creating pkgconfig/kj-async.pc
-config.status:1180: creating pkgconfig/kj-http.pc
-config.status:1180: creating pkgconfig/kj-gzip.pc
-config.status:1180: creating pkgconfig/kj-tls.pc
-config.status:1180: creating pkgconfig/kj-test.pc
-config.status:1180: creating cmake/CapnProtoConfig.cmake
-config.status:1180: creating cmake/CapnProtoConfigVersion.cmake
-config.status:1180: creating config.h
-config.status:1409: executing depfiles commands
-config.status:1486: cd .       && sed -e '/# am--include-marker/d' Makefile         | make -f - am--depfiles
-make[3]: Entering directory '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++'
+config.status:1186: creating Makefile
+config.status:1186: creating pkgconfig/capnp.pc
+config.status:1186: creating pkgconfig/capnpc.pc
+config.status:1186: creating pkgconfig/capnp-rpc.pc
+config.status:1186: creating pkgconfig/capnp-json.pc
+config.status:1186: creating pkgconfig/capnp-websocket.pc
+config.status:1186: creating pkgconfig/kj.pc
+config.status:1186: creating pkgconfig/kj-async.pc
+config.status:1186: creating pkgconfig/kj-http.pc
+config.status:1186: creating pkgconfig/kj-gzip.pc
+config.status:1186: creating pkgconfig/kj-tls.pc
+config.status:1186: creating pkgconfig/kj-test.pc
+config.status:1186: creating cmake/CapnProtoConfig.cmake
+config.status:1186: creating cmake/CapnProtoConfigVersion.cmake
+config.status:1186: creating config.h
+config.status:1367: config.h is unchanged
+config.status:1415: executing depfiles commands
+config.status:1492: cd .       && sed -e '/# am--include-marker/d' Makefile         | make -f - am--depfiles
+make[3]: Entering directory '/home/alan/panmap/src/3rdparty/capnproto/c++'
 make[3]: Nothing to be done for 'am--depfiles'.
-make[3]: Leaving directory '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++'
-config.status:1491: $? = 0
-config.status:1409: executing libtool commands
+make[3]: Leaving directory '/home/alan/panmap/src/3rdparty/capnproto/c++'
+config.status:1497: $? = 0
+config.status:1415: executing libtool commands
 
 ## ---------------- ##
 ## Cache variables. ##
@@ -1051,7 +846,7 @@ lt_cv_truncate_bin='/usr/bin/dd bs=4096 count=1'
 ## Output variables. ##
 ## ----------------- ##
 
-ACLOCAL='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' aclocal-1.16'
+ACLOCAL='${SHELL} '\''/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing'\'' aclocal-1.16'
 AMDEPBACKSLASH='\'
 AMDEP_FALSE='#'
 AMDEP_TRUE=''
@@ -1062,9 +857,9 @@ AM_DEFAULT_VERBOSITY='1'
 AM_V='$(V)'
 AR='ar'
 ASYNC_LIBS=''
-AUTOCONF='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' autoconf'
-AUTOHEADER='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' autoheader'
-AUTOMAKE='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' automake-1.16'
+AUTOCONF='${SHELL} '\''/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing'\'' autoconf'
+AUTOHEADER='${SHELL} '\''/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing'\'' autoheader'
+AUTOMAKE='${SHELL} '\''/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing'\'' automake-1.16'
 AWK='gawk'
 BUILD_KJ_GZIP_FALSE='#'
 BUILD_KJ_GZIP_TRUE=''
@@ -1117,7 +912,7 @@ LITE_MODE_TRUE='#'
 LN_S='ln -s'
 LTLIBOBJS=''
 LT_SYS_LIBRARY_PATH=''
-MAKEINFO='${SHELL} '\''/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing'\'' makeinfo'
+MAKEINFO='${SHELL} '\''/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing'\'' makeinfo'
 MANIFEST_TOOL=':'
 MKDIR_P='/usr/bin/mkdir -p'
 NM='/usr/bin/nm -B'
@@ -1188,7 +983,7 @@ host_vendor='pc'
 htmldir='${docdir}'
 includedir='${prefix}/include'
 infodir='${datarootdir}/info'
-install_sh='${SHELL} /scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/install-sh'
+install_sh='${SHELL} /home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/install-sh'
 libdir='${exec_prefix}/lib'
 libexecdir='${exec_prefix}/libexec'
 localedir='${datarootdir}/locale'
@@ -1210,6 +1005,13 @@ target_alias=''
 ## confdefs.h. ##
 ## ----------- ##
 
+/* confdefs.h */
+#define PACKAGE_NAME "Capn Proto"
+#define PACKAGE_TARNAME "capnproto-c++"
+#define PACKAGE_VERSION "1.1-dev"
+#define PACKAGE_STRING "Capn Proto 1.1-dev"
+#define PACKAGE_BUGREPORT "capnproto@googlegroups.com"
+#define PACKAGE_URL ""
 #define PACKAGE "capnproto-c++"
 #define VERSION "1.1-dev"
 #define HAVE_PTHREAD 1
