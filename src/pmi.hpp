@@ -8,18 +8,17 @@
 #include "index.capnp.h"
 #include <unordered_map>
 
-using namespace PangenomeMAT;
+using namespace panmanUtils;
 using namespace seeding;
 using namespace tree;
 
 
-typedef std::unordered_map<int, std::string> seedMap_t;
 
 enum posWidth {pos16, pos32, pos64};
 
 namespace pmi { // functions and types for seed indexing
 
-/* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
+    /* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
     void build(Tree *T, Index::Builder &index);
 
 } // namespace pmi
