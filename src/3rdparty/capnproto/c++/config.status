@@ -430,7 +430,7 @@ Copyright (C) 2021 Free Software Foundation, Inc.
 This config.status script is free software; the Free Software Foundation
 gives unlimited permission to copy, distribute and modify it."
 
-ac_pwd='/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++'
+ac_pwd='/home/alan/panmap/src/3rdparty/capnproto/c++'
 srcdir='.'
 INSTALL='/usr/bin/install -c'
 MKDIR_P='/usr/bin/mkdir -p'
@@ -980,12 +980,12 @@ S["mkdir_p"]="$(MKDIR_P)"
 S["MKDIR_P"]="/usr/bin/mkdir -p"
 S["INSTALL_STRIP_PROGRAM"]="$(install_sh) -c -s"
 S["STRIP"]="strip"
-S["install_sh"]="${SHELL} /scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/install-sh"
-S["MAKEINFO"]="${SHELL} '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing' makeinfo"
-S["AUTOHEADER"]="${SHELL} '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing' autoheader"
-S["AUTOMAKE"]="${SHELL} '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing' automake-1.16"
-S["AUTOCONF"]="${SHELL} '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing' autoconf"
-S["ACLOCAL"]="${SHELL} '/scratch1/alex/panmap-prof/src/3rdparty/capnproto/c++/build-aux/missing' aclocal-1.16"
+S["install_sh"]="${SHELL} /home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/install-sh"
+S["MAKEINFO"]="${SHELL} '/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing' makeinfo"
+S["AUTOHEADER"]="${SHELL} '/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing' autoheader"
+S["AUTOMAKE"]="${SHELL} '/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing' automake-1.16"
+S["AUTOCONF"]="${SHELL} '/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing' autoconf"
+S["ACLOCAL"]="${SHELL} '/home/alan/panmap/src/3rdparty/capnproto/c++/build-aux/missing' aclocal-1.16"
 S["VERSION"]="1.1-dev"
 S["PACKAGE"]="capnproto-c++"
 S["CYGPATH_W"]="echo"
@@ -1074,6 +1074,12 @@ fi # test -n "$CONFIG_FILES"
 if test -n "$CONFIG_HEADERS"; then
 cat >"$ac_tmp/defines.awk" <<\_ACAWK ||
 BEGIN {
+D["PACKAGE_NAME"]=" \"Capn Proto\""
+D["PACKAGE_TARNAME"]=" \"capnproto-c++\""
+D["PACKAGE_VERSION"]=" \"1.1-dev\""
+D["PACKAGE_STRING"]=" \"Capn Proto 1.1-dev\""
+D["PACKAGE_BUGREPORT"]=" \"capnproto@googlegroups.com\""
+D["PACKAGE_URL"]=" \"\""
 D["PACKAGE"]=" \"capnproto-c++\""
 D["VERSION"]=" \"1.1-dev\""
 D["HAVE_PTHREAD"]=" 1"
