@@ -5,7 +5,7 @@
 #include <iostream>
 //#include <sys/_types/_int64_t.h>
 
-using namespace PangenomeMAT;
+using namespace panman;
 using namespace tree;
 
 std::chrono::time_point<std::chrono::high_resolution_clock> global_timer =
@@ -172,7 +172,6 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
     
     for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
       
-      int scalar = tupleToScalarCoord(currCoord, globalCoords);
 
       if (blockExists[currCoord.blockId].first) {
         
@@ -228,6 +227,8 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
               break;
           }
         }
+      int scalar = tupleToScalarCoord(currCoord, globalCoords);
+
         if(c != '-'){
           seq.push_back(c);
           coords.push_back(scalar);
@@ -260,9 +261,6 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
       }
 
     }
-
-
-    int scalar = tupleToScalarCoord(end, globalCoords);
     
     //Adding end character
     if(blockExists[end.blockId].first){
@@ -316,7 +314,7 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
             
           }
         }
-
+        int scalar = tupleToScalarCoord(end, globalCoords);
         if(c != '-'){
           seq.push_back(c);
           coords.push_back(scalar);
@@ -333,46 +331,6 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> tr
     
     return std::make_tuple(seq, coords, gaps, deadBlocks);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /*
 - regap not used anywhere previously -> changed how regap is constructed for the
@@ -612,7 +570,7 @@ void tree::setup(mutableTreeData &data, globalCoords_t &globalCoords,
           stop = true;
           break;
         }
-        const char c = PangenomeMAT::getNucleotideFromCode(nc);
+        const char c = panmanUtils::getNucleotideFromCode(nc);
         sequence[b].first.push_back({c, {}});
       }
       if (stop) {
@@ -963,7 +921,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
     return "Error: Reference sequence with matching name not found!";
   }
 
-  std::vector<PangenomeMAT::Node *> path;
+  std::vector<panmanUtils::Node *> path;
   Node *it = referenceNode;
 
   while (it != root) {
@@ -1010,7 +968,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
           endFlag = true;
           break;
         }
-        const char nucleotide = PangenomeMAT::getNucleotideFromCode(nucCode);
+        const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
 
         if (secondaryBlockId != -1) {
           sequence[primaryBlockId].second[secondaryBlockId].push_back(
@@ -1061,7 +1019,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
       int type = (mutation.blockMutInfo);
       bool inversion = mutation.inversion;
 
-      if (type == PangenomeMAT::BlockMutationType::BI) {
+      if (type == panmanUtils::BlockMutationType::BI) {
         if (secondaryBlockId != -1) {
           blockExists[primaryBlockId].second[secondaryBlockId] = true;
 
@@ -1124,11 +1082,11 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
 
         int len = (((*node)->nucMutation[i].mutInfo) >> 4);
 
-        if (type == PangenomeMAT::NucMutationType::NS) {
+        if (type == panmanUtils::NucMutationType::NS) {
           if (secondaryBlockId != -1) {
             if (nucGapPosition != -1) {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId]
                     .second[secondaryBlockId][nucPosition]
@@ -1136,7 +1094,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
               }
             } else {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId]
                     .second[secondaryBlockId][nucPosition + j]
@@ -1146,7 +1104,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
           } else {
             if (nucGapPosition != -1) {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId]
                     .first[nucPosition]
@@ -1154,17 +1112,17 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
               }
             } else {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId].first[nucPosition + j].first = newVal;
               }
             }
           }
-        } else if (type == PangenomeMAT::NucMutationType::NI) {
+        } else if (type == panmanUtils::NucMutationType::NI) {
           if (secondaryBlockId != -1) {
             if (nucGapPosition != -1) {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId]
                     .second[secondaryBlockId][nucPosition]
@@ -1172,7 +1130,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
               }
             } else {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId]
                     .second[secondaryBlockId][nucPosition + j]
@@ -1182,7 +1140,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
           } else {
             if (nucGapPosition != -1) {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId]
                     .first[nucPosition]
@@ -1190,13 +1148,13 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
               }
             } else {
               for (int j = 0; j < len; j++) {
-                newVal = PangenomeMAT::getNucleotideFromCode(
+                newVal = panmanUtils::getNucleotideFromCode(
                     (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
                 sequence[primaryBlockId].first[nucPosition + j].first = newVal;
               }
             }
           }
-        } else if (type == PangenomeMAT::NucMutationType::ND) {
+        } else if (type == panmanUtils::NucMutationType::ND) {
           if (secondaryBlockId != -1) {
             if (nucGapPosition != -1) {
               for (int j = 0; j < len; j++) {
@@ -1226,8 +1184,8 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
           }
         }
       } else {
-        if (type == PangenomeMAT::NucMutationType::NSNPS) {
-          newVal = PangenomeMAT::getNucleotideFromCode(
+        if (type == panmanUtils::NucMutationType::NSNPS) {
+          newVal = panmanUtils::getNucleotideFromCode(
               (((*node)->nucMutation[i].nucs) >> 20) & 0xF);
           if (secondaryBlockId != -1) {
             if (nucGapPosition != -1) {
@@ -1248,8 +1206,8 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
               sequence[primaryBlockId].first[nucPosition].first = newVal;
             }
           }
-        } else if (type == PangenomeMAT::NucMutationType::NSNPI) {
-          newVal = PangenomeMAT::getNucleotideFromCode(
+        } else if (type == panmanUtils::NucMutationType::NSNPI) {
+          newVal = panmanUtils::getNucleotideFromCode(
               (((*node)->nucMutation[i].nucs) >> 20) & 0xF);
           if (secondaryBlockId != -1) {
             if (nucGapPosition != -1) {
@@ -1270,7 +1228,7 @@ std::string tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
               sequence[primaryBlockId].first[nucPosition].first = newVal;
             }
           }
-        } else if (type == PangenomeMAT::NucMutationType::NSNPD) {
+        } else if (type == panmanUtils::NucMutationType::NSNPD) {
           if (secondaryBlockId != -1) {
             if (nucGapPosition != -1) {
               sequence[primaryBlockId]

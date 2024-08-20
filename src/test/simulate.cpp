@@ -6,7 +6,7 @@
 #include <iostream>
 #include <vector>
 #include <random>
-#include "PangenomeMAT.hpp"
+#include "panmanUtils.hpp"
 #include "../tree.hpp"
 
 
@@ -16,7 +16,7 @@ namespace fs = boost::filesystem;
 void makeFasta(const std::string& name, const std::string& seq, const std::string& path);
 void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double);
-void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
+void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
     int n_reads, int rep, const tree::mutationMatrices& mutMat);
 
@@ -116,7 +116,7 @@ int main(int argc, char *argv[]) {
         b.push(boost::iostreams::gzip_decompressor());
         b.push(ifs);
         std::istream is(&b);
-        PangenomeMAT::Tree* T = new PangenomeMAT::Tree(is);
+        panmanUtils::Tree* T = new panmanUtils::Tree(is);
 
         // check node
         if (refNode != "RANDOM" && T->allNodes.find(refNode) == T->allNodes.end()) {
@@ -408,7 +408,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
     system(clean.c_str());
 }
 
-void sim(PangenomeMAT::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
+void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
     int n_reads, int rep, const tree::mutationMatrices& mutMat)
 {

@@ -6,10 +6,10 @@
 #include <iostream>
 #include <filesystem>
 #include <tbb/concurrent_unordered_map.h>
-#include "PangenomeMAT.hpp"
+#include "panmanUtils.hpp"
 #include "../pmi.hpp"
 
-using namespace PangenomeMAT;
+using namespace panmanUtils;
 using namespace seeding;
 using namespace tree;
 using namespace pmi;
@@ -33,7 +33,7 @@ BOOST_AUTO_TEST_CASE(sequenceReconstruction) {
     inPMATBuffer.push(boost::iostreams::gzip_decompressor());
     inPMATBuffer.push(is);
     std::istream inputStream(&inPMATBuffer);
-    PangenomeMAT::Tree *T = new PangenomeMAT::Tree(inputStream);
+    panmanUtils::Tree *T = new panmanUtils::Tree(inputStream);
 
     /* Get all sequences */
     std::unordered_map<std::string, std::string> resultSequences = tree::getAllNodeStrings(T);

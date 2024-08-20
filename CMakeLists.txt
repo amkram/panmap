@@ -1,28 +1,32 @@
-cmake_minimum_required (VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 
-project(panmap)
+project(panmap VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+include(FetchContent)
+set(FETCHCONTENT_QUIET OFF)
 
 # Project options
-
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PROFILE "Enable profiling." ON)
-# option(OPTION_TRACE "Enable tracing." ON)
+set(TBB_DIR ${CMAKE_CURRENT_BINARY_DIR}/oneTBB-2019_U9)
+set(VCPKG_DIR ${CMAKE_CURRENT_BINARY_DIR}/vcpkg)
+set(CMAKE_TOOLCHAIN_FILE ${VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake)
+set(CMAKE_PREFIX_PATH ${TBB_DIR}/cmake)
+# Fetch panman
+FetchContent_Declare(
+    panman
+    GIT_REPOSITORY https://github.com/TurakhiaLab/panman
+    GIT_TAG 3bc6f2c8cf29a8a106d58586c3bfb6c63dec6df1
+    PATCH_COMMAND rm -rf ${TBB_DIR} ${VCPKG_DIR} && cd ${CMAKE_CURRENT_BINARY_DIR} && wget https://github.com/oneapi-src/oneTBB/archive/2019_U9.tar.gz && tar -xvzf 2019_U9.tar.gz && git clone https://github.com/microsoft/vcpkg.git ${VCPKG_DIR} && ${VCPKG_DIR}/bootstrap-vcpkg.sh && ${VCPKG_DIR}/vcpkg install jsoncpp
+)
 
-#cmake_policy(SET CMP0135 NEW)
+FetchContent_MakeAvailable(panman)
 
-include(FetchContent)
-set(FETCHCONTENT_QUIET OFF)
-# find_package(Qt5 COMPONENTS Widgets REQUIRED)
-# FetchContent_Declare(easy_profiler
-#     GIT_REPOSITORY https://github.com/yse/easy_profiler
-#     GIT_TAG develop
-#     GIT_SHALLOW TRUE
-#     )
-# FetchContent_MakeAvailable(easy_profiler)
 
 add_executable(panmap
     src/main.cpp
@@ -48,8 +52,9 @@ add_executable(tests
    )
 endif()
 
+target_include_directories(panmap PRIVATE  ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-build ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src/src ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src)
 
-# system
+
 include(cmake/detect-arch.cmake)
 detect_host_arch()
 message("neon: ${HAS_NEON}")
@@ -91,12 +96,13 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-
 add_custom_target(build-deps DEPENDS
     libminimap2.a
     libst.a
+    # libpanman.a
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
+
 add_library(minimap2 STATIC IMPORTED)
 set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libminimap2.a")
 add_dependencies(minimap2 build-deps)
@@ -108,49 +114,33 @@ add_dependencies(samtools build-deps)
 add_library(htslib STATIC IMPORTED)
 set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/libhts.a")
 
-# panmat
-FetchContent_Declare(
-    panmat
-    GIT_REPOSITORY https://github.com/TurakhiaLab/pangenome-mat
-    GIT_TAG 1a05d22f4e0922e0cf98f0589d0e7bf06c6de92f # testing-cmake branch
-    GIT_SHALLOW TRUE
-    )
+add_dependencies(panmap build-deps)
+# Find dependencies
+find_package(Boost COMPONENTS system iostreams filesystem unit_test_framework REQUIRED)
+find_package(ZLIB REQUIRED)
 
-FetchContent_MakeAvailable(panmat)
-# FetchContent for docopt
-FetchContent_Declare(
-    docopt
-    GIT_REPOSITORY https://github.com/docopt/docopt.cpp.git
-    GIT_TAG v0.6.3
-    GIT_SHALLOW TRUE
-)
-
-FetchContent_MakeAvailable(docopt)
-
-
-target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/bm-src/src)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 
 if (OPTION_BUILD_TESTS)
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panmat-build)
 target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/bm-build)
 target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 endif()
+
 # Lets us do: 
 #    #include <minimap2/kseq.h>
-#    #include <htslib/sam.h>    
+#    #include <htslib/sam.h>
 #    ...
 
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/capnp ${CMAKE_CURRENT_BINARY_DIR}/capnpc-c++ ${CMAKE_CURRENT_BINARY_DIR}/.libs/libcapnp.a
     COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++ && autoupdate && autoheader && autoconf && ./configure
-    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++ check
+    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++
     COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/capnp ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/capnpc-c++ ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND cp -r ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/.libs/ ${CMAKE_CURRENT_BINARY_DIR}
@@ -185,45 +175,43 @@ target_sources(panmap PRIVATE ${CAPNP_SRCS})
 
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
-find_package(Boost COMPONENTS system filesystem unit_test_framework REQUIRED)
+FetchContent_Declare(
+  docopt
+  GIT_REPOSITORY https://github.com/docopt/docopt.cpp
+  GIT_TAG master
+)
 
-# run protoc compiler
-add_dependencies(panmap protobuf::libprotobuf)
-include(${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake)
-set(proto_SRCS index.pb.cc)
-set(proto_PROTOS index.proto)
-target_sources(panmap PRIVATE ${proto_SRCS} ${proto_PROTOS})
-
-protobuf_generate(TARGET panmap)
+FetchContent_MakeAvailable(docopt)
 
 
-target_link_libraries(panmap PUBLIC panmat minimap2 samtools htslib docopt capnp kj)
-target_compile_options(panmap PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_link_options(panmap PRIVATE -lm -lpthread -lz)
+# Ensure Boost iostreams, zlib, and protobuf are linked
+target_link_libraries(panmap PUBLIC minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman)
+target_link_options(panmap PUBLIC -lm -lpthread -lz -Wl,--allow-multiple-definition)
 
 
 if (OPTION_BUILD_TESTS)
-target_sources(tests PRIVATE ${CAPNP_SRCS})
-target_sources(tests PRIVATE ${proto_SRCS} ${proto_PROTOS})
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(tests panmat minimap2 samtools htslib
+target_sources(tests PUBLIC ${CAPNP_SRCS})
+target_include_directories(tests PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(tests minimap2 samtools htslib
                      ${Boost_FILESYSTEM_LIBRARY}
                      ${Boost_SYSTEM_LIBRARY}
-                       ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
-                       docopt
-                       capnp
-                       kj
+                     ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+                     ${Boost_IOSTREAMS_LIBRARY}
+                     ZLIB::ZLIB
+                     docopt
+                     capnp
+                     kj
+                     panman
                      )
-add_dependencies(tests protobuf::libprotobuf)
-target_compile_options(tests PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_link_options(tests PRIVATE -lm -lpthread -lz)
-target_compile_options(tests PRIVATE -g -O3 -ggdb)
+target_compile_options(tests PUBLIC -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+target_link_options(tests PUBLIC -lm -lpthread -lz)
+target_compile_options(tests PUBLIC -g -O3 -ggdb)
 endif()
 
 if (OPTION_DEBUG)
-    target_compile_options(panmap PRIVATE -g -O1 -ggdb)
+    target_compile_options(panmap PUBLIC -g -O1 -ggdb)
 else()
-    target_compile_options(panmap PRIVATE -g -O3)
+    target_compile_options(panmap PUBLIC -g -O3)
 endif()
 
 # Unit testing data
@@ -232,8 +220,3 @@ configure_file(src/test/data/test.nwk test.nwk COPYONLY)
 configure_file(src/test/data/test.json test.json COPYONLY)
 configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
-
-install(TARGETS panmap DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/index.capnp DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/index.pb.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/index.pb.cc DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)

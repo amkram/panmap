@@ -8,7 +8,7 @@
 #include "index.capnp.h"
 #include <unordered_map>
 
-using namespace PangenomeMAT;
+using namespace panmanUtils;
 using namespace seeding;
 using namespace tree;
 
