@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <fstream>
 #include <random>
-#include "PangenomeMAT.hpp"
+#include "panmanUtils.hpp"
 #include "../genotype.hpp"
 #include "../tree.hpp"
 
@@ -48,7 +48,7 @@ BOOST_AUTO_TEST_CASE(edgeMaskingForBuildingMutMat) {
     b.push(ifs);
     std::istream is(&b);
 
-    auto T = new PangenomeMAT::Tree(is);
+    auto T = new panmanUtils::Tree(is);
 
     std::unordered_map<std::string, std::string> alignedSequences = getAllNodeStrings(T);
     for (const auto& sequence : alignedSequences) {

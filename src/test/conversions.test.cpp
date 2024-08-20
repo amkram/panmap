@@ -4,7 +4,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <fstream>
-#include "PangenomeMAT.hpp"
+#include "panmanUtils.hpp"
 
 #include <algorithm>
 #include "../place.hpp"

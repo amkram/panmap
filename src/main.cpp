@@ -2,9 +2,9 @@
 #include "place.hpp"
 #include "pmi.hpp"
 #include "tree.hpp"
-#include <PangenomeMAT.hpp>
+#include <panmanUtils.hpp>
 #include <boost/filesystem.hpp>
-#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filter/lzma.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/program_options.hpp>
 #include <csignal>
@@ -36,9 +36,9 @@ Default outputs (see -o for more options):
     - Log of the panmap run (panmap.log)
 
 Usage:
-  panmap <guide.pmat> [<reads1.fastq>] [<reads2.fastq>] [options]
+  panmap <guide> [<reads1.fastq>] [<reads2.fastq>] [options]
 
-<guide.pmat>    Path to pangenome reference tree (pan-MAT file).
+<guide>         Path to pangenome reference tree (pan-MAT or pan-MAN file).
 <reads1.fastq>  [Optional] Path to first FASTQ file.
 <reads2.fastq>  [Optional] Path to second FASTQ file (for paired-end reads).
 
@@ -93,69 +93,6 @@ Other options:
 )";
 
 
-void readFromProtoFile(const std::string &filename, SeedmerIndex &index) {
-    std::ifstream input(filename, std::ios::binary);
-    if (!input) {
-        std::cerr << "Failed to open file: " << filename << std::endl;
-        return;
-    }
-    if (!index.ParseFromIstream(&input)) {
-        std::cerr << "Failed to parse index." << std::endl;
-    }
-    input.close();
-}
-
-void writeIndex(const std::string &filename, SeedmerIndex &index) {
-    std::ofstream output(filename, std::ios::binary);
-    if (!output) {
-        std::cerr << "Failed to open file: " << filename << std::endl;
-        return;
-    }
-    
-    if (!index.SerializeToOstream(&output)) {
-        std::cerr << "Failed to write index." << std::endl;
-    }
-    output.close();
-}
-
-void promptAndPlace(Tree *T, const tree::mutationMatrices &mutMat,
-                    const int32_t k, const int32_t s,
-                    const std::string &indexFile, const std::string &pmatFile,
-                    std::string &reads1File, std::string &reads2File,
-                    std::string &samFileName, std::string &bamFileName,
-                    std::string &mpileupFileName, std::string &vcfFileName,
-                    std::string &refFileName, const bool prompt,
-                    bool use_root) {
-  std::cin.clear();
-  std::fflush(stdin);
-  using namespace std;
-  // Check if reads were supplied by user
-  if (reads1File == "" && reads2File == "" && !prompt) {
-    cout << "Can't place sample because no reads were provided and -f was "
-            "specified."
-         << std::endl;
-    exit(1);
-  }
-  // Prompt for fastq files
-  if (reads1File == "") {
-    while (!reads1File.size()) {
-      cout << "First FASTQ path: ";
-      getline(cin, reads1File);
-    }
-    reads2File = "";
-    cout << "[Second FASTQ path]: ";
-    getline(cin, reads2File);
-  }
-  if (reads1File == "q" || reads2File == "q") {
-    exit(0);
-  }
-  SeedmerIndex index;
-  readFromProtoFile(indexFile, index);
-  place::placeIsolate(index, mutMat, reads1File, reads2File, samFileName,
-                      bamFileName, mpileupFileName, vcfFileName, refFileName, T,
-                      use_root);
-}
-
 using namespace std;
 
 
@@ -173,13 +110,46 @@ void readCapnp(std::string &filename) {
   // pmi::read(index);
 }
 
-PangenomeMAT::Tree* loadPanmat(const std::string &pmatFile) {
-    std::ifstream ifs(pmatFile);
-    boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
-    b.push(boost::iostreams::gzip_decompressor());
-    b.push(ifs);
-    std::istream is(&b);
-    return new PangenomeMAT::Tree(is);
+panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
+    // If the data structure loaded into memory is a PanMAT, it is pointed to by T
+    panmanUtils::Tree *T = nullptr;
+    // If the data structure loaded into memory is a PanMAN, it is pointed to by TG
+    panmanUtils::TreeGroup *TG = nullptr;
+
+    try {
+        // Try to load PanMAN file directly into memory
+        std::ifstream inputFile(pmatFile);
+        boost::iostreams::filtering_streambuf< boost::iostreams::input> inPMATBuffer;
+        inPMATBuffer.push(boost::iostreams::lzma_decompressor());
+        inPMATBuffer.push(inputFile);
+        std::istream inputStream(&inPMATBuffer);
+
+
+        TG = new panmanUtils::TreeGroup(inputStream);
+
+        
+        inputFile.close();
+    } catch (const std::exception &e) {
+        std::cerr << "Attempting to load as PanMAT...\n";
+        try {
+            std::ifstream inputFile(pmatFile);
+            boost::iostreams::filtering_streambuf< boost::iostreams::input> inPMATBuffer;
+            inPMATBuffer.push(boost::iostreams::lzma_decompressor());
+            inPMATBuffer.push(inputFile);
+            std::istream inputStream(&inPMATBuffer);
+
+
+            T = new panmanUtils::Tree(inputStream);
+
+
+        } catch (const std::exception &e) {
+            return nullptr;
+        }
+    }
+    if (TG != nullptr) {
+      return &(TG->trees[0]);
+    }
+    return T;
 }
 
 void log(const std::string& message) {
@@ -191,7 +161,7 @@ void log(const std::string& message) {
 int main(int argc, const char** argv) {
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
 
-    std::string guide = args["<guide.pmat>"].asString();
+    std::string guide = args["<guide>"].asString();
     std::string reads1 = args["<reads1.fastq>"] ? args["<reads1.fastq>"].asString() : "";
     std::string reads2 = args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";
     std::string prefix = args["--prefix"] ? args["--prefix"].asString() : "panmap";
@@ -210,7 +180,11 @@ int main(int argc, const char** argv) {
     std::cout << "  ━┫ ┗━━━● map" << std::endl;
     std::cout << "   ┗━ v0.0 ━●" << std::endl << std::endl;
 
-    PangenomeMAT::Tree *T = loadPanmat(guide);
+    panmanUtils::Tree *T = loadPanmanOrPanmat(guide);
+    if (T == nullptr) {
+      std::cerr << "Failed to load guide panMAN/panMAT.\n";
+      return 1;
+    }
 
     log("--- Settings ---");
     log("Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");
