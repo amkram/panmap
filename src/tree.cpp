@@ -1055,7 +1055,7 @@ static void applyMutations(mutableTreeData &data,
       // Either S, I or D
       int len = ((node->nucMutation[i].mutInfo) >> 4);
 
-      if (type == PangenomeMAT::NucMutationType::NS)
+      if (type == panmanUtils::NucMutationType::NS)
       {
         // Substitution
 
@@ -1066,7 +1066,7 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
             }
@@ -1076,7 +1076,7 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
             }
@@ -1089,7 +1089,7 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
             }
@@ -1099,14 +1099,14 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].first[nucPosition + j].first = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
             }
           }
         }
       }
-      else if (type == PangenomeMAT::NucMutationType::NI)
+      else if (type == panmanUtils::NucMutationType::NI)
       {
         // Insertion
         if (secondaryBlockId != -1)
@@ -1116,7 +1116,7 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
             }
@@ -1126,7 +1126,7 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
             }
@@ -1139,7 +1139,7 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
             }
@@ -1149,14 +1149,14 @@ static void applyMutations(mutableTreeData &data,
             for (int j = 0; j < len; j++)
             {
               char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
-              newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
               sequence[primaryBlockId].first[nucPosition + j].first = newVal;
               mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
             }
           }
         }
       }
-      else if (type == PangenomeMAT::NucMutationType::ND)
+      else if (type == panmanUtils::NucMutationType::ND)
       {
         // Deletion
         if (secondaryBlockId != -1)
@@ -1208,10 +1208,10 @@ static void applyMutations(mutableTreeData &data,
       int len = 0;
     
 
-      if (type == PangenomeMAT::NucMutationType::NSNPS)
+      if (type == panmanUtils::NucMutationType::NSNPS)
       {
         // SNP Substitution
-        newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
+        newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
         if (secondaryBlockId != -1)
         {
           if (nucGapPosition != -1)
@@ -1243,10 +1243,10 @@ static void applyMutations(mutableTreeData &data,
           }
         }
       }
-      else if (type == PangenomeMAT::NucMutationType::NSNPI)
+      else if (type == panmanUtils::NucMutationType::NSNPI)
       {
         // SNP Insertion
-        newVal = PangenomeMAT::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
+        newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
         if (secondaryBlockId != -1)
         {
           if (nucGapPosition != -1)
@@ -1278,7 +1278,7 @@ static void applyMutations(mutableTreeData &data,
           }
         }
       }
-      else if (type == PangenomeMAT::NucMutationType::NSNPD)
+      else if (type == panmanUtils::NucMutationType::NSNPD)
       {
         // SNP Deletion
         if (secondaryBlockId != -1)
@@ -1790,8 +1790,15 @@ void tree::fillMutationMatricesFromFile(mutationMatrices &mutMat,
   std::string line;
   int idx = 0;
   while (getline(inf, line)) {
+    std::vector<double> probs;
     std::vector<std::string> fields;
     stringSplit(line, ' ', fields);
+    for (const auto &f : fields) {
+      probs.push_back(std::stod(f));
+    }
+    if (probs.size() == 0) {
+      break;
+    }
 
     if (idx < 4) {
       if (probs.size() != 4) {

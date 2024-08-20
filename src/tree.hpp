@@ -516,7 +516,7 @@ struct mutationMatrices {
   mutationMatrices() {
     // initialize mutationMatrices object and intialize the correct size for
     // substitution amtrix
-    total_submuts.resize(4);
+    // total_submuts.resize(4);
     submat.resize(4);
     for (size_t i = 0; i < 4; ++i) {
       submat[i].resize(4);
