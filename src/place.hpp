@@ -1,14 +1,14 @@
-#ifndef __PLACE_HPP
-#define __PLACE_HPP
-
 #pragma once
 #include "tree.hpp"
-#include "PangenomeMAT.hpp"
+#include "index.pb.h"
 
 namespace place {
+    
+    enum class ScoringMethod {
+        NUM_SEED_HITS, // raw number of matches per node
+        JACCARD // Todo implement
+    };
 
-    void placeIsolate( std::ifstream &indexFile, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, PangenomeMAT::Tree *T,  bool use_root);
+    void placeIsolate( SeedmerIndex &index, const tree::mutationMatrices& mutMat, const std::string &reads1Path, const std::string &reads2Path, std::string &samFileName, std::string &bamFileName, std::string &mpileupFileName, std::string &vcfFileName, std::string &refFileName, PangenomeMAT::Tree *T,  bool use_root);
 
 }
-
-#endif

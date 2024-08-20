@@ -1,20 +1,11 @@
-#include <algorithm>
-#include "place.hpp"
-#include "pmi.hpp"
-#include "util.hpp"
-#include "tree.hpp"
-#include "genotype.hpp"
-#include <cmath>
-#include <htslib/sam.h>
-
+#include <iostream>
 #include "conversion.hpp"
+#include "genotype.hpp"
 
 extern "C" {
-    void align_reads(const char *reference, int n_reads, const char **reads, const char **quality, const char **read_names, int *r_lens, int *seed_counts, uint8_t **reversed, int **ref_positions, int **qry_positions, char** sam_alignments, int syncmer_k, bool pairedEndReads);
-    void bam_and_ref_to_mplp(sam_hdr_t *header, bam1_t **bam_lines, int nbams, char *ref_string, int lref, kstring_t *mplp_string);
+    #include "pileup.h"
+    #include "mm_align.h"
 }
-
-
 
 //samAlignment is sorted at the end
 
@@ -217,13 +208,6 @@ void createSam(
     free(r_lens);
 
 }
-
-
-
-
-
-
-
 
 //samAlignments elements are freed
 //

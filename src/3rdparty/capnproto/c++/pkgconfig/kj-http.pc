@@ -1,0 +1,11 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: KJ HTTP Library
+Description: Basic utility library called KJ (HTTP part)
+Version: 1.1-dev
+Libs: -L${libdir} -lkj-http   
+Requires: kj-async = 1.1-dev
+Cflags: -I${includedir}   
