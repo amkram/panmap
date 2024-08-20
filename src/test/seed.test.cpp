@@ -7,10 +7,10 @@
 #include <filesystem>
 #include <tbb/concurrent_unordered_map.h>
 #include <tbb/concurrent_vector.h>
-#include "PangenomeMAT.hpp"
+#include "panmanUtils.hpp"
 #include "../seeding.hpp"
 
-using namespace PangenomeMAT;
+using namespace panmanUtils;
 using namespace seeding;
 
 
@@ -337,13 +337,13 @@ BOOST_AUTO_TEST_CASE(_seedmerize) {
 // //     is.close();
 // //     os.close();
 
-// //     PangenomeMAT::Node *root = T->root;
+// //     panmanUtils::Node *root = T->root;
 // //     std::vector<read_t> reads;
 
 // //     struct seedIndex index;
 // //     std::ifstream indexFile("./test.out");
 
-// //     PangenomeMAT::loadIndex(T->root, indexFile, index);
+// //     panmanUtils::loadIndex(T->root, indexFile, index);
 
 // //     auto fastq_start = std::chrono::high_resolution_clock::now();
 // //     std::set<seed> readSyncmers = syncmersFromFastq("../r1.fastq", reads, k, s);

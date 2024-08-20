@@ -1,0 +1,24 @@
+tree_sizes = [100, 1000, 10000, 100000, 1000000]
+genome_sizes = [10000, 100000]
+
+rule all:
+    input:
+        'output/trees/{tree_size}.nwk' for tree_size in tree_sizes
+
+rule prepare_trees:
+    threads: 5
+    input: 'data/public-latest.all.masked.pb.gz'
+    output: 'output/trees/{tree_size}.nwk'
+    shell:
+        "matUtils extract -R -z {tree_size} -i {input} -o {output} -T {threads}"
+
+rule sim_haplotypes:
+    threads: 50
+    input: 'output/trees/{tree_size}.nwk' for tree_size in tree_sizes
+    output: 'output/simulations/{tree_size}.{genome_size}.fa' for genome_size in genome_sizes
+    params:
+        branch_scale = lambda wildcards: 1 / wildcards.genome_size
+    shell:
+        '''
+        iqtree2 --alisim simulations/{tree_size}.{genome_size} --write-all -m GTR+G -t {input} --indel 0.03,0.1 --length {genome_size} --branch-scale {branch_scale} --out-format fasta
+        '''

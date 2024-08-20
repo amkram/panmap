@@ -170,11 +170,11 @@ vector<double> genotype_posteriors(
     for (const auto& insertion : insertions) {
       int64_t insSize = insertion.first.size();
 
-      if (mutmat.insmat.find(insertion.first.size()) != mutmat.insmat.end()) {
-        if (mutmat.insmat[insSize] > mutmat.maxInsLogProb) {
+      if (mutmat.insmat.find(insSize) != mutmat.insmat.end()) {
+        if (mutmat.insmat.at(insSize) > mutmat.maxInsLogProb) {
           posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.maxInsLogProb);
         } else {
-          posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.insmat[insSize]);
+          posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.insmat.at(insSize));
         }
       } else {
         posteriors.push_back(likelihoods[5 + insertion_idx] + mutmat.maxInsLogProb);
@@ -188,16 +188,16 @@ vector<double> genotype_posteriors(
       int64_t delSize = deletion.first.size();
 
       if (mutmat.delmat.find(delSize) != mutmat.delmat.end()) {
-        if (mutmat.delmat[delSize] > mutmat.maxDelLogProb) {
+        if (mutmat.delmat.at(delSize) > mutmat.maxDelLogProb) {
           posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.maxDelLogProb);
         } else {
-          posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.delmat[delSize]);
+            posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.delmat.at(delSize));
         }
       } else {
         posteriors.push_back(likelihoods[5 + insertion_idx + deletion_idx] + mutmat.maxDelLogProb);
       }
 
-      insertion_idx++;
+      deletion_idx++;
     }
 
     double min_score = *min_element(posteriors.begin(), posteriors.end());
