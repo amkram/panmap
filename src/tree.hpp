@@ -500,14 +500,13 @@ struct mutableTreeData {
 struct mutationMatrices {
   // Store mutation matrices
   std::vector<std::vector<double>> submat; // 4 x 4 substitution rate matrix
-  std::vector<double> insmat = {0}; // 1 x N insertion rate by length matrix
-  std::vector<double> delmat = {0}; // 1 x N deletion rate by length matrix
+  std::unordered_map<int64_t, double> insmat; // 1 x N insertion rate by length matrix
+  std::unordered_map<int64_t, double> delmat; // 1 x N deletion rate by length matrix
 
-  // Stores total number of mutations
   bool filled = false;
-  std::vector<double> total_submuts;
-  double total_insmut = 0;
-  double total_delmut = 0;
+
+  double maxInsLogProb = 70;
+  double maxDelLogProb = 70;
 
   mutationMatrices() {
     // initialize mutationMatrices object and intialize the correct size for
@@ -543,8 +542,9 @@ std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string &s1,
                                                 const std::string &s2,
                                                 size_t window,
                                                 double threshold);
-void fillMutationMatricesFromTree(mutationMatrices &mutMat, Tree *T,
-                                  size_t window, double threshold);
+// void fillMutationMatricesFromTree(mutationMatrices &mutMat, Tree *T,
+//                                   size_t window, double threshold);
+void fillMutationMatricesFromTree_test(mutationMatrices &mutMat, Tree *T, size_t window, double threshold);
 void fillMutationMatricesFromFile(mutationMatrices &mutMat, std::ifstream &inf);
 
 // Build mutation matrices by traversing through all parent-child pairs
