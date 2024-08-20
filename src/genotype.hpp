@@ -3,7 +3,6 @@
 
 #pragma once
 #include <iostream>
-#include "PangenomeMAT.hpp"
 #include "tree.hpp"
 
 namespace genotype {

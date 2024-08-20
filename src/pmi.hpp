@@ -1,40 +1,63 @@
 #ifndef __PMI_HPP
 #define __PMI_HPP
 
+//#include <__config>
 #pragma once
-#include "PangenomeMAT.hpp"
 #include "seeding.hpp"
 #include "tree.hpp"
+#include "index.capnp.h"
+#include <unordered_map>
 
 using namespace PangenomeMAT;
 using namespace seeding;
 using namespace tree;
 
-typedef std::unordered_map<int32_t, std::pair<int32_t, std::string>> seedMap_t;
+
+typedef std::unordered_map<int, std::string> seedMap_t;
+
+enum posWidth {pos16, pos32, pos64};
+
 namespace pmi { // functions and types for seed indexing
 
-    struct seedIndex {
-        std::stringstream outStream;
-        std::vector<seed> consensusSeeds;
-        std::unordered_map<int32_t, std::string> consensusseedmers;
-        std::unordered_map<int32_t, std::string> currseedmers;
-        std::unordered_map<std::string, std::vector<seed>> deletions;
-        std::unordered_map<std::string, std::vector<seed>> insertions;
-        int32_t k;
-        int32_t s;
-    };
+/* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
+    void build(Tree *T, Index::Builder &index);
 
-    /* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
-    void build(seedIndex &index, Tree *T, const size_t j, const size_t k, const size_t s);
-}
+} // namespace pmi
 
-/* Expose some pmi.cpp helpers for unit testing */
+/* Expose some pmi.cpp helpers for unit testing also tree.cpp uses
+ * applyMutations for now */
 using namespace pmi;
 
-void buildHelper(mutableTreeData &data, seedMap_t seedMap, seedIndex &index, Tree *T, const Node *node, const int32_t l, const size_t k, const size_t s, const globalCoords_t &globalCoords);
-void undoMutations(mutableTreeData &data, seedIndex &index, Tree *T, const Node *node, const blockMutData_t &blockMutData, const nucMutData_t &nucMutData);
-void applyMutations(mutableTreeData &data, blockMutData_t &blockMutData, nucMutData_t &nucMutData, Tree *T, const Node *node, const globalCoords_t &globalCoords);
-range_t getRecomputePositions(const range_t &p, const std::string &gappedSequence, const int32_t k);
-std::vector<range_t> getAffectedRanges(mutableTreeData &data, const blockMutData_t &blockMutData, const nucMutData_t &nucMutData, std::string &seq, Tree *T, const int32_t k, const globalCoords_t &globalCoords);
+// void buildHelper(mutableTreeData &data, seedMap_t &seedMap, int32_t &k, int32_t &s, ::capnp::List<Mutations>::Builder &mutations,
+//                  Tree *T, const Node *node, const globalCoords_t &globalCoords,
+//                  CoordNavigator &navigator, int64_t &dfsIndex, posWidth &width, std::map<int64_t, int64_t> &gapRuns);
+// void applyMutations(mutableTreeData &data, seedMap_t &seedMap,
+//                     blockMutationInfo_t &blockMutData,
+//                     std::vector<tupleRange> &recompRanges,
+//                     mutationInfo_t &nucMutData, Tree *T, const Node *node,
+//                     globalCoords_t &globalCoords, const ::capnp::List<Mutations>::Builder &mutations);
+// void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &mutations, Tree *T,
+//                     Node *node, const blockMutationInfo_t &blockMutData,
+//                    const mutationInfo_t &nucMutData);
+void flipCoords(int32_t blockId, globalCoords_t &globalCoords);
+void updateGapMapStep(std::map<int64_t, int64_t>& gapMap, const std::pair<bool, std::pair<int64_t, int64_t>>& update, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack);
+void updateGapMap(std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& updates, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack);
+std::vector<std::pair<int64_t, int64_t>> invertRanges(const std::vector<std::pair<int64_t, int64_t>>& nucRanges, const std::pair<int64_t, int64_t>& invertRange);
+void invertGapMap(std::map<int64_t, int64_t>& gapMap, const std::pair<int64_t, int64_t>& invertRange, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack);
+void makeCoordIndex(std::map<int64_t, int64_t>& coordIndex, const std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<int64_t, int64_t>>& blockRanges);
+
+// // Go upstream until neededNongap nucleotides are seen and return the new coord.
+// tupleCoord_t expandLeft(const CoordNavigator &navigator, tupleCoord_t coord,
+//                         int neededNongap, blockExists_t &blockExists);
+
+// // Go downstream until neededNongap nucleotides are seen and return the new coord.
+// tupleCoord_t expandRight(const CoordNavigator &navigator, tupleCoord_t coord,
+//                          int neededNongap, blockExists_t &blockExists, blockStrand_t &blockStrand);
+
+// // Merges each range with overlapping ranges after expanding left and right
+// // by `neededNongap` non-gap nucleotides.
+// std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator, std::vector<tupleRange> &ranges, int neededNongap, blockExists_t &blockExists);
+int64_t tupleToScalarCoord(const tupleCoord_t &coord, const globalCoords_t &globalCoords);
+
 
 #endif

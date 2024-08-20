@@ -1,0 +1,10 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: KJ Framework Library
+Description: Basic utility library called KJ
+Version: 1.1-dev
+Libs: -L${libdir} -lkj   
+Cflags: -I${includedir}   

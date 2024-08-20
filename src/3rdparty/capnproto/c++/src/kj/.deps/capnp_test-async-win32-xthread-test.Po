@@ -1,0 +1,3 @@
+src/kj/capnp_test-async-win32-xthread-test.o: \
+ src/kj/async-win32-xthread-test.c++ /usr/include/stdc-predef.h
+/usr/include/stdc-predef.h:
