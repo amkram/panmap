@@ -1,7 +1,7 @@
 #include "../pmi.hpp"
 #include "../seeding.hpp"
 #include "../tree.hpp"
-#include "PangenomeMAT.hpp"
+#include "panmanUtils.hpp"
 #include "index.pb.h"
 #include <boost/filesystem.hpp>
 #include <boost/test/unit_test.hpp>
@@ -207,7 +207,7 @@ void buildHelper3(::capnp::List<Mutations>::Reader &indexedSeedMutations, Tree *
 //   b.push(ifs);
 //   std::istream is(&b);
 
-//   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
+//   panmanUtils::Tree *T = new panmanUtils::Tree(is);
 
 //   std::vector<std::tuple<int, int, int>> parameters = {{15, 8, 1}};
  
@@ -597,13 +597,13 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
 
 //     is.close();
 //     os.close();
-//     PangenomeMAT::Node *root = T->root;
+//     panmanUtils::Node *root = T->root;
 //     struct seedIndex index;
 //     std::ifstream indexFile("./test.out");
-//     PangenomeMAT::loadIndex(T->root, indexFile, index);
+//     panmanUtils::loadIndex(T->root, indexFile, index);
 
 //     for (std::string f : files) {
-//         PangenomeMAT::placeSample(T, f, index, k, s);
+//         panmanUtils::placeSample(T, f, index, k, s);
 //     }
 // }
 
@@ -626,13 +626,13 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
 // // //     is.close();
 // // //     os.close();
 
-// // //     PangenomeMAT::Node *root = T->root;
+// // //     panmanUtils::Node *root = T->root;
 // // //     std::vector<read_t> reads;
 
 // // //     struct seedIndex index;
 // // //     std::ifstream indexFile("./test.out");
 
-// // //     PangenomeMAT::loadIndex(T->root, indexFile, index);
+// // //     panmanUtils::loadIndex(T->root, indexFile, index);
 
 // // //     auto fastq_start = std::chrono::high_resolution_clock::now();
 // // //     std::set<seed> readSyncmers = syncmersFromFastq("../r1.fastq",

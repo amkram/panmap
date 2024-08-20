@@ -1,7 +1,7 @@
 #ifndef __TREE_HPP
 #define __TREE_HPP
 
-#include "PangenomeMAT.hpp"
+#include "panmanUtils.hpp"
 #include "seeding.hpp"
 #include <iostream>
 #include <tuple>
@@ -61,7 +61,7 @@ struct tupleCoord_t {
 
 };
 
-static inline bool compareNucMuts(const PangenomeMAT::NucMut &a, const PangenomeMAT::NucMut &b) {
+static inline bool compareNucMuts(const panmanUtils::NucMut &a, const panmanUtils::NucMut &b) {
   return tupleCoord_t{a.primaryBlockId, a.nucPosition, a.nucGapPosition} < tupleCoord_t{b.primaryBlockId, b.nucPosition, b.nucGapPosition};
 }
 
@@ -477,7 +477,7 @@ typedef std::unordered_map<
 
 /* Helpers for interacting with panmats */
 namespace tree {
-using namespace PangenomeMAT;
+using namespace panmanUtils;
 
 typedef std::vector<
     std::pair<std::vector<std::pair<int64_t, std::vector<int64_t>>>,
