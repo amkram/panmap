@@ -2,8 +2,9 @@ FROM ubuntu:22.04
 WORKDIR /panmap
 ARG DEBIAN_FRONTEND=noninteractive
 
+RUN apt-get update --allow-insecure-repositories
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get install -y \
     build-essential \
     wget \
     curl \
@@ -18,7 +19,6 @@ RUN apt-get update && apt-get install -y \
     cmake \
     libssl-dev \
     unzip \
-    add-apt-repository \
     zip \
     make \
     git \
