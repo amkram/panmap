@@ -1,11 +1,44 @@
-
 FROM ubuntu:22.04
-
 WORKDIR /panmap
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y libncurses5-dev libboost-all-dev libssl-dev cmake g++ make git build-essential pkg-config coreutils autotools-dev libtool flex bison automake autoconf
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    wget \
+    curl \
+    ninja-build \
+    libhtscodecs-dev \
+    libncurses5-dev \
+    libbz2-dev \
+    zlib1g-dev \
+    libncursesw5-dev \
+    liblzma-dev \
+    libboost-all-dev \
+    cmake \
+    libssl-dev \
+    unzip \
+    zip \
+    make \
+    git \
+    pkg-config \
+    coreutils \
+    autotools-dev \
+    lzma \
+    libtool \
+    flex \
+    bison \
+    automake \
+    autoconf \
+    libprotobuf-dev \
+    protobuf-compiler 
 
 COPY . .
 
-RUN rm -rf build && mkdir build && cd build && cmake -DOPTION_DEBUG=OFF -DCMAKE_INSTALL_PREFIX=/usr/local .. && make -j && make install 
+ENV CMAKE_BUILD_PARALLEL_LEVEL=4
+RUN mkdir build && cd build && cmake .. && make -j4 && make install
+
+ENV LD_LIBRARY_PATH=/usr/local/lib
+
+RUN chmod +x /usr/local/bin/*
+
+CMD ["/usr/local/bin/panmap", "-h"]

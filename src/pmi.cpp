@@ -1,23 +1,13 @@
 #include "pmi.hpp"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
-#include "tree.hpp"
+#include "seed_annotated_tree.hpp"
 #include <algorithm>
 #include <iostream>
 #include <ranges>
 #include <sstream>
 #include <string>
 #include <unordered_set>
-#include "bm.h"
-#include "bmserial.h"
-#include "bmsparsevec.h"
-#include "bmsparsevec_serial.h"
-#include "bmsparsevec_util.h"
-#include "bmsparsevec_algo.h"
-#include "bmintervals.h"
-#include "bmsparsevec_compr.h"
-#include "bmstrsparsevec.h"
-#include "bmaggregator.h"
 #include <vector>
 #include <fstream>
 #include <memory>
@@ -33,125 +23,6 @@ enum Step {
   SPECTRUM
 };
 
-// Function to write data to a file in append mode
-template <typename T>
-void appendToFile(const std::string& filename, const T& data) {
-    std::ofstream outFile(filename, std::ios::binary | std::ios::app);
-    if (!outFile) {
-        throw std::runtime_error("Failed to open file for writing: " + filename);
-    }
-    outFile.write(reinterpret_cast<const char*>(&data), sizeof(T));
-    outFile.close();
-}
-
-// Function to write vector data to a file in append mode
-template <typename T>
-void appendVectorToFile(const std::string& filename, const std::vector<T>& data) {
-    std::ofstream outFile(filename, std::ios::binary | std::ios::app);
-    if (!outFile) {
-        throw std::runtime_error("Failed to open file for writing: " + filename);
-    }
-    size_t size = data.size();
-    outFile.write(reinterpret_cast<const char*>(&size), sizeof(size));
-    for (const auto& element : data) {
-        outFile.write(reinterpret_cast<const char*>(&element), sizeof(T));
-    }
-    outFile.close();
-}
-
-// Function to write map data to a file in append mode
-template <typename K, typename V>
-void appendMapToFile(const std::string& filename, const std::map<K, V>& data) {
-    std::ofstream outFile(filename, std::ios::binary | std::ios::app);
-    if (!outFile) {
-        throw std::runtime_error("Failed to open file for writing: " + filename);
-    }
-    size_t size = data.size();
-    outFile.write(reinterpret_cast<const char*>(&size), sizeof(size));
-    for (const auto& pair : data) {
-        outFile.write(reinterpret_cast<const char*>(&pair.first), sizeof(K));
-        outFile.write(reinterpret_cast<const char*>(&pair.second), sizeof(V));
-    }
-    outFile.close();
-}
-
-// Function to read vector data from a file
-template <typename T>
-void readVectorFromFile(const std::string& filename, std::vector<T>& data) {
-    std::ifstream inFile(filename, std::ios::binary);
-    if (!inFile) {
-        throw std::runtime_error("Failed to open file for reading: " + filename);
-    }
-    size_t size;
-    while (inFile.read(reinterpret_cast<char*>(&size), sizeof(size))) {
-        if constexpr (std::is_same_v<T, bool>) {
-            std::vector<char> temp(size);
-            if (!inFile.read(temp.data(), size)) {
-                throw std::runtime_error("Failed to read data from file: " + filename);
-            }
-            data.insert(data.end(), temp.begin(), temp.end());
-        } else {
-            std::vector<T> temp(size);
-            if (!inFile.read(reinterpret_cast<char*>(temp.data()), size * sizeof(T))) {
-                throw std::runtime_error("Failed to read data from file: " + filename);
-            }
-            data.insert(data.end(), temp.begin(), temp.end());
-        }
-    }
-    inFile.close();
-}
-
-// Function to read map data from a file
-template <typename K, typename V>
-void readMapFromFile(const std::string& filename, std::map<K, V>& data) {
-    std::ifstream inFile(filename, std::ios::binary);
-    if (!inFile) {
-        throw std::runtime_error("Failed to open file for reading: " + filename);
-    }
-    size_t size;
-    while (inFile.read(reinterpret_cast<char*>(&size), sizeof(size))) {
-        for (size_t i = 0; i < size; ++i) {
-            K key;
-            V value;
-            inFile.read(reinterpret_cast<char*>(&key), sizeof(key));
-            inFile.read(reinterpret_cast<char*>(&value), sizeof(value));
-            data[key] = value;
-        }
-    }
-    inFile.close();
-}
-
-// Function to test the consistency of gapMap, onSeeds, and seedVec
-void testConsistency(const std::string& buildPrefix, const std::string& placePrefix, int64_t dfsIndex) {
-    std::map<int64_t, int64_t> buildGapMap, placeGapMap;
-    std::vector<std::optional<std::string>> buildOnSeeds, placeOnSeeds;
-    std::vector<bool> buildSeedVec, placeSeedVec;
-
-    // Read build phase data
-    readMapFromFile(buildPrefix + "_gapMap.bin", buildGapMap);
-    readVectorFromFile(buildPrefix + "_onSeeds.bin", buildOnSeeds);
-    readVectorFromFile(buildPrefix + "_seedVec.bin", buildSeedVec);
-
-    // Read place phase data
-    readMapFromFile(placePrefix + "_gapMap.bin", placeGapMap);
-    readVectorFromFile(placePrefix + "_onSeeds.bin", placeOnSeeds);
-    readVectorFromFile(placePrefix + "_seedVec.bin", placeSeedVec);
-
-    // Compare gapMap
-    if (buildGapMap != placeGapMap) {
-        std::cerr << "Mismatch in gapMap for node " << dfsIndex << std::endl;
-    }
-
-    // Compare onSeeds
-    if (buildOnSeeds != placeOnSeeds) {
-        std::cerr << "Mismatch in onSeeds for node " << dfsIndex << std::endl;
-    }
-
-    // Compare seedVec
-    if (buildSeedVec != placeSeedVec) {
-        std::cerr << "Mismatch in seedVec for node " << dfsIndex << std::endl;
-    }
-}
 void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
 
   int64_t start;
@@ -741,7 +612,7 @@ tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
         
         if(blockStrand[coord.blockId - 1].first){
           //not inverted, jump to top of next block
-          coord = tupleCoord_t{coord.blockId - 1, navigator.sequence[coord.blockId - 1].first.size() - 1, -1};
+          coord = tupleCoord_t{coord.blockId - 1, (int64_t)navigator.sequence[coord.blockId - 1].first.size() - 1, -1};
         }else{
           //inverted, jump to bottom of next block
           coord.blockId -= 1;
@@ -793,7 +664,7 @@ tupleCoord_t expandRight(CoordNavigator &navigator, tupleCoord_t &coord,
 
         if( ! blockStrand[coord.blockId + 1].first){
           //inverted, jump to top of next block
-          coord = tupleCoord_t{coord.blockId + 1, navigator.sequence[coord.blockId + 1].first.size() - 1, -1};
+          coord = tupleCoord_t{coord.blockId + 1, (int64_t)navigator.sequence[coord.blockId + 1].first.size() - 1, -1};
         }else{
           //not inverted, jump to bottom of next block
           coord.blockId += 1;
@@ -1260,11 +1131,6 @@ extractSeedmers(const std::string &seq, const int k, const int s,
   return syncmers;
 }
 
-struct LinkedSeed {
-  int64_t pos;
-  std::string seq;
-  struct LinkedSeed *next;
-};
 
 bool debug = false;
 bool gappity = true;
@@ -1370,7 +1236,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       return A < B; // Default comparison
     });
 
-
     std::vector<tupleRange> merged;
 
     merged = expandAndMergeRanges(navigator, recompRanges, seedK, data.blockExists, data.blockStrand, globalCoords);
@@ -1379,19 +1244,19 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
     if(data.sequence[0].first[0].second.size() == 0){
       start.nucGapPos = -1;
     }
-    tupleCoord_t end = tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1};
+    tupleCoord_t end = tupleCoord_t{(int64_t)data.sequence.size() - 1, (int64_t)data.sequence.back().first.size() - 1, -1};
 
     // Seed re-processing
     for (auto &range : std::ranges::reverse_view(merged))
     {
       bool atGlobalEnd = false;
-      if (range.stop >= tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1})
+      if (range.stop >= tupleCoord_t{(int64_t)data.sequence.size() - 1, (int64_t)data.sequence.back().first.size() - 1, -1})
       {
         atGlobalEnd = true;
-        range.stop = tupleCoord_t{data.sequence.size() - 1, data.sequence.back().first.size() - 1, -1};
+        range.stop = tupleCoord_t{(int64_t)data.sequence.size() - 1, (int64_t)data.sequence.back().first.size() - 1, -1};
       }
       //Get mutated sequence to re calculate seeds 
-      auto answer = tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
+      auto answer = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(range.start, range.stop, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
       std::string seq = std::get<0>(answer);
       std::vector<int> coords = std::get<1>(answer);
       std::vector<int> gaps  = std::get<2>(answer);
@@ -1613,9 +1478,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         gapMap.erase(range.first);
       }
     }
-    // appendMapToFile( "build_gapMap.bin", gapMap);
-    // appendVectorToFile( "build_onSeeds.bin", onSeeds);
-    // appendVectorToFile( "build_seedVec.bin", seedVec);
 
     merged.clear();
     recompRanges.clear();
@@ -1666,7 +1528,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
                     seedChanges.emplace_back(std::make_tuple(pos + k / 2, true, false, onSeeds[pos + k / 2], std::nullopt));
                 } else if (ternaryNumber == 2) {
                     // Handle insertion/change
-                    std::string newSeed = tree::getSeedAt(pos + k / 2, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap);
+                    std::string newSeed = seed_annotated_tree::getSeedAt(pos + k / 2, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap);
                     if (seedVec[pos + k / 2]) { // on -> on
                         seedChanges.emplace_back(std::make_tuple(pos + k / 2, true, true, onSeeds[pos + k / 2], newSeed));
                     } else { // off -> on
@@ -1704,14 +1566,20 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       } 
   }
   
+  // print out seeds at node
+  std::cout << "(" << (method == Step::BUILD ? "Build" : "Place") << ") Seeds at node " << node->identifier << std::endl;
+  for (int i = 0; i < seedVec.size(); i++) {
+    if (seedVec[i]) {
+      std::cout << i << " " << onSeeds[i].value() << " ";
+    }
+    std::cout << std::endl;
+  }
   /* Recursive step */
   dfsIndex++;
   for (Node *child : node->children) {
     buildOrPlace(method, data, seedVec, onSeeds, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap);
   }
 
-  /* Undo sequence mutations when backtracking */
-  undoMutations(data, T, node, blockMutationInfo, mutationInfo, globalCoords);
 
   for (const auto &p : seedChanges) {
     bool oldVal = std::get<1>(p);
@@ -1753,10 +1621,10 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
 void pmi::build(Tree *T, Index::Builder &index)
 {
   // Setup for seed indexing
-  tree::mutableTreeData data;
-  tree::globalCoords_t globalCoords;
+ seed_annotated_tree::mutableTreeData data;
+ seed_annotated_tree::globalCoords_t globalCoords;
 
-  tree::setup(data, globalCoords, T);
+ seed_annotated_tree::setup(data, globalCoords, T);
   
   CoordNavigator navigator(data.sequence);
 

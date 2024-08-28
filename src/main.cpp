@@ -1,7 +1,7 @@
 #include "genotype.hpp"
 #include "place.hpp"
 #include "pmi.hpp"
-#include "tree.hpp"
+#include "seed_annotated_tree.hpp"
 #include <panmanUtils.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/iostreams/filter/lzma.hpp>

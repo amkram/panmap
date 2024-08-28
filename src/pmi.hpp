@@ -4,13 +4,13 @@
 //#include <__config>
 #pragma once
 #include "seeding.hpp"
-#include "tree.hpp"
+#include "seed_annotated_tree.hpp"
 #include "index.capnp.h"
 #include <unordered_map>
 
 using namespace panmanUtils;
 using namespace seeding;
-using namespace tree;
+using namespace seed_annotated_tree;
 
 
 

@@ -11,7 +11,7 @@
 
 using namespace panmanUtils;
 using namespace seeding;
-using namespace tree;
+using namespace seed_annotated_tree;
 using namespace pmi;
 
 
@@ -36,7 +36,7 @@ BOOST_AUTO_TEST_CASE(sequenceReconstruction) {
     panmanUtils::Tree *T = new panmanUtils::Tree(inputStream);
 
     /* Get all sequences */
-    std::unordered_map<std::string, std::string> resultSequences = tree::getAllNodeStrings(T);
+    std::unordered_map<std::string, std::string> resultSequences = seed_annotated_tree::getAllNodeStrings(T);
   
     /* Do they match expected sequences from aligned fasta? */
     for (auto r : expectedSequences) {

@@ -3,11 +3,11 @@
 
 #pragma once
 #include <iostream>
-#include "tree.hpp"
+#include "seed_annotated_tree.hpp"
 
 namespace genotype {
     using namespace std;
-    using namespace tree;
+    using namespace seed_annotated_tree;
 
     struct VariationSite {
         VariationSite(

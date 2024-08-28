@@ -18,7 +18,7 @@ void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const tree::mutationMatrices& mutMat);
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -61,11 +61,11 @@ int main(int argc, char *argv[]) {
         int rep                = vm["rep"].as<int>();
         
         // Check mut_spec
-        tree::mutationMatrices mutMat = tree::mutationMatrices();
+       seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
         if (out_dir != "") {
             if (fs::exists(mut_spec)) {
                 std::ifstream mminf(mut_spec);
-                tree::fillMutationMatricesFromFile(mutMat, mminf);
+               seed_annotated_tree::fillMutationMatricesFromFile(mutMat, mminf);
                 mminf.close();
             } else {
                 throw std::invalid_argument("--mut_sepc input file doesn't exist");
@@ -206,7 +206,7 @@ char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<
     return chars[index];
 }
 
-char subNuc(char ref, const tree::mutationMatrices& mutMat) {
+char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat) {
     std::vector<char> bases = {'A', 'C', 'G', 'T'};
     int refIdx = getIndexFromNucleotide(ref);
     if (refIdx > 3) {
@@ -232,7 +232,7 @@ char subNuc(char ref, const tree::mutationMatrices& mutMat) {
     return getRandomCharWithWeights(bases, wgts);
 }
 
-size_t genLen(const std::pair<int, int>& indel_len, const tree::mutationMatrices& mutMat, int type) {
+size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type) {
     std::random_device rd;
     std::mt19937 gen(rd());
 
@@ -267,7 +267,7 @@ size_t genLen(const std::pair<int, int>& indel_len, const tree::mutationMatrices
 }
 
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
-    const tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
+    const seed_annotated_tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
     size_t beg, size_t end)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
@@ -410,7 +410,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const tree::mutationMatrices& mutMat)
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
