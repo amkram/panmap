@@ -66,11 +66,7 @@ DEALINGS IN THE SOFTWARE.  */
 #include "htslib/kseq.h"
 #include "htslib/ksort.h"
 #include "htslib/tbx.h"
-#if defined(HAVE_EXTERNAL_LIBHTSCODECS)
-#include <htscodecs/htscodecs.h>
-#else
 #include "htscodecs/htscodecs/htscodecs.h"
-#endif
 
 #ifndef EFTYPE
 #define EFTYPE ENOEXEC
@@ -146,7 +142,7 @@ const char *hts_test_feature(unsigned int id) {
         return feat & HTS_FEATURE_LZMA ? "yes" : NULL;
 
     case HTS_FEATURE_HTSCODECS:
-        return htscodecs_version();
+        return HTSCODECS_VERSION;
 
     case HTS_FEATURE_CC:
         return HTS_CC;
@@ -222,11 +218,11 @@ const char *hts_feature_string(void) {
 #ifdef ENABLE_PLUGINS
     snprintf(config, sizeof(config),
              "%s plugin-path=%.1000s htscodecs=%.40s",
-             flags, hts_plugin_path(), htscodecs_version());
+             flags, hts_plugin_path(), HTSCODECS_VERSION);
 #else
     snprintf(config, sizeof(config),
              "%s htscodecs=%.40s",
-             flags, htscodecs_version());
+             flags, HTSCODECS_VERSION);
 #endif
     return config;
 }

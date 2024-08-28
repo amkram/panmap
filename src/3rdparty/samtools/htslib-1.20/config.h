@@ -29,22 +29,22 @@
 /* Define if you have the Common Crypto library. */
 /* #undef HAVE_COMMONCRYPTO */
 
-/* Define to 1 if you have the 'drand48' function. */
+/* Define to 1 if you have the `drand48' function. */
 #define HAVE_DRAND48 1
 
 /* Define if using an external libhtscodecs */
 /* #undef HAVE_EXTERNAL_LIBHTSCODECS */
 
-/* Define to 1 if you have the 'fdatasync' function. */
+/* Define to 1 if you have the `fdatasync' function. */
 #define HAVE_FDATASYNC 1
 
-/* Define to 1 if you have the 'fsync' function. */
+/* Define to 1 if you have the `fsync' function. */
 #define HAVE_FSYNC 1
 
-/* Define to 1 if you have the 'getpagesize' function. */
+/* Define to 1 if you have the `getpagesize' function. */
 #define HAVE_GETPAGESIZE 1
 
-/* Define to 1 if you have the 'gmtime_r' function. */
+/* Define to 1 if you have the `gmtime_r' function. */
 #define HAVE_GMTIME_R 1
 
 /* Define if you have libcrypto-style HMAC(). */
@@ -53,7 +53,7 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
 
-/* Define to 1 if you have the 'bz2' library (-lbz2). */
+/* Define to 1 if you have the `bz2' library (-lbz2). */
 /* #undef HAVE_LIBBZ2 */
 
 /* Define if libcurl file access is enabled. */
@@ -62,22 +62,22 @@
 /* Define if libdeflate is available. */
 /* #undef HAVE_LIBDEFLATE */
 
-/* Define to 1 if you have the 'lzma' library (-llzma). */
+/* Define to 1 if you have the `lzma' library (-llzma). */
 /* #undef HAVE_LIBLZMA */
 
-/* Define to 1 if you have the 'z' library (-lz). */
+/* Define to 1 if you have the `z' library (-lz). */
 #define HAVE_LIBZ 1
 
 /* Define to 1 if you have the <lzma.h> header file. */
 /* #undef HAVE_LZMA_H */
 
-/* Define to 1 if you have a working 'mmap' system call. */
+/* Define to 1 if you have a working `mmap' system call. */
 #define HAVE_MMAP 1
 
 /* Defined to 1 if rANS source using popcnt can be compiled. */
 #define HAVE_POPCNT 1
 
-/* Define to 1 if you have the 'srand48_deterministic' function. */
+/* Define to 1 if you have the `srand48_deterministic' function. */
 /* #undef HAVE_SRAND48_DETERMINISTIC */
 
 /* Defined to 1 if rANS source using SSE4.1 can be compiled. */
@@ -134,7 +134,7 @@
 /* Platform-dependent plugin filename extension. */
 /* #undef PLUGIN_EXT */
 
-/* Define to 1 if all of the C89 standard headers exist (not just the ones
+/* Define to 1 if all of the C90 standard headers exist (not just the ones
    required in a freestanding environment). This macro is provided for
    backward compatibility; new code need not use it. */
 #define STDC_HEADERS 1
@@ -148,14 +148,8 @@
 /* Number of bits in a file offset, on hosts where this is settable. */
 /* #undef _FILE_OFFSET_BITS */
 
-/* Define to 1 on platforms where this makes off_t a 64-bit type. */
+/* Define for large files, on AIX-style hosts. */
 /* #undef _LARGE_FILES */
-
-/* Number of bits in time_t, on hosts where this is settable. */
-/* #undef _TIME_BITS */
 
 /* Specify X/Open requirements */
 #define _XOPEN_SOURCE 600
-
-/* Define to 1 on platforms where this makes time_t a 64-bit type. */
-/* #undef __MINGW_USE_VC2005_COMPAT */
