@@ -2,6 +2,7 @@ FROM ubuntu:22.04
 WORKDIR /panmap
 ARG DEBIAN_FRONTEND=noninteractive
 
+
 RUN apt-get update && apt-get install -y \
     build-essential \
     wget \
@@ -17,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     libssl-dev \
     unzip \
+    add-apt-repository \
     zip \
     make \
     git \
