@@ -1572,8 +1572,8 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
     if (seedVec[i]) {
       std::cout << i << " " << onSeeds[i].value() << " ";
     }
-    std::cout << std::endl;
   }
+    std::cout << std::endl;
   /* Recursive step */
   dfsIndex++;
   for (Node *child : node->children) {
