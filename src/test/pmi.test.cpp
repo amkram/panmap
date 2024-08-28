@@ -118,8 +118,8 @@ void buildHelper3(::capnp::List<Mutations>::Reader &indexedSeedMutations, Tree *
     seedMap[p.first] = p.second;
   }
 
-  // std::string node_seq = tree::getStringAtNode(node, T, true);
-  // std::string node_seq_nogap = tree::getStringAtNode(node, T, false);
+  // std::string node_seq = seed_annotated_tree::getStringAtNode(node, T, true);
+  // std::string node_seq_nogap = seed_annotated_tree::getStringAtNode(node, T, false);
 
   // std::unordered_map<int32_t, int32_t> degap;
   // std::unordered_map<int32_t, int32_t> regap;
@@ -214,11 +214,11 @@ void buildHelper3(::capnp::List<Mutations>::Reader &indexedSeedMutations, Tree *
   
 //   for (const auto &param : parameters) {
   
-//     tree::mutableTreeData data;
-//     tree::globalCoords_t globalCoords;
+//    seed_annotated_tree::mutableTreeData data;
+//    seed_annotated_tree::globalCoords_t globalCoords;
 //     std::unordered_map<int64_t, tupleCoord_t> scalarToTupleCoord;
 //     std::unordered_map<int64_t, int64_t> gapRuns;
-//     tree::setup(data, globalCoords, T, scalarToTupleCoord);
+//    seed_annotated_tree::setup(data, globalCoords, T, scalarToTupleCoord);
 //     seedMap_t seedMap;
     
 //     CoordNavigator navigator(data.sequence);
@@ -264,8 +264,8 @@ void buildHelper3(::capnp::List<Mutations>::Reader &indexedSeedMutations, Tree *
 //        std::string outSeedmersPath = dirName + node_idn + ".true.alan.pmi";
 //        Node *nod= n.second;
       
-//        std::string node_seq = tree::getStringAtNode(nod, T, true);
-//         std::string node_seq_nogap = tree::getStringAtNode(nod, T, false);
+//        std::string node_seq = seed_annotated_tree::getStringAtNode(nod, T, true);
+//         std::string node_seq_nogap = seed_annotated_tree::getStringAtNode(nod, T, false);
 
 //        std::vector<std::tuple<std::string, int, int>> seedmers =
 //            extractSeedmers(node_seq, k, s, j, false);
@@ -398,11 +398,11 @@ extractSeedmers(const std::string &seq, const int k, const int s, const int l,
 /*
 BOOST_AUTO_TEST_CASE(getNucSeq)
 {
-    using namespace tree;
+    using namespace seed_annotated_tree;
 
     size_t k = 5;
     size_t s = 3;
-    tree::mutableTreeData data;
+   seed_annotated_tree::mutableTreeData data;
     std::string seq = "----A-A-CCG---TLEMONC--CC---------";
     const sequence_t sequence = {
       {
@@ -491,7 +491,7 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
     CoordNavigator navigator(sequence);
 
     std::string wholeSeq =
-      tree::getNucleotideSequenceFromBlockCoordinates(start, end, sequence,
+     seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(start, end, sequence,
       blockExists, blockStrand, T, node, globalCoords, navigator);
     std::cout << wholeSeq << "\n";
     BOOST_TEST(wholeSeq == seq);
@@ -505,7 +505,7 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
 
 // BOOST_AUTO_TEST_CASE(_getRecomputePositions)
 // {
-//     using namespace tree;
+//     using namespace seed_annotated_tree;
 //     int32_t k = 3;
 
 //     range_t a = {6, 1, 0};

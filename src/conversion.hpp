@@ -1,5 +1,5 @@
 #include "util.hpp"
-#include "tree.hpp"
+#include "seed_annotated_tree.hpp"
 
 extern "C" {
     #include <htslib/sam.h>
@@ -43,6 +43,6 @@ void createMplp(
 
 void createVcf(
     char *mplpString,
-    const tree::mutationMatrices& mutMat,
+    const seed_annotated_tree::mutationMatrices& mutMat,
     std::string &vcfFileName
 );

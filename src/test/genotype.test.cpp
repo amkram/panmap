@@ -11,7 +11,7 @@
 #include "../tree.hpp"
 
 using namespace std;
-using namespace tree;
+using namespace seed_annotated_tree;
 namespace fs = boost::filesystem;
 
 size_t getStart_brute(const std::string& s1, const std::string& s2, size_t window, double threshold);
@@ -62,7 +62,7 @@ BOOST_AUTO_TEST_CASE(edgeMaskingForBuildingMutMat) {
         const std::string& parSeq = alignedSequences[parentId];
         size_t bruteBeg = getStart_brute(curSeq, parSeq, 20, 0.8);
         size_t bruteEnd = getEnd_brute(curSeq, parSeq, 20, 0.8);
-        std::pair<size_t, size_t> maskCoors = tree::getMaskCoorsForMutmat(curSeq, parSeq, 20, 0.8);
+        std::pair<size_t, size_t> maskCoors = seed_annotated_tree::getMaskCoorsForMutmat(curSeq, parSeq, 20, 0.8);
         BOOST_TEST(bruteBeg == maskCoors.first);
         BOOST_TEST(bruteEnd == maskCoors.second);
     }

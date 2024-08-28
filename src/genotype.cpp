@@ -5,7 +5,7 @@
 #include <string>
 
 using namespace std;
-using namespace tree;
+using namespace   seed_annotated_tree;
 using namespace genotype;
 
 enum variationType {

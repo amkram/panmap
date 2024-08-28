@@ -323,7 +323,7 @@ void createMplp(
 //destroys mplpString
 void createVcf(
     char *mplpString,
-    const tree::mutationMatrices& mutMat,
+    const seed_annotated_tree::mutationMatrices& mutMat,
     std::string &vcfFileName
 )   {
     // Convert c string of mpileup to ifstream

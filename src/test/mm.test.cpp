@@ -47,12 +47,12 @@ BOOST_AUTO_TEST_CASE(getNucSeq)
   PangenomeMAT::Tree *T = new PangenomeMAT::Tree(is);
 
   // std::cout << "brute force mutation matrix:" << std::endl;
-  // tree::mutationMatrices mutMat;
-  // tree::fillMutationMatricesFromTree(mutMat, T, 0, 0);
+  // seed_annotated_tree::mutationMatrices mutMat;
+  // seed_annotated_tree::fillMutationMatricesFromTree(mutMat, T, 0, 0);
 
   std::cout << "faster mutation matrix:" << std::endl;
-  tree::mutationMatrices mutMat2;
-  tree::fillMutationMatricesFromTree_test(mutMat2, T, 100, 0.80);
+  seed_annotated_tree::mutationMatrices mutMat2;
+  seed_annotated_tree::fillMutationMatricesFromTree_test(mutMat2, T, 100, 0.80);
 
 
 }
