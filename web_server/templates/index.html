@@ -9,7 +9,14 @@
     <h1>Panmap Debugging Panel</h1>
     <div>
         <h2>Node Genome</h2>
-        <pre>{{ data.genome }}</pre>
+        <ul>
+            {% for node in nodes %}
+            <li>Node ID: {{ node.id }}</li>
+            <li>Genome: {{ node.genome }}</li>
+            <li>Aligned Seeds: {{ node.aligned_seeds | join(', ') }}</li>
+            <li>Mutations: {{ node.mutations | join(', ') }}</li>
+            {% endfor %}
+        </ul>
     </div>
     <div>
         <h2>Seeds</h2>
