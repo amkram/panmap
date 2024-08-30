@@ -11,6 +11,8 @@
 #include <vector>
 #include <fstream>
 #include <memory>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <variant>
 #include <capnp/serialize.h>
 #include <capnp/message.h>
@@ -57,6 +59,21 @@ void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
 
     }
   } 
+}
+
+void exportDataToJson(Tree* T, const std::string& filename) {
+    nlohmann::json jsonData;
+    // Example: Add nodes and their data to JSON
+    for (const auto& node : T->allNodes) {
+        jsonData["nodes"].push_back({
+            {"id", node->identifier},
+            {"genome", "example_genome_data"},  // Replace with actual genome data
+            {"seeds", "example_seeds_data"},    // Replace with actual seeds data
+            {"mutations", "example_mutations_data"}  // Replace with actual mutations data
+        });
+    }
+    std::ofstream file(filename);
+    file << jsonData.dump(4);  // Pretty print with 4 spaces
 }
 
 void applyMutations(mutableTreeData &data,

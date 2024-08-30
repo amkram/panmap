@@ -161,12 +161,6 @@ void log(const std::string& message) {
     std::cout << message << std::endl;
 }
 
-void startWebServer() {
-    std::thread([]() {
-        std::system("python3 web_server/app.py");
-    }).detach();
-}
-
 int main(int argc, const char** argv) {
     startWebServer();
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
@@ -195,6 +189,8 @@ int main(int argc, const char** argv) {
       std::cerr << "Failed to load guide panMAN/panMAT.\n";
       return 1;
     }
+
+    exportDataToJson(T, "web_server/data.json");
 
     log("--- Settings ---");
     log("Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");

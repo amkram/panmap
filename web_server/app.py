@@ -3,10 +3,8 @@ import json
 
 app = Flask(__name__)
 
-# Load data from a JSON file or any other source
-# This is a placeholder for the actual data loading logic
 def load_data():
-    with open('data.json', 'r') as f:
+    with open('web_server/data.json', 'r') as f:
         return json.load(f)
 
 @app.route('/')
