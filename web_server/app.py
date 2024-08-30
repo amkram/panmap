@@ -6,11 +6,6 @@ app = Flask(__name__)
 def load_data():
     with open('web_server/data.json', 'r') as f:
         data = json.load(f)
-        # Assuming data.json contains nodes with genome, seeds, and mutations
-        for node in data.get('nodes', []):
-            node['genome'] = load_genome(node['id'])
-            node['aligned_seeds'] = load_aligned_seeds(node['id'])
-            node['mutations'] = load_mutations(node['id'])
         return data
 
 def load_genome(node_id):
