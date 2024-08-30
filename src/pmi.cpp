@@ -626,7 +626,7 @@ void undoMutations(mutableTreeData &data, Tree *T,
 // Go upstream until neededNongap nucleotides are seen and return the new coord.
 tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
                         int neededNongap, blockExists_t &blockExists,
-                                             blockStrand_t &blockStrand, tupleCoord_t stop_coord={-1,-1,-1})
+                                             blockStrand_t &blockStrand, tupleCoord_t stop_coord)
 {
   int count = -1;
   
