@@ -1,5 +1,16 @@
 {
-    "genome": "ATCGATCGATCG...",
-    "seeds": "Seed1, Seed2, Seed3...",
-    "mutations": "Mutation1, Mutation2, Mutation3..."
+    "nodes": [
+        {
+            "id": 1,
+            "genome": "ATCGATCGATCG...",
+            "aligned_seeds": ["Seed1", "Seed2", "Seed3"],
+            "mutations": ["Mutation1", "Mutation2", "Mutation3"]
+        },
+        {
+            "id": 2,
+            "genome": "GCTAGCTAGCTA...",
+            "aligned_seeds": ["Seed4", "Seed5"],
+            "mutations": ["Mutation4"]
+        }
+    ]
 }
