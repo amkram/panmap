@@ -23,6 +23,9 @@
 #include <thread>
 #include <cstdlib>
 
+void startWebServer();
+void exportDataToJson(panmanUtils::Tree* T, const std::string& filename);
+
 
 using namespace pmi;
 namespace po = boost::program_options;
