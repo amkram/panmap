@@ -37,4 +37,9 @@ def update_data():
     # For example, you might want to store it in a global variable or a database
     print("Received data:", data)
     return "Data received", 200
+def startWebServer():
     app.run(debug=True)
+
+def exportDataToJson(T, filename):
+    # Implement the logic to export data to JSON
+    pass
