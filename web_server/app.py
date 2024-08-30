@@ -12,5 +12,10 @@ def index():
     data = load_data()
     return render_template('index.html', data=data)
 
+@app.route('/control-panel')
+def control_panel():
+    data = load_data()
+    return render_template('control_panel.html', data=data)
+
 if __name__ == '__main__':
     app.run(debug=True)
