@@ -1406,8 +1406,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
     }
     
 
-    auto seedMutationsBuilder = perNodeSeedMutations_Index[dfsIndex];
-
     int seedChangeIndex = seedChanges.size() - 1;
     int maskIndex = 0;
 
@@ -1450,34 +1448,65 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         }
         masks_all.push_back(masks);
     }
-    auto perPosMasksBuilder = perNodeSeedMutations_Index[dfsIndex].initPerPosMasks(masks_all.size());
-    for (int i = 0; i < masks_all.size(); i++) {
-      const auto &masks = masks_all[i];
-      auto maskBuilder = perPosMasksBuilder[i].initMasks(masks.size());
-      // Store the ternary numbers in the perMutMasks
-      for (int j = 0; j < masks.size(); j++) {
-        const auto& mask = masks[j];
-        uint32_t tritMask = 0;
-        for (int k = 0; k < mask.size(); k++) {
-          tritMask |= (mask[k] & 0x3) << (k * 2);
-        }
-        maskBuilder.set(j, tritMask);
-      }
-    }
 
-    auto gapMutationsBuilder = perNodeGapMutations_Index[dfsIndex].initDeltas(gapRunBacktracks.size());
-    for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
-      const auto& [del, range] = *it;
-      if (del) {
-        gapMutationsBuilder[gapMutationsBuilder.size() - 1].setPos(range.first);
-        gapMutationsBuilder[gapMutationsBuilder.size() - 1].initMaybeValue().setValue(range.second);
-        gapMap[range.first] = range.second;
-      } else {
-        gapMutationsBuilder[gapMutationsBuilder.size() - 1].setPos(range.first);
-        gapMutationsBuilder[gapMutationsBuilder.size() - 1].initMaybeValue().setNone();
-        gapMap.erase(range.first);
+
+
+    if constexpr (std::is_same_v<SeedMutationsType, ::capnp::List<SeedMutations>::Builder>) {
+        auto basePositionsBuilder = perNodeSeedMutations_Index[dfsIndex].initBasePositions(basePositions.size());
+        auto perPosMasksBuilder = perNodeSeedMutations_Index[dfsIndex].initPerPosMasks(masks_all.size());
+
+        std::cout << "Writing seeds for Node " << node->identifier << " at DFS index " << dfsIndex << std::endl;
+        std::cout << "Base Positions count: " << basePositions.size() << std::endl;
+        std::cout << "Masks count: " << masks_all.size() << std::endl;
+        for (int i = 0; i < masks_all.size(); i++) {
+          const auto &masks = masks_all[i];
+          auto maskBuilder = perPosMasksBuilder[i].initMasks(masks.size());
+          // Store the ternary numbers in the perMutMasks
+          for (int j = 0; j < masks.size(); j++) {
+            const auto& mask = masks[j];
+            uint32_t tritMask = 0;
+            for (int k = 0; k < mask.size(); k++) {
+              tritMask |= (mask[k] & 0x3) << (k * 2);
+            }
+            maskBuilder.set(j, tritMask);
+          }
+        }
+        for (int i = 0; i < basePositions.size(); i++) {
+          basePositionsBuilder.set(i, basePositions[i]);
+          std::cout << "dfs_i: " << dfsIndex << " basePos: " << basePositions[i] << " = " << basePositions[i] << std::endl;
+        }
+    }
+    auto nodeGapBuilder = perNodeGapMutations_Index[dfsIndex];
+    if constexpr (std::is_same_v<GapMutationsType, ::capnp::List<GapMutations>::Builder>) {
+      auto gapMutationsBuilder = nodeGapBuilder.initDeltas(gapRunBacktracks.size());
+      for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
+        const auto& [del, range] = *it;
+        if (del) {
+          gapMutationsBuilder[gapMutationsBuilder.size() - 1].setPos(range.first);
+          gapMutationsBuilder[gapMutationsBuilder.size() - 1].initMaybeValue().setValue(range.second);
+          gapMap[range.first] = range.second;
+        } else {
+          gapMutationsBuilder[gapMutationsBuilder.size() - 1].setPos(range.first);
+          gapMutationsBuilder[gapMutationsBuilder.size() - 1].initMaybeValue().setNone();
+          gapMap.erase(range.first);
+        }
       }
     }
+    std::cout << "Capnp writes at this node: " << dfsIndex << std::endl;
+    for (int i = 0; i < basePositions.size(); i++) {
+      std::cout << basePositions[i] << " ";
+    }
+    std::cout << std::endl;
+    for (int i = 0; i < masks_all.size(); i++) {
+      for (int j = 0; j < masks_all[i].size(); j++) {
+        for (int k = 0; k < masks_all[i][j].size(); k++) {
+          std::cout << (int)masks_all[i][j][k] << " ";
+        }
+        std::cout << std::endl;
+      }
+    }
+    std::cout << std::endl;
+    
 
     merged.clear();
     recompRanges.clear();
@@ -1503,21 +1532,12 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       }
     }
 
-    ::capnp::List<SeedMutations>::Reader seedMutationsList;
-    if constexpr (std::is_same_v<SeedMutationsType, ::capnp::List<SeedMutations>::Reader>) {
-      seedMutationsList = perNodeSeedMutations_Index[dfsIndex];
-    }
-
-        // Assuming dfsIndex is the current node index
-        auto seedMutations = seedMutationsList[dfsIndex];
-
-        // Process seed mutations
-        auto basePositions = seedMutations.getBasePositions();
-        auto perPosMasks = seedMutations.getPerPosMasks();
-
-        for (int i = 0; i < basePositions.size(); ++i) {
-            int64_t pos = basePositions[i];
-            auto masks = perPosMasks[i].getMasks();
+    auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
+    auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
+    std::vector<std::vector<int8_t>> masks;
+    for (int i = 0; i < currBasePositions.size(); ++i) {
+        int64_t pos = currBasePositions[i];
+        auto masks = currPerPosMasks[i].getMasks();
 
         for (int j = 0; j < masks.size(); ++j) {
             uint32_t tritMask = masks[j];
@@ -1538,8 +1558,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
             }
         }
       }
-
-
   }
   
 
@@ -1577,7 +1595,9 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
   /* Recursive step */
   dfsIndex++;
   for (Node *child : node->children) {
-    buildOrPlace(method, data, seedVec, onSeeds, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap);
+    buildOrPlace(
+      method, data, seedVec, onSeeds, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap
+    );
   }
 
 
@@ -1679,17 +1699,89 @@ void pmi::build(Tree *T, Index::Builder &index)
     coord = navigator.newdecrement(coord, data.blockStrand);
   }
 
-  ::capnp::List<SeedMutations>::Builder perNodeSeedMutations_Index = index.initPerNodeSeedMutations(T->allNodes.size());
-  ::capnp::List<GapMutations>::Builder perNodeGapMutations_Index = index.initPerNodeGapMutations(T->allNodes.size());
+  ::capnp::List<SeedMutations>::Builder perNodeSeedMutations_Builder = index.initPerNodeSeedMutations(T->allNodes.size());
+  ::capnp::List<GapMutations>::Builder perNodeGapMutations_Builder = index.initPerNodeGapMutations(T->allNodes.size());
 
   int64_t dfsIndex = 0;
 
   std::vector<bool> seedVec(globalCoords.back().first.back().first + 1, false);
   std::vector<std::optional<std::string>> onSeeds(globalCoords.back().first.back().first + 1, std::nullopt);
 
-  buildOrPlace(Step::BUILD, data, seedVec, onSeeds, perNodeSeedMutations_Index, perNodeGapMutations_Index, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap);
+  buildOrPlace<decltype(perNodeSeedMutations_Builder), decltype(perNodeGapMutations_Builder)>(
+    Step::BUILD, data, seedVec, onSeeds, perNodeSeedMutations_Builder, perNodeGapMutations_Builder, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap
+  );
+}
 
-  
-  //buildOrPlace(Step::PLACE, data, seedVec, onSeeds, perNodeSeedMutations_Index, perNodeGapMutations_Index, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap);
+void pmi::place(Tree *T, Index::Reader &index)
+{
+    // Setup for seed indexing
+    seed_annotated_tree::mutableTreeData data;
+    seed_annotated_tree::globalCoords_t globalCoords;
 
+    seed_annotated_tree::setup(data, globalCoords, T);
+    
+    CoordNavigator navigator(data.sequence);
+
+    std::vector<int> BlockSizes(data.sequence.size(),0);
+    std::vector<std::pair<int64_t, int64_t>> blockRanges(data.blockExists.size());
+
+    int32_t k = index.getK();
+    int32_t s = index.getS();
+    
+    std::map<int64_t, int64_t> gapMap;
+
+    gapMap[0] = tupleToScalarCoord({blockRanges.size() - 1, globalCoords[blockRanges.size() - 1].first.size() - 1, -1}, globalCoords);
+    
+    std::vector<int64_t> scalarCoordToBlockId(globalCoords.back().first.back().first + 1);
+    auto currCoord = tupleCoord_t{0,0,0};
+    if(navigator.sequence[0].first[0].second.empty()) {
+        currCoord.nucGapPos = -1;
+    }
+
+    for (int64_t i = 0; i < scalarCoordToBlockId.size(); i++) {
+        scalarCoordToBlockId[i] = currCoord.blockId;
+        BlockSizes[currCoord.blockId]++;
+        currCoord = navigator.newincrement(currCoord, data.blockStrand);
+    }
+
+    for (int64_t i = 0; i < blockRanges.size(); ++i) {
+        int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
+        int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
+        blockRanges[i] = std::make_pair(start, end);
+    }
+
+    std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
+
+    tupleCoord_t coord = {0, 0, globalCoords[0].first[0].second.empty() ? -1 : 0};
+    auto curIt = gapMap.end();
+
+    while (coord < tupleCoord_t{-1, -1, -1}) {
+        char c = coord.nucGapPos == -1 ? data.sequence[coord.blockId].first[coord.nucPos].first : data.sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
+        int64_t scalar = tupleToScalarCoord(coord, globalCoords);
+        if (c == '-' || c == 'x') {
+            if (!gapMap.empty() && curIt->second + 1 == scalar) {
+                ++curIt->second;
+            } else {
+                auto tmpIt = gapMap.emplace(scalar, scalar);
+                curIt = tmpIt.first;
+            }
+        }
+        coord = navigator.newincrement(coord, data.blockStrand);
+    }
+
+    if (coord.blockId != -1 && !data.blockExists[coord.blockId].first) {
+        coord = navigator.newdecrement(coord, data.blockStrand);
+    }
+
+    ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader= index.getPerNodeSeedMutations();
+    ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
+
+    int64_t dfsIndex = 0;
+
+    std::vector<bool> seedVec(globalCoords.back().first.back().first + 1, false);
+    std::vector<std::optional<std::string>> onSeeds(globalCoords.back().first.back().first + 1, std::nullopt);
+    
+    buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
+      Step::PLACE, data, seedVec, onSeeds, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap
+    );
 }

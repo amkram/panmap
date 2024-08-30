@@ -13,10 +13,8 @@ set(ABSL_PROPAGATE_CXX_STD ON)
 
 
 # Project options
-option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
-option(OPTION_PROFILE "Enable profiling." ON)
 
 set(TBB_DIR ${CMAKE_CURRENT_BINARY_DIR}/oneTBB-2019_U9)
 # set(VCPKG_DIR ${CMAKE_CURRENT_BINARY_DIR}/vcpkg)
@@ -199,8 +197,8 @@ target_link_options(tests PUBLIC -lm -lpthread )
 target_compile_options(tests PUBLIC -g -O3 -ggdb)
 endif()
 
-if (OPTION_DEBUG)
-    target_compile_options(panmap PUBLIC -g -O1 -ggdb)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(panmap PUBLIC -g -O0 -ggdb)
 else()
     target_compile_options(panmap PUBLIC -g -O3)
 endif()
