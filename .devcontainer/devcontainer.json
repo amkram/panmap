@@ -15,5 +15,6 @@
             ]
         }
     },
-    "postCreateCommand": "cmake -Bbuild -H. && cmake --build build"
+    "postCreateCommand": "cmake -Bbuild -H. && cmake --build build",
+    "forwardPorts": [5000]
 }
