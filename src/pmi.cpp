@@ -1454,10 +1454,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
     if constexpr (std::is_same_v<SeedMutationsType, ::capnp::List<SeedMutations>::Builder>) {
         auto basePositionsBuilder = perNodeSeedMutations_Index[dfsIndex].initBasePositions(basePositions.size());
         auto perPosMasksBuilder = perNodeSeedMutations_Index[dfsIndex].initPerPosMasks(masks_all.size());
-
-        std::cout << "Writing seeds for Node " << node->identifier << " at DFS index " << dfsIndex << std::endl;
-        std::cout << "Base Positions count: " << basePositions.size() << std::endl;
-        std::cout << "Masks count: " << masks_all.size() << std::endl;
         for (int i = 0; i < masks_all.size(); i++) {
           const auto &masks = masks_all[i];
           auto maskBuilder = perPosMasksBuilder[i].initMasks(masks.size());
@@ -1473,7 +1469,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         }
         for (int i = 0; i < basePositions.size(); i++) {
           basePositionsBuilder.set(i, basePositions[i]);
-          std::cout << "dfs_i: " << dfsIndex << " basePos: " << basePositions[i] << " = " << basePositions[i] << std::endl;
         }
     }
     auto nodeGapBuilder = perNodeGapMutations_Index[dfsIndex];
@@ -1492,20 +1487,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         }
       }
     }
-    std::cout << "Capnp writes at this node: " << dfsIndex << std::endl;
-    for (int i = 0; i < basePositions.size(); i++) {
-      std::cout << basePositions[i] << " ";
-    }
-    std::cout << std::endl;
-    for (int i = 0; i < masks_all.size(); i++) {
-      for (int j = 0; j < masks_all[i].size(); j++) {
-        for (int k = 0; k < masks_all[i][j].size(); k++) {
-          std::cout << (int)masks_all[i][j][k] << " ";
-        }
-        std::cout << std::endl;
-      }
-    }
-    std::cout << std::endl;
     
 
     merged.clear();
@@ -1585,13 +1566,26 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
   }
   
   // print out seeds at node
+  std::cout << "\n-------\n";
   std::cout << "(" << (method == Step::BUILD ? "Build" : "Place") << ") Seeds at node " << node->identifier << std::endl;
   for (int i = 0; i < seedVec.size(); i++) {
     if (seedVec[i]) {
       std::cout << i << " " << onSeeds[i].value() << " ";
     }
   }
+
+  std::cout << "Node " << node->identifier << " syncmers:" << std::endl;
+  tupleCoord_t startCoord= {0,0,0};
+  tupleCoord_t endCoord = {data.sequence.size() - 1, data.sequence.back().first.size() - 1, data.sequence.back().first.back().second.empty() ? -1 : 0};
+    auto [seq, coords, gaps, deadBlocks] = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
+        startCoord, endCoord, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
+    
+    auto syncmers = extractSeedmers(seq, seedK, seedS, /*open=*/true);
+    for (const auto &[kmer, startPos, endPos] : syncmers) {
+        std::cout << startPos << " " << kmer << " ";
+    }
     std::cout << std::endl;
+
   /* Recursive step */
   dfsIndex++;
   for (Node *child : node->children) {
