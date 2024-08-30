@@ -18,8 +18,8 @@ enum posWidth {pos16, pos32, pos64};
 
 namespace pmi { // functions and types for seed indexing
 
-    /* Indexes T with syncmers parameterized by (k,s). Stores result in si. */
     void build(Tree *T, Index::Builder &index);
+    void place(Tree *T, Index::Reader &index);
 
 } // namespace pmi
 
