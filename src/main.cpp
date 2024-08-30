@@ -259,7 +259,6 @@ int main(int argc, const char** argv) {
     index.setK(k);
     index.setS(s);
 
-
     auto start = std::chrono::high_resolution_clock::now();
     pmi::build(T, index);
     auto end = std::chrono::high_resolution_clock::now();
