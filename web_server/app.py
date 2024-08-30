@@ -1,4 +1,4 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 import json
 
 app = Flask(__name__)
@@ -30,5 +30,11 @@ def control_panel():
     data = load_data()
     return render_template('control_panel.html', data=data)
 
-if __name__ == '__main__':
+@app.route('/update-data', methods=['POST'])
+def update_data():
+    data = request.get_json()
+    # Here you can process the incoming data and update the control panel
+    # For example, you might want to store it in a global variable or a database
+    print("Received data:", data)
+    return "Data received", 200
     app.run(debug=True)
