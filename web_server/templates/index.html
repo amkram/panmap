@@ -7,17 +7,24 @@
 </head>
 <body>
     <h1>Panmap Debugging Panel</h1>
-    <div>
-        <h2>Node Genome</h2>
-        <ul>
-            {% for node in nodes %}
-            <li>Node ID: {{ node.id }}</li>
-            <li>Genome: {{ node.genome }}</li>
-            <li>Aligned Seeds: {{ node.aligned_seeds | join(', ') }}</li>
-            <li>Mutations: {{ node.mutations | join(', ') }}</li>
-            {% endfor %}
-        </ul>
+    <div id="genome-visualization">
+        <h2>Genome Visualization</h2>
+        <div id="genome-chart"></div>
     </div>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        const nodes = {{ nodes|tojson }};
+        const svg = d3.select("#genome-chart").append("svg")
+            .attr("width", 800)
+            .attr("height", 400);
+
+        nodes.forEach((node, index) => {
+            svg.append("text")
+                .attr("x", 10)
+                .attr("y", 20 * (index + 1))
+                .text(`Node ID: ${node.id}, Genome: ${node.genome}`);
+        });
+    </script>
     <div>
         <h2>Seeds</h2>
         <pre>{{ data.seeds }}</pre>
