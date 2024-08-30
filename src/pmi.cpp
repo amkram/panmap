@@ -16,6 +16,11 @@
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 #include "index.capnp.h"
+  #include <tbb/parallel_for.h>
+  #include <tbb/blocked_range.h>
+
+const bool DEBUG = false;
+
 
 enum Step {
   BUILD,
@@ -1573,29 +1578,31 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       } 
   }
   
-  // print out seeds at node
-  std::cout << node->identifier << " build syncmers: ";
-  // for (const auto& [pos, numGaps] : gapMap) {
-  //   std::cout << pos << ":" << numGaps << " ";
-  // }
-  for (int i = 0; i < seedVec.size(); i++) {
-    if (seedVec[i]) {
-      std::cout << degapGlobal(i, coordIndex) << ":" << onSeeds[i].value() << " ";
+  if (debug) {
+    // print out seeds at node
+    std::cout << node->identifier << " build syncmers: ";
+    // for (const auto& [pos, numGaps] : gapMap) {
+    //   std::cout << pos << ":" << numGaps << " ";
+    // }
+    for (int i = 0; i < seedVec.size(); i++) {
+      if (seedVec[i]) {
+        std::cout << degapGlobal(i, coordIndex) << ":" << onSeeds[i].value() << " ";
+      }
     }
-  }
 
-  std::cout << std::endl;
-  std::cout << node->identifier << " true syncmers: ";
-  tupleCoord_t startCoord= {0,0,0};
-  tupleCoord_t endCoord = {data.sequence.size() - 1, data.sequence.back().first.size() - 1, data.sequence.back().first.back().second.empty() ? -1 : 0};
-  auto [seq, coords, gaps, deadBlocks] = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
-    startCoord, endCoord, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
-  
-  auto syncmers = extractSeedmers(seq, seedK, seedS, /*open=*/false);
-  for (const auto &[kmer, startPos, endPos] : syncmers) {
-    std::cout << startPos << ":" << kmer << " ";
+    std::cout << std::endl;
+    std::cout << node->identifier << " true syncmers: ";
+    tupleCoord_t startCoord= {0,0,0};
+    tupleCoord_t endCoord = {data.sequence.size() - 1, data.sequence.back().first.size() - 1, data.sequence.back().first.back().second.empty() ? -1 : 0};
+    auto [seq, coords, gaps, deadBlocks] = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
+      startCoord, endCoord, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
+    
+    auto syncmers = extractSeedmers(seq, seedK, seedS, /*open=*/false);
+    for (const auto &[kmer, startPos, endPos] : syncmers) {
+      std::cout << startPos << ":" << kmer << " ";
+    }
+    std::cout << std::endl;
   }
-  std::cout << std::endl;
 
   /* Recursive step */
   dfsIndex++;
@@ -1669,17 +1676,21 @@ void pmi::build(Tree *T, Index::Builder &index)
     currCoord.nucGapPos = -1;
   }
 
-  for (int64_t i = 0; i < scalarCoordToBlockId.size(); i++) {
-    scalarCoordToBlockId[i] = currCoord.blockId;
-    BlockSizes[currCoord.blockId]++;
-    currCoord = navigator.newincrement(currCoord, data.blockStrand);
-  }
+  tbb::parallel_for(tbb::blocked_range<int64_t>(0, scalarCoordToBlockId.size()), [&](const tbb::blocked_range<int64_t>& range) {
+    for (int64_t i = range.begin(); i < range.end(); i++) {
+      scalarCoordToBlockId[i] = currCoord.blockId;
+      BlockSizes[currCoord.blockId]++;
+      currCoord = navigator.newincrement(currCoord, data.blockStrand);
+    }
+  });
 
-  for (int64_t i = 0; i < blockRanges.size(); ++i) {
-    int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
-    int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
-    blockRanges[i] = std::make_pair(start, end);
-  }
+  tbb::parallel_for(tbb::blocked_range<int64_t>(0, blockRanges.size()), [&](const tbb::blocked_range<int64_t>& range) {
+    for (int64_t i = range.begin(); i < range.end(); i++) {
+      int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
+      int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
+      blockRanges[i] = std::make_pair(start, end);
+    }
+  });
 
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
 
@@ -1691,7 +1702,7 @@ void pmi::build(Tree *T, Index::Builder &index)
   std::vector<bool> seedVec(globalCoords.back().first.back().first + 1, false);
   std::vector<std::optional<std::string>> onSeeds(globalCoords.back().first.back().first + 1, std::nullopt);
 
-  buildOrPlace<decltype(perNodeSeedMutations_Builder), decltype(perNodeGapMutations_Builder)>(
+  buildOrPlace(
     Step::BUILD, data, seedVec, onSeeds, perNodeSeedMutations_Builder, perNodeGapMutations_Builder, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap
   );
 }

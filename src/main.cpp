@@ -19,6 +19,8 @@
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 #include <fcntl.h>
+#include <chrono>
+
 
 using namespace pmi;
 namespace po = boost::program_options;
@@ -226,7 +228,12 @@ int main(int argc, const char** argv) {
     index.setK(k);
     index.setS(s);
 
+
+    auto start = std::chrono::high_resolution_clock::now();
     pmi::build(T, index);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
     std::string tst = "atest.pmi";
     writeCapnp(message, tst);
