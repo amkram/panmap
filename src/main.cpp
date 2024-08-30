@@ -31,7 +31,7 @@
 
 void startWebServer() {
     std::cout << "Starting web server..." << std::endl;
-    std::system("python3 web_server/app.py &");
+    std::system("python3 src/web_server/app.py &");
     std::this_thread::sleep_for(std::chrono::seconds(2)); // Give the server time to start
     std::cout << "Web server started." << std::endl;
 }
