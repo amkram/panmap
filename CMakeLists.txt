@@ -175,6 +175,7 @@ FetchContent_Declare(
   GIT_TAG v3.11.2
 )
 FetchContent_MakeAvailable(json)
+target_link_libraries(panmap PRIVATE nlohmann_json::nlohmann_json)
 
 # Fetch docopt
 FetchContent_Declare(
