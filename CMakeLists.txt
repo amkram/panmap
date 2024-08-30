@@ -109,6 +109,13 @@ add_custom_target(build-deps DEPENDS
     ${CMAKE_CURRENT_BINARY_DIR}/include/capnp
 )
 
+# Copy web_server directory to build directory
+add_custom_command(
+    TARGET panmap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/web_server ${CMAKE_BINARY_DIR}/web_server
+)
+
 # Define and link libraries
 add_library(kj STATIC IMPORTED)
 set_target_properties(kj PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libkj.a")
