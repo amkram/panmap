@@ -23,12 +23,12 @@ def load_mutations(node_id):
 @app.route('/')
 def index():
     data = load_data()
-    return render_template('index.html', data=data)
+    return render_template('index.html', nodes=data['nodes'])
 
 @app.route('/control-panel')
 def control_panel():
     data = load_data()
-    return render_template('control_panel.html', data=data)
+    return render_template('control_panel.html', nodes=data['nodes'])
 
 @app.route('/update-data', methods=['POST'])
 def update_data():
