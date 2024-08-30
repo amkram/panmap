@@ -1,7 +1,7 @@
 #include "pmi.hpp"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
-#include "tree.hpp"
+#include "seed_annotated_tree.hpp"
 #include <algorithm>
 #include <iostream>
 #include <ranges>
@@ -71,9 +71,9 @@ void traverseAndScore(Tree* T, const bm::bvector<>& allBitsets, const std::vecto
     std::vector<bm::bvector<>> compressedSeedDeltas;
     decodeBitsets(allBitsets, compressedSeedDeltas, numBitsets, bitsetSize);
 
-    tree::mutableTreeData data;
-    tree::globalCoords_t globalCoords;
-    tree::setup(data, globalCoords, T);
+    seed_annotated_tree::mutableTreeData data;
+    seed_annotated_tree::globalCoords_t globalCoords;
+    seed_annotated_tree::setup(data, globalCoords, T);
 
     CoordNavigator navigator(data.sequence);
     std::vector<int> BlockSizes(data.sequence.size(), 0);

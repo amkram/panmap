@@ -101,13 +101,12 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, std::string &filename) {
   capnp::writePackedMessageToFd(fd, message);
 }
 
-void readCapnp(std::string &filename) {
+Index::Reader readCapnp(std::string &filename) {
   int fd = open(filename.c_str(), O_RDONLY);
   ::capnp::ReaderOptions options = {(uint64_t) -1, 64}; 
   ::capnp::PackedFdMessageReader message(fd, options);
 
-  Index::Reader index = message.getRoot<Index>();
-  // pmi::read(index);
+  return message.getRoot<Index>();
 }
 
 panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
@@ -234,8 +233,11 @@ int main(int argc, const char** argv) {
 
     // Placement
     log("Reading...");
-    // Placement logic here
-    readCapnp(tst);
+    Index::Reader index_input = readCapnp(tst);
+
+    pmi::place(T, index_input);
+
+
     // Mapping
     log("Mapping...");
     // Mapping logic here

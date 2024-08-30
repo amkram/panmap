@@ -32,12 +32,14 @@ RUN apt-get install -y \
     automake \
     autoconf \
     libprotobuf-dev \
-    protobuf-compiler 
+    protobuf-compiler \
+    gdb
 
 COPY . .
 
-ENV CMAKE_BUILD_PARALLEL_LEVEL=4
-RUN mkdir build && cd build && cmake .. && make -j4 && make install
+ENV CMAKE_BUILD_PARALLEL_LEVEL=3
+ENV MAKEFLAGS="+j3"
+RUN mkdir build && cd build && cmake .. && make -j3 && make install
 
 ENV LD_LIBRARY_PATH=/usr/local/lib
 
