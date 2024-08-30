@@ -20,6 +20,8 @@
 #include <capnp/serialize-packed.h>
 #include <fcntl.h>
 #include <chrono>
+#include <thread>
+#include <cstdlib>
 
 
 using namespace pmi;
@@ -159,7 +161,14 @@ void log(const std::string& message) {
     std::cout << message << std::endl;
 }
 
+void startWebServer() {
+    std::thread([]() {
+        std::system("python3 web_server/app.py");
+    }).detach();
+}
+
 int main(int argc, const char** argv) {
+    startWebServer();
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
 
     std::string guide = args["<guide>"].asString();
