@@ -133,6 +133,7 @@ add_dependencies(htslib build-deps)
 add_dependencies(panmap build-deps)
 
 # Find dependencies
+find_package(CURL REQUIRED)
 find_package(Boost COMPONENTS system iostreams filesystem unit_test_framework REQUIRED)
 find_package(ZLIB REQUIRED)
 
@@ -189,7 +190,7 @@ FetchContent_MakeAvailable(docopt)
 target_link_libraries(panmap PRIVATE 
     minimap2 samtools htslib docopt capnp kj 
     Boost::iostreams Boost::filesystem Boost::system 
-    ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy
+    ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy CURL::libcurl
 )
 target_link_options(panmap PRIVATE -lm -lpthread)
 target_compile_options(panmap PRIVATE -Wall)
