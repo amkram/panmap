@@ -47,6 +47,8 @@ def render_genome(genome, seeds):
         else:
             rendered += base
     return rendered
+
+if __name__ == "__main__":
     app.run(debug=True)
 
 @app.route('/data')
