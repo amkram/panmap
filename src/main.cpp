@@ -235,7 +235,7 @@ int main(int argc, const char** argv) {
     log("Reading...");
     Index::Reader index_input = readCapnp(tst);
 
-    pmi::place(T, index_input);
+    // pmi::place(T, index_input);
 
 
     // Mapping
