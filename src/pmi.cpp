@@ -14,6 +14,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <variant>
+#include <curl/curl.h>  // Include libcurl for HTTP requests
 #include "seed_annotated_tree.hpp"  // Ensure this header is included for blockStrand_t
 #include <capnp/serialize.h>
 #include <capnp/message.h>
@@ -62,9 +63,27 @@ void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
   } 
 }
 
-void exportDataToJson(Tree* T, const std::string& filename) {
+void sendDataToServer(const nlohmann::json& jsonData) {
+    CURL* curl;
+    CURLcode res;
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+    if(curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, "http://localhost:5000/update-data");
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonData.dump().c_str());
+
+        res = curl_easy_perform(curl);
+        if(res != CURLE_OK) {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        }
+        curl_easy_cleanup(curl);
+    }
+    curl_global_cleanup();
+}
+
+void exportDataToJson(Tree* T) {
     nlohmann::json jsonData;
-    // Example: Add nodes and their data to JSON
     for (const auto& node : T->allNodes) {
         jsonData["nodes"].push_back({
             {"id", node->identifier},
@@ -72,9 +91,8 @@ void exportDataToJson(Tree* T, const std::string& filename) {
             {"seeds", "example_seeds_data"},    // Replace with actual seeds data
             {"mutations", "example_mutations_data"}  // Replace with actual mutations data
         });
+        sendDataToServer(jsonData);  // Send data to server
     }
-    std::ofstream file(filename);
-    file << jsonData.dump(4);  // Pretty print with 4 spaces
 }
 
 void applyMutations(mutableTreeData &data,
