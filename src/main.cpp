@@ -34,7 +34,19 @@ void startWebServer() {
     std::this_thread::sleep_for(std::chrono::seconds(2)); // Give the server time to start
     std::cout << "Web server started." << std::endl;
 }
-void exportDataToJson(panmanUtils::Tree* T, const std::string& filename);
+void exportDataToJson(panmanUtils::Tree* T, const std::string& filename) {
+    nlohmann::json jsonData;
+    for (const auto& node : T->allNodes) {
+        nlohmann::json nodeData;
+        nodeData["id"] = node.first;
+        nodeData["genome"] = "ATCG"; // Placeholder, replace with actual genome data
+        nodeData["seeds"] = {"seed1", "seed2"}; // Placeholder, replace with actual seeds
+        nodeData["mutations"] = {"mutation1", "mutation2"}; // Placeholder, replace with actual mutations
+        jsonData["nodes"].push_back(nodeData);
+    }
+    std::ofstream file(filename);
+    file << jsonData.dump(4);
+}
 
 
 using namespace pmi;
