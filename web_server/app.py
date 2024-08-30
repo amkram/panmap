@@ -41,5 +41,16 @@ def startWebServer():
     app.run(debug=True)
 
 def exportDataToJson(T, filename):
-    # Implement the logic to export data to JSON
-    pass
+    data = {
+        "nodes": [
+            {
+                "id": node_id,
+                "genome": load_genome(node_id),
+                "seeds": load_aligned_seeds(node_id),
+                "mutations": load_mutations(node_id)
+            }
+            for node_id in T.allNodes
+        ]
+    }
+    with open(filename, 'w') as f:
+        json.dump(data, f, indent=4)
