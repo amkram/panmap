@@ -168,6 +168,14 @@ add_custom_command(
 target_sources(panmap PRIVATE ${CAPNP_SRCS})
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
 
+# Fetch nlohmann/json
+FetchContent_Declare(
+  json
+  GIT_REPOSITORY https://github.com/nlohmann/json
+  GIT_TAG v3.11.2
+)
+FetchContent_MakeAvailable(json)
+
 # Fetch docopt
 FetchContent_Declare(
   docopt
