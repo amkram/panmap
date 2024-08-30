@@ -971,6 +971,14 @@ void makeCoordIndex(std::map<int64_t, int64_t>& coordIndex, const std::map<int64
   }
 }
 
+int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& coordsIndex) {
+    auto coordIt = coordsIndex.upper_bound(globalCoord);
+    if (coordIt == coordsIndex.begin()) {
+        return 0;
+    }
+    return globalCoord - std::prev(coordIt)->second;
+}
+
 // Merges each range with overlapping ranges after expanding left and right
 // by `neededNongap` non-gap nucleotides.
 std::vector<tupleRange> expandAndMergeRanges(CoordNavigator &navigator,
@@ -1137,22 +1145,22 @@ bool gappity = true;
 // Recursive function to build the seed index
 template <typename SeedMutationsType, typename GapMutationsType>
 void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec, std::vector<std::optional<std::string>>& onSeeds, SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, int seedK, int seedS, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator, std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes, std::vector<std::pair<int64_t, int64_t>>& blockRanges, int dfsIndex, std::map<int64_t, int64_t>& gapMap) {
-    // Variables needed for both build and place
-    std::vector<std::tuple<int64_t, bool, bool, std::optional<std::string>, std::optional<std::string>>> seedChanges;
-    blockMutationInfo_t blockMutationInfo;
-    mutationInfo_t mutationInfo;
-    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunUpdates;
-    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
-    std::vector<tupleRange> recompRanges;
-    blockExists_t oldBlockExists = data.blockExists;
-    blockStrand_t oldBlockStrand = data.blockStrand;
+  // Variables needed for both build and place
+  std::vector<std::tuple<int64_t, bool, bool, std::optional<std::string>, std::optional<std::string>>> seedChanges;
+  blockMutationInfo_t blockMutationInfo;
+  mutationInfo_t mutationInfo;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunUpdates;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
+  std::map<int64_t, int64_t> coordIndex;
+  std::vector<tupleRange> recompRanges;
+  blockExists_t oldBlockExists = data.blockExists;
+  blockStrand_t oldBlockStrand = data.blockStrand;
 
-    applyMutations(data, blockMutationInfo, recompRanges,  mutationInfo, T, node, globalCoords, navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists, oldBlockStrand, method == Step::PLACE);
+  applyMutations(data, blockMutationInfo, recompRanges,  mutationInfo, T, node, globalCoords, navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists, oldBlockStrand, method == Step::PLACE);
 
   if (method == Step::BUILD) {
     
     std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
-    std::map<int64_t, int64_t> coordIndex;
 
     if (gappity) {
       updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks);
@@ -1566,25 +1574,28 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
   }
   
   // print out seeds at node
-  std::cout << "\n-------\n";
-  std::cout << "(" << (method == Step::BUILD ? "Build" : "Place") << ") Seeds at node " << node->identifier << std::endl;
+  std::cout << node->identifier << " build syncmers: ";
+  // for (const auto& [pos, numGaps] : gapMap) {
+  //   std::cout << pos << ":" << numGaps << " ";
+  // }
   for (int i = 0; i < seedVec.size(); i++) {
     if (seedVec[i]) {
-      std::cout << i << " " << onSeeds[i].value() << " ";
+      std::cout << degapGlobal(i, coordIndex) << ":" << onSeeds[i].value() << " ";
     }
   }
 
-  std::cout << "Node " << node->identifier << " syncmers:" << std::endl;
+  std::cout << std::endl;
+  std::cout << node->identifier << " true syncmers: ";
   tupleCoord_t startCoord= {0,0,0};
   tupleCoord_t endCoord = {data.sequence.size() - 1, data.sequence.back().first.size() - 1, data.sequence.back().first.back().second.empty() ? -1 : 0};
-    auto [seq, coords, gaps, deadBlocks] = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
-        startCoord, endCoord, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
-    
-    auto syncmers = extractSeedmers(seq, seedK, seedS, /*open=*/true);
-    for (const auto &[kmer, startPos, endPos] : syncmers) {
-        std::cout << startPos << " " << kmer << " ";
-    }
-    std::cout << std::endl;
+  auto [seq, coords, gaps, deadBlocks] = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
+    startCoord, endCoord, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
+  
+  auto syncmers = extractSeedmers(seq, seedK, seedS, /*open=*/false);
+  for (const auto &[kmer, startPos, endPos] : syncmers) {
+    std::cout << startPos << ":" << kmer << " ";
+  }
+  std::cout << std::endl;
 
   /* Recursive step */
   dfsIndex++;
@@ -1671,27 +1682,6 @@ void pmi::build(Tree *T, Index::Builder &index)
   }
 
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
-
-  tupleCoord_t coord = {0, 0, globalCoords[0].first[0].second.empty() ? -1 : 0};
-  auto curIt = gapMap.end();
-
-  while (coord < tupleCoord_t{-1, -1, -1}) {
-    char c = coord.nucGapPos == -1 ? data.sequence[coord.blockId].first[coord.nucPos].first : data.sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
-    int64_t scalar = tupleToScalarCoord(coord, globalCoords);
-    if (c == '-' || c == 'x') {
-      if (!gapMap.empty() && curIt->second + 1 == scalar) {
-        ++curIt->second;
-      } else {
-        auto tmpIt = gapMap.emplace(scalar, scalar);
-        curIt = tmpIt.first;
-      }
-    }
-    coord = navigator.newincrement(coord, data.blockStrand);
-  }
-
-  if (coord.blockId != -1 && !data.blockExists[coord.blockId].first) {
-    coord = navigator.newdecrement(coord, data.blockStrand);
-  }
 
   ::capnp::List<SeedMutations>::Builder perNodeSeedMutations_Builder = index.initPerNodeSeedMutations(T->allNodes.size());
   ::capnp::List<GapMutations>::Builder perNodeGapMutations_Builder = index.initPerNodeGapMutations(T->allNodes.size());
