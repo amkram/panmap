@@ -14,6 +14,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <variant>
+#include "seed_annotated_tree.hpp"  // Ensure this header is included for blockStrand_t
 #include <capnp/serialize.h>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
