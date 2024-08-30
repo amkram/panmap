@@ -7,7 +7,7 @@
 </head>
 <body>
     <h1>Control Panel Debug Page</h1>
-    {% for node in data.nodes %}
+    {% for node in nodes %}
     <div>
         <h2>Node ID: {{ node.id }}</h2>
         <h3>Genome:</h3>
@@ -26,5 +26,15 @@
         </ul>
     </div>
     {% endfor %}
+<script>
+    async function fetchData() {
+        const response = await fetch('/update-data');
+        const data = await response.json();
+        // Update the DOM with the new data
+        console.log(data);
+    }
+
+    setInterval(fetchData, 5000); // Fetch data every 5 seconds
+</script>
 </body>
 </html>
