@@ -85,11 +85,30 @@ void sendDataToServer(const nlohmann::json& jsonData) {
 void exportDataToJson(Tree* T) {
     nlohmann::json jsonData;
     for (const auto& node : T->allNodes) {
+        // Extract genome data
+        std::string genome = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
+            {0, 0, 0}, 
+            {static_cast<int64_t>(node->sequence.size()) - 1, static_cast<int64_t>(node->sequence.back().first.size()) - 1, -1},
+            node->sequence, node->blockExists, node->blockStrand, T, node, node->globalCoords, node->navigator
+        ).first;
+
+        // Extract seeds data
+        std::vector<std::string> seeds;
+        for (const auto& seed : node->seeds) {
+            seeds.push_back(seed.sequence);
+        }
+
+        // Extract mutations data
+        std::vector<std::string> mutations;
+        for (const auto& mutation : node->mutations) {
+            mutations.push_back(mutation.description);
+        }
+
         jsonData["nodes"].push_back({
             {"id", node->identifier},
-            {"genome", "example_genome_data"},  // Replace with actual genome data
-            {"seeds", "example_seeds_data"},    // Replace with actual seeds data
-            {"mutations", "example_mutations_data"}  // Replace with actual mutations data
+            {"genome", genome},
+            {"seeds", seeds},
+            {"mutations", mutations}
         });
         sendDataToServer(jsonData);  // Send data to server
     }
