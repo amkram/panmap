@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <chrono>
 #include <thread>
+#include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <thread>
 #include <future>
