@@ -7,25 +7,24 @@
 </head>
 <body>
     <h1>Control Panel Debug Page</h1>
-    {% for node in nodes %}
-    <div>
-        <h2>Node ID: {{ node.id }}</h2>
-        <h3>Genome:</h3>
-        <pre>{{ node.genome }}</pre>
-        <h3>Aligned Seeds:</h3>
-        <ul>
-            {% for seed in node.aligned_seeds %}
-            <li>{{ seed }}</li>
-            {% endfor %}
-        </ul>
-        <h3>Mutations:</h3>
-        <ul>
-            {% for mutation in node.mutations %}
-            <li>{{ mutation }}</li>
-            {% endfor %}
-        </ul>
+    <div id="seeds-visualization">
+        <h2>Seeds Visualization</h2>
+        <div id="seeds-chart"></div>
     </div>
-    {% endfor %}
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        const nodes = {{ nodes|tojson }};
+        const seedsSvg = d3.select("#seeds-chart").append("svg")
+            .attr("width", 800)
+            .attr("height", 400);
+
+        nodes.forEach((node, index) => {
+            seedsSvg.append("text")
+                .attr("x", 10)
+                .attr("y", 20 * (index + 1))
+                .text(`Node ID: ${node.id}, Seeds: ${node.aligned_seeds.join(', ')}`);
+        });
+    </script>
 <script>
     async function fetchData() {
         const response = await fetch('/update-data');
