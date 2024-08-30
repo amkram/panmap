@@ -1,0 +1,19 @@
+{
+    "name": "CMake Project in Docker",
+    "context": "..",
+    "dockerFile": "../Dockerfile",
+    "runArgs": ["--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"],
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.shell.linux": "/bin/bash"
+            },
+            "extensions": [
+                "ms-vscode.cmake-tools",
+                "ms-vscode.cpptools",
+                "ms-vscode.remote-containers"
+            ]
+        }
+    },
+    "postCreateCommand": "cmake -Bbuild -H. && cmake --build build"
+}
