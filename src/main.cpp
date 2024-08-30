@@ -22,8 +22,18 @@
 #include <chrono>
 #include <thread>
 #include <cstdlib>
+#include <thread>
+#include <future>
+#include <iostream>
+#include <boost/asio.hpp>
+#include <boost/process.hpp>
 
-void startWebServer();
+void startWebServer() {
+    std::cout << "Starting web server..." << std::endl;
+    std::system("python3 web_server/app.py &");
+    std::this_thread::sleep_for(std::chrono::seconds(2)); // Give the server time to start
+    std::cout << "Web server started." << std::endl;
+}
 void exportDataToJson(panmanUtils::Tree* T, const std::string& filename);
 
 
