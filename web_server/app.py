@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 import json
 
 app = Flask(__name__)
@@ -23,7 +23,7 @@ def load_mutations(node_id):
 @app.route('/')
 def index():
     data = load_data()
-    return render_template('index.html', nodes=data['nodes'])
+    return render_template('index.html', nodes=data['nodes'], render_genome=render_genome)
 
 @app.route('/control-panel')
 def control_panel():
@@ -37,10 +37,22 @@ def update_data():
     # For example, you might want to store it in a global variable or a database
     print("Received data:", data)
     return "Data received", 200
-def startWebServer():
+def render_genome(genome, seeds):
+    # Render genome with seeds aligned
+    rendered = ""
+    seed_positions = {seed: genome.find(seed) for seed in seeds}
+    for i, base in enumerate(genome):
+        if any(pos == i for pos in seed_positions.values()):
+            rendered += f"<span style='color: red;'>{base}</span>"
+        else:
+            rendered += base
+    return rendered
     app.run(debug=True)
 
-def exportDataToJson(T, filename):
+@app.route('/data')
+def get_data():
+    data = load_data()
+    return jsonify(data)
     data = {
         "nodes": [
             {
