@@ -288,5 +288,18 @@ int main(int argc, const char** argv) {
     // Assembly logic here
 
     log("panmap run completed.");
-  return 0;
+
+    // Keep the application running
+    std::cout << "Press Ctrl+C to exit." << std::endl;
+    std::signal(SIGINT, [](int signum) {
+        std::cout << "\nExiting panmap..." << std::endl;
+        std::exit(signum);
+    });
+
+    // Infinite loop to keep the application running
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    return 0;
 }
