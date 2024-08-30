@@ -7,6 +7,24 @@
 </head>
 <body>
     <h1>Control Panel Debug Page</h1>
-    <pre>{{ data | tojson(indent=2) }}</pre>
+    {% for node in data.nodes %}
+    <div>
+        <h2>Node ID: {{ node.id }}</h2>
+        <h3>Genome:</h3>
+        <pre>{{ node.genome }}</pre>
+        <h3>Aligned Seeds:</h3>
+        <ul>
+            {% for seed in node.aligned_seeds %}
+            <li>{{ seed }}</li>
+            {% endfor %}
+        </ul>
+        <h3>Mutations:</h3>
+        <ul>
+            {% for mutation in node.mutations %}
+            <li>{{ mutation }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endfor %}
 </body>
 </html>
