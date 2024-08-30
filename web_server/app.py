@@ -53,16 +53,3 @@ def render_genome(genome, seeds):
 def get_data():
     data = load_data()
     return jsonify(data)
-    data = {
-        "nodes": [
-            {
-                "id": node_id,
-                "genome": load_genome(node_id),
-                "seeds": load_aligned_seeds(node_id),
-                "mutations": load_mutations(node_id)
-            }
-            for node_id in T.allNodes
-        ]
-    }
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=4)
