@@ -1641,9 +1641,9 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
     std::cout << node->identifier << " true syncmers: ";
     tupleCoord_t startCoord= {0,0,0};
     tupleCoord_t endCoord = {data.sequence.size() - 1, data.sequence.back().first.size() - 1, data.sequence.back().first.back().second.empty() ? -1 : 0};
-    auto [seq, coords, gaps, deadBlocks] = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
-      startCoord, endCoord, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
-    
+    // auto [seq, coords, gaps, deadBlocks] = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
+    //   startCoord, endCoord, data.sequence, data.blockExists, data.blockStrand, T, node, globalCoords, navigator);
+    auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
     auto syncmers = extractSeedmers(seq, seedK, seedS, /*open=*/false);
     for (const auto &[kmer, startPos, endPos] : syncmers) {
       std::cout << startPos << ":" << kmer << " ";
