@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#include <tbb/global_control.h>
 #include "docopt.h"
 #include "index.capnp.h"
 #include <capnp/message.h>
@@ -80,6 +81,7 @@ Seeding/alignment options:
                                        one from the tree. Overrides --prior. [default: ]
   -I --identity-threshold <cutoff>   Identity cutoff for mutation spectrum, effective with --prior. [default: 0.80]
 Other options:
+  -c --cpus <num>            Number of CPUs to use. [default: 1]
   -x --stop-after <stage>        Stop after the specified stage. Accepted values:
                                     indexing / i:   Stop after seed indexing
                                     placement / p:  Stop after placement
@@ -161,7 +163,7 @@ void log(const std::string& message) {
 
 int main(int argc, const char** argv) {
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
-
+    tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::stoi(args["--cpus"].asString()));
     std::string guide = args["<guide>"].asString();
     std::string reads1 = args["<reads1.fastq>"] ? args["<reads1.fastq>"].asString() : "";
     std::string reads2 = args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";

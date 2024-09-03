@@ -16,8 +16,8 @@
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
 #include "index.capnp.h"
-  #include <tbb/parallel_for.h>
-  #include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 
 const bool DEBUG = false;
 
@@ -504,9 +504,9 @@ void applyMutations(mutableTreeData &data,
   if (!isPlacement){
     for (auto &mutation : mutationInfo) {
       int blockId = std::get<0>(mutation);
-    if (!oldBlockExists[blockId].first && blockExists[blockId].first) {
-      continue;
-    }
+      if (!(oldBlockExists[blockId].first && blockExists[blockId].first)) {
+        continue;
+      }
 
       int nucPos = std::get<2>(mutation);
       int nucGapPos = std::get<3>(mutation);
@@ -705,7 +705,7 @@ void updateGapMapStep(std::map<int64_t, int64_t>& gapMap, const std::pair<bool, 
   bool toGap = update.first;
   int64_t start = update.second.first;
   int64_t end = update.second.second;
-  
+
   auto rightIt = gapMap.upper_bound(start);
   auto leftIt = (rightIt == gapMap.begin()) ? gapMap.end() : std::prev(rightIt);
 
@@ -858,6 +858,7 @@ void updateGapMapStep(std::map<int64_t, int64_t>& gapMap, const std::pair<bool, 
       }
     }
   }
+
 }
 
 void updateGapMap(std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& updates, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack) {
@@ -892,9 +893,9 @@ void invertGapMap(std::map<int64_t, int64_t>& gapMap, const std::pair<int64_t, i
   if (
     gapMap.empty() || // empty gap map
     (!leftItExists && end < rightIt->first) || // completely left of first gap range
-    (!rightItExists && start > leftIt->second) || // completely right of last gap range
-    (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first) || // completely between two gap ranges
-    (leftItExists && start >= leftIt->first && end <= leftIt->second) // completely inside a gap range
+    (!rightItExists && start > leftIt->second) // completely right of last gap range
+    // (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first) || // completely between two gap ranges
+    // (leftItExists && start >= leftIt->first && end <= leftIt->second) // completely inside a gap range
   ) {
     return;
   }
@@ -955,6 +956,7 @@ void invertGapMap(std::map<int64_t, int64_t>& gapMap, const std::pair<int64_t, i
   int64_t curBeg = blockRuns.front().second.first;
   for (auto it = blockRuns.rbegin(); it != blockRuns.rend(); ++it) {
     int64_t curEnd = curBeg + (it->second.second - it->second.first);
+    std::cout << it->first << " " << curBeg << " " << curEnd << std::endl;
     updateGapMapStep(gapMap, {it->first, {curBeg, curEnd}}, backtrack);
     curBeg = curEnd + 1;
   }
@@ -1144,8 +1146,25 @@ extractSeedmers(const std::string &seq, const int k, const int s,
   return syncmers;
 }
 
+void bruteForceCoordIndex(const std::string& gappedSeq, std::map<int32_t, int32_t>& coordIndex){
+  int32_t numGaps = 0;
+  int32_t numNucs = 0;
 
-bool debug = false;
+  for (int32_t i = 0; i < gappedSeq.size(); i++){
+    const char &c = gappedSeq[i];
+    const char &p = gappedSeq[std::max(0, i-1)];
+    if (c == '-' || c == 'x') {
+      ++numGaps;
+    } else {
+      ++numNucs;
+      if (i == 0 || p == '-' || p == 'x') {
+        coordIndex[i] = numGaps;
+      }
+    }
+  }
+}
+
+bool debug = true;
 bool gappity = true;
 // Recursive function to build the seed index
 template <typename SeedMutationsType, typename GapMutationsType>
@@ -1174,6 +1193,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         const bool& oldExists = oldBlockExists[i].first;
         const bool& newExists = data.blockExists[i].first;
         if (newExists && !data.blockStrand[i].first) {
+          std::cout << "need to invert block " << i << " " << blockRanges[i].first << "-" << blockRanges[i].second << std::endl;
           invertedBlocks.emplace_back(i);
         }
         if (oldExists && !newExists) {
@@ -1226,9 +1246,32 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         }
       }
 
+      // std::cout << node->identifier << " gapMap before inverting inverse blocks: ";
+      // for (const auto& [pos, gap] : gapMap) {
+      //   std::cout << pos << "," << gap << " ";
+      // }
+      // std::cout << std::endl;
+
       for (const auto& blockId : invertedBlocks) {
+        std::cout << "inverting block " << blockId << " " << blockRanges[blockId].first << "-" << blockRanges[blockId].second << std::endl;
+        std::cout << "gapMap before: ";
+        for (const auto& [pos, gap] : gapMap) {
+          std::cout << pos << "," << gap << " ";
+        }
+        std::cout << std::endl;
         invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks);
+        std::cout << "gapMap after: ";
+        for (const auto& [pos, gap] : gapMap) {
+          std::cout << pos << "," << gap << " ";
+        }
+        std::cout << std::endl;
       }
+
+      // std::cout << node->identifier << " gapMap after inverting inverse blocks: ";
+      // for (const auto& [pos, gap] : gapMap) {
+      //   std::cout << pos << "," << gap << " ";
+      // }
+      // std::cout << std::endl;
 
       makeCoordIndex(coordIndex, gapMap, blockRanges);
       
@@ -1240,6 +1283,13 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
           gapMap[range.first] = range.second;
         }
       }
+
+      // std::cout << node->identifier << " gapMap after blockBacktracks: ";
+      // for (const auto& [pos, gap] : gapMap) {
+      //   std::cout << pos << "," << gap << " ";
+      // }
+      // std::cout << std::endl;
+
     }
 
     std::sort(recompRanges.begin(), recompRanges.end(), [&data](const tupleRange& A, const tupleRange& B) {
@@ -1492,11 +1542,11 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         if (del) {
           gapMutationsBuilder[gapMutationsBuilder.size() - 1].setPos(range.first);
           gapMutationsBuilder[gapMutationsBuilder.size() - 1].initMaybeValue().setValue(range.second);
-          gapMap[range.first] = range.second;
+          // gapMap[range.first] = range.second;
         } else {
           gapMutationsBuilder[gapMutationsBuilder.size() - 1].setPos(range.first);
           gapMutationsBuilder[gapMutationsBuilder.size() - 1].initMaybeValue().setNone();
-          gapMap.erase(range.first);
+          // gapMap.erase(range.first);
         }
       }
     }
@@ -1505,8 +1555,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
     merged.clear();
     recompRanges.clear();
     gapRunUpdates.clear();
-    
-    
+  
   } else if (method == Step::PLACE) {
     
     ::capnp::List<MapDelta>::Reader gapMutationsList;
@@ -1581,16 +1630,14 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
   if (debug) {
     // print out seeds at node
     std::cout << node->identifier << " build syncmers: ";
-    // for (const auto& [pos, numGaps] : gapMap) {
-    //   std::cout << pos << ":" << numGaps << " ";
-    // }
     for (int i = 0; i < seedVec.size(); i++) {
       if (seedVec[i]) {
         std::cout << degapGlobal(i, coordIndex) << ":" << onSeeds[i].value() << " ";
       }
     }
-
     std::cout << std::endl;
+
+
     std::cout << node->identifier << " true syncmers: ";
     tupleCoord_t startCoord= {0,0,0};
     tupleCoord_t endCoord = {data.sequence.size() - 1, data.sequence.back().first.size() - 1, data.sequence.back().first.back().second.empty() ? -1 : 0};
@@ -1602,6 +1649,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       std::cout << startPos << ":" << kmer << " ";
     }
     std::cout << std::endl;
+
   }
 
   /* Recursive step */
@@ -1634,6 +1682,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       BlocksToSeeds[blockId].erase(std::get<0>(p));
     } 
   }
+  
   // undo gapMap updates
   for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
     const auto& [del, range] = *it;
