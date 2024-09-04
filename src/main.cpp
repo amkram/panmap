@@ -102,7 +102,19 @@ using namespace std;
 
 void writeCapnp(::capnp::MallocMessageBuilder &message, std::string &filename) {
   int fd = open(filename.c_str(), O_WRONLY | O_CREAT, 0644);
-  capnp::writePackedMessageToFd(fd, message);
+
+  if (fd < 0) {
+    perror("Failed to open proto file for writing");
+    return;
+  }
+
+  try {
+    capnp::writePackedMessageToFd(fd, message);
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to write Cap'n Proto message: " << e.what() << std::endl;
+  }
+
+  close(fd);
 }
 
 Index::Reader readCapnp(std::string &filename) {
@@ -235,6 +247,7 @@ int main(int argc, const char** argv) {
     pmi::build(T, index);
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
     log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
     std::string tst = "atest.pmi";
@@ -242,8 +255,9 @@ int main(int argc, const char** argv) {
 
     // Placement
     log("Reading...");
-    Index::Reader index_input = readCapnp(tst);
+    // Index::Reader index_input = readCapnp(tst);
 
+    log("Placing...");
     // pmi::place(T, index_input);
 
 
