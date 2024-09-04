@@ -117,12 +117,11 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, std::string &filename) {
   close(fd);
 }
 
-Index::Reader readCapnp(std::string &filename) {
+std::unique_ptr<::capnp::PackedFdMessageReader> readCapnp(std::string &filename) {
   int fd = open(filename.c_str(), O_RDONLY);
-  ::capnp::ReaderOptions options = {(uint64_t) -1, 64}; 
-  ::capnp::PackedFdMessageReader message(fd, options);
-
-  return message.getRoot<Index>();
+  ::capnp::ReaderOptions options = {(uint64_t) -1, 64};
+  auto message = std::make_unique<::capnp::PackedFdMessageReader>(fd, options);
+  return message;
 }
 
 panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
@@ -236,29 +235,27 @@ int main(int argc, const char** argv) {
     log("Indexing...");
 
     // capnp index object
-    ::capnp::MallocMessageBuilder message;
-    Index::Builder index = message.initRoot<Index>();
-    
-    index.setK(k);
-    index.setS(s);
 
-
-    auto start = std::chrono::high_resolution_clock::now();
-    pmi::build(T, index);
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-    log("Build time: " + std::to_string(duration.count()) + " milliseconds");
+    // ::capnp::MallocMessageBuilder message;
+    // Index::Builder index = message.initRoot<Index>();
+    // index.setK(k);
+    // index.setS(s);
+    // auto start = std::chrono::high_resolution_clock::now();
+    // pmi::build(T, index);
+    // auto end = std::chrono::high_resolution_clock::now();
+    // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    // log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
     std::string tst = "atest.pmi";
-    writeCapnp(message, tst);
+    // writeCapnp(message, tst);
 
     // Placement
     log("Reading...");
-    // Index::Reader index_input = readCapnp(tst);
+    auto message = readCapnp(tst);
+    Index::Reader index_input = message->getRoot<Index>();
 
     log("Placing...");
-    // pmi::place(T, index_input);
+    pmi::place(T, index_input);
 
 
     // Mapping

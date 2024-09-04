@@ -1244,21 +1244,10 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
         }
       }
 
-      // std::cout << node->identifier << " gapMap before inverting inverse blocks: ";
-      // for (const auto& [pos, gap] : gapMap) {
-      //   std::cout << pos << "," << gap << " ";
-      // }
-      // std::cout << std::endl;
 
       for (const auto& blockId : invertedBlocks) {
         invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks);
       }
-
-      // std::cout << node->identifier << " gapMap after inverting inverse blocks: ";
-      // for (const auto& [pos, gap] : gapMap) {
-      //   std::cout << pos << "," << gap << " ";
-      // }
-      // std::cout << std::endl;
 
       makeCoordIndex(coordIndex, gapMap, blockRanges);
       
@@ -1270,12 +1259,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
           gapMap[range.first] = range.second;
         }
       }
-
-      // std::cout << node->identifier << " gapMap after blockBacktracks: ";
-      // for (const auto& [pos, gap] : gapMap) {
-      //   std::cout << pos << "," << gap << " ";
-      // }
-      // std::cout << std::endl;
 
     }
 
@@ -1528,7 +1511,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       int i = 0;
       for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
         const auto& [del, range] = *it;
-        std::cout << node->identifier << " gap mutation: " << del << " " << range.first << " " << range.second << std::endl;
         if (del) {
           gapMutationsBuilder[i].setPos(range.first);
           gapMutationsBuilder[i].initMaybeValue().setValue(range.second);
@@ -1799,10 +1781,12 @@ void pmi::place(Tree *T, Index::Reader &index)
     std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
 
     std::cout << "getting gap mutations" << std::endl;
-    ::capnp::List< ::GapMutations,  ::capnp::Kind::STRUCT>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
+    std::cout << index.hasPerNodeGapMutations() << std::endl;
+    std::cout << "has per node gap mutations" << std::endl;
+    ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
     std::cout << "got gap mutations" << std::endl;
-    std::cout << "getting seed mutations" << std::endl;
-    ::capnp::List< ::SeedMutations,  ::capnp::Kind::STRUCT>::Reader perNodeSeedMutations_Reader= index.getPerNodeSeedMutations();
+    std::cout << "getting seed mutations " << index.hasPerNodeSeedMutations() << std::endl;
+    ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader= index.getPerNodeSeedMutations();
     std::cout << "got seed mutations" << std::endl;
   
     int64_t dfsIndex = 0;
