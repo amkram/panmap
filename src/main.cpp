@@ -246,7 +246,7 @@ int main(int argc, const char** argv) {
     // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     // log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
-    std::string tst = "atest.pmi";
+    std::string tst = "atest.pmi"; 
     // writeCapnp(message, tst);
 
     // Placement
