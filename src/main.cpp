@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
+#include <tbb/global_control.h>
 #include "docopt.h"
 #include "index.capnp.h"
 #include <capnp/message.h>
@@ -108,6 +109,7 @@ Seeding/alignment options:
                                        one from the tree. Overrides --prior. [default: ]
   -I --identity-threshold <cutoff>   Identity cutoff for mutation spectrum, effective with --prior. [default: 0.80]
 Other options:
+  -c --cpus <num>            Number of CPUs to use. [default: 1]
   -x --stop-after <stage>        Stop after the specified stage. Accepted values:
                                     indexing / i:   Stop after seed indexing
                                     placement / p:  Stop after placement
@@ -128,15 +130,26 @@ using namespace std;
 
 void writeCapnp(::capnp::MallocMessageBuilder &message, std::string &filename) {
   int fd = open(filename.c_str(), O_WRONLY | O_CREAT, 0644);
-  capnp::writePackedMessageToFd(fd, message);
+
+  if (fd < 0) {
+    perror("Failed to open proto file for writing");
+    return;
+  }
+
+  try {
+    capnp::writePackedMessageToFd(fd, message);
+  } catch (const std::exception &e) {
+    std::cerr << "Failed to write Cap'n Proto message: " << e.what() << std::endl;
+  }
+
+  close(fd);
 }
 
-Index::Reader readCapnp(std::string &filename) {
+std::unique_ptr<::capnp::PackedFdMessageReader> readCapnp(std::string &filename) {
   int fd = open(filename.c_str(), O_RDONLY);
-  ::capnp::ReaderOptions options = {(uint64_t) -1, 64}; 
-  ::capnp::PackedFdMessageReader message(fd, options);
-
-  return message.getRoot<Index>();
+  ::capnp::ReaderOptions options = {(uint64_t) -1, 64};
+  auto message = std::make_unique<::capnp::PackedFdMessageReader>(fd, options);
+  return message;
 }
 
 panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
@@ -190,7 +203,7 @@ void log(const std::string& message) {
 int main(int argc, const char** argv) {
     startWebServer();
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
-
+    tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::stoi(args["--cpus"].asString()));
     std::string guide = args["<guide>"].asString();
     std::string reads1 = args["<reads1.fastq>"] ? args["<reads1.fastq>"].asString() : "";
     std::string reads2 = args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";
@@ -265,14 +278,16 @@ int main(int argc, const char** argv) {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
-    std::string tst = "atest.pmi";
-    writeCapnp(message, tst);
+    std::string tst = "atest.pmi"; 
+    // writeCapnp(message, tst);
 
     // Placement
     log("Reading...");
-    Index::Reader index_input = readCapnp(tst);
+    auto message = readCapnp(tst);
+    Index::Reader index_input = message->getRoot<Index>();
 
-    // pmi::place(T, index_input);
+    log("Placing...");
+    pmi::place(T, index_input);
 
 
     // Mapping

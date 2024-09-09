@@ -547,7 +547,7 @@ std::string getSeedAt(const int64_t &pos, Tree *T, int32_t &k,
     std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
     const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const globalCoords_t &globalCoords, CoordNavigator &navigator,
-    std::map<int64_t, int64_t> &gapRuns);
+    std::map<int64_t, int64_t> &gapRuns, const std::vector<std::pair<int64_t, int64_t>>& blockRanges);
 
 // Fill mutation matrices from tree or file
 std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string &s1,
