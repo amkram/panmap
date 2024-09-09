@@ -12,13 +12,10 @@ struct GapMutations {
     deltas @0 :List(MapDelta);
 }
 
-struct TernaryMasks {
-    masks @0 :List(UInt32);
-}
 
 struct SeedMutations {
     basePositions @0 :List(Int64);
-    perPosMasks @1 :List(TernaryMasks);
+    perPosMasks @1 :List(UInt64);
 }
 
 struct Index {
