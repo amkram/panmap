@@ -331,8 +331,22 @@ namespace seeding
       return std::make_tuple(0, false, false);
     }
 
-    inline std::vector<std::tuple<size_t, bool, bool>> rollingSyncmers(const std::string& seq, int k, int s, bool open) {
-      std::vector<std::tuple<size_t, bool, bool>> syncmers;
+
+    inline std::pair<size_t, size_t> hashSeq(const std::string& s) {
+      size_t fHash = 0;
+      size_t rHash = 0;
+      int k = s.size();
+      for (int i = 0; i < k; i++) {
+        if (chash(s[i]) == 0) throw std::invalid_argument("Kmer contains non canonical base");
+        fHash ^= rol(chash(s[i]), k-i-1);
+        rHash ^= rol(chash(comp(s[k-i-1])), k-i-1);
+      }
+      return std::make_pair(fHash, rHash);
+    }
+
+    // returns vector of (hash, isReverse, isSyncmer, startPos)  
+    inline std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(const std::string& seq, int k, int s, bool open) {
+      std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmers;
 
       const size_t max_size_t = std::numeric_limits<size_t>::max();
       size_t forwardKmerHash = 0, reverseKmerHash = 0;
@@ -397,38 +411,38 @@ namespace seeding
       }
 
       if (recentAmbiguousBaseIndex >= 0) {
-        syncmers.emplace_back(std::make_tuple(0, false, false));
+        syncmers.emplace_back(std::make_tuple(0, false, false, 0));
       } else {
         if (forwardKmerHash < reverseKmerHash) {
           if (open) {
             if (curMinSmerHash == curSmerHashes.front()) {
-              syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true));
+              syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
             } else {
-              syncmers.emplace_back(std::make_tuple(max_size_t, false, true));
+              syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
             }
           } else {
             if (curMinSmerHash == curSmerHashes.front() || curMinSmerHash == curSmerHashes.back()) {
-              syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true));
+              syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
             } else {
-              syncmers.emplace_back(std::make_tuple(max_size_t, false, true));
+              syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
             }
           }
         } else if (reverseKmerHash < forwardKmerHash) {
           if (open) {
             if (curMinSmerHash == curSmerHashes.front()) {
-              syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true));
+              syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
             } else {
-              syncmers.emplace_back(std::make_tuple(max_size_t, true, true));
+              syncmers.emplace_back(std::make_tuple(max_size_t, true, false, 0));
             }
           } else {
             if (curMinSmerHash == curSmerHashes.front() || curMinSmerHash == curSmerHashes.back()) {
-              syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true));
+              syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
             } else {
-              syncmers.emplace_back(std::make_tuple(max_size_t, true, true));
+              syncmers.emplace_back(std::make_tuple(max_size_t, true, false, 0));
             }
           }
         } else {
-          syncmers.emplace_back(std::make_tuple(max_size_t, false, false));
+          syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
         }
       }
 
@@ -468,38 +482,38 @@ namespace seeding
         }
 
         if (recentAmbiguousBaseIndex >= 0 && i < recentAmbiguousBaseIndex + k) {
-          syncmers.emplace_back(std::make_tuple(max_size_t, false, false));
+          syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
         } else {
           if (forwardKmerHash < reverseKmerHash) {
             if (open) {
               if (curMinSmerHash == curSmerHashes.front()) {
-                syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true));
+                syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, i - k + 1));
               } else {
-                syncmers.emplace_back(std::make_tuple(max_size_t, false, true));
+                syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
               }
             } else {
               if (curMinSmerHash == curSmerHashes.front() || curMinSmerHash == curSmerHashes.back()) {
-                syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true));
+                syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, i - k + 1));
               } else {
-                syncmers.emplace_back(std::make_tuple(max_size_t, false, true));
+                syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
               }
             }
           } else if (reverseKmerHash < forwardKmerHash) {
             if (open) {
               if (curMinSmerHash == curSmerHashes.front()) {
-                syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true));
+                syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, i - k + 1));
               } else {
-                syncmers.emplace_back(std::make_tuple(max_size_t, true, true));
+                syncmers.emplace_back(std::make_tuple(max_size_t, true, false, i - k + 1));
               }
             } else {
               if (curMinSmerHash == curSmerHashes.front() || curMinSmerHash == curSmerHashes.back()) {
-                syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true));
+                syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, i - k + 1));
               } else {
-                syncmers.emplace_back(std::make_tuple(max_size_t, true, true));
+                syncmers.emplace_back(std::make_tuple(max_size_t, true, false, i - k + 1));
               }
             }
           } else {
-            syncmers.emplace_back(std::make_tuple(max_size_t, false, false));
+            syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
           }
         }
       }
