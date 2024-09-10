@@ -345,9 +345,9 @@ namespace seeding
     }
 
     // returns vector of (hash, isReverse, isSyncmer, startPos)  
-    inline std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(const std::string& seq, int k, int s, bool open) {
+    inline std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(const std::string& seq, int k, int s, bool open, int t = 0) {
       std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmers;
-
+      if (!open) t = 0;
       const size_t max_size_t = std::numeric_limits<size_t>::max();
       size_t forwardKmerHash = 0, reverseKmerHash = 0;
       size_t forwardSmerHash = 0, reverseSmerHash = 0;
@@ -415,7 +415,7 @@ namespace seeding
       } else {
         if (forwardKmerHash < reverseKmerHash) {
           if (open) {
-            if (curMinSmerHash == curSmerHashes.front()) {
+            if (curMinSmerHash == curSmerHashes[t]) {
               syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
             } else {
               syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
@@ -429,7 +429,7 @@ namespace seeding
           }
         } else if (reverseKmerHash < forwardKmerHash) {
           if (open) {
-            if (curMinSmerHash == curSmerHashes.front()) {
+            if (curMinSmerHash == curSmerHashes[t]) {
               syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
             } else {
               syncmers.emplace_back(std::make_tuple(max_size_t, true, false, 0));
@@ -486,7 +486,7 @@ namespace seeding
         } else {
           if (forwardKmerHash < reverseKmerHash) {
             if (open) {
-              if (curMinSmerHash == curSmerHashes.front()) {
+              if (curMinSmerHash == curSmerHashes[t]) {
                 syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, i - k + 1));
               } else {
                 syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
@@ -500,7 +500,7 @@ namespace seeding
             }
           } else if (reverseKmerHash < forwardKmerHash) {
             if (open) {
-              if (curMinSmerHash == curSmerHashes.front()) {
+              if (curMinSmerHash == curSmerHashes[t]) {
                 syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, i - k + 1));
               } else {
                 syncmers.emplace_back(std::make_tuple(max_size_t, true, false, i - k + 1));
