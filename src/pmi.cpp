@@ -11,11 +11,7 @@
 #include <vector>
 #include <fstream>
 #include <memory>
-#include <fstream>
-#include <nlohmann/json.hpp>
 #include <variant>
-#include <curl/curl.h>  // Include libcurl for HTTP requests
-#include "seed_annotated_tree.hpp"  // Ensure this header is included for blockStrand_t
 #include <capnp/serialize.h>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -23,7 +19,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 
-const bool DEBUG = false;
+const bool debug = false;
 
 
 enum Step {
@@ -61,57 +57,6 @@ void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
 
     }
   } 
-}
-
-void sendDataToServer(const nlohmann::json& jsonData) {
-    CURL* curl;
-    CURLcode res;
-
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    curl = curl_easy_init();
-    if(curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, "http://localhost:5000/update-data");
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonData.dump().c_str());
-
-        res = curl_easy_perform(curl);
-        if(res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        }
-        curl_easy_cleanup(curl);
-    }
-    curl_global_cleanup();
-}
-
-void exportDataToJson(Tree* T) {
-    nlohmann::json jsonData;
-    for (const auto& node : T->allNodes) {
-        // Extract genome data
-        std::string genome = seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
-            {0, 0, 0}, 
-            {static_cast<int64_t>(node->sequence.size()) - 1, static_cast<int64_t>(node->sequence.back().first.size()) - 1, -1},
-            node->sequence, node->blockExists, node->blockStrand, T, node, node->globalCoords, node->navigator
-        ).first;
-
-        // Extract seeds data
-        std::vector<std::string> seeds;
-        for (const auto& seed : node->seeds) {
-            seeds.push_back(seed.sequence);
-        }
-
-        // Extract mutations data
-        std::vector<std::string> mutations;
-        for (const auto& mutation : node->mutations) {
-            mutations.push_back(mutation.description);
-        }
-
-        jsonData["nodes"].push_back({
-            {"id", node->identifier},
-            {"genome", genome},
-            {"seeds", seeds},
-            {"mutations", mutations}
-        });
-        sendDataToServer(jsonData);  // Send data to server
-    }
 }
 
 void applyMutations(mutableTreeData &data,
@@ -653,7 +598,7 @@ void undoMutations(mutableTreeData &data, Tree *T,
 // Go upstream until neededNongap nucleotides are seen and return the new coord.
 tupleCoord_t expandLeft(CoordNavigator &navigator, tupleCoord_t coord,
                         int neededNongap, blockExists_t &blockExists,
-                                             blockStrand_t &blockStrand, tupleCoord_t stop_coord)
+                                             blockStrand_t &blockStrand, tupleCoord_t stop_coord={-1,-1,-1})
 {
   int count = -1;
   
@@ -1282,7 +1227,6 @@ void bruteForceCoordIndex(const std::string& gappedSeq, std::map<int32_t, int32_
   }
 }
 
-bool debug = true;
 bool gappity = true;
 // Recursive function to build the seed index
 template <typename SeedMutationsType, typename GapMutationsType>
@@ -1607,11 +1551,11 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<bool>& seedVec
       throw std::runtime_error("num_masks + basePositions.size() != seedChanges.size()");
     }
 
-    if (node->identifier == "node_1") {
-      for (const auto& mask : masks_all[0]) {
-        std::cout << "mask: " << static_cast<int>(mask.first) << " " << static_cast<unsigned int>(mask.second) << std::endl;
-      }
-    }
+    // if (node->identifier == "node_1") {
+    //   for (const auto& mask : masks_all[0]) {
+    //     std::cout << "mask: " << static_cast<int>(mask.first) << " " << static_cast<unsigned int>(mask.second) << std::endl;
+    //   }
+    // }
 
 
 
