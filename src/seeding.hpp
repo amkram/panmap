@@ -25,7 +25,8 @@ namespace seeding
     struct seed
     {
 
-        std::string seq;
+        // std::string seq;
+        size_t hash;
         int32_t pos; // start position in sequence
         int32_t idx; // index of kmer in vector used in indexing DFS
         bool reversed;
