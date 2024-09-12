@@ -24,7 +24,6 @@
 
 const bool DEBUG = false;
 
-
 enum Step {
   BUILD,
   PLACE,
@@ -1821,7 +1820,20 @@ void pmi::build(Tree *T, Index::Builder &index)
   );
 }
 
-void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<std::vector<seed>> &readSeeds,  const std::string &fastqPath1, const std::string &fastqPath2) {
+void perfect_shuffle(std::vector<std::string>& v) {
+    int n = v.size();
+
+    std::vector<std::string> canvas(n);
+
+    for (int i = 0; i < n / 2; i++) {
+        canvas[i*2] = v[i];
+        canvas[i*2+1] = v[i + n/2];
+    }
+
+    v = std::move(canvas);
+}
+
+void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<seed> &readSeeds,  const std::string &fastqPath1, const std::string &fastqPath2) {
     FILE *fp;
     kseq_t *seq;
     fp = fopen(fastqPath1.c_str(), "r");
@@ -1847,7 +1859,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_
         line = 0;
         int forwardReads = readSequences.size();
         while ((line = kseq_read(seq)) >= 0) {
-            readSequences.push_back(reverseComplement(seq->seq.s));
+            readSequences.push_back(seeding::reverseComplement(seq->seq.s));
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
@@ -1864,32 +1876,13 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_
     }
 
     for (int i = 0; i < readSequences.size(); i++) {
-        std::string seq = readSequences[i];
-        std::string name = readNames[i];
-        std::string rc = reverseComplement(seq);
-
-        std::vector<seed> syncmers = syncmerize(seq, index.k(), index.s(), false, true, 0);
-        readSeedsFwd.push_back(syncmers);
-
-        std::vector<seed> syncmersReverse = syncmerize(rc, index.k(), index.s(), false, true, 0);
-        readSeedsBwd.push_back(syncmersReverse);
-
-        std::vector<seedmer> seedmers = seedmerize(syncmers, index.j());
-        std::vector<seedmer> seedmersReverse = seedmerize(syncmersReverse, index.j());
-        for (const auto &m : seedmers) {
-            if (readSeedCounts.find(m.seq) == readSeedCounts.end()) {
-                readSeedCounts[m.seq] = 1;
-            } else {
-                readSeedCounts[m.seq] += 1;
-            }
-        }
-        for (const auto &m : seedmersReverse) {
-            if (readSeedCounts.find(m.seq) == readSeedCounts.end()) {
-                readSeedCounts[m.seq] = 1;
-            } else {
-                readSeedCounts[m.seq] += 1;
-            }
-        }
+      for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : rollingSyncmers(readSequences[i], k, s, true, 1)) {
+        if (!isSyncmer) continue;
+        readSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
+        if (readSeedCounts.find(kmerHash) == readSeedCounts.end()) readSeedCounts[kmerHash] = std::make_pair(0, 0);
+        if (isReverse) ++readSeedCounts[kmerHash].second;
+        else           ++readSeedCounts[kmerHash].first;
+      }
     }
 }
 
@@ -1948,7 +1941,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::vector<std::string> readSequences;
     std::vector<std::string> readQuals;
     std::vector<std::string> readNames;
-    std::vector<std::vector<seed>> readSeeds
+    std::vector<seed> readSeeds;
     std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
     seedsFromFastq(k, s, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
 
