@@ -255,7 +255,7 @@ int main(int argc, const char** argv) {
     Index::Reader index_input = message->getRoot<Index>();
 
     log("Placing...");
-    pmi::place(T, index_input);
+    pmi::place(T, index_input, reads1, reads2);
 
 
     // Mapping
