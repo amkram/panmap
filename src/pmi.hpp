@@ -19,7 +19,7 @@ enum posWidth {pos16, pos32, pos64};
 namespace pmi { // functions and types for seed indexing
 
     void build(Tree *T, Index::Builder &index);
-    void place(Tree *T, Index::Reader &index);
+    void place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path);
 
 } // namespace pmi
 
