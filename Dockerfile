@@ -43,4 +43,6 @@ ENV LD_LIBRARY_PATH=/usr/local/lib
 
 RUN chmod +x /usr/local/bin/*
 
+EXPOSE 5000
+
 CMD ["/usr/local/bin/panmap", "-h"]

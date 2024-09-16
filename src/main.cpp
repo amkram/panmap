@@ -21,6 +21,34 @@
 #include <capnp/serialize-packed.h>
 #include <fcntl.h>
 #include <chrono>
+#include <thread>
+#include <nlohmann/json.hpp>
+#include <cstdlib>
+#include <thread>
+#include <future>
+#include <iostream>
+#include <boost/asio.hpp>
+#include <boost/process.hpp>
+
+void startWebServer() {
+    std::cout << "Starting web server..." << std::endl;
+    std::system("python3 web_server/app.py &");
+    std::this_thread::sleep_for(std::chrono::seconds(2)); // Give the server time to start
+    std::cout << "Web server started." << std::endl;
+}
+void exportDataToJson(panmanUtils::Tree* T, const std::string& filename) {
+    nlohmann::json jsonData;
+    for (const auto& node : T->allNodes) {
+        nlohmann::json nodeData;
+        nodeData["id"] = node.first;
+        nodeData["genome"] = "ATCG"; // Placeholder, replace with actual genome data
+        nodeData["seeds"] = {"seed1", "seed2"}; // Placeholder, replace with actual seeds
+        nodeData["mutations"] = {"mutation1", "mutation2"}; // Placeholder, replace with actual mutations
+        jsonData["nodes"].push_back(nodeData);
+    }
+    std::ofstream file(filename);
+    file << jsonData.dump(4);
+}
 
 
 using namespace pmi;
@@ -173,6 +201,7 @@ void log(const std::string& message) {
 }
 
 int main(int argc, const char** argv) {
+    startWebServer();
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
     tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::stoi(args["--cpus"].asString()));
     std::string guide = args["<guide>"].asString();
@@ -199,6 +228,8 @@ int main(int argc, const char** argv) {
       std::cerr << "Failed to load guide panMAN/panMAT.\n";
       return 1;
     }
+
+    exportDataToJson(T, "web_server/data.json");
 
     log("--- Settings ---");
     log("Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");
@@ -235,17 +266,17 @@ int main(int argc, const char** argv) {
     log("Indexing...");
 
     // capnp index object
+    ::capnp::MallocMessageBuilder message;
+    Index::Builder index = message.initRoot<Index>();
+    
+    index.setK(k);
+    index.setS(s);
 
-    // ::capnp::MallocMessageBuilder message;
-    // Index::Builder index = message.initRoot<Index>();
-    // index.setK(k);
-    // index.setS(s);
-    // index.setL(3);
-    // auto start = std::chrono::high_resolution_clock::now();
-    // pmi::build(T, index);
-    // auto end = std::chrono::high_resolution_clock::now();
-    // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    // log("Build time: " + std::to_string(duration.count()) + " milliseconds");
+    auto start = std::chrono::high_resolution_clock::now();
+    pmi::build(T, index);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
     // std::string tst = "atest.pmi"; 
     // writeCapnp(message, tst);
@@ -273,5 +304,18 @@ int main(int argc, const char** argv) {
     // Assembly logic here
 
     log("panmap run completed.");
-  return 0;
+
+    // Keep the application running
+    std::cout << "Press Ctrl+C to exit." << std::endl;
+    std::signal(SIGINT, [](int signum) {
+        std::cout << "\nExiting panmap..." << std::endl;
+        std::exit(signum);
+    });
+
+    // Infinite loop to keep the application running
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    return 0;
 }
