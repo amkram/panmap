@@ -240,17 +240,19 @@ int main(int argc, const char** argv) {
     // Index::Builder index = message.initRoot<Index>();
     // index.setK(k);
     // index.setS(s);
+    // index.setL(3);
     // auto start = std::chrono::high_resolution_clock::now();
     // pmi::build(T, index);
     // auto end = std::chrono::high_resolution_clock::now();
     // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     // log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
-    std::string tst = "atest.pmi"; 
+    // std::string tst = "atest.pmi"; 
     // writeCapnp(message, tst);
 
     // Placement
     log("Reading...");
+    std::string tst = "rsv_4k.pmi";
     auto message = readCapnp(tst);
     Index::Reader index_input = message->getRoot<Index>();
 

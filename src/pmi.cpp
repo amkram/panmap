@@ -1,6 +1,7 @@
 #include "pmi.hpp"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
+#include "mgsr.hpp"
 #include "seed_annotated_tree.hpp"
 #include <algorithm>
 #include <iostream>
@@ -180,17 +181,17 @@ void applyMutations(mutableTreeData &data,
 
     if (!isPlacement) {
 
-    //Push new recomb range, order depends on inversion
-    tupleRange newRange = {tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0},
-                            tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1}};
-    
-    if(! blockStrand[primaryBlockId].first){
-      auto temp = newRange.start;
-      newRange.start = newRange.stop;
-      newRange.stop = temp;
-    }
+      //Push new recomb range, order depends on inversion
+      tupleRange newRange = {tupleCoord_t{primaryBlockId, 0, data.sequence[primaryBlockId].first[0].second.empty() ? -1 : 0},
+                              tupleCoord_t{primaryBlockId, (int32_t)data.sequence[primaryBlockId].first.size() - 1, -1}};
+      
+      if(! blockStrand[primaryBlockId].first){
+        auto temp = newRange.start;
+        newRange.start = newRange.stop;
+        newRange.stop = temp;
+      }
 
-    recompRanges.emplace_back(newRange);
+      recompRanges.emplace_back(newRange);
     }
 
     if (startingStrand != blockStrand[primaryBlockId].first) {
@@ -1184,7 +1185,7 @@ inline uint16_t setBit(uint16_t number, uint16_t n) {
 }
 
 // std::vector<std::tuple<std::string, int, int>>
-// extractSeedmers(const std::string &seq, const int k, const int s,
+// extractSyncmers(const std::string &seq, const int k, const int s,
 //                 const bool open) {
 //   std::vector<std::tuple<std::string, int, int>> syncmers;
 //   std::unordered_map<int32_t, int32_t> degap;
@@ -1213,7 +1214,7 @@ inline uint16_t setBit(uint16_t number, uint16_t n) {
 
 //                     kmer,        hash  , reverse, start
 std::vector<std::tuple<std::string, size_t, bool, int>>
-extractSeedmers(const std::string &seq, const int k, const int s, const bool open) {
+extractSyncmers(const std::string &seq, const int k, const int s, const bool open) {
   std::vector<std::tuple<std::string, size_t, bool, int>> seedmers;
   for (int64_t i = 0; i < seq.size() - k + 1; ++i) {
     std::string kmer = seq.substr(i, k);
@@ -1702,7 +1703,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<
 
     // std::cout << node->identifier << " true syncmers: ";
     // auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
-    // auto syncmers = extractSeedmers(seq, seedK, seedS, false);
+    // auto syncmers = extractSyncmers(seq, seedK, seedS, false);
     // for (const auto &[kmer, hash, isReverse, startPos] : syncmers) {
     //   // std::cout << startPos << ":" << hash << " ";
     //   std::cout << startPos << ":" << hash << "|" << isReverse << " ";
@@ -1954,5 +1955,261 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     // buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
     buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
       Step::PLACE, data, onSeedsString, onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds
+    );
+}
+
+template <typename SeedMutationsType, typename GapMutationsType>
+void place_metagenomics_helper(mutableTreeData& data, std::vector<std::optional<std::string>>& onSeeds, std::vector<std::optional<std::pair<size_t, bool>>>& onSeedsHash, SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, int seedK, int seedS, int seedL, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator, std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes, std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap, std::unordered_set<int64_t>& inverseBlockIds) {
+  // Variables needed for both build and place
+  // std::vector<std::tuple<int64_t, bool, bool, std::optional<std::string>, std::optional<std::string>>> seedChanges;
+  std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>>> seedChanges;
+  blockMutationInfo_t blockMutationInfo;
+  mutationInfo_t mutationInfo;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunUpdates;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
+  std::vector<std::pair<bool, int64_t>> inverseBlockIdsBacktrack;
+  std::map<int64_t, int64_t> coordIndex;
+  std::vector<tupleRange> recompRanges;
+  blockExists_t oldBlockExists = data.blockExists;
+  blockStrand_t oldBlockStrand = data.blockStrand;
+  Step method = Step::PLACE;
+  applyMutations(data, blockMutationInfo, recompRanges,  mutationInfo, T, node, globalCoords, navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists, oldBlockStrand, method == Step::PLACE, inverseBlockIds, inverseBlockIdsBacktrack);
+
+  ::capnp::List<MapDelta>::Reader gapMutationsList;
+  if constexpr (std::is_same_v<GapMutationsType, ::capnp::List<GapMutations>::Reader>) {
+    gapMutationsList = perNodeGapMutations_Index[dfsIndex].getDeltas();
+  }
+  for (int i = 0; i < gapMutationsList.size(); ++i) {
+    const auto& gapMutation = gapMutationsList[i];
+    const int32_t& pos = gapMutation.getPos();
+    const auto& maybeValue = gapMutation.getMaybeValue();
+    if (maybeValue.isValue()) {
+      if (gapMap.find(pos) != gapMap.end()) {
+        gapRunBacktracks.emplace_back(false, std::make_pair(pos, gapMap[pos]));
+      } else {
+        gapRunBacktracks.emplace_back(true, std::make_pair(pos, maybeValue.getValue()));
+      }
+      gapMap[pos] = maybeValue.getValue();
+    } else {
+      gapRunBacktracks.emplace_back(false, std::make_pair(pos, gapMap[pos]));
+      gapMap.erase(pos);
+    }
+  }
+  for (const auto& blockId : inverseBlockIds) {
+    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> tmpGapMapUpdates;
+    if (data.blockExists[blockId].first) {
+      invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks, tmpGapMapUpdates);
+    }
+  }
+
+  // makeCoordIndex(coordIndex, gapMap, blockRanges);
+
+  auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
+  auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
+  std::vector<std::vector<int8_t>> masks;
+  for (int i = 0; i < currBasePositions.size(); ++i) {
+      int64_t pos = currBasePositions[i];
+      uint64_t tritMask = currPerPosMasks[i];
+      for (int k = 0; k < 32; ++k) {
+        uint8_t ternaryNumber = (tritMask >> (k * 2)) & 0x3;
+        if (ternaryNumber == 1) { // on -> off
+          // Handle deletion
+          // seedChanges.emplace_back(std::make_tuple(pos - k, true, false, onSeeds[pos - k], std::nullopt));
+          auto [oldSeed, oldIsReverse] = onSeedsHash[pos - k].value();
+          seedChanges.emplace_back(std::make_tuple(pos - k, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt));
+        } else if (ternaryNumber == 2) {
+          // Handle insertion/change
+          std::string newSeed = seed_annotated_tree::getSeedAt(pos - k, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges);
+          auto [newSeedFHash, newSeedRHash] = hashSeq(newSeed);
+          size_t newSeedHash;
+          bool newIsReverse;
+          if (newSeedFHash < newSeedRHash) {
+            newSeedHash = newSeedFHash;
+            newIsReverse = false;
+          } else {
+            newSeedHash = newSeedRHash;
+            newIsReverse = true;
+          }
+
+          if (onSeedsHash[pos - k].has_value()) { // on -> on
+            // seedChanges.emplace_back(std::make_tuple(pos - k, true, true, onSeeds[pos - k], newSeed));
+            auto [oldSeed, oldIsReverse] = onSeedsHash[pos - k].value();
+            seedChanges.emplace_back(std::make_tuple(pos - k, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse));
+          } else { // off -> on
+            // seedChanges.emplace_back(std::make_tuple(pos - k, false, true, std::nullopt, newSeed));
+            seedChanges.emplace_back(std::make_tuple(pos - k, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse));
+          }
+        }
+      }
+    }
+
+  for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
+
+  gapRunBlocksBacktracks.clear();
+
+  
+
+  for (const auto &p : seedChanges)
+  {
+    const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse] = p;
+
+    if (oldVal && newVal) { // seed at same pos changed
+      onSeedsHash[pos].value().first  = newSeed.value();
+      onSeedsHash[pos].value().second = newIsReverse.value();
+    } else if (oldVal && !newVal) { // seed on to off
+      if (onSeedsHash[pos].has_value() && pos < onSeedsHash.size()) onSeedsHash[pos].reset();
+      int blockId = scalarCoordToBlockId[pos];
+      BlocksToSeeds[blockId].erase(pos);
+    } else if (!oldVal && newVal) { // seed off to on
+      onSeedsHash[pos] = std::make_pair(newSeed.value(), newIsReverse.value());
+      int blockId = scalarCoordToBlockId[pos];
+      BlocksToSeeds[blockId].insert(pos);
+    } 
+  }
+  
+  if (debug) {
+    // // print out seeds at node
+    // if (method == Step::PLACE) {
+    //   std::cout << node->identifier << " place syncmers: ";
+    //   for (int i = 0; i < onSeedsHash.size(); i++) {
+    //     if (onSeedsHash[i].has_value()) {
+    //       // std::cout << degapGlobal(i, coordIndex) << ":" << onSeeds[i].value() << " ";
+    //       std::cout << degapGlobal(i, coordIndex) << ":" << onSeedsHash[i].value().first << "|" << onSeedsHash[i].value().second << " ";
+    //     }
+    //   }
+    //   std::cout << std::endl;
+    // }
+
+    std::cout << node->identifier << " true seedmers: ";
+    auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
+    auto syncmers = extractSyncmers(seq, seedK, seedS, false);
+    for (const auto &[kmer, hash, isReverse, startPos] : syncmers) {
+      // std::cout << startPos << ":" << hash << " ";
+      std::cout << startPos << ":" << hash << "|" << isReverse << " ";
+    }
+    std::cout << std::endl;
+  }
+
+  /* Recursive step */
+  dfsIndex++;
+  for (Node *child : node->children) {
+    buildOrPlace(
+      method, data, onSeeds, onSeedsHash, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds
+    );
+  }
+
+
+  for (const auto &p : seedChanges) {
+    const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse] = p;
+    if (oldVal && newVal) { // UNDO seed at same pos changed
+      onSeedsHash[pos].value().first = oldSeed.value();
+      onSeedsHash[pos].value().second = oldIsReverse.value();
+    } else if (oldVal && !newVal) { // seed on to off
+      onSeedsHash[pos] = std::make_pair(oldSeed.value(), oldIsReverse.value());
+      int blockId = scalarCoordToBlockId[pos];
+      BlocksToSeeds[blockId].insert(pos);
+    } else if (!oldVal && newVal) { // UNDO seed off to on
+      if (onSeedsHash[pos].has_value() && pos < onSeedsHash.size()) onSeedsHash[pos].reset();
+      int blockId = scalarCoordToBlockId[pos];
+      BlocksToSeeds[blockId].erase(pos);
+    } 
+  }
+  
+  // undo gapMap updates
+  for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
+
+  for (const auto& [del, blockId] : inverseBlockIdsBacktrack) {
+    if (del) {
+      inverseBlockIds.erase(blockId);
+    } else {
+      inverseBlockIds.insert(blockId);
+    }
+  }
+
+  /* Undo sequence mutations when backtracking */
+  undoMutations(data, T, node, blockMutationInfo, mutationInfo, globalCoords);
+
+}
+
+void pmi::place_metagenomics(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path)
+{
+    // Setup for seed indexing
+    seed_annotated_tree::mutableTreeData data;
+    seed_annotated_tree::globalCoords_t globalCoords;
+
+    seed_annotated_tree::setup(data, globalCoords, T);
+    
+    CoordNavigator navigator(data.sequence);
+
+    std::vector<int> BlockSizes(data.sequence.size(),0);
+    std::vector<std::pair<int64_t, int64_t>> blockRanges(data.blockExists.size());
+    std::unordered_set<int64_t> inverseBlockIds;
+
+
+    int32_t k = index.getK();
+    int32_t s = index.getS();
+    int32_t l = index.getL();
+    
+    std::map<int64_t, int64_t> gapMap;
+
+    gapMap[0] = tupleToScalarCoord({blockRanges.size() - 1, globalCoords[blockRanges.size() - 1].first.size() - 1, -1}, globalCoords);
+    
+    std::vector<int64_t> scalarCoordToBlockId(globalCoords.back().first.back().first + 1);
+    auto currCoord = tupleCoord_t{0,0,0};
+    if(navigator.sequence[0].first[0].second.empty()) {
+        currCoord.nucGapPos = -1;
+    }
+
+    for (int64_t i = 0; i < scalarCoordToBlockId.size(); i++) {
+        scalarCoordToBlockId[i] = currCoord.blockId;
+        BlockSizes[currCoord.blockId]++;
+        currCoord = navigator.newincrement(currCoord, data.blockStrand);
+    }
+
+    for (int64_t i = 0; i < blockRanges.size(); ++i) {
+        int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
+        int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
+        blockRanges[i] = std::make_pair(start, end);
+        if (!data.blockStrand[i].first) inverseBlockIds.insert(i);
+    }
+    
+    std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
+    ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
+    ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader= index.getPerNodeSeedMutations();
+  
+    int64_t dfsIndex = 0;
+
+    
+    // std::vector<std::optional<std::string>> onSeedsString(globalCoords.back().first.back().first + 1, std::nullopt);
+    std::vector<std::optional<std::string>> onSeedsString;
+    std::vector<std::optional<std::pair<size_t, bool>>> onSeedsHash(globalCoords.back().first.back().first + 1, std::nullopt);
+    
+    // std::vector<std::string> readSequences;
+    // std::vector<std::string> readQuals;
+    // std::vector<std::string> readNames;
+    // std::vector<std::vector<seed>> readSeeds;
+    // std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
+    // seedsFromFastq(k, s, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
+    // for (const auto& count : readSeedCounts) {
+    //   std::cout << count.first << " " << count.second.first << " " << count.second.second << std::endl;
+    // }
+
+    place_metagenomics_helper<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
+      data, onSeedsString, onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, l, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds
     );
 }
