@@ -4,6 +4,7 @@
 extern "C" {
     #include <htslib/sam.h>
 }
+
 void createSam(
     std::vector<std::vector<seeding::seed>> &readSeeds,
     std::vector<std::string> &readSequences,
