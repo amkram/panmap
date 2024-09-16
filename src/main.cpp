@@ -22,7 +22,7 @@
 #include <fcntl.h>
 #include <chrono>
 #include <thread>
-#include <nlohmann/json.hpp>
+// #include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <thread>
 #include <future>
@@ -256,6 +256,9 @@ int main(int argc, const char** argv) {
       
       index.setK(k);
       index.setS(s);
+      index.setT(1);
+      index.setOpen(true);
+      index.setL(3);
 
       auto start = std::chrono::high_resolution_clock::now();
       pmi::build(T, index);

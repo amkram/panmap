@@ -133,7 +133,6 @@ add_dependencies(panmap build-deps)
 
 
 # Find dependencies
-find_package(CURL REQUIRED)
 find_package(Boost COMPONENTS system iostreams filesystem unit_test_framework REQUIRED)
 find_package(ZLIB REQUIRED)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
