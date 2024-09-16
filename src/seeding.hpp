@@ -51,15 +51,15 @@ namespace seeding
         std::vector<int32_t> positions; // positions of s kmers
     };
 
-    class KHash
-    {
-    public:
-        size_t operator()(const seed &t) const
-        {
-            const std::hash<std::string> h;
-            return h(t.seq);
-        }
-    };
+    // class KHash
+    // {
+    // public:
+    //     size_t operator()(const seed &t) const
+    //     {
+    //         const std::hash<std::string> h;
+    //         return h(t.seq);
+    //     }
+    // };
 
     struct read_t
     {
@@ -522,25 +522,25 @@ namespace seeding
       return syncmers;
     }
 
-    inline std::vector<seedmer> seedmerize(const std::vector<seed> &kmers, const int32_t j)
-    {
-        std::vector<seedmer> ret;
-        if (kmers.size() < j)
-        {
-            return ret;
-        }
-        for (size_t i = 0; i < kmers.size() - j + 1; i++)
-        {
-            seedmer jk = {j, static_cast<int32_t>(kmers[i].seq.length()), ""};
-            for (size_t k = 0; k < j; k++)
-            {
-                jk.positions.push_back(kmers[i + k].pos);
-                jk.seq += kmers[i + k].seq;
-            }
-            ret.push_back(jk);
-        }
-        return ret;
-    }
+    // inline std::vector<seedmer> seedmerize(const std::vector<seed> &kmers, const int32_t j)
+    // {
+    //     std::vector<seedmer> ret;
+    //     if (kmers.size() < j)
+    //     {
+    //         return ret;
+    //     }
+    //     for (size_t i = 0; i < kmers.size() - j + 1; i++)
+    //     {
+    //         seedmer jk = {j, static_cast<int32_t>(kmers[i].seq.length()), ""};
+    //         for (size_t k = 0; k < j; k++)
+    //         {
+    //             jk.positions.push_back(kmers[i + k].pos);
+    //             jk.seq += kmers[i + k].seq;
+    //         }
+    //         ret.push_back(jk);
+    //     }
+    //     return ret;
+    // }
 
     inline std::string getNextSyncmer(std::string &seq, const int32_t currPos, const int32_t k, const int32_t s)
     {
@@ -555,143 +555,158 @@ namespace seeding
         }
         return "";
     }
-    inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k, const int32_t s, const bool open, const bool aligned, const int32_t pad)
-    {
-        std::mutex mtx;
-        std::vector<seed> ret;
-        int32_t seqLen = seq.size();
-        if (seqLen < k)
-        {
-            return ret;
-        }
-        if (aligned)
-        {
-            std::unordered_map<int32_t, int32_t> degap;
-            int32_t pos = 0;
-            std::string ungapped = "";
-            for (int32_t i = 0; i < seqLen; i++)
-            {
-                char c = seq[i];
-                degap[pos] = i;
-                if (c != '-')
-                {
-                    ungapped += c;
-                    pos++;
-                }
-            }
 
-            if (ungapped.size() < k + 1)
-            {
-                return ret;
-            }
-            for (int32_t i = 0; i < ungapped.size() - k + 1; i++)
-            {
-                std::string kmer = ungapped.substr(i, k);
-                if (is_syncmer(kmer, s, open))
-                {
-                    ret.push_back(seed{kmer, degap[i] + pad, -1, false, degap[i + k - 1] + pad});
-                }
-            }
-        }
-        else
-        {
+    inline std::string reverseComplement(std::string dna_sequence) {
+      std::string complement = "";
+      for (char c : dna_sequence) {
+          switch (c) {
+              case 'A': complement += 'T'; break;
+              case 'T': complement += 'A'; break;
+              case 'C': complement += 'G'; break;
+              case 'G': complement += 'C'; break;
+              default: complement += c; break;
+          }
+      }
+      std::reverse(complement.begin(), complement.end());
+      return complement;
+}
+    // inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k, const int32_t s, const bool open, const bool aligned, const int32_t pad)
+    // {
+    //     std::mutex mtx;
+    //     std::vector<seed> ret;
+    //     int32_t seqLen = seq.size();
+    //     if (seqLen < k)
+    //     {
+    //         return ret;
+    //     }
+    //     if (aligned)
+    //     {
+    //         std::unordered_map<int32_t, int32_t> degap;
+    //         int32_t pos = 0;
+    //         std::string ungapped = "";
+    //         for (int32_t i = 0; i < seqLen; i++)
+    //         {
+    //             char c = seq[i];
+    //             degap[pos] = i;
+    //             if (c != '-')
+    //             {
+    //                 ungapped += c;
+    //                 pos++;
+    //             }
+    //         }
 
-            // Loop through sequence and build up seeds as we go
-            if (seq.size() >= k)
-            {
+    //         if (ungapped.size() < k + 1)
+    //         {
+    //             return ret;
+    //         }
+    //         for (int32_t i = 0; i < ungapped.size() - k + 1; i++)
+    //         {
+    //             std::string kmer = ungapped.substr(i, k);
+    //             if (is_syncmer(kmer, s, open))
+    //             {
+    //                 ret.push_back(seed{kmer, degap[i] + pad, -1, false, degap[i + k - 1] + pad});
+    //             }
+    //         }
+    //     }
+    //     else
+    //     {
 
-                // Check first k bp for smers
-                std::string min_s = seq.substr(0, s);
-                int first_min_coord = 0;
-                int last_min_coord = 0;
-                int Ns = seq[0] == 'N';
+    //         // Loop through sequence and build up seeds as we go
+    //         if (seq.size() >= k)
+    //         {
 
-                for (int i = 1; i < k - s + 1; i++)
-                {
-                    std::string smer = seq.substr(i, s);
-                    if (seq[i] == 'N')
-                        Ns++;
+    //             // Check first k bp for smers
+    //             std::string min_s = seq.substr(0, s);
+    //             int first_min_coord = 0;
+    //             int last_min_coord = 0;
+    //             int Ns = seq[0] == 'N';
 
-                    if (smer < min_s)
-                    {
-                        min_s = smer;
-                        first_min_coord = i;
-                        last_min_coord = i;
-                    }
-                    else if (smer == min_s)
-                    {
-                        last_min_coord = i;
-                    }
-                }
-                for (int i = k - s + 1; i < k; i++)
-                {
-                    if (seq[i] == 'N')
-                        Ns++;
-                }
+    //             for (int i = 1; i < k - s + 1; i++)
+    //             {
+    //                 std::string smer = seq.substr(i, s);
+    //                 if (seq[i] == 'N')
+    //                     Ns++;
 
-                // Check the rest for smers and kmer seeds
-                for (int i = k; i < seq.size() + 1; i++)
-                {
+    //                 if (smer < min_s)
+    //                 {
+    //                     min_s = smer;
+    //                     first_min_coord = i;
+    //                     last_min_coord = i;
+    //                 }
+    //                 else if (smer == min_s)
+    //                 {
+    //                     last_min_coord = i;
+    //                 }
+    //             }
+    //             for (int i = k - s + 1; i < k; i++)
+    //             {
+    //                 if (seq[i] == 'N')
+    //                     Ns++;
+    //             }
 
-                    // Processing kmer starting at i - k in seq
-                    bool isSeed = (first_min_coord == i - k || last_min_coord == i - s) && Ns <= k / 2;
+    //             // Check the rest for smers and kmer seeds
+    //             for (int i = k; i < seq.size() + 1; i++)
+    //             {
 
-                    if (isSeed)
-                    {
-                        std::string kmer = seq.substr(i - k, k);
-                        ret.push_back(seed{kmer, i - k, -1, false, i});
-                    }
+    //                 // Processing kmer starting at i - k in seq
+    //                 bool isSeed = (first_min_coord == i - k || last_min_coord == i - s) && Ns <= k / 2;
 
-                    // Updating smers for kmer starting at i - k + 1
-                    if (i < seq.size())
-                    {
-                        if (seq[i] == 'N')
-                            Ns++;
-                        if (seq[i - k] == 'N')
-                            Ns--;
+    //                 if (isSeed)
+    //                 {
+    //                     std::string kmer = seq.substr(i - k, k);
+    //                     ret.push_back(seed{kmer, i - k, -1, false, i});
+    //                 }
 
-                        if (first_min_coord == i - k)
-                        {
-                            // Were losing the lowest smer, Re search for lowest
-                            min_s = seq.substr(i - k + 1, s);
-                            first_min_coord = i - k + 1;
+    //                 // Updating smers for kmer starting at i - k + 1
+    //                 if (i < seq.size())
+    //                 {
+    //                     if (seq[i] == 'N')
+    //                         Ns++;
+    //                     if (seq[i - k] == 'N')
+    //                         Ns--;
 
-                            for (int j = 1; j < k - s + 1; j++)
-                            {
-                                std::string smer = seq.substr(i - k + 1 + j, s);
-                                if (smer < min_s)
-                                {
-                                    min_s = smer;
-                                    first_min_coord = i - k + 1 + j;
-                                    last_min_coord = first_min_coord;
-                                }
-                                else if (smer == min_s)
-                                {
-                                    last_min_coord = i - k + 1 + j;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Test new smer to see if its the lowest
-                            std::string smer = seq.substr(i - s + 1, s);
-                            if (smer < min_s)
-                            {
-                                min_s = smer;
-                                first_min_coord = i - s + 1;
-                                last_min_coord = i - s + 1;
-                            }
-                            else if (smer == min_s)
-                            {
-                                last_min_coord = i - s + 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return ret;
-    }
+    //                     if (first_min_coord == i - k)
+    //                     {
+    //                         // Were losing the lowest smer, Re search for lowest
+    //                         min_s = seq.substr(i - k + 1, s);
+    //                         first_min_coord = i - k + 1;
+
+    //                         for (int j = 1; j < k - s + 1; j++)
+    //                         {
+    //                             std::string smer = seq.substr(i - k + 1 + j, s);
+    //                             if (smer < min_s)
+    //                             {
+    //                                 min_s = smer;
+    //                                 first_min_coord = i - k + 1 + j;
+    //                                 last_min_coord = first_min_coord;
+    //                             }
+    //                             else if (smer == min_s)
+    //                             {
+    //                                 last_min_coord = i - k + 1 + j;
+    //                             }
+    //                         }
+    //                     }
+    //                     else
+    //                     {
+    //                         // Test new smer to see if its the lowest
+    //                         std::string smer = seq.substr(i - s + 1, s);
+    //                         if (smer < min_s)
+    //                         {
+    //                             min_s = smer;
+    //                             first_min_coord = i - s + 1;
+    //                             last_min_coord = i - s + 1;
+    //                         }
+    //                         else if (smer == min_s)
+    //                         {
+    //                             last_min_coord = i - s + 1;
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     return ret;
+    // }
 
 }
 
