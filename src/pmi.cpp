@@ -1241,7 +1241,7 @@ void bruteForceCoordIndex(const std::string& gappedSeq, std::map<int32_t, int32_
   }
 }
 
-bool gappity = true;
+bool debug = false;
 // Recursive function to build the seed index
 template <typename SeedMutationsType, typename GapMutationsType>
 void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<std::string>>& onSeeds, std::vector<std::optional<std::pair<size_t, bool>>>& onSeedsHash, SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, int seedK, int seedS, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator, std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes, std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap, std::unordered_set<int64_t>& inverseBlockIds, int64_t jacNumer, int64_t jacDenom,  std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts) {
@@ -1897,7 +1897,7 @@ void perfect_shuffle(std::vector<std::string>& v) {
     v = std::move(canvas);
 }
 
-void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<seed> &readSeeds,  const std::string &fastqPath1, const std::string &fastqPath2) {
+void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, std::vector<std::string> &readSequences, std::vector<std::string> &readQuals, std::vector<std::string> &readNames, std::vector<std::vector<seed>> &readSeeds,  const std::string &fastqPath1, const std::string &fastqPath2) {
     FILE *fp;
     kseq_t *seq;
     fp = fopen(fastqPath1.c_str(), "r");
@@ -1923,7 +1923,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_
         line = 0;
         int forwardReads = readSequences.size();
         while ((line = kseq_read(seq)) >= 0) {
-            readSequences.push_back(seeding::reverseComplement(seq->seq.s));
+            readSequences.push_back(seq->seq.s);
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
@@ -1940,13 +1940,15 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, std::unordered_map<size_
     }
 
     for (int i = 0; i < readSequences.size(); i++) {
+      std::vector<seeding::seed> curReadSeeds;
       for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : rollingSyncmers(readSequences[i], k, s, true, 1)) {
         if (!isSyncmer) continue;
-        readSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
+        curReadSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
         if (readSeedCounts.find(kmerHash) == readSeedCounts.end()) readSeedCounts[kmerHash] = std::make_pair(0, 0);
         if (isReverse) ++readSeedCounts[kmerHash].second;
         else           ++readSeedCounts[kmerHash].first;
       }
+      readSeeds.push_back(std::move(curReadSeeds));
     }
 }
 
@@ -2005,9 +2007,12 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::vector<std::string> readSequences;
     std::vector<std::string> readQuals;
     std::vector<std::string> readNames;
-    std::vector<seed> readSeedsHash;
+    std::vector<std::vector<seed>> readSeeds;
     std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
-    seedsFromFastq(k, s, readSeedCounts, readSequences, readQuals, readNames, readSeedsHash, reads1Path, reads2Path);
+    seedsFromFastq(k, s, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
+    for (const auto& count : readSeedCounts) {
+      std::cout << count.first << " " << count.second.first << " " << count.second.second << std::endl;
+    }
 
     int64_t jacNumer = 0;
     int64_t jacDenom = 0;
