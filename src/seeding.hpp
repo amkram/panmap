@@ -31,7 +31,7 @@ namespace seeding
         int32_t idx; // index of kmer in vector used in indexing DFS
         bool reversed;
         int32_t gappedEnd;
-        int32_t rpos; // position on reference (only used during alignment)
+        uint32_t rpos; // position on reference (only used during alignment)
 
         bool operator<(const seed &rhs) const
         {
