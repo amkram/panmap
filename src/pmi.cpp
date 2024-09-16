@@ -20,8 +20,6 @@
 #include <tbb/blocked_range.h>
 
 
-const bool debug = false;
-
 enum Step {
   BUILD,
   PLACE,
@@ -1242,6 +1240,7 @@ void bruteForceCoordIndex(const std::string& gappedSeq, std::map<int32_t, int32_
 }
 
 bool debug = false;
+bool gappity = true;
 // Recursive function to build the seed index
 template <typename SeedMutationsType, typename GapMutationsType>
 void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<std::string>>& onSeeds, std::vector<std::optional<std::pair<size_t, bool>>>& onSeedsHash, SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, int seedK, int seedS, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator, std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes, std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap, std::unordered_set<int64_t>& inverseBlockIds, int64_t jacNumer, int64_t jacDenom,  std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts) {
@@ -1262,7 +1261,6 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<
   applyMutations(data, blockMutationInfo, recompRanges,  mutationInfo, T, node, globalCoords, navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists, oldBlockStrand, method == Step::PLACE, inverseBlockIds, inverseBlockIdsBacktrack);
 
   if (method == Step::BUILD) {
-    
     //                    erase           beg      end
     std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapMapUpdates;
     if (gappity) {
@@ -1599,7 +1597,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<
       }
     }
 
-    makeCoordIndex(coordIndex, gapMap, blockRanges);
+    // makeCoordIndex(coordIndex, gapMap, blockRanges);
 
     auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
     auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
@@ -1684,31 +1682,33 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<
     */
 
     if (method == Step::PLACE) {
+      auto oldSeedVal = oldSeed.value_or(0);
+      auto newSeedVal = newSeed.value_or(0);
       if (oldVal && newVal) { // seed at same pos changed
-        if (readSeedCounts.find(oldSeed) != readSeedCounts.end()) {
+        if (oldSeedVal && readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
           //case 1: seed is in reads
           jacNumer -= 1;
         } else {
           //case 2: seed not in reads
           jacDenom -= 1;
         }
-        if (readSeedCounts.find(newSeed) != readSeedCounts.end()) {
+        if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
           //case 1: seed is in reads
           jacNumer += 1;
         } else {
           //case 2: seed not in reads
           jacDenom += 1;
         }
-      } else if (oldVal && !newVal) { // seed on to off
-        if (readSeedCounts.find(oldSeed) != readSeedCounts.end()) {
+      } else if (oldSeedVal && oldVal && !newVal) { // seed on to off
+        if (readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
           //case 1: seed is in reads
           jacNumer -= 1;
         } else {
           //case 2: seed not in reads
           jacDenom -= 1;
         }
-      } else if (!oldVal && newVal) { // seed off to on
-        if (readSeedCounts.find(newSeed) != readSeedCounts.end()) {
+      } else if (newSeedVal && !oldVal && newVal) { // seed off to on
+        if (readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
           //case 1: seed is in reads
           jacNumer += 1;
         } else {
@@ -1878,7 +1878,9 @@ void pmi::build(Tree *T, Index::Builder &index)
   // std::vector<std::optional<std::string>> onSeedsString(globalCoords.back().first.back().first + 1, std::nullopt);
   std::vector<std::optional<std::string>> onSeedsString;
   std::vector<std::optional<std::pair<size_t, bool>>> onSeedsHash(globalCoords.back().first.back().first + 1, std::nullopt);
-
+  int64_t jacNumer = 0;
+  int64_t jacDenom = 0;
+  std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
   buildOrPlace(
     Step::BUILD, data, onSeedsString, onSeedsHash, perNodeSeedMutations_Builder, perNodeGapMutations_Builder, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts
   );
@@ -2010,13 +2012,14 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::vector<std::vector<seed>> readSeeds;
     std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
     seedsFromFastq(k, s, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
-    for (const auto& count : readSeedCounts) {
-      std::cout << count.first << " " << count.second.first << " " << count.second.second << std::endl;
-    }
 
     int64_t jacNumer = 0;
-    int64_t jacDenom = 0;
+    int64_t jacDenom = 0;    
 
+    for (const auto& count : readSeedCounts) {
+      jacDenom += count.second.first + count.second.second;
+      // std::cout << count.first << " " << count.second.first << " " << count.second.second << std::endl;
+    }
     // buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
     buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
       Step::PLACE, data, onSeedsString, onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts
