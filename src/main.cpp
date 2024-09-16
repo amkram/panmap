@@ -27,28 +27,6 @@
 #include <thread>
 #include <future>
 #include <iostream>
-#include <boost/asio.hpp>
-#include <boost/process.hpp>
-
-void startWebServer() {
-    std::cout << "Starting web server..." << std::endl;
-    std::system("python3 web_server/app.py &");
-    std::this_thread::sleep_for(std::chrono::seconds(2)); // Give the server time to start
-    std::cout << "Web server started." << std::endl;
-}
-void exportDataToJson(panmanUtils::Tree* T, const std::string& filename) {
-    nlohmann::json jsonData;
-    for (const auto& node : T->allNodes) {
-        nlohmann::json nodeData;
-        nodeData["id"] = node.first;
-        nodeData["genome"] = "ATCG"; // Placeholder, replace with actual genome data
-        nodeData["seeds"] = {"seed1", "seed2"}; // Placeholder, replace with actual seeds
-        nodeData["mutations"] = {"mutation1", "mutation2"}; // Placeholder, replace with actual mutations
-        jsonData["nodes"].push_back(nodeData);
-    }
-    std::ofstream file(filename);
-    file << jsonData.dump(4);
-}
 
 
 using namespace pmi;
@@ -201,7 +179,7 @@ void log(const std::string& message) {
 }
 
 int main(int argc, const char** argv) {
-    startWebServer();
+
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
     tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::stoi(args["--cpus"].asString()));
     std::string guide = args["<guide>"].asString();
@@ -229,7 +207,6 @@ int main(int argc, const char** argv) {
       return 1;
     }
 
-    exportDataToJson(T, "web_server/data.json");
 
     log("--- Settings ---");
     log("Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");
@@ -245,12 +222,19 @@ int main(int argc, const char** argv) {
     log("Reindex: " + std::to_string(reindex));
     log("k-mer length: " + std::to_string(k));
     log("s-mer length: " + std::to_string(s));
+
+    bool build = true;
+    ::capnp::MallocMessageBuilder outMessage;
+    std::unique_ptr<::capnp::PackedFdMessageReader> inMessage;
+    std::string default_index_path = guide + ".pmi";
+
     if (!index_path.empty() && !reindex) {
       log("Index path: " + index_path);
     } else {
-      std::string default_index_path = guide + ".pmi";
       if (!reindex && fs::exists(default_index_path)) {
         log("Index loaded from: " + default_index_path);
+        inMessage = readCapnp(default_index_path);
+        build = false;
       } else if (reindex) {
         log("Reindexing.");
       } else {
@@ -261,30 +245,32 @@ int main(int argc, const char** argv) {
         std::string stop_after = args["--stop-after"].asString();
         log("Will stop after stage: " + stop_after);
     }
-    log("");
-    log("--- Run ---");
-    log("Indexing...");
 
-    // capnp index object
-    ::capnp::MallocMessageBuilder message;
-    Index::Builder index = message.initRoot<Index>();
-    
-    index.setK(k);
-    index.setS(s);
+    if (build) {
+      // build
+      log("--- Run ---");
+      log("Indexing...");
 
-    auto start = std::chrono::high_resolution_clock::now();
-    pmi::build(T, index);
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    log("Build time: " + std::to_string(duration.count()) + " milliseconds");
+      // capnp index object
+      Index::Builder index = outMessage.initRoot<Index>();
+      
+      index.setK(k);
+      index.setS(s);
 
-    std::string tst = "atest.pmi"; 
-    // writeCapnp(message, tst);
+      auto start = std::chrono::high_resolution_clock::now();
+      pmi::build(T, index);
+      auto end = std::chrono::high_resolution_clock::now();
+      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+      log("Build time: " + std::to_string(duration.count()) + " milliseconds");
+
+      writeCapnp(outMessage, default_index_path);
+
+    }
 
     // Placement
     log("Reading...");
-    auto message = readCapnp(tst);
-    Index::Reader index_input = message->getRoot<Index>();
+    inMessage = readCapnp(default_index_path);
+    Index::Reader index_input = inMessage->getRoot<Index>();
 
     log("Placing...");
     pmi::place(T, index_input, reads1, reads2);
