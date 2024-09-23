@@ -13,13 +13,19 @@
 typedef std::pair<std::vector<std::tuple<size_t, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>> readSeedmers_t;
 typedef std::tuple<int32_t, int32_t, int32_t, int32_t, bool, int32_t> match_t;
 namespace mgsr {
+
+  struct positionInfo {
+    int32_t endPos;
+    size_t fhash;
+    size_t rhash;
+    bool rev;
+  };
+
   struct seedmers {
-      //       beg                hash    rev
-      // std::map<int32_t, std::pair<size_t, bool>> positionMap;
-      //       beg                 end      hash    rev
-      std::map<int32_t, std::tuple<int32_t, size_t, bool>> positionMap;
+      //       beg                 end      fhash    rhash    rev
+      std::map<int32_t, positionInfo> positionMap;
       //                 hash                       begs
-      std::unordered_map<size_t, std::set<int32_t>> seedmersMap;
+      std::unordered_map<size_t, std::set<int32_t>> hashToPositionsMap;
   };
 
   class Read {
