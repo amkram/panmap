@@ -43,6 +43,12 @@ namespace seeding
         };
     };
 
+    struct onSeedsHash {
+      size_t hash;
+      int64_t endPos;
+      bool isReverse;
+    };
+
     struct seedmer
     {
         int32_t j;
