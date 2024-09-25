@@ -21,6 +21,9 @@ struct SeedMutations {
 struct Index {
     k @0 :Int32;
     s @1 :Int32;
-    perNodeSeedMutations @2 :List(SeedMutations);
-    perNodeGapMutations @3 :List(GapMutations);
+    t @2 :Int32;
+    l @3 :Int32;
+    open @4 :Bool;
+    perNodeSeedMutations @5 :List(SeedMutations);
+    perNodeGapMutations @6 :List(GapMutations);
 }

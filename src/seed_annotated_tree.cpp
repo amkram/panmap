@@ -46,7 +46,7 @@ std::string seed_annotated_tree::getConsensus(Tree *T) {
   return consensus;
 }
 
-std::string seed_annotated_tree::getSeedAt(const int64_t &pos, Tree *T, int32_t &k,
+std::pair<std::string, int64_t> seed_annotated_tree::getSeedAt(const int64_t &pos, Tree *T, int32_t &k,
     std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
     const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const globalCoords_t &globalCoords, CoordNavigator &navigator,
@@ -111,7 +111,7 @@ std::string seed_annotated_tree::getSeedAt(const int64_t &pos, Tree *T, int32_t 
 
         if(c != '-'){
           seq.push_back(c);
-          if (seq.size() == k) return seq;
+          if (seq.size() == k) return std::make_pair(seq, tupleToScalarCoord(currCoord, globalCoords));
         } else {
           int scalar = tupleToScalarCoord(currCoord, globalCoords);
           if (scalarToTupleCoord.find(gapRuns.find(scalar)->second) != scalarToTupleCoord.end()) {
@@ -165,7 +165,7 @@ std::string seed_annotated_tree::getSeedAt(const int64_t &pos, Tree *T, int32_t 
     if (seq.size() != k) {
       throw std::runtime_error("unexpected kmer length during syncmer reconstruction");
     }
-    return seq;
+    return std::make_pair(seq, tupleToScalarCoord(currCoord, globalCoords));
   }  
     
 

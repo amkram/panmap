@@ -22,7 +22,7 @@
 #include <fcntl.h>
 #include <chrono>
 #include <thread>
-#include <nlohmann/json.hpp>
+// #include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <thread>
 #include <future>
@@ -256,6 +256,9 @@ int main(int argc, const char** argv) {
       
       index.setK(k);
       index.setS(s);
+      index.setT(1);
+      index.setOpen(true);
+      index.setL(3);
 
       auto start = std::chrono::high_resolution_clock::now();
       pmi::build(T, index);
@@ -273,7 +276,11 @@ int main(int argc, const char** argv) {
     Index::Reader index_input = inMessage->getRoot<Index>();
 
     log("Placing...");
+    auto start = std::chrono::high_resolution_clock::now();
     pmi::place(T, index_input, reads1, reads2);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    log("Placement time: " + std::to_string(duration.count()) + " milliseconds");
 
 
     // Mapping
@@ -290,17 +297,17 @@ int main(int argc, const char** argv) {
 
     log("panmap run completed.");
 
-    // Keep the application running
-    std::cout << "Press Ctrl+C to exit." << std::endl;
-    std::signal(SIGINT, [](int signum) {
-        std::cout << "\nExiting panmap..." << std::endl;
-        std::exit(signum);
-    });
+    // // Keep the application running
+    // std::cout << "Press Ctrl+C to exit." << std::endl;
+    // std::signal(SIGINT, [](int signum) {
+    //     std::cout << "\nExiting panmap..." << std::endl;
+    //     std::exit(signum);
+    // });
 
-    // Infinite loop to keep the application running
-    while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
+    // // Infinite loop to keep the application running
+    // while (true) {
+    //     std::this_thread::sleep_for(std::chrono::seconds(1));
+    // }
 
     return 0;
 }
