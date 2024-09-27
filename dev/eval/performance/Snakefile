@@ -1,0 +1,23 @@
+panmans = ['ecoli_1000', 'HIV_20000', 'klebs_1000', 'rsv_4000', 'sars_20000', 'tb_400']
+
+
+rule all:
+    input:
+        msa = expand('data/fasta/{panman}.panman.aln.fa.gz', panman=panmans),
+        raw = expand('data/fasta/{panman}.panman.fa.gz', panman=panmans),
+
+# panmans -> MSA and raw sequences
+rule fasta:
+    input: 'data/panmans/{panman}.panman'
+    output:
+        msa = 'data/fasta/{panman}.panman.aln.fa.gz',
+        raw = 'data/fasta/{panman}.panman.fa.gz'
+    shell:
+        '''
+        panman/build/panmanUtils -I {input} --fasta > {input}.aln.fa
+        gzip -c {input}.aln.fa > {output.msa}
+        panman/build/panmanUtils -I {input} --fasta-aligned > {input}.fa    
+        gzip -c {input}.fa > {output.raw}
+        '''
+
+    
