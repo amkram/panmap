@@ -15,7 +15,7 @@ typedef std::tuple<int32_t, int32_t, int32_t, int32_t, bool, int32_t> match_t;
 namespace mgsr {
 
   struct positionInfo {
-    int32_t endPos;
+    int64_t endPos;
     size_t fhash;
     size_t rhash;
     bool rev;
@@ -29,9 +29,9 @@ namespace mgsr {
   };
 
   struct readSeedmer {
-    const size_t* hash;
-    const int32_t begPos;
-    const int32_t endPos;
+    const size_t hash;
+    const int64_t begPos;
+    const int64_t endPos;
     const bool rev;
     const int32_t iorder;
   };
