@@ -16,13 +16,7 @@ using namespace boost::icl;
 typedef std::pair<std::vector<std::tuple<size_t*, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>> readSeedmers_t;
 typedef std::tuple<int32_t, int32_t, int32_t, int32_t, bool, int32_t> match_t;
 
-static inline int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& coordsIndex) {
-    auto coordIt = coordsIndex.upper_bound(globalCoord);
-    if (coordIt == coordsIndex.begin()) {
-        return 0;
-    }
-    return globalCoord - std::prev(coordIt)->second;
-}
+
 
 namespace mgsr {
 
@@ -61,6 +55,13 @@ namespace mgsr {
     // size_t numAbsentees = 0;
   };
 
+  int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& coordsIndex) {
+    auto coordIt = coordsIndex.upper_bound(globalCoord);
+    if (coordIt == coordsIndex.begin()) {
+        return 0;
+    }
+    return globalCoord - std::prev(coordIt)->second;
+  }
 
   template<typename Iterator>
   Iterator safe_next(Iterator it, const Iterator& end, const uint8_t steps) {
