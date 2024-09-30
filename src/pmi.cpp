@@ -1046,13 +1046,6 @@ void makeCoordIndex(std::map<int64_t, int64_t>& coordIndex, const std::map<int64
   }
 }
 
-static inline int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& coordsIndex) {
-    auto coordIt = coordsIndex.upper_bound(globalCoord);
-    if (coordIt == coordsIndex.begin()) {
-        return 0;
-    }
-    return globalCoord - std::prev(coordIt)->second;
-}
 
 // Merges each range with overlapping ranges after expanding left and right
 // by `neededNongap` non-gap nucleotides.
@@ -1792,7 +1785,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<
       std::cout << node->identifier << " place syncmers: ";
       for (int i = 0; i < onSeedsHash.size(); i++) {
         if (onSeedsHash[i].has_value()) {
-          std::cout << degapGlobal(i, coordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
+          std::cout << mgsr::degapGlobal(i, coordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
         }
       }
       std::cout << std::endl;
@@ -1800,7 +1793,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::optional<
       std::cout << node->identifier << " build syncmers: ";
       for (int i = 0; i < onSeedsHash.size(); i++) {
         if (onSeedsHash[i].has_value()) {
-          std::cout << degapGlobal(i, coordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
+          std::cout << mgsr::degapGlobal(i, coordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
         }
       }
       std::cout << std::endl;
@@ -2162,8 +2155,8 @@ void place_per_read_DFS(
         const auto& beg = seedmer.first;
         const auto& [end, fhash, rhash, rev] = seedmer.second;
         if (fhash != rhash) {
-          std::cout << degapGlobal(beg, coordIndex) << "-" << degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
-          // std::cout << beg << "|" << degapGlobal(beg, coordIndex) << "-" << end << "|" << degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
+          std::cout << mgsr::degapGlobal(beg, coordIndex) << "-" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
+          // std::cout << beg << "|" << mgsr::degapGlobal(beg, coordIndex) << "-" << end << "|" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
 
         }
       }
