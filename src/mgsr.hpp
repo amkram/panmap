@@ -11,6 +11,10 @@
 #include "index.capnp.h"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
+#include <eigen3/Eigen/Dense>
+#include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
+
 
 using namespace boost::icl;
 typedef std::pair<std::vector<std::tuple<size_t*, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>> readSeedmers_t;
@@ -575,6 +579,323 @@ namespace mgsr {
     return false;
   }
 
+
+  double getExp(const Eigen::MatrixXd& probs, const Eigen::VectorXd& props, const Eigen::VectorXd& numReadDuplicates) {
+      assert(props.size() == probs.cols());
+
+      Eigen::VectorXd readSums = probs * props;
+      double llh = (numReadDuplicates.array() * readSums.array().log()).sum();
+
+      return llh;
+  }
+
+  Eigen::VectorXd getMax(const Eigen::MatrixXd& probs, const Eigen::VectorXd& props, const Eigen::VectorXd& numReadDuplicates, const int32_t& totalReads) {
+    size_t numNodes = probs.cols();
+
+    Eigen::VectorXd denoms = probs * props;
+
+    Eigen::VectorXd newProps(numNodes);
+    newProps.setZero();
+    size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes, numNodes/num_cpus),
+      [&](const tbb::blocked_range<size_t>& range) {
+        for (size_t i = range.begin(); i < range.end(); ++i) {
+          Eigen::VectorXd ratios = (probs.col(i).array() * props[i]) / denoms.array();
+          double newProp = (numReadDuplicates.array() * ratios.array()).sum();
+          newProp /= totalReads;
+          newProps(i) = newProp;
+        }
+      }); 
+
+    // for (size_t i = 0; i < numNodes; ++i) {
+    //   Eigen::VectorXd ratios = (probs.col(i).array() * props[i]) / denoms.array();
+    //   double newProp = (numReadDuplicates.array() * ratios.array()).sum();
+    //   newProp /= totalReads;
+    //   newProps(i) = newProp;
+    // }
+
+    return newProps;
+
+  }
+
+  void normalize(Eigen::VectorXd& props) {    
+    for (int i = 0; i < props.size(); ++i) {
+      if (props(i) <= 0) {
+          props(i) = std::numeric_limits<double>::min();
+      }
+    }
+    double sum = props.sum();
+    props /= sum;
+  }
+
+  void updateInsigCounts(const Eigen::VectorXd& props, std::vector<size_t>& insigCounts, size_t totalNodes) {
+    double insigProp =  (1.0 / static_cast<double>(totalNodes)) / 10.0;
+    for (int i = 0; i < props.size(); ++i) {
+      if (props(i) <= insigProp) {
+        ++insigCounts[i];
+      } else {
+        insigCounts[i] = 0;
+      }
+    }
+  }
+
+
+  void squarem_test_1(
+    const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs,
+    const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    const Eigen::VectorXd& numReadDuplicates, const int32_t& numReads, 
+    Eigen::VectorXd& props, double& llh, int& curit, bool& converged, size_t iterations, std::vector<size_t>& insigCounts, size_t totalNodes
+    ) {
+    assert(nodes.size() == probs.cols());
+    assert(nodes.size() == props.size());
+    size_t curIteration = 1;
+    while (true) {
+      Eigen::VectorXd theta1 = getMax(probs, props, numReadDuplicates, numReads);
+      normalize(theta1);
+      Eigen::VectorXd theta2 = getMax(probs, theta1, numReadDuplicates, numReads);
+      normalize(theta2);
+
+      Eigen::VectorXd r = theta1 - props;
+      Eigen::VectorXd v = theta2 - theta1 - r;
+      double r_norm = r.norm();
+      double v_norm = v.norm();
+
+      double alpha;
+      if (r_norm == 0 || v_norm == 0) {
+        alpha = 0;
+      } else {
+        alpha = - r_norm / v_norm;
+      }
+      double newllh;
+
+      
+      Eigen::VectorXd theta_p;
+      if (alpha > -1) {
+        alpha = -1;
+        theta_p = props - 2 * alpha * r + alpha * alpha * v;
+        props = getMax(probs, theta_p, numReadDuplicates, numReads);
+        normalize(props);
+        newllh = getExp(probs, props, numReadDuplicates);
+      } else {
+        theta_p = props - 2 * alpha * r + alpha * alpha * v;
+        auto newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
+        normalize(newProps);
+        newllh = getExp(probs, newProps, numReadDuplicates);
+        if (newllh >= llh) {
+          props = std::move(newProps);
+        } else {
+          while (llh - newllh > 0.0001) {
+            // std::cerr << "it " << curit << "\t" << newllh << "\t" << llh << std::endl;
+            alpha = (alpha - 1) / 2;
+            theta_p = props - 2 * alpha * r + alpha * alpha * v;
+            newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
+            normalize(newProps);
+            newllh   = getExp(probs, newProps, numReadDuplicates);
+          }
+          props = std::move(newProps);
+        }
+      }
+
+      updateInsigCounts(props, insigCounts, totalNodes);
+      // std::cerr << "it " << curit << "\t" << newllh << "\t" << llh << std::endl;
+      if (newllh - llh < 0.0001) {
+        llh = newllh;
+        converged = true;
+        break;
+      } else if (curIteration == iterations) {
+        llh = newllh;
+        break;
+      }
+      llh = newllh;
+      ++curit;
+      ++curIteration;
+    }
+    ++curit;
+  }
+
+  //squarem test 1: periodically drop nodes with very low abundance
+  void squaremHelper_test_1(
+    Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
+    const std::vector<bool>& lowScoreReads, const int32_t& numReads, const size_t& numLowScoreReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    Eigen::MatrixXd& probs, std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude
+  ) {
+    if (exclude.empty()) {
+      std::stringstream msg;
+      msg << "starting to set up EM" << "\n";
+      std::cerr << msg.str();
+    } else {
+      std::stringstream msg;
+      msg << "starting to set up EM excluding " << exclude << "\n";
+      std::cerr << msg.str();
+    }
+
+
+    if (!exclude.empty()) {
+      probs.resize(allScores.begin()->second.size() - numLowScoreReads, allScores.size() - leastRecentIdenticalAncestors.size() - 1);
+    } else {
+      probs.resize(allScores.begin()->second.size() - numLowScoreReads, allScores.size() - leastRecentIdenticalAncestors.size());
+    }
+    size_t colIndex = 0;
+    for (const auto& node : allScores) {
+      if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
+      if (!exclude.empty() && node.first == exclude) continue;
+      std::vector<double> curProbs;
+      size_t rowIndex = 0;
+      for (size_t i = 0; i < node.second.size(); ++i) {
+        if (!lowScoreReads[i]) {
+          const auto& score = node.second[i];
+          probs(rowIndex, colIndex) = score.second;
+          ++rowIndex;
+        }
+      }
+      nodes.push_back(node.first);
+      ++colIndex;
+    }
+
+    // std::cerr << "num nodes " << nodes.size() << std::endl;
+    props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
+    size_t totalNodes = nodes.size();
+    Eigen::VectorXd readDuplicates(allScores.begin()->second.size() - numLowScoreReads);
+    
+    size_t indexReadDuplicates = 0;
+    size_t numHighScoreReads = 0;
+    for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
+      if (!lowScoreReads[i]) {
+        readDuplicates(indexReadDuplicates) = readSeedmersDuplicatesIndex[i].size();
+        numHighScoreReads += readSeedmersDuplicatesIndex[i].size();
+        ++indexReadDuplicates;
+      }
+    }
+
+    if (exclude.empty()) {
+      std::stringstream msg;
+      msg << "starting EM estimation of haplotype proportions" << "\n";
+      std::cerr << msg.str();
+    } else {
+      std::stringstream msg;
+      msg << "starting EM estimation of haplotype proportions excluding " << exclude << "\n";
+      std::cerr << msg.str();
+    }
+
+
+    int curit = 0;
+    bool converged = false;
+    int32_t filter_round = 0;
+    size_t check_freq = 20;
+    size_t remove_count = 20;
+    std::vector<size_t> insigCounts(nodes.size());
+    while (true) {
+      std::cerr << "filter round " << filter_round + 1 << std::endl;
+      ++filter_round;
+      llh = getExp(probs, props, readDuplicates);
+      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, check_freq, insigCounts, totalNodes);
+      if (converged) {
+        break;
+      }
+      
+      std::vector<size_t> significantIndices;
+      std::vector<std::string> sigNodes;
+      for (size_t i = 0; i < nodes.size(); ++i) {
+        if (insigCounts[i] < remove_count) {
+          significantIndices.push_back(i);
+        }
+      }
+
+      if (significantIndices.size() == nodes.size()) {
+        continue;
+      }
+
+      for (size_t idx : significantIndices) {
+        sigNodes.push_back(nodes[idx]);
+      }
+
+      Eigen::MatrixXd sigProbs(probs.rows(), sigNodes.size());
+      Eigen::VectorXd sigProps(sigNodes.size());
+      for (size_t i = 0; i < significantIndices.size(); ++i) {
+        sigProbs.col(i) = probs.col(significantIndices[i]);
+        sigProps(i) = props(i);
+      }
+      std::cerr << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
+      std::cerr << sigNodes.size() << " nodes left" << std::endl;
+      nodes = std::move(sigNodes);
+      probs = std::move(sigProbs);
+      props = std::move(sigProps);
+      normalize(props);
+      insigCounts.assign(nodes.size(), 0);
+      if (nodes.size() <= std::max(static_cast<int>(totalNodes) / 20, 100) || filter_round >= 10) {
+        break;
+      }
+    }
+
+    if (!converged) {
+      std::vector<size_t> insigCounts(nodes.size());
+      std::cerr << "start full EM" << std::endl;
+      llh = getExp(probs, props, readDuplicates);
+      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), insigCounts, totalNodes);
+      assert(converged == true);
+    }
+
+    for (int32_t i = 0; i < roundsRemove; ++i) {
+      std::vector<size_t> significantIndices;
+      std::vector<std::string> sigNodes;
+
+      for (size_t i = 0; i < props.size(); ++i) {
+          if (props(i) >= removeThreshold) {
+              significantIndices.push_back(i);
+          }
+      }
+      if (significantIndices.size() == nodes.size()) break;
+      std::cerr << "remove round " << i + 1 << std::endl;
+
+      for (size_t idx : significantIndices) {
+          sigNodes.push_back(nodes[idx]);
+      }
+
+      Eigen::MatrixXd sigProbs(probs.rows(), significantIndices.size());
+      sigProbs.resize(probs.rows(), significantIndices.size());
+      for (size_t i = 0; i < significantIndices.size(); ++i) {
+          sigProbs.col(i) = probs.col(significantIndices[i]);
+      }
+      Eigen::VectorXd sigProps = Eigen::VectorXd::Constant(sigNodes.size(), 1.0 / static_cast<double>(sigNodes.size()));
+      llh = getExp(sigProbs, sigProps, readDuplicates);
+      bool converged = false;
+      size_t iterations = std::numeric_limits<size_t>::max();
+      std::vector<size_t> insigCounts(sigNodes.size());
+      squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, iterations, insigCounts, totalNodes);
+      assert(converged);
+      nodes = std::move(sigNodes);
+      probs = std::move(sigProbs);
+      props = std::move(sigProps);
+    }
+
+    if (!exclude.empty()) {
+      Eigen::VectorXd curProbs(allScores.begin()->second.size() - numLowScoreReads);
+      size_t indexCurProbs = 0;
+      const auto& curNode = allScores.at(exclude);
+      for (size_t i = 0; i < curNode.size(); ++i) {
+        if (!lowScoreReads[i]) {
+          const auto& score = curNode[i];
+          curProbs(indexCurProbs) = score.second;
+          ++indexCurProbs;
+        }
+      }
+
+      probs = probs, curProbs;
+      props = props, 0.0;
+      llh = getExp(probs, props, readDuplicates);
+    }
+
+    if (exclude.empty()) {
+      std::stringstream msg;
+      msg << "Finished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
+      std::cerr << msg.str();
+    } else {
+      std::stringstream msg;
+      msg << "Finished EM estimation of haplotype proportions excluding " << exclude << ". Total EM iterations: " << curit<< "\n";
+      std::cerr << msg.str();
+    }
+  }
 }
 
 #endif
