@@ -1,10 +1,10 @@
-panmans = ['ecoli_1000', 'HIV_20000', 'klebs_1000', 'rsv_4000', 'sars_20000', 'tb_400']
-
+normal = ['ecoli_1000', 'HIV_20000', 'rsv_4000', 'sars_20000', 'tb_400']
+subsampled = ['ecoli_100', 'HIV_2000', 'klebs_100', 'rsv_400', 'sars_2000', 'tb_40']
+panmans = normal + subsampled
 
 rule all:
     input:
-        msa = expand('data/fasta/{panman}.panman.aln.fa.gz', panman=panmans),
-        raw = expand('data/fasta/{panman}.panman.fa.gz', panman=panmans),
+        gfa = expand('data/gfa/{panman}.panman.gfa.gz', panman=normal)
 
 # panmans -> MSA and raw sequences
 rule fasta:
@@ -16,8 +16,84 @@ rule fasta:
         '''
         panman/build/panmanUtils -I {input} --fasta > {input}.aln.fa
         gzip -c {input}.aln.fa > {output.msa}
+        rm {input}.aln.fa
         panman/build/panmanUtils -I {input} --fasta-aligned > {input}.fa    
         gzip -c {input}.fa > {output.raw}
+        rm {input}.fa
+        '''
+rule gfa:
+    input: 'data/panmans/{panman}.panman'
+    output: 'data/gfa/{panman}.panman.gfa.gz'
+    shell:
+        '''
+        panman/build/panmanUtils -I {input} --gfa > {input}.gfa
+        gzip -c {input}.gfa > {output}
         '''
 
-    
+# rule subsample:
+#     input: 'data/fasta/{subsampled}0.panman.fa.gz'
+#     output: 'data/fasta/{subsampled}.panman.fa.gz'
+#     shell:
+#         '''
+#         seqkit sample --proportion 10 {input} -o {output}
+#         '''
+# rule panman_from_subsampled
+# rule vcf:
+#     input: rules.panman_from_subsampled.output
+
+#     output: 'data/vcf/{subsampled}.panman.vcf.gz'
+#     shell:
+#         '''
+#         panman/build/panmanUtils -I {input} --vcf > {input}.vcf
+#         gzip -c {input}.vcf > {output}
+#         rm {input}.vcf
+#         '''
+
+# 
+
+# rule vg_graph_from_vcf:
+#     input: rules.vcf.output
+#     output: 'output/vg-from-panman-vcf/{panman}.xg.gz
+#     shell:
+#         '''
+#         /usr/bin/time -v vg construct -r data/ref/{panman}.ref.fa -v {input} > {input}.xg 2> {panman}.xg.time
+#         gzip -c {input}.xg > {output}
+#         '''
+
+# rule vg_graph_size:
+#     input: rules.vg_graph_from_vcf.output
+#     output: 'output/vg-from-panman-vcf/{panman}.xg.size'
+#     shell:
+#         '''
+#         wc -c {input} > {output}
+#         '''
+
+# rule vg_index_map:
+#     input:
+#         ref = 'data/ref/{panman}.ref.fa',
+#         vcf = rules.vcf.output
+#     output:
+#     shell:
+#         '''
+#         vg/bin/vg autoindex --workflow map -r {input.ref} -v {input.vcf} -p output/vg-map-index/{panman}
+#         '''
+
+# rule vg_index_mpmap:
+#     input:
+#         ref = 'data/ref/{panman}.ref.fa',
+#         vcf = rules.vcf.output
+#     output: 'output/vg-mpmap-index/{panman}.'
+#     shell:
+#         '''
+#         vg/bin/vg autoindex --workflow mpmap -r {input.ref} -v {input.vcf} -p {output}
+#         '''
+# rule vg_index_giraffe:
+#     input:
+#         ref = 'data/ref/{panman}.ref.fa',
+#         vcf = rules.vcf.output
+#     output:
+#     shell:
+#         '''
+#         vg/bin/vg autoindex --workflow giraffe -r {input.ref} -v {input.vcf} -p output/vg-giraffe-index/{panman}
+#         '''
+# rule vg_graph_from_panman_gfa:
