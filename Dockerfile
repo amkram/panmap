@@ -32,7 +32,8 @@ RUN apt-get install -y \
     automake \
     autoconf \
     libprotobuf-dev \
-    protobuf-compiler 
+    protobuf-compiler \
+    libeigen3-dev
 
 COPY . .
 
