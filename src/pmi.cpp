@@ -2122,7 +2122,8 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
       std::vector<seeding::seed> curReadSeeds;
       for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : rollingSyncmers(readSequences[i], k, s, open, t, false)) {
         if (!isSyncmer) continue;
-        curReadSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
+        //curReadSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
+        curReadSeeds.emplace_back(seed{kmerHash, startPos + k - 1, -1, isReverse, 0});
         if (readSeedCounts.find(kmerHash) == readSeedCounts.end()) readSeedCounts[kmerHash] = std::make_pair(0, 0);
         if (isReverse) ++readSeedCounts[kmerHash].second;
         else           ++readSeedCounts[kmerHash].first;
