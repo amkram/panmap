@@ -2297,9 +2297,6 @@ void place_per_read_DFS(
   if (debug) {
     // print out seeds at node
     if (method == Step::PLACE) {
-      if (node->parent != nullptr) {
-        std::cout << node->identifier << " -> " << node->parent->identifier << " " << seedChanges.size() << std::endl;
-      }
       std::cout << node->identifier << " place seedmers: ";
       for (const auto& seedmer : positionMap) {
         const auto& beg = seedmer.first;
@@ -2310,22 +2307,22 @@ void place_per_read_DFS(
 
         }
       }
+      std::cout << std::endl;
     }
 
-    // std::cout << node->identifier << " true seedmers: ";
-    // auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
-    // auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
-    // for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
-    //   std::cout << startPos << "-" << endPos << ":" << seedmer << "|" << hash << "|" << isReverse << " ";
-    // }
-    // std::cout << std::endl;
+    std::cout << node->identifier << " true seedmers: ";
+    auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
+    auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
+    for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
+      std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
+    }
+    std::cout << std::endl;
   }
 
   tbb::concurrent_vector<std::pair<size_t, boost::icl::split_interval_map<int32_t, int>>> readBackTrack;
   tbb::concurrent_vector<std::pair<size_t, std::unordered_set<int32_t>>> readDuplicateSetsBackTrack;
   tbb::concurrent_vector<std::pair<size_t, std::vector<std::pair<int32_t, bool>>>> readDuplicatesBackTrack;
-  if (node->parent != nullptr) std::cout << node->identifier << " -> " << node->parent->identifier << std::endl;
-  std::cout << node->identifier << " SCORE: ";
+  // std::cout << node->identifier << " SCORE: ";
   if (node->identifier == T->root->identifier) {
     allScores[node->identifier].resize(reads.size());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, reads.size(), reads.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
@@ -2337,7 +2334,7 @@ void place_per_read_DFS(
         int64_t pseudoScore = getPseudoScore(curRead, positionMap, hashToPositionsMap, coordIndex, maximumGap, minimumCount, minimumScore);
         double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
         allScores[node->identifier][i] = {pseudoScore, pseudoProb};
-        std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
+        // std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
         
       }
     });
@@ -2514,7 +2511,7 @@ void place_per_read_DFS(
           double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
           allScores[node->identifier][i] = {pseudoScore, pseudoProb};
 
-          std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
+          // std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
         }
       });
     }
@@ -2640,7 +2637,6 @@ void place_per_read_DFS(
 
   /* Undo sequence mutations when backtracking */
   undoMutations(data, T, node, blockMutationInfo, mutationInfo, globalCoords);
-
 }
 
 

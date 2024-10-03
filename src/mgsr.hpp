@@ -536,11 +536,7 @@ namespace mgsr {
 
 
     // if (true && curRead.duplicates.size() > 0) {
-    //   if (reverse) {
-
-    //   } else {
       
-    //   }
     // }
     // const auto& first1 = curRead.seedmersList[boost::icl::first(*firstMatch)];
     // const auto& last1 = curRead.seedmersList[boost::icl::last(*lastMatch)];

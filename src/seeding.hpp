@@ -51,10 +51,10 @@ namespace seeding
 
     struct seedmer
     {
-        int32_t j;
-        int32_t k;
-        std::string seq;                // concatenated string of s kmers
-        std::vector<int32_t> positions; // positions of s kmers
+      int32_t j;
+      int32_t k;
+      std::string seq;                // concatenated string of s kmers
+      std::vector<int32_t> positions; // positions of s kmers
     };
 
     // class KHash
@@ -69,10 +69,10 @@ namespace seeding
 
     struct read_t
     {
-        std::string seq;                    // read sequence
-        std::string qual;                   // quality string
-        std::vector<int32_t> seedPositions; // positions of seed starts in read
-        std::string name;                   // read id
+      std::string seq;                    // read sequence
+      std::string qual;                   // quality string
+      std::vector<int32_t> seedPositions; // positions of seed starts in read
+      std::string name;                   // read id
     };
 
     static size_t btn(char b)
@@ -396,7 +396,7 @@ namespace seeding
 
         forwardKmerHash ^= rol(chash(seq[i]), k-i-1);
         reverseKmerHash ^= rol(chash(comp(seq[k-i-1])), k-i-1);
-        forwardSmerHash  = rol(forwardSmerHash, 1) ^ rol(chash(seq[i-s]), s) ^ chash(seq[i]);
+        forwardSmerHash  = rol(forwardSmerHash, 1) ^ rol(chash(seq[i-s]), s)       ^ chash(seq[i]);
         reverseSmerHash  = ror(reverseSmerHash, 1) ^ ror(chash(comp(seq[i-s])), 1) ^ rol(chash(comp(seq[i])), s-1);
 
         if (forwardSmerHash < reverseSmerHash) {
