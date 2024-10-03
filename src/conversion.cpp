@@ -51,11 +51,6 @@ void createSam(
     readSeeds[i] = matchingSeeds;
   }
   */
-    for(int r = 0; r < readSequences.size() ; r++){
-        std::vector<seed> matchingSeeds;
-        for(int i = 0; i < readSeeds[r].size(); i++){
-        }
-    }
 
     for(int r = 0; r < readSequences.size() ; r++){
 
@@ -63,12 +58,14 @@ void createSam(
         for(int i = 0; i < readSeeds[r].size(); i++){
 
             for (int32_t rpos : seedToRefPositions[readSeeds[r][i].hash]) {
+                if(!readSeeds[r][i].reversed){ //TODO remove this
                 seed thisSeed;
                 thisSeed.reversed = readSeeds[r][i].reversed;
                 thisSeed.hash = readSeeds[r][i].hash;
                 thisSeed.pos = readSeeds[r][i].pos;
                 thisSeed.rpos = rpos;
                 matchingSeeds.push_back(thisSeed);
+                }
             }
 
         }
@@ -82,9 +79,9 @@ void createSam(
         for(int i = 0; i < readSeeds[r].size(); i++){
             std::cout << "seed: " << readSeeds[r][i].hash << " " << readSeeds[r][i].reversed 
                 << " " <<  readSequences[r].substr(readSeeds[r][i].pos, k) << " " << bestMatchSequence.substr(readSeeds[r][i].rpos, k) << "\n";
-            if(readSequences[r].substr(readSeeds[r][i].pos, k) !=  bestMatchSequence.substr(readSeeds[r][i].rpos, k)){
+            /*if(readSequences[r].substr(readSeeds[r][i].pos, k) !=  bestMatchSequence.substr(readSeeds[r][i].rpos, k)){
                 std::cout << "\n\n\nSCREAM \n\n\n\n";
-            }
+            }*/
         }
     }
 
