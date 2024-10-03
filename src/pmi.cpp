@@ -2253,6 +2253,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     }
 
 
+    /*
     std::unordered_map<size_t, std::vector<int32_t>> seedToRefPositions;
     for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
       if(bestNodeOnSeedsHash[i].has_value()){
@@ -2264,22 +2265,31 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
         seedToRefPositions[seed].push_back(degap[i]);
       }
     }
-    
-    /*
-    for (const auto &seedmer : bestNodeSeedMap) {
-        if (seedmer.second.first == "" ) {
-            continue;
-        }
-        int32_t refPos = seedmer.first;
-        std::string seed = seedmer.second.first.substr(0, k);
+    */
+
+    std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
+    for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
+      if(bestNodeOnSeedsHash[i].has_value()){
+        size_t seed = bestNodeOnSeedsHash[i].value().hash;
+        bool reversed = bestNodeOnSeedsHash[i].value().isReverse;
+        int pos = degap[i];
+
+
+
         if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
-            seedToRefPositions[seed] = {};
+            std::vector<uint32_t> a;
+            std::vector<uint32_t> b;
+            seedToRefPositions[seed] = std::make_pair(a,b);
         }
-        seedToRefPositions[seed].push_back(degap[refPos]);
-    }*/
 
-
-
+        if(reversed){
+          seedToRefPositions[seed].second.push_back(pos);
+        }else{
+          seedToRefPositions[seed].first.push_back(pos);
+        }
+        
+      }
+    }
 
     
     
@@ -2330,6 +2340,47 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     );
 
 
+
+    std::string bamFileName = "BAM";
+
+    //Convert to BAM
+    sam_hdr_t *header;
+    bam1_t **bamRecords;
+
+    createBam(
+        samAlignments,
+        samHeader,
+        bamFileName,
+
+        header,
+        bamRecords
+    );
+
+
+
+
+    std::string mpileupFileName = "MPILEUP";
+    //Convert to Mplp
+    char *mplpString;
+
+    createMplp(
+        bestMatchSequence,
+        header,
+        bamRecords,
+        samAlignments.size(),
+        mpileupFileName,
+
+        mplpString
+    );
+
+    /*
+    std::string vcfFileName = "VCF";
+    //Convert to VCF
+    createVcf(
+        mplpString,
+        mutMat,
+        vcfFileName
+    );*/
 
 
 
