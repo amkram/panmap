@@ -464,71 +464,84 @@ namespace mgsr {
     const mgsr::Read& curRead, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<int32_t>>& hashToPositionsMap,
     const std::map<int64_t, int64_t>& coordsIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore
   ) {
+    int64_t pseudoScore = 0;
+    const boost::icl::discrete_interval<int32_t>* firstMatch = nullptr;
+    const boost::icl::discrete_interval<int32_t>* lastMatch  = nullptr;
+    bool reverse = false;
     // simple cases
     if (curRead.matches.empty()) {
       return 0;
     } else if (curRead.matches.size() == 1) {
-      return boost::icl::length(curRead.matches.begin()->first);
-    }
-
-    // find longest interval
-    std::pair<boost::icl::discrete_interval<int32_t>, int> longestInterval = *curRead.matches.begin();
-    int longestIdx = 0;
-    int curIdx = 1;
-    for (auto it = std::next(curRead.matches.begin()); it != curRead.matches.end(); ++it) {
-      const auto& curInterval = it;
-      if (boost::icl::length(curInterval->first) > boost::icl::length(longestInterval.first)) {
-        longestInterval = *curInterval;
-        longestIdx = curIdx;
-      }
-      ++curIdx;
-    }
-
-    int64_t pseudoScore = 0;
-    // find intervals colinear with longest interval and add length to pseudoScore
-    const boost::icl::discrete_interval<int32_t>* firstMatch = nullptr;
-    const boost::icl::discrete_interval<int32_t>* lastMatch = nullptr;
-    auto longestQbeg = curRead.seedmersList[boost::icl::first(longestInterval.first)].begPos;
-    curIdx = 0;
-    for (const auto& curInterval : curRead.matches) {
-      if (curIdx == longestIdx) {
-        pseudoScore += boost::icl::length(curInterval.first);
-        if (firstMatch == nullptr) firstMatch = &curInterval.first;
-        lastMatch = &curInterval.first;
+      pseudoScore = boost::icl::length(curRead.matches.begin()->first);
+      firstMatch  = &curRead.matches.begin()->first;
+      lastMatch   = &curRead.matches.begin()->first;
+      reverse     = curRead.matches.begin()->second == 1 ? false : true;
+    } else {
+      // find longest interval
+      std::pair<boost::icl::discrete_interval<int32_t>, int> longestInterval = *curRead.matches.begin();
+      int longestIdx = 0;
+      int curIdx = 1;
+      for (auto it = std::next(curRead.matches.begin()); it != curRead.matches.end(); ++it) {
+        const auto& curInterval = it;
+        if (boost::icl::length(curInterval->first) > boost::icl::length(longestInterval.first)) {
+          longestInterval = *curInterval;
+          longestIdx = curIdx;
+        }
         ++curIdx;
-        continue;
       }
 
-      // check if same direction
-      if (curInterval.second != longestInterval.second) {
-        ++curIdx;
-        continue;
-      }
-
-      auto curQbeg = curRead.seedmersList[boost::icl::first(curInterval.first)].begPos;
-      // check if within maximum gap
-      if (longestQbeg < curQbeg) {
-        // longest query beg before current query beg
-        if (isColinear(longestInterval, curInterval, curRead, positionMap, hashToPositionsMap, coordsIndex, maximumGap)) {
+      // find intervals colinear with longest interval and add length to pseudoScore
+      auto longestQbeg = curRead.seedmersList[boost::icl::first(longestInterval.first)].begPos;
+      curIdx = 0;
+      for (const auto& curInterval : curRead.matches) {
+        if (curIdx == longestIdx) {
           pseudoScore += boost::icl::length(curInterval.first);
           if (firstMatch == nullptr) firstMatch = &curInterval.first;
           lastMatch = &curInterval.first;
+          ++curIdx;
+          continue;
         }
-      } else if (longestQbeg > curQbeg) {
-        // longest query beg after current query beg
-        if (isColinear(curInterval, longestInterval, curRead, positionMap, hashToPositionsMap, coordsIndex, maximumGap)) {
-          pseudoScore += boost::icl::length(curInterval.first);
-          if (firstMatch == nullptr) firstMatch = &curInterval.first;
-          lastMatch = &curInterval.first;
-        }
-      } else {
-        // error
-        std::cerr << "Error: Invalid direction in getPseudoScore()" << std::endl;
-        exit(1);
-      }
 
-      ++curIdx;
+        // check if same direction
+        if (curInterval.second != longestInterval.second) {
+          ++curIdx;
+          continue;
+        }
+
+        auto curQbeg = curRead.seedmersList[boost::icl::first(curInterval.first)].begPos;
+        // check if within maximum gap
+        if (longestQbeg < curQbeg) {
+          // longest query beg before current query beg
+          if (isColinear(longestInterval, curInterval, curRead, positionMap, hashToPositionsMap, coordsIndex, maximumGap)) {
+            pseudoScore += boost::icl::length(curInterval.first);
+            if (firstMatch == nullptr) firstMatch = &curInterval.first;
+            lastMatch = &curInterval.first;
+          }
+        } else if (longestQbeg > curQbeg) {
+          // longest query beg after current query beg
+          if (isColinear(curInterval, longestInterval, curRead, positionMap, hashToPositionsMap, coordsIndex, maximumGap)) {
+            pseudoScore += boost::icl::length(curInterval.first);
+            if (firstMatch == nullptr) firstMatch = &curInterval.first;
+            lastMatch = &curInterval.first;
+          }
+        } else {
+          // error
+          std::cerr << "Error: Invalid direction in getPseudoScore()" << std::endl;
+          exit(1);
+        }
+
+        ++curIdx;
+      }
     }
+
+
+    // if (true && curRead.duplicates.size() > 0) {
+    //   if (reverse) {
+
+    //   } else {
+      
+    //   }
+    // }
     // const auto& first1 = curRead.seedmersList[boost::icl::first(*firstMatch)];
     // const auto& last1 = curRead.seedmersList[boost::icl::last(*lastMatch)];
     // const auto& first2 = curRead.seedmersList[boost::icl::first(*firstMatch)];
