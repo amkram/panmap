@@ -11,7 +11,7 @@ void createSam(
     std::vector<std::string> &readQuals,
     std::vector<std::string> &readNames,
     std::string &bestMatchSequence,
-    std::unordered_map<std::string, std::vector<int32_t>> &seedToRefPositions,
+    std::unordered_map<size_t, std::vector<int32_t>> &seedToRefPositions,
     std::string &samFileName,
     int k,
     bool pairedEndReads,
