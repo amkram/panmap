@@ -2477,44 +2477,53 @@ void place_per_read_DFS(
   }
 
   tbb::concurrent_vector<std::pair<size_t, boost::icl::split_interval_map<int32_t, int>>> readBackTrack;
+  tbb::concurrent_vector<std::pair<size_t, std::unordered_set<int32_t>>> readDuplicateSetsBackTrack;
   tbb::concurrent_vector<std::pair<size_t, std::vector<std::pair<int32_t, bool>>>> readDuplicatesBackTrack;
-
+  if (node->parent != nullptr) std::cout << node->identifier << " -> " << node->parent->identifier << std::endl;
+  std::cout << node->identifier << " SCORE: ";
   if (node->identifier == T->root->identifier) {
     allScores[node->identifier].resize(reads.size());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, reads.size(), reads.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
       for (size_t i = range.begin(); i < range.end(); ++i) {
         mgsr::Read& curRead = reads[i];
+        // curRead.matches.clear();
+        // curRead.duplicates.clear();
         initializeMatches(curRead, positionMap, hashToPositionsMap);
         int64_t pseudoScore = getPseudoScore(curRead, positionMap, hashToPositionsMap, coordIndex, maximumGap, minimumCount, minimumScore);
         double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
         allScores[node->identifier][i] = {pseudoScore, pseudoProb};
-        // curRead.matches.clear();
-        // curRead.duplicates.clear();
+        std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
+        
       }
     });
     // std::cout << std::endl;
     // computedCount += reads.size();
     // totalCount += reads.size();
   } else {
-    allScores[node->identifier] = allScores[node->parent->identifier];
-    if (affectedSeedmers.empty()) {
+    // allScores[node->identifier] = allScores[node->parent->identifier];
+    allScores[node->identifier].resize(reads.size());
+    if (false) {
       identicalPairs[node->identifier] = node->parent->identifier;
     } else {
       tbb::parallel_for(tbb::blocked_range<size_t>(0, reads.size(), reads.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
         for (size_t i = range.begin(); i < range.end(); ++i) {
           mgsr::Read& curRead = reads[i];
-          std::pair<size_t, boost::icl::split_interval_map<int32_t, int>> curReadBackTrack(i, curRead.matches);
-          std::vector<std::pair<int32_t, bool>> curReadDuplicatesBackTrack;
 
           bool modified = false;
           std::pair<bool, std::vector<size_t>> redo = checkRedo(curRead.uniqueSeedmers, affectedSeedmers, 5);
 
           if (redo.first) {
+            // std::cout << "REDO " << i << std::endl;
             modified = true;
+            readBackTrack.emplace_back(std::make_pair(i, curRead.matches));
+            readDuplicateSetsBackTrack.emplace_back(std::make_pair(i, curRead.duplicates));
             curRead.matches.clear();
             curRead.duplicates.clear();
             initializeMatches(curRead, positionMap, hashToPositionsMap);
           } else if (!redo.second.empty()) {
+            readBackTrack.emplace_back(std::make_pair(i, curRead.matches));
+            readDuplicatesBackTrack.emplace_back(std::make_pair(i, std::vector<std::pair<int32_t, bool>>()));
+            std::vector<std::pair<int32_t, bool>>& curReadDuplicatesBackTrack = readDuplicatesBackTrack.back().second;
             for (const auto& affectedSeedmer : redo.second) {
               modified = true;
               // interate through the indices of affected seedmer in read
@@ -2530,9 +2539,6 @@ void place_per_read_DFS(
                   // if not inside a range in read matches
                   if (isContained(curRead.matches, index)) {
                     auto curIntervalIt = curRead.matches.find(index);
-                    auto oldBeg = first(curIntervalIt->first);
-                    auto oldEnd = last(curIntervalIt->first);
-                    auto oldRev = curIntervalIt->second;
                     curRead.matches.subtract({discrete_interval<int32_t>::closed(index, index), curIntervalIt->second});
                   }
 
@@ -2652,9 +2658,6 @@ void place_per_read_DFS(
                   if (isContained(curRead.matches, index)) {
                     // split range
                     auto curIntervalIt = curRead.matches.find(index);
-                    auto oldBeg = first(curIntervalIt->first);
-                    auto oldEnd = last(curIntervalIt->first);
-                    auto oldRev = curIntervalIt->second;
                     curRead.matches.subtract({discrete_interval<int32_t>::closed(index, index), curIntervalIt->second});
                   }
                 }
@@ -2662,23 +2665,17 @@ void place_per_read_DFS(
             }
           }
           
-          if (modified) {
-            readBackTrack.push_back(curReadBackTrack);
-            readDuplicatesBackTrack.emplace_back(std::make_pair(i, curReadDuplicatesBackTrack));
-            int64_t pseudoScore = getPseudoScore(curRead, positionMap, hashToPositionsMap, coordIndex, maximumGap, minimumCount, minimumScore);
-            double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
-            allScores[node->identifier][i] = {pseudoScore, pseudoProb};
-          }
+          int64_t pseudoScore = getPseudoScore(curRead, positionMap, hashToPositionsMap, coordIndex, maximumGap, minimumCount, minimumScore);
+          double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
+          allScores[node->identifier][i] = {pseudoScore, pseudoProb};
+
+          std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
         }
       });
     }
   }
 
-  // std::cout << node->identifier << " SCORE: ";
-  // for (size_t i = 0; i < reads.size(); ++i) {
-  //   std::cout << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << reads[i].duplicates.size() << " ";
-  // }
-  // std::cout << std::endl;
+  std::cout << std::endl;
 
   /* Recursive step */
   dfsIndex++;
@@ -2765,21 +2762,34 @@ void place_per_read_DFS(
     positionMap.erase(toEraseIt);
   }
 
-  // undo read changes
+  // undo read  matches changes
   tbb::parallel_for(tbb::blocked_range<size_t>(0, readBackTrack.size(), readBackTrack.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
     for (size_t i = range.begin(); i < range.end(); ++i) {
-      const auto& readIdx = readBackTrack[i].first;
-      reads[readIdx].matches = readBackTrack[i].second;
+      const auto& [readIdx, matches] = readBackTrack[i];
+      reads[readIdx].matches = std::move(matches);
 
-      for (size_t j = 0; j < readDuplicatesBackTrack[i].second.size(); ++j) {
-        const auto& [hash, del] = readDuplicatesBackTrack[i].second[j];
+    }
+  });
+
+  // undo read duplicate sets changes
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, readDuplicateSetsBackTrack.size(), readDuplicateSetsBackTrack.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
+    for (size_t i = range.begin(); i < range.end(); ++i) {
+      const auto& [readIdx, duplicates] = readDuplicateSetsBackTrack[i];
+      reads[readIdx].duplicates = std::move(duplicates);
+    }
+  });
+
+  // undo read duplicates changes
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, readDuplicatesBackTrack.size(), readDuplicatesBackTrack.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
+    for (size_t i = range.begin(); i < range.end(); ++i) {
+      const auto& [readIdx, changes] = readDuplicatesBackTrack[i];
+      for (const auto& [hash, del] : changes) {
         if (del) {
           reads[readIdx].duplicates.erase(hash);
         } else {
           reads[readIdx].duplicates.insert(hash);
         }
       }
-
     }
   });
 
@@ -3090,97 +3100,95 @@ void pmi::place_per_read(Tree *T, Index::Reader &index, const std::string &reads
     );
 
     std::cerr << "finished scoring DFS" << std::endl;
+
+    // for (const auto& pair : identicalPairs) {
+    //     std::unordered_set<std::string> curIdenticals;
+    //     std::string curNode = pair.first;
+    //     std::string curParent = pair.second;
+    //     curIdenticals.insert(curNode);
+    //     while (identicalPairs.find(curParent) != identicalPairs.end()) {
+    //         curNode = curParent;   
+    //         curParent = identicalPairs[curParent];
+    //         curIdenticals.insert(curNode);      
+    //     }
+    //     for (const auto& node : curIdenticals) {
+    //         identicalSets[curParent].insert(node);
+    //     }
+    // }
+
+    // for (const auto& set : identicalSets) {
+    //     for (const auto& offspring : set.second) {
+    //         leastRecentIdenticalAncestor[offspring] = set.first;
+    //     }
+    // }
+
+    // std::cerr << "First round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
+
+    // std::vector<std::pair<std::string, int32_t>> scores;
+    // scores.reserve(allScores.size() - leastRecentIdenticalAncestor.size());
+    // for (const auto& node : allScores) {
+    //     if (leastRecentIdenticalAncestor.find(node.first) != leastRecentIdenticalAncestor.end()) continue;
+    //     int32_t score = 0;
+    //     for (size_t i = 0; i < node.second.size(); ++i) {
+    //         score += node.second[i].first * readSeedmersDuplicatesIndex[i].size();
+    //     }
+    //     scores.emplace_back(std::make_pair(node.first, score));
+    // }
+    // std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
+    //     return a.second > b.second;
+    // });
+
+    // std::unordered_set<std::string> identicalGroup;
+    // for (size_t i = 0; i < scores.size() - 1; ++i) {
+    //     const auto& currScore = scores[i];
+    //     const auto& nextScore = scores[i+1];
+    //     if (currScore.second == nextScore.second) {
+    //         identicalGroup.insert(currScore.first);
+    //         identicalGroup.insert(nextScore.first);
+    //     } else {
+    //         if (!identicalGroup.empty()) {
+    //             updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
+    //             std::unordered_set<std::string>().swap(identicalGroup);
+    //         }
+    //     }
+    // }
+    // if (!identicalGroup.empty()) {
+    //     updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
+    // }
+    // std::cerr << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << "\n" << std::endl;
+
+    // size_t numReads = readSequences.size();
+    // std::atomic<size_t> numLowScoreReads = 0;
+    // std::vector<bool> lowScoreReads(reads.size(), false);
+    // std::vector<std::string> nodes;
+    // Eigen::MatrixXd probs;
+    // Eigen::VectorXd props;
+    // double llh;
+    // int32_t roundsRemove = 3;
+    // double removeThreshold = 0.005;
+    // mgsr::squaremHelper_test_1(T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
     
+    // std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
+    // for (size_t i = 0; i < nodes.size(); ++i) {
+    //     sortedOut.at(i) = {nodes[i], props(i)};
+    // }
 
-    for (const auto& pair : identicalPairs) {
-        std::unordered_set<std::string> curIdenticals;
-        std::string curNode = pair.first;
-        std::string curParent = pair.second;
-        curIdenticals.insert(curNode);
-        while (identicalPairs.find(curParent) != identicalPairs.end()) {
-            curNode = curParent;   
-            curParent = identicalPairs[curParent];
-            curIdenticals.insert(curNode);      
-        }
-        for (const auto& node : curIdenticals) {
-            identicalSets[curParent].insert(node);
-        }
-    }
+    // std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
+    //     return a.second > b.second;
+    // });
 
-    for (const auto& set : identicalSets) {
-        for (const auto& offspring : set.second) {
-            leastRecentIdenticalAncestor[offspring] = set.first;
-        }
-    }
-
-    std::cerr << "First round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
-
-    std::vector<std::pair<std::string, int32_t>> scores;
-    scores.reserve(allScores.size() - leastRecentIdenticalAncestor.size());
-    for (const auto& node : allScores) {
-        if (leastRecentIdenticalAncestor.find(node.first) != leastRecentIdenticalAncestor.end()) continue;
-        int32_t score = 0;
-        for (size_t i = 0; i < node.second.size(); ++i) {
-            score += node.second[i].first * readSeedmersDuplicatesIndex[i].size();
-        }
-        scores.emplace_back(std::make_pair(node.first, score));
-    }
-    std::sort(scores.begin(), scores.end(), [](const auto &a, const auto &b) {
-        return a.second > b.second;
-    });
-
-    std::unordered_set<std::string> identicalGroup;
-    for (size_t i = 0; i < scores.size() - 1; ++i) {
-        const auto& currScore = scores[i];
-        const auto& nextScore = scores[i+1];
-        if (currScore.second == nextScore.second) {
-            identicalGroup.insert(currScore.first);
-            identicalGroup.insert(nextScore.first);
-        } else {
-            if (!identicalGroup.empty()) {
-                updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
-                std::unordered_set<std::string>().swap(identicalGroup);
-            }
-        }
-    }
-    if (!identicalGroup.empty()) {
-        updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
-    }
-    std::cerr << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << "\n" << std::endl;
-
-    size_t numReads = readSequences.size();
-    std::atomic<size_t> numLowScoreReads = 0;
-    std::vector<bool> lowScoreReads(reads.size(), false);
-    std::vector<std::string> nodes;
-    Eigen::MatrixXd probs;
-    Eigen::VectorXd props;
-    double llh;
-    int32_t roundsRemove = 3;
-    double removeThreshold = 0.005;
-    mgsr::squaremHelper_test_1(T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, roundsRemove, removeThreshold, "");
-    
-    std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        sortedOut.at(i) = {nodes[i], props(i)};
-    }
-
-    std::sort(sortedOut.begin(), sortedOut.end(), [](const std::pair<std::string, double>& a, const std::pair<std::string, double>& b) {
-        return a.second > b.second;
-    });
-
-    std::string abundanceOutFile = "out.abundance";
-    std::ofstream abundanceOut(abundanceOutFile);
-    for (size_t i = 0; i < sortedOut.size(); ++i) {
-        const auto& node = sortedOut[i];
-        abundanceOut << node.first;
-        if (identicalSets.find(node.first) != identicalSets.end()) {
-            for (const auto& identicalNode : identicalSets.at(node.first)) {
-                abundanceOut << "," << identicalNode;
-            }
-        }
-        abundanceOut << "\t" << node.second << "\n";
-    }
-    abundanceOut.close();
-
+    // std::string abundanceOutFile = "out.abundance";
+    // std::ofstream abundanceOut(abundanceOutFile);
+    // for (size_t i = 0; i < sortedOut.size(); ++i) {
+    //     const auto& node = sortedOut[i];
+    //     abundanceOut << node.first;
+    //     if (identicalSets.find(node.first) != identicalSets.end()) {
+    //         for (const auto& identicalNode : identicalSets.at(node.first)) {
+    //             abundanceOut << "," << identicalNode;
+    //         }
+    //     }
+    //     abundanceOut << "\t" << node.second << "\n";
+    // }
+    // abundanceOut.close();
 
 }
