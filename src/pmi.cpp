@@ -3,6 +3,8 @@
 #include "seeding.hpp"
 #include "mgsr.hpp"
 #include "seed_annotated_tree.hpp"
+#include "conversion.hpp"
+
 #include <algorithm>
 #include <iostream>
 #include <ranges>
@@ -2120,7 +2122,8 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
       std::vector<seeding::seed> curReadSeeds;
       for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : rollingSyncmers(readSequences[i], k, s, open, t, false)) {
         if (!isSyncmer) continue;
-        curReadSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
+        //curReadSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
+        curReadSeeds.emplace_back(seed{kmerHash, startPos + k - 1, -1, isReverse, 0});
         if (readSeedCounts.find(kmerHash) == readSeedCounts.end()) readSeedCounts[kmerHash] = std::make_pair(0, 0);
         if (isReverse) ++readSeedCounts[kmerHash].second;
         else           ++readSeedCounts[kmerHash].first;
@@ -2197,6 +2200,9 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
     seedsFromFastq(k, s, t, open, l, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
 
+    bool pairedEndReads = reads2Path.size();
+
+
     int64_t jacNumer = 0;
     int64_t jacDenom = 0;    
     std::vector<std::pair<std::string, float>> placementScores;
@@ -2228,9 +2234,158 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::vector<std::optional<seeding::onSeedsHash>> bestNodeOnSeedsHash(globalCoords.back().first.back().first + 1, std::nullopt);
     getBestNodeSeeds(rpath, bestNodeData, bestNodeOnSeedsString, bestNodeOnSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, globalCoords, bestNodeNavigator, scalarCoordToBlockId, bestNodeBlocksToSeeds, bestNodeBlockSizes, bestNodeBlockRanges, bestNodeGapMap, bestNodeInverseBlockIds, dfsIndexes);
 
-    std::cout << "best node: " << bestNodeId << std::endl;
+    std::cout << "best nods: " << bestNodeId << std::endl;
     std::cout << "best node score: " << placementScores[0].second << std::endl;
     // Here bestNodeOnSeedsHash contains the best node's seeds
+
+
+
+
+    std::string bestMatchSequence = "";
+    std::string gappedSeq = T->getStringFromReference(bestNode->identifier, true);
+    std::vector<int32_t> degap;
+    for (int32_t i = 0; i < gappedSeq.size(); i ++) {
+        char &c = gappedSeq[i];
+        degap.push_back(bestMatchSequence.size());
+        if (c != '-') {
+            bestMatchSequence += c;
+        }
+    }
+
+
+    /*
+    std::unordered_map<size_t, std::vector<int32_t>> seedToRefPositions;
+    for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
+      if(bestNodeOnSeedsHash[i].has_value()){
+        size_t seed = bestNodeOnSeedsHash[i].value().hash;
+
+        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
+            seedToRefPositions[seed] = {};
+        }
+        seedToRefPositions[seed].push_back(degap[i]);
+      }
+    }
+    */
+
+    std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
+    for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
+      if(bestNodeOnSeedsHash[i].has_value()){
+        size_t seed = bestNodeOnSeedsHash[i].value().hash;
+        bool reversed = bestNodeOnSeedsHash[i].value().isReverse;
+        int pos = degap[i];
+
+
+
+        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
+            std::vector<uint32_t> a;
+            std::vector<uint32_t> b;
+            seedToRefPositions[seed] = std::make_pair(a,b);
+        }
+
+        if(reversed){
+          seedToRefPositions[seed].second.push_back(pos);
+        }else{
+          seedToRefPositions[seed].first.push_back(pos);
+        }
+        
+      }
+    }
+
+    
+    
+
+
+
+
+
+
+
+    std::string refFileName = "REFERENCE";
+    //Print out Reference
+    if(refFileName.size() > 0){
+        std::ofstream outFile{refFileName};
+
+        if (outFile.is_open()) {
+            
+            outFile << ">ref\n";
+            outFile << bestMatchSequence << "\n";
+
+            std::cout << "Wrote reference fasta to " << refFileName << std::endl;
+        } else {
+            std::cerr << "Error: failed to write to file " << refFileName << std::endl;
+        }
+    }
+
+
+
+    std::string samFileName = "SAM";
+
+    //Create SAM
+    std::vector<char *> samAlignments;
+    std::string samHeader;
+
+    createSam(
+        readSeeds,                 //yep
+        readSequences,             //yep
+        readQuals,                 //yep
+        readNames,                 //yep
+        bestMatchSequence,         //yep
+        seedToRefPositions,        // yep
+        samFileName,               //yeah
+        k,                         //yep
+        pairedEndReads,            //yep
+        
+        samAlignments,             //yep
+        samHeader                  //yep
+    );
+
+
+
+    std::string bamFileName = "BAM";
+
+    //Convert to BAM
+    sam_hdr_t *header;
+    bam1_t **bamRecords;
+
+    createBam(
+        samAlignments,
+        samHeader,
+        bamFileName,
+
+        header,
+        bamRecords
+    );
+
+
+
+
+    std::string mpileupFileName = "MPILEUP";
+    //Convert to Mplp
+    char *mplpString;
+
+    createMplp(
+        bestMatchSequence,
+        header,
+        bamRecords,
+        samAlignments.size(),
+        mpileupFileName,
+
+        mplpString
+    );
+
+    /*
+    std::string vcfFileName = "VCF";
+    //Convert to VCF
+    createVcf(
+        mplpString,
+        mutMat,
+        vcfFileName
+    );*/
+
+
+
+
+
 }
 
 
