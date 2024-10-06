@@ -2444,9 +2444,9 @@ void place_per_read_DFS(
   std::vector<int32_t> backTrackPositionMapErase;
 
   std::unordered_set<size_t> affectedSeedmers;
-  std::map<int32_t, mgsr::positionInfo>& positionMap = seedmersIndex.positionMap;
-  std::unordered_map<size_t, std::set<int32_t>>& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
-  updateSeedmersIndex(seedChanges, onSeedsHashMap, positionMap, hashToPositionsMap, affectedSeedmers, seedK, seedL, coordIndex, backTrackPositionMapChAdd, backTrackPositionMapErase);
+  auto& positionMap = seedmersIndex.positionMap;
+  auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
+  updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, coordIndex, backTrackPositionMapChAdd, backTrackPositionMapErase);
 
 
   if (debug) {
@@ -2459,25 +2459,23 @@ void place_per_read_DFS(
         if (fhash != rhash) {
           std::cout << mgsr::degapGlobal(beg, coordIndex) << "-" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
           // std::cout << beg << "|" << mgsr::degapGlobal(beg, coordIndex) << "-" << end << "|" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
-
         }
       }
-      std::cout << std::endl;
     }
 
-    std::cout << node->identifier << " true seedmers: ";
-    auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
-    auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
-    for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
-      std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
-    }
-    std::cout << std::endl;
+    // std::cout << node->identifier << " true seedmers: ";
+    // auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
+    // auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
+    // for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
+    //   std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
+    // }
+    // std::cout << std::endl;
   }
 
   tbb::concurrent_vector<std::pair<size_t, boost::icl::split_interval_map<int32_t, int>>> readBackTrack;
   tbb::concurrent_vector<std::pair<size_t, std::unordered_set<int32_t>>> readDuplicateSetsBackTrack;
   tbb::concurrent_vector<std::pair<size_t, std::vector<std::pair<int32_t, bool>>>> readDuplicatesBackTrack;
-  // std::cout << node->identifier << " SCORE: ";
+  std::cout << node->identifier << " SCORE: ";
   if (node->identifier == T->root->identifier) {
     allScores[node->identifier].resize(reads.size());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, reads.size(), reads.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
@@ -2486,10 +2484,10 @@ void place_per_read_DFS(
         // curRead.matches.clear();
         // curRead.duplicates.clear();
         initializeMatches(curRead, positionMap, hashToPositionsMap);
-        int64_t pseudoScore = getPseudoScore(curRead, positionMap, hashToPositionsMap, coordIndex, maximumGap, minimumCount, minimumScore);
+        int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, coordIndex, maximumGap, minimumCount, minimumScore);
         double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
         allScores[node->identifier][i] = {pseudoScore, pseudoProb};
-        // std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
+        std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
         
       }
     });
@@ -2526,9 +2524,9 @@ void place_per_read_DFS(
               // interate through the indices of affected seedmer in read
               for (const auto& index : curRead.uniqueSeedmers.find(affectedSeedmer)->second) {
 
-                const auto& affectedSeedmerRefIt = hashToPositionsMap.find(affectedSeedmer);
+                const auto& affectedSeedmerHashToPositionIt = hashToPositionsMap.find(affectedSeedmer);
                 // if affected seedmer exists and unique in ref
-                if (affectedSeedmerRefIt != hashToPositionsMap.end() && affectedSeedmerRefIt->second.size() == 1) {
+                if (affectedSeedmerHashToPositionIt != hashToPositionsMap.end() && affectedSeedmerHashToPositionIt->second.size() == 1) {
                   if (curRead.duplicates.find(index) != curRead.duplicates.end()) {
                     curRead.duplicates.erase(index);
                     curReadDuplicatesBackTrack.push_back({index, false});
@@ -2539,7 +2537,7 @@ void place_per_read_DFS(
                     curRead.matches.subtract({discrete_interval<int32_t>::closed(index, index), curIntervalIt->second});
                   }
 
-                  const auto& affectedPositionRefIt = positionMap.find(*(affectedSeedmerRefIt->second.begin()));
+                  const auto& affectedPositionRefIt = *(affectedSeedmerHashToPositionIt->second.begin());
                   int currev = curRead.seedmersList[index].rev == affectedPositionRefIt->second.rev ? 1 : 2;
                   // check left and right flanking bases and merge if possible
                   auto leftFlank = curRead.matches.find(index - 1);
@@ -2638,8 +2636,8 @@ void place_per_read_DFS(
                     curRead.matches.add({discrete_interval<int32_t>::closed(index, index), currev});
                   }
                 
-                } else if (affectedSeedmerRefIt == hashToPositionsMap.end() || affectedSeedmerRefIt->second.size() > 1) {
-                  if (affectedSeedmerRefIt == hashToPositionsMap.end()) {
+                } else if (affectedSeedmerHashToPositionIt == hashToPositionsMap.end() || affectedSeedmerHashToPositionIt->second.size() > 1) {
+                  if (affectedSeedmerHashToPositionIt == hashToPositionsMap.end()) {
                     if (curRead.duplicates.find(index) != curRead.duplicates.end()) {
                       curRead.duplicates.erase(index);
                       curReadDuplicatesBackTrack.push_back({index, false});
@@ -2662,11 +2660,11 @@ void place_per_read_DFS(
             }
           }
           
-          int64_t pseudoScore = getPseudoScore(curRead, positionMap, hashToPositionsMap, coordIndex, maximumGap, minimumCount, minimumScore);
+          int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, coordIndex, maximumGap, minimumCount, minimumScore);
           double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
           allScores[node->identifier][i] = {pseudoScore, pseudoProb};
 
-          // std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
+          std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
         }
       });
     }
@@ -2728,20 +2726,21 @@ void place_per_read_DFS(
       const auto& [oldEnd, oldFHash, oldRHash, oldRev] = oldPositionMapIt->second;
       if (oldFHash != oldRHash) {
         size_t minHash = std::min(oldFHash, oldRHash);
-        hashToPositionsMap[minHash].erase(pos);
+        hashToPositionsMap[minHash].erase(oldPositionMapIt);
         if (hashToPositionsMap[minHash].empty()) {
           hashToPositionsMap.erase(minHash);
         }
       }
 
       oldPositionMapIt->second = {end, fhash, rhash, rev};
+      if (fhash != rhash) {
+        hashToPositionsMap[std::min(fhash, rhash)].insert(oldPositionMapIt);
+      }
     } else {
-      positionMap[pos] = {end, fhash, rhash, rev};
-    }
-
-
-    if (fhash != rhash) {
-      hashToPositionsMap[std::min(fhash, rhash)].insert(pos);
+      auto newPositionMapIt = positionMap.emplace(pos, positionInfo(end, fhash, rhash, rev)).first;
+      if (fhash != rhash) {
+        hashToPositionsMap[std::min(fhash, rhash)].insert(newPositionMapIt);
+      }
     }
   }
 
@@ -2751,7 +2750,7 @@ void place_per_read_DFS(
     const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = toEraseIt->second;
     if (toEraseFHash != toEraseRHash) {
       size_t minHash = std::min(toEraseFHash, toEraseRHash);
-      hashToPositionsMap[minHash].erase(pos);
+      hashToPositionsMap[minHash].erase(toEraseIt);
       if (hashToPositionsMap[minHash].empty()) {
         hashToPositionsMap.erase(minHash);
       }

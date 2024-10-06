@@ -31,11 +31,73 @@ namespace mgsr {
     bool rev;
   };
 
+  struct IteratorComparator {
+      bool operator()(const std::map<int32_t, positionInfo>::iterator& lhs,
+                      const std::map<int32_t, positionInfo>::iterator& rhs) const {
+          return lhs->first < rhs->first;
+      }
+  };
+
   struct seedmers {
-      //       beg                 end      fhash    rhash    rev
-      std::map<int32_t, positionInfo> positionMap;
-      //                 hash                       begs
-      std::unordered_map<size_t, std::set<int32_t>> hashToPositionsMap;
+    //       beg                 end      fhash    rhash    rev
+    std::map<int32_t, positionInfo> positionMap;
+    //                 hash                       begs
+    std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>> hashToPositionsMap;
+
+    void addPosition(const int32_t& beg, const int32_t& end, const size_t& fhash, const size_t& rhash, const bool& rev, std::unordered_set<size_t>& affectedSeedmers) {
+      auto it = positionMap.emplace(beg, positionInfo(end, fhash, rhash, rev)).first;
+      if (fhash != rhash) {
+        size_t minHash = std::min(fhash, rhash);
+        hashToPositionsMap[minHash].insert(it);
+        affectedSeedmers.insert(minHash);
+      }
+    }
+
+    void subPosition(std::map<int32_t, positionInfo>::iterator& it, const int32_t& end, const size_t& fhash, const size_t& rhash, const bool& rev, std::unordered_set<size_t>& affectedSeedmers) {
+      const auto& [oldEnd, oldFHash, oldRHash, oldRev] = it->second;
+      if (oldFHash != oldRHash) {
+        size_t minHash = std::min(oldFHash, oldRHash);
+        auto hashToPositionIt = hashToPositionsMap.find(minHash);
+        hashToPositionIt->second.erase(it);
+        if (hashToPositionIt->second.empty()) hashToPositionsMap.erase(hashToPositionIt);
+        affectedSeedmers.insert(minHash);
+      }
+
+      it->second.endPos = end;
+      it->second.fhash = fhash;
+      it->second.rhash = rhash;
+      it->second.rev = rev;
+      if (fhash != rhash) {
+        size_t minHash = std::min(fhash, rhash);
+        hashToPositionsMap[minHash].insert(it);
+        affectedSeedmers.insert(minHash);
+      }
+    }
+
+    void delPosition(std::map<int32_t, positionInfo>::iterator& it, std::unordered_set<size_t>& affectedSeedmers) {
+      const auto& [end, fhash, rhash, rev] = it->second;
+      if (fhash != rhash) {
+        size_t minHash = std::min(fhash, rhash);
+        auto hashToPositionIt = hashToPositionsMap.find(minHash);
+        hashToPositionIt->second.erase(it);
+        if (hashToPositionIt->second.empty()) hashToPositionsMap.erase(hashToPositionIt);
+        affectedSeedmers.insert(minHash);
+      }
+      positionMap.erase(it);
+    }
+
+    int32_t getBegFromHash(const size_t& hash, const bool& safe=false) {
+      auto hashToPositionIt = hashToPositionsMap.find(hash);
+      if (safe && (hashToPositionIt == hashToPositionsMap.end() || hashToPositionIt->second.size() != 1)) return -1;
+      return (*(hashToPositionIt->second.begin()))->first;
+    }
+
+    int32_t getEndFromHash(const size_t& hash, const bool& safe=false) {
+      auto hashToPositionIt = hashToPositionsMap.find(hash);
+      if (safe && (hashToPositionIt == hashToPositionsMap.end() || hashToPositionIt->second.size() != 1)) return -1;
+      auto positionIt = *(hashToPositionIt->second.begin());
+      return positionIt->second.endPos;
+    }
   };
 
   struct readSeedmer {
@@ -167,14 +229,16 @@ namespace mgsr {
 
   void updateSeedmersIndex(const std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges, 
                           std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap,
-                          std::map<int32_t, mgsr::positionInfo>& positionMap,
-                          std::unordered_map<size_t, std::set<int32_t>>& hashToPositionsMap,
+                          mgsr::seedmers& seedmersIndex,
                           std::unordered_set<size_t>& affectedSeedmers,
                           const int& seedK,
                           const int& seedL,
                           const std::map<int64_t, int64_t>& coordIndex,
                           std::vector<std::tuple<int32_t, int32_t, size_t, size_t, bool>>& backTrackPositionMapChAdd,
-                          std::vector<int32_t>& backTrackPositionMapErase) {
+                          std::vector<int32_t>& backTrackPositionMapErase
+) {
+    auto& positionMap = seedmersIndex.positionMap;
+    auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
     int64_t maxBegCoord = std::prev(onSeedsHashMap.end(), seedL)->first;
     std::unordered_set<int64_t> processedSeedBegs;
     
@@ -201,41 +265,17 @@ namespace mgsr {
 
         if (!positionMap.empty() && positionMap.begin()->first <= firstKminmerSeedIt->first && firstKminmerSeedIt != onSeedsHashMap.begin()) {
           const auto& [prevEnd, prevForwardKminmerHash, prevReverseKminmerHash, prevRev] = std::prev(curKminmerPositionIt)->second;
-          if (isReplacement) {
-            const auto& [oldEnd, oldFHash, oldRHash, oldRev] = curKminmerPositionIt->second;
-            backTrackPositionMapChAdd.emplace_back(std::make_tuple(curKminmerPositionIt->first, oldEnd, oldFHash, oldRHash, oldRev));
-
-            if (oldFHash != oldRHash) {
-              size_t minHash = std::min(oldFHash, oldRHash);
-              auto hashToPositionIt = hashToPositionsMap.find(minHash);
-              hashToPositionIt->second.erase(curKminmerPositionIt->first);
-              size_t ohashNum = hashToPositionIt->second.size();
-              if (ohashNum <= 1) {
-                affectedSeedmers.insert(minHash);
-                if (ohashNum == 0) {
-                  hashToPositionsMap.erase(hashToPositionIt);
-                }
-              }
-            }
-          } else {
-            backTrackPositionMapErase.emplace_back(firstKminmerSeedIt->first);
-          }
 
           size_t curforwardHash = rol(prevForwardKminmerHash, seedK) ^ rol(std::prev(firstKminmerSeedIt)->second.hash, seedK * seedL) ^ lastKminmerSeedIt->second.hash;
           size_t curReverseHash = ror(prevReverseKminmerHash, seedK) ^ ror(std::prev(firstKminmerSeedIt)->second.hash, seedK)         ^ rol(lastKminmerSeedIt->second.hash, seedK * (seedL-1));        
           
           if (isReplacement) {
-            curKminmerPositionIt->second.endPos = lastKminmerSeedIt->second.endPos;
-            curKminmerPositionIt->second.fhash = curforwardHash;
-            curKminmerPositionIt->second.rhash = curReverseHash;
-            curKminmerPositionIt->second.rev = curReverseHash < curforwardHash;
+            const auto& [oldEnd, oldFHash, oldRHash, oldRev] = curKminmerPositionIt->second;
+            backTrackPositionMapChAdd.emplace_back(std::make_tuple(curKminmerPositionIt->first, oldEnd, oldFHash, oldRHash, oldRev));
+            seedmersIndex.subPosition(curKminmerPositionIt, lastKminmerSeedIt->second.endPos, curforwardHash, curReverseHash, curReverseHash < curforwardHash, affectedSeedmers);
           } else {
-            positionMap[firstKminmerSeedIt->first] = mgsr::positionInfo(lastKminmerSeedIt->second.endPos, curforwardHash, curReverseHash, curReverseHash < curforwardHash);
-          }
-
-          if (curforwardHash != curReverseHash) {
-            hashToPositionsMap[std::min(curforwardHash, curReverseHash)].insert(firstKminmerSeedIt->first);
-            affectedSeedmers.insert(std::min(curforwardHash, curReverseHash));
+            backTrackPositionMapErase.emplace_back(firstKminmerSeedIt->first);
+            seedmersIndex.addPosition(firstKminmerSeedIt->first, lastKminmerSeedIt->second.endPos, curforwardHash, curReverseHash, curReverseHash < curforwardHash, affectedSeedmers);
           }
 
           processedSeedBegs.insert(firstKminmerSeedIt->first);
@@ -255,32 +295,10 @@ namespace mgsr {
           if (isReplacement) {
             const auto& [oldEnd, oldFHash, oldRHash, oldRev] = curKminmerPositionIt->second;
             backTrackPositionMapChAdd.emplace_back(std::make_tuple(curKminmerPositionIt->first, oldEnd, oldFHash, oldRHash, oldRev));
-            
-            if (oldFHash != oldRHash) {
-              size_t minHash = std::min(oldFHash, oldRHash);
-              auto hashToPositionIt = hashToPositionsMap.find(minHash);
-              hashToPositionIt->second.erase(curKminmerPositionIt->first);
-              size_t ohashNum = hashToPositionIt->second.size();
-              if (ohashNum <= 1) {
-                affectedSeedmers.insert(minHash);
-                if (ohashNum == 0) {
-                  hashToPositionsMap.erase(minHash);
-                }
-              }
-            }
-
-            curKminmerPositionIt->second.endPos = lastKminmerSeedIt->second.endPos;
-            curKminmerPositionIt->second.fhash = forwardKminmerHash;
-            curKminmerPositionIt->second.rhash = reverseKminmerHash;
-            curKminmerPositionIt->second.rev = reverseKminmerHash < forwardKminmerHash;
+            seedmersIndex.subPosition(curKminmerPositionIt, lastKminmerSeedIt->second.endPos, forwardKminmerHash, reverseKminmerHash, reverseKminmerHash < forwardKminmerHash, affectedSeedmers);
           } else {
             backTrackPositionMapErase.emplace_back(firstKminmerSeedIt->first);
-            positionMap[firstKminmerSeedIt->first] = mgsr::positionInfo(lastKminmerSeedIt->second.endPos, forwardKminmerHash, reverseKminmerHash, reverseKminmerHash < forwardKminmerHash);
-          }
-
-          if (forwardKminmerHash != reverseKminmerHash) {
-            hashToPositionsMap[std::min(forwardKminmerHash, reverseKminmerHash)].insert(firstKminmerSeedIt->first);
-            affectedSeedmers.insert(std::min(forwardKminmerHash, reverseKminmerHash));
+            seedmersIndex.addPosition(firstKminmerSeedIt->first, lastKminmerSeedIt->second.endPos, forwardKminmerHash, reverseKminmerHash, reverseKminmerHash < forwardKminmerHash, affectedSeedmers);
           }
           
           processedSeedBegs.insert(firstKminmerSeedIt->first);
@@ -297,21 +315,8 @@ namespace mgsr {
         if (toEraseIt != positionMap.end()) {
           const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = toEraseIt->second;
           backTrackPositionMapChAdd.emplace_back(std::make_tuple(toEraseIt->first, toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev));
-
           processedSeedBegs.insert(toEraseIt->first);
-          if (toEraseFHash != toEraseRHash) {
-            size_t minHash = std::min(toEraseFHash, toEraseRHash);
-            auto hashToPositionIt = hashToPositionsMap.find(minHash);
-            hashToPositionIt->second.erase(pos);
-            size_t ohashNum = hashToPositionIt->second.size();
-            if (ohashNum <= 1) {
-              affectedSeedmers.insert(minHash);
-              if (ohashNum == 0) {
-                hashToPositionsMap.erase(minHash);
-              }
-            }
-          }
-          positionMap.erase(toEraseIt);
+          seedmersIndex.delPosition(toEraseIt, affectedSeedmers);
         }
       }
     }
@@ -320,24 +325,12 @@ namespace mgsr {
     while (lastPositionMapIt->first > maxBegCoord) {
       const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = lastPositionMapIt->second;
       backTrackPositionMapChAdd.emplace_back(std::make_tuple(lastPositionMapIt->first, toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev));
-      if (toEraseFHash != toEraseRHash) {
-        size_t minHash = std::min(toEraseFHash, toEraseRHash);
-        auto hashToPositionIt = hashToPositionsMap.find(minHash);
-        hashToPositionIt->second.erase(lastPositionMapIt->first);
-        size_t ohashNum = hashToPositionIt->second.size();
-        if (ohashNum <= 1) {
-          affectedSeedmers.insert(minHash);
-          if (ohashNum == 0) {
-            hashToPositionsMap.erase(minHash);
-          }
-        }
-      }
-      positionMap.erase(lastPositionMapIt);
+      seedmersIndex.delPosition(lastPositionMapIt, affectedSeedmers);
       --lastPositionMapIt;
     }
   }
 
-  int32_t extend(int64_t& curEnd, mgsr::Read& curRead, int rev, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<int32_t>>& hashToPositionsMap, int32_t qidx, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt, int32_t c) {
+  int32_t extend(int64_t& curEnd, mgsr::Read& curRead, int rev, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap, int32_t qidx, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt, int32_t c) {
     if (qidx == curRead.seedmersList.size() - 1) return c;
     const auto& [nhash, nqbeg, nqend, nqrev, nqidx] = curRead.seedmersList[qidx+1];
 
@@ -349,8 +342,7 @@ namespace mgsr {
           exit(1);
         }
 
-        const auto& rbeg = *(hashToPositionsMap.find(nhash)->second.begin());
-        auto curRefPositionIt = positionMap.find(rbeg);
+        auto curRefPositionIt = *nextHashToPositionIt->second.begin();
         char nrev = nqrev == curRefPositionIt->second.rev? 1 : 2;
         if (rev == nrev) {
           if (rev == 1) {
@@ -376,7 +368,7 @@ namespace mgsr {
     return c;
   }
 
-  void initializeMatches(mgsr::Read& curRead, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<int32_t>>& hashToPositionsMap) {
+  void initializeMatches(mgsr::Read& curRead, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap) {
     int32_t i = 0;
     while (i < curRead.seedmersList.size()) {
       const auto& [hash, qbeg, qend, qrev, qidx] = curRead.seedmersList[i];
@@ -388,8 +380,7 @@ namespace mgsr {
             std::cerr << "Error: hash " << hash << " has multiple positions" << std::endl;
             exit(1);
           }
-          const auto& rbeg = *(hashToPositionIt->second.begin());
-          auto curRefPositionIt = positionMap.find(rbeg);
+          auto curRefPositionIt = *(hashToPositionIt->second.begin());
           int64_t curEnd = i;
           int rev = qrev == curRefPositionIt->second.rev? 1 : 2;
           c = extend(curEnd, curRead, rev, positionMap, hashToPositionsMap, qidx, curRefPositionIt, c);
@@ -402,7 +393,7 @@ namespace mgsr {
     }
   }
 
-  bool isColinear(const std::pair<boost::icl::discrete_interval<int32_t>, int>& match1, const std::pair<boost::icl::discrete_interval<int32_t>, int>& match2, const mgsr::Read& curRead, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<int32_t>>& hashToPositionsMap, const std::map<int64_t, int64_t>& coordsIndex, const int& maximumGap) {
+  bool isColinear(const std::pair<boost::icl::discrete_interval<int32_t>, int>& match1, const std::pair<boost::icl::discrete_interval<int32_t>, int>& match2, const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& coordsIndex, const int& maximumGap) {
     bool rev1 = match1.second == 1 ? false : true;
     bool rev2 = match2.second == 1 ? false : true;
     if (rev1 != rev2) {
@@ -417,9 +408,9 @@ namespace mgsr {
 
     if (rev1 == false) {
       // forward direction
-      const auto& rglobalbeg1 = *(hashToPositionsMap.find(first1.hash)->second.begin());
-      const auto& rglobalend1 = (positionMap.find(*(hashToPositionsMap.find(last1.hash)->second.begin()))->second).endPos;
-      const auto& rglobalbeg2 = *(hashToPositionsMap.find(first2.hash)->second.begin());
+      const auto& rglobalbeg1 = seedmersIndex.getBegFromHash(first1.hash);
+      const auto& rglobalend1 = seedmersIndex.getEndFromHash(last1.hash);
+      const auto& rglobalbeg2 = seedmersIndex.getBegFromHash(first2.hash);
       // const auto& rglobalend2 = (positionMap.find(*(hashToPositionsMap.find(*last2.hash)->second.begin()))->second).endPos;
       
       const auto& qbeg1 = first1.begPos;
@@ -437,10 +428,10 @@ namespace mgsr {
 
     } else {
       // reverse direction
-      auto rglobalbeg1 = *(hashToPositionsMap.find(last1.hash)->second.begin());
+      auto rglobalbeg1 = seedmersIndex.getBegFromHash(last1.hash);
       // auto rglobalend1 = (positionMap.find(*(hashToPositionsMap.find(*first1.hash)->second.begin()))->second).endPos;
-      auto rglobalbeg2 = *(hashToPositionsMap.find(last2.hash)->second.begin());
-      auto rglobalend2 = (positionMap.find(*(hashToPositionsMap.find(first2.hash)->second.begin()))->second).endPos;
+      auto rglobalbeg2 = seedmersIndex.getBegFromHash(last2.hash);
+      auto rglobalend2 = seedmersIndex.getEndFromHash(first2.hash);
 
       const auto& qbeg1 = first1.begPos;
       const auto& qend1 = last1.endPos;
@@ -461,8 +452,7 @@ namespace mgsr {
   }
 
   int64_t getPseudoScore(
-    const mgsr::Read& curRead, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<int32_t>>& hashToPositionsMap,
-    const std::map<int64_t, int64_t>& coordsIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore
+    const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& coordsIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore
   ) {
     int64_t pseudoScore = 0;
     const boost::icl::discrete_interval<int32_t>* firstMatch = nullptr;
@@ -512,14 +502,14 @@ namespace mgsr {
         // check if within maximum gap
         if (longestQbeg < curQbeg) {
           // longest query beg before current query beg
-          if (isColinear(longestInterval, curInterval, curRead, positionMap, hashToPositionsMap, coordsIndex, maximumGap)) {
+          if (isColinear(longestInterval, curInterval, curRead, seedmersIndex, coordsIndex, maximumGap)) {
             pseudoScore += boost::icl::length(curInterval.first);
             if (firstMatch == nullptr) firstMatch = &curInterval.first;
             lastMatch = &curInterval.first;
           }
         } else if (longestQbeg > curQbeg) {
           // longest query beg after current query beg
-          if (isColinear(curInterval, longestInterval, curRead, positionMap, hashToPositionsMap, coordsIndex, maximumGap)) {
+          if (isColinear(curInterval, longestInterval, curRead, seedmersIndex, coordsIndex, maximumGap)) {
             pseudoScore += boost::icl::length(curInterval.first);
             if (firstMatch == nullptr) firstMatch = &curInterval.first;
             lastMatch = &curInterval.first;
