@@ -1472,7 +1472,7 @@ void buildMutationMatricesHelper_test(
   mutationMatrices &mutMat, Tree *T, Node* node, mutableTreeData &data, std::map<int64_t, int64_t> &gapMap,
   globalCoords_t &globalCoords, CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId,
   std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes,
-  const std::vector<std::pair<int64_t, int64_t>>& blockRanges, size_t window, double threshold,
+  const std::vector<std::pair<int64_t, int64_t>>& blockRanges,
   std::vector<int64_t> &parentBaseCounts, std::vector<int64_t> &totalBaseCounts,
   std::vector<std::vector<int64_t>> &subCount, std::unordered_map<int64_t, int64_t> &insCount, std::unordered_map<int64_t, int64_t> &delCount
 ) {
@@ -1658,7 +1658,7 @@ void buildMutationMatricesHelper_test(
   gapRunUpdates.clear();
 
   for (Node *child : node->children) {
-    buildMutationMatricesHelper_test(mutMat, T, child, data, gapMap, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, window, threshold, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
+    buildMutationMatricesHelper_test(mutMat, T, child, data, gapMap, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
   }
 
   // undo gapMap updates
@@ -1680,7 +1680,7 @@ void buildMutationMatricesHelper_test(
 }
 
 void seed_annotated_tree::fillMutationMatricesFromTree_test(
-  mutationMatrices &mutMat, Tree *T, size_t window, double threshold
+  mutationMatrices &mutMat, Tree *T, const std::string& path
 ) {
  seed_annotated_tree::mutableTreeData data;
  seed_annotated_tree::globalCoords_t globalCoords;
@@ -1725,9 +1725,8 @@ void seed_annotated_tree::fillMutationMatricesFromTree_test(
   // update totalBaseCounts
   //   add baseCounts to totalbaseCounts if there is any indel or substitution
   //   do nothing if there is no indel or substitution
-  buildMutationMatricesHelper_test(mutMat, T, T->root, data, gapMap, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, window, threshold, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount); 
+  buildMutationMatricesHelper_test(mutMat, T, T->root, data, gapMap, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
 
-  std::cout << insCount.size() << " " << delCount.size() << std::endl;
   int64_t totalNucCounts = 0;
   int64_t totalInsCounts = 0;
   int64_t totalDelCounts = 0;
@@ -1756,68 +1755,49 @@ void seed_annotated_tree::fillMutationMatricesFromTree_test(
     mutMat.delmat[size] = static_cast<double>(count);
   }
 
-  for (const auto& count : totalBaseCounts) {
-    std::cout << count << " ";
-  }
-  std::cout << std::endl;
-  std::cout << "test sub count:" << std::endl;
-  for (auto i = 0; i < 4; i++) {
-    for (auto j = 0; j < 4; j++) {
-      std::cout << std::fixed << mutMat.submat[i][j] << " ";
-    }
-    std::cout << std::endl;
-  }
-
-  std::cout << "test ins count:" << std::endl;
-  for (const auto& [size, count] : mutMat.insmat) {
-    std::cout << size << ":" << count << " ";
-  }
-  std::cout << std::endl;
-
-  std::cout << "test del count:" << std::endl;
-  for (const auto& [size, count] : mutMat.delmat) {
-    std::cout << size << ":" << count << " ";
-  }
-  std::cout << std::endl;
-
-
   // insertion
-  for (auto i = 0; i < mutMat.insmat.size(); ++i) {
-    mutMat.insmat[i] = -10 * log10f(mutMat.insmat[i] / static_cast<double>(totalNucCounts));
+  for (auto [size, count] : mutMat.insmat) {
+    mutMat.insmat[size] = -10 * log10f(count / static_cast<double>(totalNucCounts));
   }
   // deletion
-  for (auto i = 0; i < mutMat.delmat.size(); ++i) {
-    mutMat.delmat[i] = -10 * log10f(mutMat.delmat[i] / static_cast<double>(totalNucCounts));
+  for (auto [size, count] : mutMat.delmat) {
+    mutMat.delmat[size] = -10 * log10f(count / static_cast<double>(totalNucCounts));
   }
 
   // substitution
   for (auto i = 0; i < 4; i++) {
     for (auto j = 0; j < 4; j++) {
-      mutMat.submat[i][j] =
-          -10 * log10f(mutMat.submat[i][j] / static_cast<double>(totalBaseCounts[i]));
+      mutMat.submat[i][j] = -10 * log10f(mutMat.submat[i][j] / static_cast<double>(totalBaseCounts[i]));
     }
   }
   mutMat.filled = true;
 
-  std::cout << "test sub count:" << std::endl;
+  std::ofstream outFile(path);
   for (auto i = 0; i < 4; i++) {
     for (auto j = 0; j < 4; j++) {
-      std::cout << std::fixed << mutMat.submat[i][j] << " ";
+      outFile << mutMat.submat[i][j] << " ";
     }
-    std::cout << std::endl;
+    outFile << "\n";
   }
 
-  std::cout << "test ins count:" << std::endl;
-  for (const auto& [size, count] : mutMat.insmat) {
-    std::cout << size << ":" << count << " ";
+  std::vector<std::pair<int64_t, double>> insmat_sorted(mutMat.insmat.begin(), mutMat.insmat.end());
+  std::sort(insmat_sorted.begin(), insmat_sorted.end(), [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+    return a.first < b.first;
+  });
+  for (const auto& [size, logProb] : insmat_sorted) {
+    outFile << size << ":" << logProb << " ";
   }
-  std::cout << std::endl;
+  outFile << "\n";
 
-  std::cout << "test del count:" << std::endl;
-  for (const auto& [size, count] : mutMat.delmat) {
-    std::cout << size << ":" << count << " ";
+  std::vector<std::pair<int64_t, double>> delmat_sorted(mutMat.delmat.begin(), mutMat.delmat.end());
+  std::sort(delmat_sorted.begin(), delmat_sorted.end(), [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+    return a.first < b.first;
+  });
+  for (const auto& [size, logProb] : delmat_sorted) {
+    outFile << size << ":" << logProb << " ";
   }
-  std::cout << std::endl;
+  outFile << "\n";
+  outFile.close();
 }
 
 void seed_annotated_tree::fillMutationMatricesFromFile(mutationMatrices &mutMat,

@@ -556,7 +556,7 @@ std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string &s1,
                                                 double threshold);
 // void fillMutationMatricesFromTree(mutationMatrices &mutMat, Tree *T,
 //                                   size_t window, double threshold);
-void fillMutationMatricesFromTree_test(mutationMatrices &mutMat, Tree *T, size_t window, double threshold);
+void fillMutationMatricesFromTree_test(mutationMatrices &mutMat, Tree *T, const std::string& path);
 void fillMutationMatricesFromFile(mutationMatrices &mutMat, std::ifstream &inf);
 
 // Build mutation matrices by traversing through all parent-child pairs

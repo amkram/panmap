@@ -32,6 +32,7 @@
 using namespace pmi;
 namespace po = boost::program_options;
 namespace fs = boost::filesystem;
+namespace sat = seed_annotated_tree;
 
 static const char USAGE[] = 
 R"(panmap -- v0.0 ⟗ ⟗
@@ -74,6 +75,10 @@ Input/output options:
   -i --index <path>         Provide a precomputed panmap index. If not specified, index
                                 is loaded from <guide.pmat>.pmi, if it exists, otherwise
                                 it is built with parameters <k> and <s> (see below). [default: ]
+  
+  -m --mutmat <path>        Provide a precomputed mutation spectrum matrix instead of computing
+                                one from the tree. if not specified, one is computed from the tree.
+                                Overrides --prior. [default: ]
 
 Seeding/alignment options:
   -k <k>                             Length of k-mer seeds. [default: 19]
@@ -83,8 +88,6 @@ Seeding/alignment options:
   -P --prior                         Compute and use a mutation spectrum prior for genotyping.
   -f --reindex                       Don't load index from disk, build it from scratch.
 
-  -M --mutmat <path>                 Provide a mutation spectrum matrix instead of computing.
-                                       one from the tree. Overrides --prior. [default: ]
   -I --identity-threshold <cutoff>   Identity cutoff for mutation spectrum, effective with --prior. [default: 0.80]
 Other options:
   -c --cpus <num>            Number of CPUs to use. [default: 1]
@@ -223,6 +226,7 @@ int main(int argc, const char** argv) {
     log("k-mer length: " + std::to_string(k));
     log("s-mer length: " + std::to_string(s));
 
+
     bool build = true;
     ::capnp::MallocMessageBuilder outMessage;
     std::unique_ptr<::capnp::PackedFdMessageReader> inMessage;
@@ -257,7 +261,7 @@ int main(int argc, const char** argv) {
       index.setK(k);
       index.setS(s);
       index.setT(1);
-      index.setOpen(true);
+      index.setOpen(false);
       index.setL(3);
 
       auto start = std::chrono::high_resolution_clock::now();
@@ -267,8 +271,9 @@ int main(int argc, const char** argv) {
       log("Build time: " + std::to_string(duration.count()) + " milliseconds");
 
       writeCapnp(outMessage, default_index_path);
-
     }
+
+
 
     // Placement
     log("Reading...");
@@ -283,6 +288,7 @@ int main(int argc, const char** argv) {
     log("Placement time: " + std::to_string(duration.count()) + " milliseconds");
 
 
+
     // Mapping
     log("Mapping...");
     // Mapping logic here
@@ -290,6 +296,24 @@ int main(int argc, const char** argv) {
     // Genotyping
     log("Genotyping...");
     // Genotyping logic here
+
+    sat::mutationMatrices mutMat;
+    std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
+    std::string default_mutmat_path = guide + ".mm";
+    if (!mutmat_path.empty()) {
+      log("Loading mutation matrices from: " + mutmat_path);
+      std::ifstream mutmat_file(mutmat_path);
+      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+    } else if (fs::exists(default_mutmat_path)) {
+      log("Loading default mutation matrices from: " + default_mutmat_path);
+      std::ifstream mutmat_file(default_mutmat_path);
+      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+    } else {
+      log("No mutation matrices found, building...");
+      sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
+    }
+
+
 
     // Assembly
     log("Assembly...");
