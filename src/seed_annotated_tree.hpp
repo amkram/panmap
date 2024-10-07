@@ -510,8 +510,8 @@ struct mutationMatrices {
 
   bool filled = false;
 
-  double maxInsLogProb = 70;
-  double maxDelLogProb = 70;
+  double maxInsLogProb = 40;
+  double maxDelLogProb = 40;
 
   mutationMatrices() {
     // initialize mutationMatrices object and intialize the correct size for
