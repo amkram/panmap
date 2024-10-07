@@ -1034,10 +1034,11 @@ void invertGapMap(std::map<int64_t, int64_t>& gapMap, const std::pair<int64_t, i
 
 }
 
-void makeCoordIndex(std::map<int64_t, int64_t>& coordIndex, const std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
+void makeCoordIndex(std::map<int64_t, int64_t>& degapCoordIndex, std::map<int64_t, int64_t>& regapCoordIndex, const std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
   int64_t totalGapSize = 0;
   if (gapMap.empty() || gapMap.begin()->first > 0) {
-    coordIndex[0] == totalGapSize;
+    degapCoordIndex[0] == totalGapSize;
+    regapCoordIndex[0] == totalGapSize;
   }
   for (auto &gap : gapMap) {
     int64_t gapStart = gap.first;
@@ -1045,7 +1046,8 @@ void makeCoordIndex(std::map<int64_t, int64_t>& coordIndex, const std::map<int64
     int64_t gapSize = gapEnd - gapStart + 1;
     if (gapEnd == blockRanges.back().second) break;
     totalGapSize += gapSize;
-    coordIndex[gapEnd+1] = totalGapSize;
+    degapCoordIndex[gapEnd+1] = totalGapSize;
+    regapCoordIndex[gapEnd+1-totalGapSize] = totalGapSize;
   }
 }
 
@@ -2408,7 +2410,8 @@ void place_per_read_DFS(
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
   std::vector<std::pair<bool, int64_t>> inverseBlockIdsBacktrack;
-  std::map<int64_t, int64_t> coordIndex;
+  std::map<int64_t, int64_t> degapCoordIndex;
+  std::map<int64_t, int64_t> regapCoordIndex;
   std::vector<tupleRange> recompRanges;
   blockExists_t oldBlockExists = data.blockExists;
   blockStrand_t oldBlockStrand = data.blockStrand;
@@ -2418,7 +2421,7 @@ void place_per_read_DFS(
 
   processNodeMutations(perNodeGapMutations_Index, perNodeSeedMutations_Index, dfsIndex, gapMap, gapRunBacktracks, gapRunBlocksBacktracks, inverseBlockIds, blockRanges, data, onSeedsHashMap, seedChanges, T, seedK, globalCoords, navigator);
 
-  makeCoordIndex(coordIndex, gapMap, blockRanges);
+  makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
 
   for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
     const auto& [del, range] = *it;
@@ -2446,7 +2449,7 @@ void place_per_read_DFS(
   std::unordered_set<size_t> affectedSeedmers;
   auto& positionMap = seedmersIndex.positionMap;
   auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
-  updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, coordIndex, backTrackPositionMapChAdd, backTrackPositionMapErase);
+  updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, backTrackPositionMapChAdd, backTrackPositionMapErase);
 
 
   if (debug) {
@@ -2457,7 +2460,7 @@ void place_per_read_DFS(
         const auto& beg = seedmer.first;
         const auto& [end, fhash, rhash, rev] = seedmer.second;
         if (fhash != rhash) {
-          std::cout << mgsr::degapGlobal(beg, coordIndex) << "-" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
+          std::cout << mgsr::degapGlobal(beg, degapCoordIndex) << "-" << mgsr::degapGlobal(end, degapCoordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
           // std::cout << beg << "|" << mgsr::degapGlobal(beg, coordIndex) << "-" << end << "|" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
         }
       }
@@ -2484,7 +2487,7 @@ void place_per_read_DFS(
         // curRead.matches.clear();
         // curRead.duplicates.clear();
         initializeMatches(curRead, positionMap, hashToPositionsMap);
-        int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, coordIndex, maximumGap, minimumCount, minimumScore);
+        int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore);
         double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
         allScores[node->identifier][i] = {pseudoScore, pseudoProb};
         std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
@@ -2660,7 +2663,7 @@ void place_per_read_DFS(
             }
           }
           
-          int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, coordIndex, maximumGap, minimumCount, minimumScore);
+          int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore);
           double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
           allScores[node->identifier][i] = {pseudoScore, pseudoProb};
 

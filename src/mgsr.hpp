@@ -20,8 +20,6 @@ using namespace boost::icl;
 typedef std::pair<std::vector<std::tuple<size_t*, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>> readSeedmers_t;
 typedef std::tuple<int32_t, int32_t, int32_t, int32_t, bool, int32_t> match_t;
 
-
-
 namespace mgsr {
 
   struct positionInfo {
@@ -121,12 +119,20 @@ namespace mgsr {
     // size_t numAbsentees = 0;
   };
 
-  int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& coordsIndex) {
-    auto coordIt = coordsIndex.upper_bound(globalCoord);
-    if (coordIt == coordsIndex.begin()) {
+  int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& degapCoordsIndex) {
+    auto coordIt = degapCoordsIndex.upper_bound(globalCoord);
+    if (coordIt == degapCoordsIndex.begin()) {
         return 0;
     }
     return globalCoord - std::prev(coordIt)->second;
+  }
+
+  int64_t regapGlobal(const int64_t& localCoord, const std::map<int64_t, int64_t>& regapCoordsIndex) {
+    auto coordIt = regapCoordsIndex.upper_bound(localCoord);
+    if (coordIt == regapCoordsIndex.begin()) {
+        return 0;
+    }
+    return localCoord + std::prev(coordIt)->second;
   }
 
   template<typename Iterator>
@@ -233,7 +239,6 @@ namespace mgsr {
                           std::unordered_set<size_t>& affectedSeedmers,
                           const int& seedK,
                           const int& seedL,
-                          const std::map<int64_t, int64_t>& coordIndex,
                           std::vector<std::tuple<int32_t, int32_t, size_t, size_t, bool>>& backTrackPositionMapChAdd,
                           std::vector<int32_t>& backTrackPositionMapErase
 ) {
@@ -393,7 +398,7 @@ namespace mgsr {
     }
   }
 
-  bool isColinear(const std::pair<boost::icl::discrete_interval<int32_t>, int>& match1, const std::pair<boost::icl::discrete_interval<int32_t>, int>& match2, const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& coordsIndex, const int& maximumGap) {
+  bool isColinear(const std::pair<boost::icl::discrete_interval<int32_t>, int>& match1, const std::pair<boost::icl::discrete_interval<int32_t>, int>& match2, const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap) {
     bool rev1 = match1.second == 1 ? false : true;
     bool rev2 = match2.second == 1 ? false : true;
     if (rev1 != rev2) {
@@ -417,10 +422,10 @@ namespace mgsr {
       const auto& qend1 = last1.endPos;
       const auto& qbeg2 = first2.begPos;
       const auto& qend2 = last2.endPos;
-      auto rbeg1 = degapGlobal(rglobalbeg1, coordsIndex);
-      auto rend1 = degapGlobal(rglobalend1, coordsIndex);
-      auto rbeg2 = degapGlobal(rglobalbeg2, coordsIndex);
-      // auto rend2 = degapGlobal(rglobalend2, coordsIndex);
+      auto rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
+      auto rend1 = degapGlobal(rglobalend1, degapCoordIndex);
+      auto rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
+      // auto rend2 = degapGlobal(rglobalend2, degapCoordIndex);
 
       int32_t qgap = abs(qbeg2 - qend1);
       int32_t rgap = abs(rbeg2 - rend1);
@@ -438,10 +443,10 @@ namespace mgsr {
       const auto& qbeg2 = first2.begPos;
       const auto& qend2 = last2.endPos;
 
-      auto rbeg1 = degapGlobal(rglobalbeg1, coordsIndex);
-      // auto rend1 = degapGlobal(rglobalend1, coordsIndex);
-      auto rbeg2 = degapGlobal(rglobalbeg2, coordsIndex);
-      auto rend2 = degapGlobal(rglobalend2, coordsIndex);
+      auto rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
+      // auto rend1 = degapGlobal(rglobalend1, degapCoordIndex);
+      auto rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
+      auto rend2 = degapGlobal(rglobalend2, degapCoordIndex);
 
       int32_t qgap = abs(qbeg2 - qend1);
       int32_t rgap = abs(rbeg1 - rend2);
@@ -452,12 +457,13 @@ namespace mgsr {
   }
 
   int64_t getPseudoScore(
-    const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& coordsIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore
+    const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore
   ) {
     int64_t pseudoScore = 0;
     const boost::icl::discrete_interval<int32_t>* firstMatch = nullptr;
     const boost::icl::discrete_interval<int32_t>* lastMatch  = nullptr;
-    bool reverse = false;
+    bool reversed = false;
+
     // simple cases
     if (curRead.matches.empty()) {
       return 0;
@@ -465,7 +471,7 @@ namespace mgsr {
       pseudoScore = boost::icl::length(curRead.matches.begin()->first);
       firstMatch  = &curRead.matches.begin()->first;
       lastMatch   = &curRead.matches.begin()->first;
-      reverse     = curRead.matches.begin()->second == 1 ? false : true;
+      reversed    = curRead.matches.begin()->second == 1 ? false : true;
     } else {
       // find longest interval
       std::pair<boost::icl::discrete_interval<int32_t>, int> longestInterval = *curRead.matches.begin();
@@ -479,6 +485,7 @@ namespace mgsr {
         }
         ++curIdx;
       }
+      reversed = longestInterval.second == 1 ? false : true;
 
       // find intervals colinear with longest interval and add length to pseudoScore
       auto longestQbeg = curRead.seedmersList[boost::icl::first(longestInterval.first)].begPos;
@@ -502,14 +509,14 @@ namespace mgsr {
         // check if within maximum gap
         if (longestQbeg < curQbeg) {
           // longest query beg before current query beg
-          if (isColinear(longestInterval, curInterval, curRead, seedmersIndex, coordsIndex, maximumGap)) {
+          if (isColinear(longestInterval, curInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap)) {
             pseudoScore += boost::icl::length(curInterval.first);
             if (firstMatch == nullptr) firstMatch = &curInterval.first;
             lastMatch = &curInterval.first;
           }
         } else if (longestQbeg > curQbeg) {
           // longest query beg after current query beg
-          if (isColinear(curInterval, longestInterval, curRead, seedmersIndex, coordsIndex, maximumGap)) {
+          if (isColinear(curInterval, longestInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap)) {
             pseudoScore += boost::icl::length(curInterval.first);
             if (firstMatch == nullptr) firstMatch = &curInterval.first;
             lastMatch = &curInterval.first;
@@ -524,10 +531,35 @@ namespace mgsr {
       }
     }
 
+    // const auto& curReadDuplicates = curRead.duplicates;
+    // if (true && !curReadDuplicates.empty() && curReadDuplicates.size() < 5) {
+    //   const size_t& leftBoundHash  = reversed ? curRead.seedmersList[boost::icl::last(*lastMatch)].hash : curRead.seedmersList[boost::icl::first(*firstMatch)].hash;
+    //   const size_t& rightBoundHash = reversed ? curRead.seedmersList[boost::icl::first(*firstMatch)].hash : curRead.seedmersList[boost::icl::last(*lastMatch)].hash;
 
-    // if (true && curRead.duplicates.size() > 0) {
-      
+    //   int32_t leftBoundGlobal = seedmersIndex.getBegFromHash(leftBoundHash);
+    //   int32_t rightBoundGlobal = seedmersIndex.getEndFromHash(rightBoundHash);
+
+    //   if (leftBoundGlobal >= rightBoundGlobal) {
+    //     std::cerr << "Error: Invalid bounds in getPseudoScore()" << std::endl;
+    //     exit(1);
+    //   }
+
+    //   int32_t leftBoundLocal = std::max(0, degapGlobal(leftBoundGlobal, coordsIndex) - 150);
+    //   int32_t rightBoundLocal = degapGlobal(rightBoundGlobal, coordsIndex) + 150;
+
+
+
+
+    //   for (const auto& duplicateIndex : curReadDuplicates) {
+    //     const auto& duplicateHash = curRead.seedmersList[duplicateIndex].hash;
+        
+    //   }
+
+
+
+
     // }
+
     // const auto& first1 = curRead.seedmersList[boost::icl::first(*firstMatch)];
     // const auto& last1 = curRead.seedmersList[boost::icl::last(*lastMatch)];
     // const auto& first2 = curRead.seedmersList[boost::icl::first(*firstMatch)];
@@ -540,8 +572,8 @@ namespace mgsr {
 
     // get range of psuedoChain + readLen padding
     // for duplicate in duplicates:
-      // for begs of duplicated hash:
-        // if colinear pseudochain: add to colinear duplicates
+    //   for begs of duplicated hash:
+    //     if colinear pseudochain: add to colinear duplicates
 
     return pseudoScore;
   }
