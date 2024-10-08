@@ -531,50 +531,45 @@ namespace mgsr {
       }
     }
 
-    // const auto& curReadDuplicates = curRead.duplicates;
-    // if (true && !curReadDuplicates.empty() && curReadDuplicates.size() < 5) {
-    //   const size_t& leftBoundHash  = reversed ? curRead.seedmersList[boost::icl::last(*lastMatch)].hash : curRead.seedmersList[boost::icl::first(*firstMatch)].hash;
-    //   const size_t& rightBoundHash = reversed ? curRead.seedmersList[boost::icl::first(*firstMatch)].hash : curRead.seedmersList[boost::icl::last(*lastMatch)].hash;
+    bool rescueDuplicates = false;
+    const auto& curReadDuplicates = curRead.duplicates;
+    if (rescueDuplicates && !curReadDuplicates.empty() && curReadDuplicates.size() < 5) {
+      const size_t& leftBoundHash  = reversed ? curRead.seedmersList[boost::icl::last(*lastMatch)].hash : curRead.seedmersList[boost::icl::first(*firstMatch)].hash;
+      const size_t& rightBoundHash = reversed ? curRead.seedmersList[boost::icl::first(*firstMatch)].hash : curRead.seedmersList[boost::icl::last(*lastMatch)].hash;
 
-    //   int32_t leftBoundGlobal = seedmersIndex.getBegFromHash(leftBoundHash);
-    //   int32_t rightBoundGlobal = seedmersIndex.getEndFromHash(rightBoundHash);
+      int32_t leftBoundGlobal = seedmersIndex.getBegFromHash(leftBoundHash);
+      int32_t rightBoundGlobal = seedmersIndex.getEndFromHash(rightBoundHash);
 
-    //   if (leftBoundGlobal >= rightBoundGlobal) {
-    //     std::cerr << "Error: Invalid bounds in getPseudoScore()" << std::endl;
-    //     exit(1);
-    //   }
+      if (leftBoundGlobal >= rightBoundGlobal) {
+        std::cerr << "Error: Invalid bounds in getPseudoScore()" << std::endl;
+        exit(1);
+      }
 
-    //   int32_t leftBoundLocal = std::max(0, degapGlobal(leftBoundGlobal, coordsIndex) - 150);
-    //   int32_t rightBoundLocal = degapGlobal(rightBoundGlobal, coordsIndex) + 150;
+      int32_t leftBoundLocal = std::max(static_cast<int64_t>(0), degapGlobal(leftBoundGlobal, degapCoordIndex) - 150);
+      int32_t rightBoundLocal = degapGlobal(rightBoundGlobal, degapCoordIndex) + 150;
 
-
-
-
-    //   for (const auto& duplicateIndex : curReadDuplicates) {
-    //     const auto& duplicateHash = curRead.seedmersList[duplicateIndex].hash;
-        
-    //   }
+      leftBoundGlobal = regapGlobal(leftBoundLocal, regapCoordIndex);
+      rightBoundGlobal = regapGlobal(rightBoundLocal, regapCoordIndex);
 
 
 
-
-    // }
-
-    // const auto& first1 = curRead.seedmersList[boost::icl::first(*firstMatch)];
-    // const auto& last1 = curRead.seedmersList[boost::icl::last(*lastMatch)];
-    // const auto& first2 = curRead.seedmersList[boost::icl::first(*firstMatch)];
-    // const auto& last2 = curRead.seedmersList[boost::icl::last(*lastMatch)];
-
-    // auto rglobalbeg1 = *(hashToPositionsMap.find(*first1.hash)->second.begin());
-    // auto rglobalend1 = (positionMap.find(*(hashToPositionsMap.find(*last1.hash)->second.begin()))->second).endPos;
-    // auto rglobalbeg2 = *(hashToPositionsMap).find(*first2.hash)->second.begin();
-    // auto rglobalend2 = (positionMap.find(*(hashToPositionsMap.find(*last2.hash)->second.begin()))->second).endPos;
-
-    // get range of psuedoChain + readLen padding
-    // for duplicate in duplicates:
-    //   for begs of duplicated hash:
-    //     if colinear pseudochain: add to colinear duplicates
-
+      for (const auto& duplicateIndex : curReadDuplicates) {
+        const auto& duplicateHash = curRead.seedmersList[duplicateIndex].hash;
+        const auto& duplicateRev = curRead.seedmersList[duplicateIndex].rev;
+        auto hashToPositionIt = seedmersIndex.hashToPositionsMap.find(duplicateHash);
+        if (hashToPositionIt == seedmersIndex.hashToPositionsMap.end()) continue;
+        for (const auto& positionMapIt : hashToPositionIt->second) {
+          const auto& rbeg = positionMapIt->first;
+          const auto& rend = positionMapIt->second.endPos;
+          const auto& rrev = positionMapIt->second.rev;
+          bool curReversedMatch = rrev != duplicateRev;
+          if (rbeg >= leftBoundGlobal && rend <= rightBoundGlobal && curReversedMatch == reversed) {
+            ++pseudoScore;
+            break;
+          }
+        }
+      }
+    }
     return pseudoScore;
   }
 
