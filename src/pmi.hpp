@@ -20,8 +20,18 @@ enum posWidth {pos16, pos32, pos64};
 namespace pmi { // functions and types for seed indexing
 
     void build(Tree *T, Index::Builder &index);
-    void place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName);
-    void place_per_read(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path);
+    void place(
+      Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
+      seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName,
+      std::string bamFileName, std::string mpileupFileName, std::string vcfFileName);
+
+    void place_per_read(
+      Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
+      const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
+      const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
+      const int& rescueDuplicatesThreshold, const int& filterRound, const int& checkFrequency,
+      const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold,
+      const bool& leafNodesOnly);
 
 } // namespace pmi
 
