@@ -88,10 +88,10 @@ Seeding/alignment options:
   -P --prior                         Compute and use a mutation spectrum prior for genotyping.
   -f --reindex                       Don't load index from disk, build it from scratch.
 
-  -I --identity-threshold <cutoff>   Identity cutoff for mutation spectrum, effective with --prior. [default: 0.80]
 Other options:
+  -r --place-per-read         placement per read (panmama).
   -c --cpus <num>            Number of CPUs to use. [default: 1]
-  -x --stop-after <stage>        Stop after the specified stage. Accepted values:
+  -x --stop-after <stage>    Stop after the specified stage. Accepted values:
                                     indexing / i:   Stop after seed indexing
                                     placement / p:  Stop after placement
                                     mapping / m:    Stop after read mapping
@@ -282,7 +282,28 @@ int main(int argc, const char** argv) {
 
     log("Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    pmi::place(T, index_input, reads1, reads2);
+    if (args["--place-per-read"]) {
+      pmi::place_per_read(T, index_input, reads1, reads2);
+    } else {
+      // maximum gap
+      // minimum count
+      // minimum score
+      // error rate
+      // redo read thresholds
+      // recalculate score frequency
+      // rescue duplicates
+      // rescue duplicates threshold
+      // filter_round
+      // check_freq
+      // remove_count
+      // roundsRemove
+      // removeThreshold
+      // leafNodeOnly
+
+
+
+      pmi::place(T, index_input, reads1, reads2);
+    }
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     log("Placement time: " + std::to_string(duration.count()) + " milliseconds");
@@ -297,21 +318,21 @@ int main(int argc, const char** argv) {
     log("Genotyping...");
     // Genotyping logic here
 
-    sat::mutationMatrices mutMat;
-    std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
-    std::string default_mutmat_path = guide + ".mm";
-    if (!mutmat_path.empty()) {
-      log("Loading mutation matrices from: " + mutmat_path);
-      std::ifstream mutmat_file(mutmat_path);
-      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
-    } else if (fs::exists(default_mutmat_path)) {
-      log("Loading default mutation matrices from: " + default_mutmat_path);
-      std::ifstream mutmat_file(default_mutmat_path);
-      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
-    } else {
-      log("No mutation matrices found, building...");
-      sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
-    }
+    // sat::mutationMatrices mutMat;
+    // std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
+    // std::string default_mutmat_path = guide + ".mm";
+    // if (!mutmat_path.empty()) {
+    //   log("Loading mutation matrices from: " + mutmat_path);
+    //   std::ifstream mutmat_file(mutmat_path);
+    //   sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+    // } else if (fs::exists(default_mutmat_path)) {
+    //   log("Loading default mutation matrices from: " + default_mutmat_path);
+    //   std::ifstream mutmat_file(default_mutmat_path);
+    //   sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+    // } else {
+    //   log("No mutation matrices found, building...");
+    //   sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
+    // }
 
 
 
