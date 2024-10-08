@@ -457,7 +457,9 @@ namespace mgsr {
   }
 
   int64_t getPseudoScore(
-    const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore
+    const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex,
+    const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore,
+    const bool& rescueDuplicates, const int& rescueDuplicatesThreshold
   ) {
     int64_t pseudoScore = 0;
     const boost::icl::discrete_interval<int32_t>* firstMatch = nullptr;
@@ -531,9 +533,8 @@ namespace mgsr {
       }
     }
 
-    bool rescueDuplicates = false;
     const auto& curReadDuplicates = curRead.duplicates;
-    if (rescueDuplicates && !curReadDuplicates.empty() && curReadDuplicates.size() < 5) {
+    if (rescueDuplicates && !curReadDuplicates.empty() && curReadDuplicates.size() <= rescueDuplicatesThreshold) {
       const size_t& leftBoundHash  = reversed ? curRead.seedmersList[boost::icl::last(*lastMatch)].hash : curRead.seedmersList[boost::icl::first(*firstMatch)].hash;
       const size_t& rightBoundHash = reversed ? curRead.seedmersList[boost::icl::first(*firstMatch)].hash : curRead.seedmersList[boost::icl::last(*lastMatch)].hash;
 
@@ -573,7 +574,9 @@ namespace mgsr {
     return pseudoScore;
   }
 
-  std::pair<bool, std::vector<size_t>> checkRedo(const std::unordered_map<size_t, std::vector<int32_t>>& a, const std::unordered_set<size_t>& b, int32_t threshold) {
+  std::pair<bool, std::vector<size_t>> checkRedo(
+    const std::unordered_map<size_t, std::vector<int32_t>>& a, const std::unordered_set<size_t>& b, const int& threshold
+  ) {
     std::vector<size_t> affectedSeedmers;
     uint32_t numAffected = 0;
     if (a.size() < b.size()) {
@@ -655,7 +658,7 @@ namespace mgsr {
     props /= sum;
   }
 
-  void updateInsigCounts(const Eigen::VectorXd& props, std::vector<size_t>& insigCounts, size_t totalNodes) {
+  void updateInsigCounts(const Eigen::VectorXd& props, std::vector<int>& insigCounts, size_t totalNodes) {
     double insigProp =  (1.0 / static_cast<double>(totalNodes)) / 10.0;
     for (int i = 0; i < props.size(); ++i) {
       if (props(i) <= insigProp) {
@@ -671,7 +674,7 @@ namespace mgsr {
     const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
     const Eigen::VectorXd& numReadDuplicates, const int32_t& numReads, 
-    Eigen::VectorXd& props, double& llh, int& curit, bool& converged, size_t iterations, std::vector<size_t>& insigCounts, size_t totalNodes
+    Eigen::VectorXd& props, double& llh, int& curit, bool& converged, size_t iterations, std::vector<int>& insigCounts, size_t totalNodes
     ) {
     assert(nodes.size() == probs.cols());
     assert(nodes.size() == props.size());
@@ -742,9 +745,12 @@ namespace mgsr {
 
   //squarem test 1: periodically drop nodes with very low abundance
   void squaremHelper_test_1(
-    Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
-    const std::vector<bool>& lowScoreReads, const int32_t& numReads, const size_t& numLowScoreReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
-    Eigen::MatrixXd& probs, std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int32_t& roundsRemove, const double& removeThreshold, std::string exclude
+    Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
+    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, const std::vector<bool>& lowScoreReads,
+    const int32_t& numReads, const size_t& numLowScoreReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors,
+    const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs,
+    std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int filterRound, const int& checkFrequency,
+    const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold, std::string exclude
   ) {
     if (exclude.empty()) {
       std::stringstream msg;
@@ -807,15 +813,13 @@ namespace mgsr {
 
     int curit = 0;
     bool converged = false;
-    int32_t filter_round = 0;
-    size_t check_freq = 20;
-    size_t remove_count = 20;
-    std::vector<size_t> insigCounts(nodes.size());
+    int32_t filterRoundCount = 0;
+    std::vector<int> insigCounts(nodes.size());
     while (true) {
-      std::cerr << "filter round " << filter_round + 1 << std::endl;
-      ++filter_round;
+      std::cerr << "filter round " << filterRoundCount + 1 << std::endl;
+      ++filterRoundCount;
       llh = getExp(probs, props, readDuplicates);
-      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, check_freq, insigCounts, totalNodes);
+      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, insigCounts, totalNodes);
       if (converged) {
         break;
       }
@@ -823,7 +827,7 @@ namespace mgsr {
       std::vector<size_t> significantIndices;
       std::vector<std::string> sigNodes;
       for (size_t i = 0; i < nodes.size(); ++i) {
-        if (insigCounts[i] < remove_count) {
+        if (insigCounts[i] < removeIteration) {
           significantIndices.push_back(i);
         }
       }
@@ -849,13 +853,13 @@ namespace mgsr {
       props = std::move(sigProps);
       normalize(props);
       insigCounts.assign(nodes.size(), 0);
-      if (nodes.size() <= std::max(static_cast<int>(totalNodes) / 20, 100) || filter_round >= 10) {
+      if (nodes.size() <= std::max(static_cast<int>(totalNodes) / 20, 100) || filterRoundCount >= filterRound) {
         break;
       }
     }
 
     if (!converged) {
-      std::vector<size_t> insigCounts(nodes.size());
+      std::vector<int> insigCounts(nodes.size());
       std::cerr << "start full EM" << std::endl;
       llh = getExp(probs, props, readDuplicates);
       squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), insigCounts, totalNodes);
@@ -887,7 +891,7 @@ namespace mgsr {
       llh = getExp(sigProbs, sigProps, readDuplicates);
       bool converged = false;
       size_t iterations = std::numeric_limits<size_t>::max();
-      std::vector<size_t> insigCounts(sigNodes.size());
+      std::vector<int> insigCounts(sigNodes.size());
       squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, iterations, insigCounts, totalNodes);
       assert(converged);
       nodes = std::move(sigNodes);
