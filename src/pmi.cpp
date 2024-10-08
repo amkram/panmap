@@ -2134,7 +2134,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
     }
 }
 
-void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path)
+void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName)
 {
     // Setup for seed indexing
     seed_annotated_tree::mutableTreeData data;
@@ -2302,7 +2302,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
 
 
-    std::string refFileName = "REFERENCE";
+    //std::string refFileName = "REFERENCE";
     //Print out Reference
     if(refFileName.size() > 0){
         std::ofstream outFile{refFileName};
@@ -2320,30 +2320,30 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
 
 
-    std::string samFileName = "SAM";
+    //std::string samFileName = "SAM";
 
     //Create SAM
     std::vector<char *> samAlignments;
     std::string samHeader;
 
     createSam(
-        readSeeds,                 //yep
-        readSequences,             //yep
-        readQuals,                 //yep
-        readNames,                 //yep
-        bestMatchSequence,         //yep
-        seedToRefPositions,        // yep
-        samFileName,               //yeah
-        k,                         //yep
-        pairedEndReads,            //yep
+        readSeeds,                 
+        readSequences,             
+        readQuals,                 
+        readNames,                 
+        bestMatchSequence,         
+        seedToRefPositions,        
+        samFileName,               
+        k,                         
+        pairedEndReads,            
         
-        samAlignments,             //yep
-        samHeader                  //yep
+        samAlignments,             
+        samHeader                  
     );
 
 
 
-    std::string bamFileName = "BAM";
+    //std::string bamFileName = "BAM";
 
     //Convert to BAM
     sam_hdr_t *header;
@@ -2361,7 +2361,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
 
 
-    std::string mpileupFileName = "MPILEUP";
+    //std::string mpileupFileName = "MPILEUP";
     //Convert to Mplp
     char *mplpString;
 
@@ -2375,14 +2375,14 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
         mplpString
     );
 
-    /*
-    std::string vcfFileName = "VCF";
+  
+    //std::string vcfFileName = "VCF";
     //Convert to VCF
     createVcf(
         mplpString,
         mutMat,
         vcfFileName
-    );*/
+    );
 
 
 

@@ -14,12 +14,13 @@ using namespace seed_annotated_tree;
 
 
 
+
 enum posWidth {pos16, pos32, pos64};
 
 namespace pmi { // functions and types for seed indexing
 
     void build(Tree *T, Index::Builder &index);
-    void place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path);
+    void place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName);
     void place_per_read(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path);
 
 } // namespace pmi
