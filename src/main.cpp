@@ -366,8 +366,27 @@ int main(int argc, const char** argv) {
 
     log("Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    std::string dummuy = "";
-    pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
+    if (args["--place-per-read"]) {
+      // maximum gap
+      // minimum count
+      // minimum score
+      // error rate
+      // redo read thresholds
+      // recalculate score frequency
+      // rescue duplicates
+      // rescue duplicates threshold
+      // filter_round
+      // check_freq
+      // remove_count
+      // roundsRemove
+      // removeThreshold
+      // leafNodeOnly
+      pmi::place_per_read(T, index_input, reads1, reads2);
+    } else {
+      std::string dummuy = "";
+      pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
+    }
+
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     log("Placement time: " + std::to_string(duration.count()) + " milliseconds");
