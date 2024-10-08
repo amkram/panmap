@@ -191,6 +191,72 @@ int main(int argc, const char** argv) {
     std::string prefix = args["--prefix"] ? args["--prefix"].asString() : "panmap";
     std::string outputs = args["-o"] && args["-o"].isString() ? args["-o"].asString() : "bam,vcf,assembly";
 
+
+
+    std::vector<std::string> outputs_seperated;
+
+    std::string token;
+    std::stringstream ss(outputs);
+    while (std::getline(ss, token, ',')) {
+        outputs_seperated.push_back(token);
+    }
+
+    std::string refFileName = "";
+    std::string samFileName = "";
+    std::string bamFileName = "";
+    std::string mpileupFileName = ""; 
+    std::string vcfFileName = "";
+
+    
+    for (const auto& output : outputs_seperated) {
+        if(output.size() == 1){
+          switch(output[0]){
+            case 'r':
+              refFileName = prefix + ".reference.fa";
+              break;
+            case 's':
+              samFileName = prefix + ".sam";
+              break;
+            case 'b':
+              bamFileName = prefix + ".bam";
+              break;
+            case 'm':
+              mpileupFileName = prefix + ".mpileup";
+              break;
+            case 'v':
+              vcfFileName = prefix + ".vcf";
+              break;
+            case 'A':
+              refFileName = prefix + ".reference.fa";
+              samFileName = prefix + ".sam";
+              bamFileName = prefix + ".bam";
+              mpileupFileName = prefix + ".mpileup";
+              vcfFileName = prefix + ".vcf";
+              break;
+          }
+        }else{
+          
+            if(output == "reference"){
+              refFileName = prefix + ".reference.fa";
+            }else if(output == "sam"){
+              samFileName = prefix + ".sam";
+            }else if(output == "bam"){
+              bamFileName = prefix + ".bam";
+            }else if(output == "mpileup"){
+              mpileupFileName = prefix + ".mpileup";
+            }else if(output == "vcf"){
+              vcfFileName = prefix + ".vcf";
+            }else if(output == "all"){
+              refFileName = prefix + ".reference.fa";
+              samFileName = prefix + ".sam";
+              bamFileName = prefix + ".bam";
+              mpileupFileName = prefix + ".mpileup";
+              vcfFileName = prefix + ".vcf";
+            }
+        }
+    }
+
+
     double subsample_reads = std::stod(args["--subsample-reads"].asString());
     double subsample_seeds = std::stod(args["--subsample-seeds"].asString());
     bool reindex = args["--reindex"] && args["--reindex"].isBool() ? args["--reindex"].asBool() : false;
@@ -275,6 +341,24 @@ int main(int argc, const char** argv) {
 
 
 
+
+    sat::mutationMatrices mutMat;
+    std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
+    std::string default_mutmat_path = guide + ".mm";
+    if (!mutmat_path.empty()) {
+      log("Loading mutation matrices from: " + mutmat_path);
+      std::ifstream mutmat_file(mutmat_path);
+      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+    } else if (fs::exists(default_mutmat_path)) {
+      log("Loading default mutation matrices from: " + default_mutmat_path);
+      std::ifstream mutmat_file(default_mutmat_path);
+      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+    } else {
+      log("No mutation matrices found, building...");
+      sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
+    }
+
+
     // Placement
     log("Reading...");
     inMessage = readCapnp(default_index_path);
@@ -282,28 +366,8 @@ int main(int argc, const char** argv) {
 
     log("Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    if (args["--place-per-read"]) {
-      pmi::place_per_read(T, index_input, reads1, reads2);
-    } else {
-      // maximum gap
-      // minimum count
-      // minimum score
-      // error rate
-      // redo read thresholds
-      // recalculate score frequency
-      // rescue duplicates
-      // rescue duplicates threshold
-      // filter_round
-      // check_freq
-      // remove_count
-      // roundsRemove
-      // removeThreshold
-      // leafNodeOnly
-
-
-
-      pmi::place(T, index_input, reads1, reads2);
-    }
+    std::string dummuy = "";
+    pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     log("Placement time: " + std::to_string(duration.count()) + " milliseconds");
@@ -311,33 +375,20 @@ int main(int argc, const char** argv) {
 
 
     // Mapping
-    log("Mapping...");
+    //log("Mapping...");
     // Mapping logic here
 
     // Genotyping
-    log("Genotyping...");
+    //log("Genotyping...");
     // Genotyping logic here
 
-    // sat::mutationMatrices mutMat;
-    // std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
-    // std::string default_mutmat_path = guide + ".mm";
-    // if (!mutmat_path.empty()) {
-    //   log("Loading mutation matrices from: " + mutmat_path);
-    //   std::ifstream mutmat_file(mutmat_path);
-    //   sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
-    // } else if (fs::exists(default_mutmat_path)) {
-    //   log("Loading default mutation matrices from: " + default_mutmat_path);
-    //   std::ifstream mutmat_file(default_mutmat_path);
-    //   sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
-    // } else {
-    //   log("No mutation matrices found, building...");
-    //   sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
-    // }
+    
+
 
 
 
     // Assembly
-    log("Assembly...");
+    //log("Assembly...");
     // Assembly logic here
 
     log("panmap run completed.");
