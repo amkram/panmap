@@ -89,7 +89,10 @@ Seeding/alignment options:
   -f --reindex                       Don't load index from disk, build it from scratch.
 
 Other options:
+<<<<<<< HEAD
   -r --place-per-read        placement per read (panmama).
+=======
+>>>>>>> 1c2118f82a824df6281ca487b72e9982fb396f47
   -c --cpus <num>            Number of CPUs to use. [default: 1]
   -x --stop-after <stage>    Stop after the specified stage. Accepted values:
                                     indexing / i:   Stop after seed indexing
@@ -103,6 +106,31 @@ Other options:
   -h --help                 Show this screen.
   -D --dump                 Dump all seeds to file.
   -X --dump-real            Dump true seeds to file.
+
+Placement per read options:
+  --place-per-read       Place reads per read (panmama)
+
+  --maximum-gap <gap>              Maximum gap between matches. [default: 10]
+  --minimum-count <count>          Minimum count of seeds in a match. [default: 0]
+  --minimum-score <score>          Minimum score of seeds in a match. [default: 0]
+  --error-rate <rate>              Error rate of kminmer [default: 0.005]
+
+  --redo-read-threshold           Re-chain reads when the number of kminmers need to be updated exceeds this threshold [default: 5]
+  --recalculate-score             Recalculate chain scores for every read at each node (Sometimes, although rare, a
+                                    read's kminmer matches are not affected but the coordinate of the kminmer changes,
+                                    which can affect the chaining score. This typically affects the scores very slightly.)
+  --rescue-duplicates             Rescue duplicate seeds.
+  --rescue-duplicates-threshold   Rescue reads with number of duplicates not greater than <threshold>. [default: 5]
+
+  --filter-round <round>          Maximum number of rounds to filter low probability haplotypes before EM. [default: 5]
+  --check-frequency <frequency>   Number of iterations between each filter-round. [default: 20]
+  --remove-iteration <count>      Remove haplotypes that has probability less than insig-prob for more than remove-count consecutive iterations. [default: 20]
+  --insig-prob <prob>             As described in --remove-iteration. (default is calculated from total number of nodes, where default = 1 / (total number of nodes * 10))
+
+  --rounds-remove                 Number of rounds to clean up and remove low probability haplotypes after EM. [default: 3]
+  --remove-threshold              Remove haplotypes with probability less than this threshold during rounds-remove. [default: 0.005]
+
+  --leaf-nodes-only               Only consider leaf nodes when placing reads.
 )";
 
 
@@ -261,8 +289,7 @@ int main(int argc, const char** argv) {
     double subsample_seeds = std::stod(args["--subsample-seeds"].asString());
     bool reindex = args["--reindex"] && args["--reindex"].isBool() ? args["--reindex"].asBool() : false;
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
-    bool place_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
-
+    bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
   
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
@@ -368,22 +395,28 @@ int main(int argc, const char** argv) {
 
     log("Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    if (place_per_read) {
-      // maximum gap
-      // minimum count
-      // minimum score
-      // error rate
-      // redo read thresholds
-      // recalculate score frequency
-      // rescue duplicates
-      // rescue duplicates threshold
-      // filter_round
-      // check_freq
-      // remove_count
-      // roundsRemove
-      // removeThreshold
-      // leafNodeOnly
-      pmi::place_per_read(T, index_input, reads1, reads2);
+    if (placement_per_read) {
+      int maximumGap                = std::stoi(args["--maximum-gap"].asString());
+      int minimumCount              = std::stoi(args["--minimum-count"].asString());
+      int minimumScore              = std::stoi(args["--minimum-score"].asString());
+      double errorRate              = std::stod(args["--error-rate"].asString());
+      int redoReadThreshold         = std::stoi(args["--redo-read-threshold"].asString());
+      bool recalculateScore         = args["--recalculate-score"] && args["--recalculate-score"].isBool() ? args["--recalculate-score"].asBool() : false;
+      bool rescueDuplicates         = args["--rescue-duplicates"] && args["--rescue-duplicates"].isBool() ? args["--rescue-duplicates"].asBool() : false;
+      int rescueDuplicatesThreshold = std::stoi(args["--rescue-duplicates-threshold"].asString());
+      int filterRound               = std::stoi(args["--filter-round"].asString());
+      int checkFrequency            = std::stoi(args["--check-frequency"].asString());
+      int removeIteration           = std::stoi(args["--remove-iteration"].asString());
+      double insigProb              = std::stod(args["--insig-prob"].asString());
+      int roundsRemove              = std::stoi(args["--rounds-remove"].asString());
+      double removeThreshold        = std::stod(args["--remove-threshold"].asString());
+      bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
+
+      pmi::place_per_read(
+        T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
+        errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
+        rescueDuplicatesThreshold, filterRound, checkFrequency, removeIteration,
+        insigProb, roundsRemove, removeThreshold, leafNodesOnly);
     } else {
       pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
     }
