@@ -89,7 +89,7 @@ Seeding/alignment options:
   -f --reindex                       Don't load index from disk, build it from scratch.
 
 Other options:
-  -r --place-per-read         placement per read (panmama).
+  -r --place-per-read        placement per read (panmama).
   -c --cpus <num>            Number of CPUs to use. [default: 1]
   -x --stop-after <stage>    Stop after the specified stage. Accepted values:
                                     indexing / i:   Stop after seed indexing
@@ -261,6 +261,8 @@ int main(int argc, const char** argv) {
     double subsample_seeds = std::stod(args["--subsample-seeds"].asString());
     bool reindex = args["--reindex"] && args["--reindex"].isBool() ? args["--reindex"].asBool() : false;
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
+    bool place_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
+
   
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
@@ -366,7 +368,7 @@ int main(int argc, const char** argv) {
 
     log("Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    if (args["--place-per-read"]) {
+    if (place_per_read) {
       // maximum gap
       // minimum count
       // minimum score
@@ -383,7 +385,6 @@ int main(int argc, const char** argv) {
       // leafNodeOnly
       pmi::place_per_read(T, index_input, reads1, reads2);
     } else {
-      std::string dummuy = "";
       pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
     }
 
