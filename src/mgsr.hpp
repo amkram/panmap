@@ -147,7 +147,7 @@ namespace mgsr {
   }
 
   template <typename SeedMutationsType, typename GapMutationsType>
-  void processNodeMutations(const GapMutationsType& perNodeGapMutations_Index, const SeedMutationsType& perNodeSeedMutations_Index, int64_t dfsIndex, std::map<int64_t, int64_t>& gapMap, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBacktracks, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBlocksBacktracks, const std::unordered_set<int64_t>& inverseBlockIds, const std::vector<std::pair<int64_t, int64_t>>& blockRanges, mutableTreeData& data, std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap, std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges, Tree* T, int seedK, const globalCoords_t& globalCoords, CoordNavigator& navigator) {
+  void processNodeMutations(const GapMutationsType& perNodeGapMutations_Index, const SeedMutationsType& perNodeSeedMutations_Index, int64_t dfsIndex, std::map<int64_t, int64_t>& gapMap, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBacktracks, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBlocksBacktracks, const std::unordered_set<int64_t>& inverseBlockIds, const std::vector<std::pair<int64_t, int64_t>>& blockRanges, mutableTreeData& data, std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap, std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges, Tree* T, int seedK, const globalCoords_t& globalCoords, CoordNavigator& navigator, const size_t& num_cpus) {
     ::capnp::List<MapDelta>::Reader gapMutationsList;
     if constexpr (std::is_same_v<GapMutationsType, ::capnp::List<GapMutations>::Reader>) {
       gapMutationsList = perNodeGapMutations_Index[dfsIndex].getDeltas();
@@ -178,6 +178,47 @@ namespace mgsr {
     auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
     auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
     std::vector<std::vector<int8_t>> masks;
+
+    std::vector<std::pair<int64_t, uint8_t>> changedPositions;
+    for (int i = 0; i < currBasePositions.size(); ++i) {
+      int64_t pos = currBasePositions[i];
+      uint64_t tritMask = currPerPosMasks[i];
+      for (int k = 0; k < 32; ++k) {
+        uint8_t ternaryNumber = (tritMask >> (k * 2)) & 0x3;
+        if      (ternaryNumber == 1) changedPositions.emplace_back(pos - k, 1);
+        else if (ternaryNumber == 2) changedPositions.emplace_back(pos - k, 2);
+      }
+    }
+
+    // tbb::parallel_for(tbb::blocked_range<int>(0, changedPositions.size(), changedPositions.size() / num_cpus), [&](const tbb::blocked_range<int>& r) {
+    //   for (int i = r.begin(); i < r.end(); ++i) {
+    //     const auto& [pos, trit] = changedPositions[i];
+    //     auto seedIt = onSeedsHashMap.find(pos);
+    //     if (trit == 1) { // on -> off
+    //       const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
+    //       seedChanges.emplace_back(std::make_tuple(pos, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt, oldEndPos, std::nullopt));
+    //     } else if (trit == 2) {
+    //       auto [newSeed, newSeedEndPos] = seed_annotated_tree::getSeedAt(pos, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges);
+    //       auto [newSeedFHash, newSeedRHash] = hashSeq(newSeed);
+    //       size_t newSeedHash;
+    //       bool newIsReverse;
+    //       if (newSeedFHash < newSeedRHash) {
+    //         newSeedHash  = newSeedFHash;
+    //         newIsReverse = false;
+    //       } else {
+    //         newSeedHash  = newSeedRHash;
+    //         newIsReverse = true;
+    //       }
+    //       if (seedIt != onSeedsHashMap.end()) { // on -> on
+    //         const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
+    //         seedChanges.emplace_back(std::make_tuple(pos, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse, oldEndPos, newSeedEndPos));
+    //       } else { // off -> on
+    //         seedChanges.emplace_back(std::make_tuple(pos, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse, std::nullopt, newSeedEndPos));
+    //       }
+    //     }
+    //   }
+    // });
+
     for (int i = 0; i < currBasePositions.size(); ++i) {
       int64_t pos = currBasePositions[i];
       uint64_t tritMask = currPerPosMasks[i];
@@ -658,8 +699,7 @@ namespace mgsr {
     props /= sum;
   }
 
-  void updateInsigCounts(const Eigen::VectorXd& props, std::vector<int>& insigCounts, size_t totalNodes) {
-    double insigProp =  (1.0 / static_cast<double>(totalNodes)) / 10.0;
+  void updateInsigCounts(const Eigen::VectorXd& props, std::vector<int>& insigCounts, const double& insigProp, size_t totalNodes) {
     for (int i = 0; i < props.size(); ++i) {
       if (props(i) <= insigProp) {
         ++insigCounts[i];
@@ -674,7 +714,7 @@ namespace mgsr {
     const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
     const Eigen::VectorXd& numReadDuplicates, const int32_t& numReads, 
-    Eigen::VectorXd& props, double& llh, int& curit, bool& converged, size_t iterations, std::vector<int>& insigCounts, size_t totalNodes
+    Eigen::VectorXd& props, double& llh, int& curit, bool& converged, size_t iterations, std::vector<int>& insigCounts, const double& insigProp, size_t totalNodes
     ) {
     assert(nodes.size() == probs.cols());
     assert(nodes.size() == props.size());
@@ -726,7 +766,7 @@ namespace mgsr {
         }
       }
 
-      updateInsigCounts(props, insigCounts, totalNodes);
+      updateInsigCounts(props, insigCounts, insigProp, totalNodes);
       // std::cerr << "it " << curit << "\t" << newllh << "\t" << llh << std::endl;
       if (newllh - llh < 0.0001) {
         llh = newllh;
@@ -750,7 +790,7 @@ namespace mgsr {
     const int32_t& numReads, const size_t& numLowScoreReads, const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs,
     std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const int filterRound, const int& checkFrequency,
-    const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold, std::string exclude
+    const int& removeIteration, const double& insigProp, const int& roundsRemove, const double& removeThreshold, std::string exclude
   ) {
     if (exclude.empty()) {
       std::stringstream msg;
@@ -819,7 +859,7 @@ namespace mgsr {
       std::cerr << "filter round " << filterRoundCount + 1 << std::endl;
       ++filterRoundCount;
       llh = getExp(probs, props, readDuplicates);
-      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, insigCounts, totalNodes);
+      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, insigCounts, insigProp, totalNodes);
       if (converged) {
         break;
       }
@@ -862,7 +902,7 @@ namespace mgsr {
       std::vector<int> insigCounts(nodes.size());
       std::cerr << "start full EM" << std::endl;
       llh = getExp(probs, props, readDuplicates);
-      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), insigCounts, totalNodes);
+      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       assert(converged == true);
     }
 
@@ -892,7 +932,7 @@ namespace mgsr {
       bool converged = false;
       size_t iterations = std::numeric_limits<size_t>::max();
       std::vector<int> insigCounts(sigNodes.size());
-      squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, iterations, insigCounts, totalNodes);
+      squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, iterations, insigCounts, insigProp, totalNodes);
       assert(converged);
       nodes = std::move(sigNodes);
       probs = std::move(sigProbs);
