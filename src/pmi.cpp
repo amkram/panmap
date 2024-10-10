@@ -2417,11 +2417,12 @@ void place_per_read_DFS(
   blockExists_t oldBlockExists = data.blockExists;
   blockStrand_t oldBlockStrand = data.blockStrand;
   Step method = Step::PLACE;
+
   applyMutations(data, blockMutationInfo, recompRanges,  mutationInfo, T, node, globalCoords, navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists, oldBlockStrand, method == Step::PLACE, inverseBlockIds, inverseBlockIdsBacktrack);
   recompRanges.clear();
-
-  processNodeMutations(perNodeGapMutations_Index, perNodeSeedMutations_Index, dfsIndex, gapMap, gapRunBacktracks, gapRunBlocksBacktracks, inverseBlockIds, blockRanges, data, onSeedsHashMap, seedChanges, T, seedK, globalCoords, navigator);
-
+  
+  processNodeMutations(perNodeGapMutations_Index, perNodeSeedMutations_Index, dfsIndex, gapMap, gapRunBacktracks, gapRunBlocksBacktracks, inverseBlockIds, blockRanges, data, onSeedsHashMap, seedChanges, T, seedK, globalCoords, navigator, num_cpus);
+  
   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
 
   for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
@@ -2437,7 +2438,6 @@ void place_per_read_DFS(
   oldBlockExists.clear();
   oldBlockStrand.clear();
   gapRunUpdates.clear();
-
   std::sort(seedChanges.begin(), seedChanges.end(), [](const auto& a, const auto& b) {
     return std::get<0>(a) < std::get<0>(b);
   });
@@ -2466,6 +2466,7 @@ void place_per_read_DFS(
         }
       }
     }
+
 
     // std::cout << node->identifier << " true seedmers: ";
     // auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
@@ -3018,7 +3019,7 @@ void pmi::place_per_read(
   const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
   const int& rescueDuplicatesThreshold, const int& filterRound, const int& checkFrequency,
-  const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold,
+  const int& removeIteration, const double& insigPropArg, const int& roundsRemove, const double& removeThreshold,
   const bool& leafNodesOnly
 )
 {
@@ -3096,6 +3097,8 @@ void pmi::place_per_read(
   std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
   std::unordered_map<std::string, std::string> identicalPairs;
 
+  std::cerr << "start scoring DFS" << std::endl;
+
   place_per_read_DFS<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
     data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, reads, allScores,
     identicalPairs, k, s, t, l, openSyncmers, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds,
@@ -3168,10 +3171,11 @@ void pmi::place_per_read(
   Eigen::MatrixXd probs;
   Eigen::VectorXd props;
   double llh;
+  double insigProp =  insigPropArg <= 0 ? (1.0 / static_cast<double>(T->allNodes.size())) / 10.0 : insigPropArg;
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads,
     leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, filterRound,
-    checkFrequency, removeIteration, insigProb, roundsRemove, removeThreshold, "");
+    checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
   
   std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
   for (size_t i = 0; i < nodes.size(); ++i) {
