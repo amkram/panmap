@@ -89,6 +89,10 @@ Seeding/alignment options:
   -f --reindex                       Don't load index from disk, build it from scratch.
 
 Other options:
+<<<<<<< HEAD
+  -r --place-per-read        placement per read (panmama).
+=======
+>>>>>>> 1c2118f82a824df6281ca487b72e9982fb396f47
   -c --cpus <num>            Number of CPUs to use. [default: 1]
   -x --stop-after <stage>    Stop after the specified stage. Accepted values:
                                     indexing / i:   Stop after seed indexing
@@ -423,7 +427,6 @@ int main(int argc, const char** argv) {
         rescueDuplicatesThreshold, filterRound, checkFrequency, removeIteration,
         insigProp, roundsRemove, removeThreshold, leafNodesOnly);
     } else {
-      std::string dummuy = "";
       pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
     }
 
