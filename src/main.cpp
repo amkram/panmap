@@ -119,6 +119,7 @@ Placement-per-read options:
   --insig-prop <double>                 As described in --remove-iteration. (default is calculated from total number of nodes, where default = 1 / (total number of nodes * 10))
   --rounds-remove <int>                 Number of rounds to clean up and remove low probability haplotypes after EM. [default: 3]
   --remove-threshold <double>           Remove haplotypes with probability less than this threshold during rounds-remove. [default: 0.005]
+  --keep-all-reads                      Keep all reads for EM. By default, reads containing number of matching kminmers that are duplicate in any haplotype greater than [rescue-duplicates-threshold] are removed. 
   --leaf-nodes-only                     Only consider leaf nodes when placing reads.
 )";
 
@@ -399,8 +400,9 @@ int main(int argc, const char** argv) {
       double insigProp              = args["--insig-prop"] ? std::stod(args["--insig-prop"].asString()) : -1;
       int roundsRemove              = args["--rounds-remove"] ? std::stoi(args["--rounds-remove"].asString()) : 3;
       double removeThreshold        = args["--remove-threshold"] ? std::stod(args["--remove-threshold"].asString()) : 0.005;
+      bool keepAllReads             = args["--keep-all-reads"] && args["--keep-all-reads"].isBool() ? args["--keep-all-reads"].asBool() : false;
       bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
-      
+
       log("Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
         "\nminimum-count: " + std::to_string(minimumCount) +
         "\nminimum-score: " + std::to_string(minimumScore) +
@@ -415,13 +417,14 @@ int main(int argc, const char** argv) {
         "\ninsig-prop: " + std::to_string(insigProp) +
         "\nrounds-remove: " + std::to_string(roundsRemove) +
         "\nremove-threshold: " + std::to_string(removeThreshold) +
+        "\nkeep-all-reads: " + (keepAllReads ? "true" : "false") +
         "\nleaf-nodes-only: " + (leafNodesOnly ? "true" : "false") + "\n");
 
       pmi::place_per_read(
         T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
         errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
         rescueDuplicatesThreshold, filterRound, checkFrequency, removeIteration,
-        insigProp, roundsRemove, removeThreshold, leafNodesOnly);
+        insigProp, roundsRemove, removeThreshold, leafNodesOnly, prefix);
     } else {
       pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
     }
