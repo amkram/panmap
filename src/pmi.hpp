@@ -31,7 +31,7 @@ namespace pmi { // functions and types for seed indexing
       const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
       const int& rescueDuplicatesThreshold, const int& filterRound, const int& checkFrequency,
       const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold,
-      const bool& leafNodesOnly);
+      const bool& leafNodesOnly, const std::string& prefix);
 
 } // namespace pmi
 

@@ -14,6 +14,8 @@
 #include <eigen3/Eigen/Dense>
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
+#include <tbb/combinable.h>
+#include <tbb/task_group.h>
 
 
 using namespace boost::icl;
@@ -146,12 +148,23 @@ namespace mgsr {
     return it;
   }
 
-  template <typename SeedMutationsType, typename GapMutationsType>
-  void processNodeMutations(const GapMutationsType& perNodeGapMutations_Index, const SeedMutationsType& perNodeSeedMutations_Index, int64_t dfsIndex, std::map<int64_t, int64_t>& gapMap, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBacktracks, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBlocksBacktracks, const std::unordered_set<int64_t>& inverseBlockIds, const std::vector<std::pair<int64_t, int64_t>>& blockRanges, mutableTreeData& data, std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap, std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges, Tree* T, int seedK, const globalCoords_t& globalCoords, CoordNavigator& navigator, const size_t& num_cpus) {
+  // Gap Mutations Processing Function
+  template <typename GapMutationsType>
+  void processGapMutations(
+    const GapMutationsType& perNodeGapMutations_Index, 
+    const int64_t& dfsIndex, 
+    std::map<int64_t, int64_t>& gapMap, 
+    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBacktracks, 
+    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBlocksBacktracks,
+    const std::unordered_set<int64_t>& inverseBlockIds, 
+    const std::vector<std::pair<int64_t, int64_t>>& blockRanges, 
+    mutableTreeData& data
+  ) {
     ::capnp::List<MapDelta>::Reader gapMutationsList;
     if constexpr (std::is_same_v<GapMutationsType, ::capnp::List<GapMutations>::Reader>) {
       gapMutationsList = perNodeGapMutations_Index[dfsIndex].getDeltas();
     }
+
     for (int i = 0; i < gapMutationsList.size(); ++i) {
       const auto& gapMutation = gapMutationsList[i];
       const int32_t& pos = gapMutation.getPos();
@@ -168,70 +181,48 @@ namespace mgsr {
         gapMap.erase(pos);
       }
     }
+
     for (const auto& blockId : inverseBlockIds) {
       std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> tmpGapMapUpdates;
       if (data.blockExists[blockId].first) {
         invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks, tmpGapMapUpdates);
       }
     }
+  }
 
+  // Seed Mutations Processing Function
+  template <typename SeedMutationsType>
+  void processSeedMutations(
+    const SeedMutationsType& perNodeSeedMutations_Index, 
+    const int64_t& dfsIndex, 
+    std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap, 
+    std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges, 
+    Tree* T, 
+    const int& seedK, 
+    const globalCoords_t& globalCoords, 
+    CoordNavigator& navigator, 
+    mutableTreeData& data, 
+    std::map<int64_t, int64_t>& gapMap, 
+    const std::vector<std::pair<int64_t, int64_t>>& blockRanges
+  ) {
     auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
     auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
-    std::vector<std::vector<int8_t>> masks;
-
-    std::vector<std::pair<int64_t, uint8_t>> changedPositions;
-    for (int i = 0; i < currBasePositions.size(); ++i) {
-      int64_t pos = currBasePositions[i];
-      uint64_t tritMask = currPerPosMasks[i];
-      for (int k = 0; k < 32; ++k) {
-        uint8_t ternaryNumber = (tritMask >> (k * 2)) & 0x3;
-        if      (ternaryNumber == 1) changedPositions.emplace_back(pos - k, 1);
-        else if (ternaryNumber == 2) changedPositions.emplace_back(pos - k, 2);
-      }
-    }
-
-    // tbb::parallel_for(tbb::blocked_range<int>(0, changedPositions.size(), changedPositions.size() / num_cpus), [&](const tbb::blocked_range<int>& r) {
-    //   for (int i = r.begin(); i < r.end(); ++i) {
-    //     const auto& [pos, trit] = changedPositions[i];
-    //     auto seedIt = onSeedsHashMap.find(pos);
-    //     if (trit == 1) { // on -> off
-    //       const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
-    //       seedChanges.emplace_back(std::make_tuple(pos, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt, oldEndPos, std::nullopt));
-    //     } else if (trit == 2) {
-    //       auto [newSeed, newSeedEndPos] = seed_annotated_tree::getSeedAt(pos, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges);
-    //       auto [newSeedFHash, newSeedRHash] = hashSeq(newSeed);
-    //       size_t newSeedHash;
-    //       bool newIsReverse;
-    //       if (newSeedFHash < newSeedRHash) {
-    //         newSeedHash  = newSeedFHash;
-    //         newIsReverse = false;
-    //       } else {
-    //         newSeedHash  = newSeedRHash;
-    //         newIsReverse = true;
-    //       }
-    //       if (seedIt != onSeedsHashMap.end()) { // on -> on
-    //         const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
-    //         seedChanges.emplace_back(std::make_tuple(pos, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse, oldEndPos, newSeedEndPos));
-    //       } else { // off -> on
-    //         seedChanges.emplace_back(std::make_tuple(pos, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse, std::nullopt, newSeedEndPos));
-    //       }
-    //     }
-    //   }
-    // });
 
     for (int i = 0; i < currBasePositions.size(); ++i) {
       int64_t pos = currBasePositions[i];
       uint64_t tritMask = currPerPosMasks[i];
       for (int k = 0; k < 32; ++k) {
         uint8_t ternaryNumber = (tritMask >> (k * 2)) & 0x3;
-        auto seedIt = onSeedsHashMap.find(pos - k);
+        int64_t seedPos = pos - k;
+        auto seedIt = onSeedsHashMap.find(seedPos);
+
         if (ternaryNumber == 1) { // on -> off
-          // Handle deletion
-          const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
-          seedChanges.emplace_back(std::make_tuple(pos - k, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt, oldEndPos, std::nullopt));
-        } else if (ternaryNumber == 2) {
-          // Handle insertion/change
-          auto [newSeed, newSeedEndPos] = seed_annotated_tree::getSeedAt(pos - k, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges);
+          if (seedIt != onSeedsHashMap.end()) {
+            const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
+            seedChanges.emplace_back(std::make_tuple(seedPos, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt, oldEndPos, std::nullopt));
+          }
+        } else if (ternaryNumber == 2) { // Handle insertion/change (off -> on or on -> on)
+          auto [newSeed, newSeedEndPos] = seed_annotated_tree::getSeedAt(seedPos, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges);
           auto [newSeedFHash, newSeedRHash] = hashSeq(newSeed);
           size_t newSeedHash;
           bool newIsReverse;
@@ -245,12 +236,68 @@ namespace mgsr {
 
           if (seedIt != onSeedsHashMap.end()) { // on -> on
             const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
-            seedChanges.emplace_back(std::make_tuple(pos - k, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse, oldEndPos, newSeedEndPos));
+            seedChanges.emplace_back(std::make_tuple(seedPos, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse, oldEndPos, newSeedEndPos));
           } else { // off -> on
-            seedChanges.emplace_back(std::make_tuple(pos - k, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse, std::nullopt, newSeedEndPos));
+            seedChanges.emplace_back(std::make_tuple(seedPos, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse, std::nullopt, newSeedEndPos));
           }
         }
       }
+    }
+  }
+
+  template <typename SeedMutationsType, typename GapMutationsType>
+  void processNodeMutations(
+    const GapMutationsType& perNodeGapMutations_Index,
+    const SeedMutationsType& perNodeSeedMutations_Index,
+    const int64_t& dfsIndex,
+    std::map<int64_t, int64_t>& gapMap,
+    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBacktracks,
+    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBlocksBacktracks,
+    const std::unordered_set<int64_t>& inverseBlockIds,
+    const std::vector<std::pair<int64_t, int64_t>>& blockRanges,
+    mutableTreeData& data,
+    std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap,
+    std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges,
+    Tree* T,
+    const int& seedK,
+    const globalCoords_t& globalCoords,
+    CoordNavigator& navigator,
+    const size_t& num_cpus
+  ) {
+    if (false) {
+      // More than 1 CPU: Use task group to run tasks in parallel
+      tbb::task_group tg;
+      tg.run([&] {
+        processGapMutations(
+          perNodeGapMutations_Index, dfsIndex, gapMap, gapRunBacktracks, 
+          gapRunBlocksBacktracks, inverseBlockIds, blockRanges, data
+        );
+      });
+  
+      tg.run([&] {
+        processSeedMutations(
+          perNodeSeedMutations_Index, dfsIndex, onSeedsHashMap, seedChanges, 
+          T, seedK, globalCoords, navigator, data, gapMap, blockRanges
+        );
+      });
+      try {
+        tg.wait();
+      } catch (const std::exception& e) {
+        // Handle any exception thrown by tasks
+        std::cerr << "Exception occurred: " << e.what() << std::endl;
+      }
+
+    } else {
+      // Only 1 CPU: Run tasks sequentially to avoid task group overhead
+      processGapMutations(
+        perNodeGapMutations_Index, dfsIndex, gapMap, gapRunBacktracks, 
+        gapRunBlocksBacktracks, inverseBlockIds, blockRanges, data
+      );
+
+      processSeedMutations(
+        perNodeSeedMutations_Index, dfsIndex, onSeedsHashMap, seedChanges, 
+        T, seedK, globalCoords, navigator, data, gapMap, blockRanges
+      );
     }
   }
 

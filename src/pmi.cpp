@@ -2520,8 +2520,7 @@ void place_per_read_DFS(
         } else if (!redo.second.empty()) {
           modified = true;
           readBackTrack.emplace_back(std::make_pair(i, curRead.matches));
-          readDuplicatesBackTrack.emplace_back(std::make_pair(i, std::vector<std::pair<int32_t, bool>>()));
-          std::vector<std::pair<int32_t, bool>>& curReadDuplicatesBackTrack = readDuplicatesBackTrack.back().second;
+          std::vector<std::pair<int32_t, bool>> curReadDuplicatesBackTrack;
           for (const auto& affectedSeedmer : redo.second) {
             // interate through the indices of affected seedmer in read
             for (const auto& index : curRead.uniqueSeedmers.find(affectedSeedmer)->second) {
@@ -2660,6 +2659,9 @@ void place_per_read_DFS(
               }
             }
           }
+          if (!curReadDuplicatesBackTrack.empty()) {
+            readDuplicatesBackTrack.emplace_back(std::make_pair(i, std::move(curReadDuplicatesBackTrack)));
+          }
         }
         
         if (recalculateScore || modified) {
@@ -2677,8 +2679,10 @@ void place_per_read_DFS(
 
   // std::cout << std::endl;
 
+
   /* Recursive step */
   dfsIndex++;
+  std::cerr << "\rprocessed " << dfsIndex << " / " <<  T->allNodes.size() << " haplotypes" << std::flush;
   for (Node *child : node->children) {
     place_per_read_DFS(
       data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, reads, allScores, identicalPairs,
@@ -2772,6 +2776,7 @@ void place_per_read_DFS(
 
     }
   });
+
 
   // undo read duplicate sets changes
   tbb::parallel_for(tbb::blocked_range<size_t>(0, readDuplicateSetsBackTrack.size(), readDuplicateSetsBackTrack.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
@@ -3020,7 +3025,7 @@ void pmi::place_per_read(
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
   const int& rescueDuplicatesThreshold, const int& filterRound, const int& checkFrequency,
   const int& removeIteration, const double& insigPropArg, const int& roundsRemove, const double& removeThreshold,
-  const bool& leafNodesOnly
+  const bool& leafNodesOnly, const std::string& prefix
 )
 {
   // Setup for seed indexing
@@ -3098,13 +3103,18 @@ void pmi::place_per_read(
   std::unordered_map<std::string, std::string> identicalPairs;
 
   std::cerr << "start scoring DFS" << std::endl;
-
+  
+  auto start_time = std::chrono::high_resolution_clock::now();
+  
   place_per_read_DFS<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
     data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, reads, allScores,
     identicalPairs, k, s, t, l, openSyncmers, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds,
     BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap, minimumCount, minimumScore, errorRate,
     redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold
   );
+  
+  auto end_time = std::chrono::high_resolution_clock::now();
+  std::cerr << "\nplace_per_read_DFS execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
 
   std::cerr << "finished scoring DFS" << std::endl;
 
@@ -3172,10 +3182,17 @@ void pmi::place_per_read(
   Eigen::VectorXd props;
   double llh;
   double insigProp =  insigPropArg <= 0 ? (1.0 / static_cast<double>(T->allNodes.size())) / 10.0 : insigPropArg;
+  
+  auto start = std::chrono::high_resolution_clock::now();
+  
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads,
     leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, filterRound,
     checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
+  
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> elapsed = end - start;
+  std::cerr << "squaremHelper_test_1 execution time: " << elapsed.count() << " seconds" << std::endl;
   
   std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
   for (size_t i = 0; i < nodes.size(); ++i) {
@@ -3186,7 +3203,7 @@ void pmi::place_per_read(
       return a.second > b.second;
   });
 
-  std::string abundanceOutFile = "out.abundance";
+  std::string abundanceOutFile = prefix + ".abundance";
   std::ofstream abundanceOut(abundanceOutFile);
   for (size_t i = 0; i < sortedOut.size(); ++i) {
       const auto& node = sortedOut[i];
