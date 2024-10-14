@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 WORKDIR /panmap
 ARG DEBIAN_FRONTEND=noninteractive
-
+ARG CPUS=8
 RUN apt-get update --allow-insecure-repositories
 
 RUN apt-get install -y \
@@ -33,14 +33,20 @@ RUN apt-get install -y \
     autoconf \
     libprotobuf-dev \
     protobuf-compiler \
-    libeigen3-dev
+    libeigen3-dev \
+    libdeflate-dev
 
-COPY . .
+COPY ./*.* .
+COPY ./src ./src
+COPY ./cmake ./cmake
+COPY ./dev/examples ./dev/examples
+COPY ./dev/simulation_testing ./dev/simulation_testing
 
-ENV CMAKE_BUILD_PARALLEL_LEVEL=4
-RUN mkdir build && cd build && cmake .. && make -j4 && make install
+# ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:$LD_LIBRARY_PATH
 
-ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV CMAKE_BUILD_PARALLEL_LEVEL=${CPUS}
+RUN mkdir build && cd build && cmake -DOPTION_BUILD_SIMULATE=ON .. && cmake --build . --parallel && cmake --install .
+
 
 RUN chmod +x /usr/local/bin/*
 
