@@ -1,0 +1,1 @@
+docker build --no-cache --build-arg CPUS=8 -t panmap .
