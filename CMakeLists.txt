@@ -83,7 +83,11 @@ FetchContent_Declare(
     GIT_TAG master
     GIT_SHALLOW TRUE
 )
-
+FetchContent_Declare(deflate
+    GIT_REPOSITORY https://github.com/ebiggers/libdeflate
+    GIT_SHALLOW TRUE
+    )
+FetchContent_MakeAvailable(deflate)
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
     COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20 && autoreconf -i -Wno-syntax && ./configure --prefix=${CMAKE_CURRENT_BINARY_DIR} --disable-lzma --disable-bz2 --disable-libcurl && make -j && make install
@@ -98,6 +102,80 @@ add_custom_command(
     COMMENT "Compiling capnproto"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+set(BWA_SOURCES
+    src/3rdparty/bwa/bwa.c
+    src/3rdparty/bwa/run.c
+    src/3rdparty/bwa/bwase.c
+    src/3rdparty/bwa/bwaseqio.c
+    src/3rdparty/bwa/bwt.c
+    src/3rdparty/bwa/bwtaln.c
+    src/3rdparty/bwa/bwtindex.c
+    src/3rdparty/bwa/bwt_gen.c
+    src/3rdparty/bwa/bwtsw2_core.c
+    src/3rdparty/bwa/bwtsw2_main.c
+    src/3rdparty/bwa/bwtsw2_aux.c
+    src/3rdparty/bwa/bwt_lite.c
+    src/3rdparty/bwa/bwtsw2_chain.c
+    src/3rdparty/bwa/fastmap.c
+    src/3rdparty/bwa/bwtsw2_pair.c
+    # src/3rdparty/bwa/main.c
+    src/3rdparty/bwa/utils.c
+    src/3rdparty/bwa/bwape.c
+    src/3rdparty/bwa/kopen.c
+    src/3rdparty/bwa/pemerge.c
+    src/3rdparty/bwa/maxk.c
+    src/3rdparty/bwa/bwashm.c
+    src/3rdparty/bwa/bntseq.c
+    src/3rdparty/bwa/is.c
+    src/3rdparty/bwa/bwamem.c
+    src/3rdparty/bwa/bwamem_pair.c
+    src/3rdparty/bwa/bwamem_extra.c
+    src/3rdparty/bwa/malloc_wrap.c
+    src/3rdparty/bwa/QSufSort.c
+    src/3rdparty/bwa/bwt_gen.c
+    src/3rdparty/bwa/rope.c
+    src/3rdparty/bwa/utils.c
+    src/3rdparty/bwa/kstring.c
+    src/3rdparty/bwa/ksw.c
+    src/3rdparty/bwa/bwt.c
+    src/3rdparty/bwa/bamlite.c
+    src/3rdparty/bwa/bntseq.c
+    src/3rdparty/bwa/bwashm.c
+    src/3rdparty/bwa/bwase.c
+    src/3rdparty/bwa/bwaseqio.c
+    src/3rdparty/bwa/bwt_lite.c
+    src/3rdparty/bwa/bwtaln.c
+    src/3rdparty/bwa/bwtindex.c
+    src/3rdparty/bwa/is.c
+    src/3rdparty/bwa/kopen.c
+    src/3rdparty/bwa/kstring.c
+    src/3rdparty/bwa/ksw.c
+    src/3rdparty/bwa/utils.c
+    src/3rdparty/bwa/bwt_gen.c
+    src/3rdparty/bwa/rope.c
+    src/3rdparty/bwa/rle.c
+    src/3rdparty/bwa/bwtsw2_aux.c
+    src/3rdparty/bwa/bwtsw2_chain.c
+    src/3rdparty/bwa/bwtsw2_main.c
+    src/3rdparty/bwa/bwtsw2_pair.c
+    src/3rdparty/bwa/bwt_gen.c
+    src/3rdparty/bwa/bwtgap.c
+    src/3rdparty/bwa/bwtaln.c
+    src/3rdparty/bwa/bwtindex.c
+    src/3rdparty/bwa/is.c
+    src/3rdparty/bwa/bwase.c
+    src/3rdparty/bwa/bwaseqio.c
+    src/3rdparty/bwa/bwashm.c
+    src/3rdparty/bwa/bwt_lite.c
+    src/3rdparty/bwa/bwtsw2_aux.c
+    src/3rdparty/bwa/bwtsw2_chain.c
+    src/3rdparty/bwa/bwtsw2_main.c
+    src/3rdparty/bwa/bwtsw2_pair.c
+)
+
+add_library(bwa STATIC ${BWA_SOURCES})
+target_include_directories(bwa PUBLIC src/3rdparty/bwa)
 
 add_custom_target(build-deps DEPENDS
     ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
@@ -132,6 +210,7 @@ add_dependencies(htslib build-deps)
 add_dependencies(panmap build-deps)
 
 
+
 # Find dependencies
 find_package(Boost COMPONENTS system iostreams filesystem unit_test_framework REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -145,6 +224,27 @@ target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 endif()
 
+if(OPTION_BUILD_SIMULATE)
+add_executable(simulate
+    src/test/simulate.cpp
+    src/conversion.cpp
+    src/place.cpp
+    src/genotype.cpp
+    src/pmi.cpp
+    src/seed_annotated_tree.cpp
+    src/mm_align.c
+    src/pileup.c
+)
+target_link_libraries(simulate PRIVATE bwa minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy deflate m)
+target_compile_options(simulate PUBLIC -g -O3)
+target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-build ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src/src ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src)
+target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
+
+endif()
 
 set(CAPNP_SRCS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.c++)
 set(CAPNP_HDRS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.h)
@@ -173,7 +273,9 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(docopt)
 
-target_link_libraries(panmap PRIVATE minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy)
+target_compile_options(bwa PRIVATE -fPIC)
+
+target_link_libraries(panmap PRIVATE bwa minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy deflate m)
 target_link_options(panmap PRIVATE -lm -lpthread)
 target_compile_options(panmap PRIVATE -Wall)
 target_compile_features(panmap PRIVATE cxx_std_20)
@@ -182,7 +284,7 @@ target_compile_features(panmap PRIVATE cxx_std_20)
 if (OPTION_BUILD_TESTS)
 target_sources(tests PUBLIC ${CAPNP_SRCS})
 target_include_directories(tests PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(tests minimap2 samtools htslib
+target_link_libraries(tests bwa minimap2 samtools htslib
                      ${Boost_FILESYSTEM_LIBRARY}
                      ${Boost_SYSTEM_LIBRARY}
                      ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
@@ -192,12 +294,15 @@ target_link_libraries(tests minimap2 samtools htslib
                      capnp
                      kj
                      panman
-                     tbb_static tbbmalloc_static tbbmalloc_proxy_static
+                     tbb_static tbbmalloc_static tbbmalloc_proxy_static 
+                     deflate
+                     m
                      )
 target_compile_options(tests PUBLIC -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
 target_link_options(tests PUBLIC -lm -lpthread )
 target_compile_options(tests PUBLIC -g -O3 -ggdb)
 endif()
+
 
 if (OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O1 -ggdb)

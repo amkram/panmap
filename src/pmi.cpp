@@ -26,7 +26,9 @@
 #include <boost/icl/interval_map.hpp>
 #include <boost/icl/split_interval_map.hpp>
 #include <eigen3/Eigen/Dense>
-
+extern "C" {
+#include <bwa/bwa.h>
+}
 using namespace boost::icl;
 using namespace mgsr;
 
@@ -35,6 +37,7 @@ enum Step {
   PLACE,
   SPECTRUM
 };
+
 
 void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
 
@@ -2134,7 +2137,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
     }
 }
 
-void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName)
+void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner)
 {
     // Setup for seed indexing
     seed_annotated_tree::mutableTreeData data;
@@ -2293,17 +2296,11 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
       }
     }
 
-    
-    
-
-
-
-
-
-
-
     //std::string refFileName = "REFERENCE";
     //Print out Reference
+    if (refFileName.size() == 0) {
+      refFileName = "panmap.reference.fa";
+    }
     if(refFileName.size() > 0){
         std::ofstream outFile{refFileName};
 
@@ -2318,76 +2315,159 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
         }
     }
 
+    if (aligner == "minimap2") {
+      //Create SAM
+      std::vector<char *> samAlignments;
+      std::string samHeader;
 
+      createSam(
+          readSeeds,                 
+          readSequences,             
+          readQuals,                 
+          readNames,                 
+          bestMatchSequence,         
+          seedToRefPositions,        
+          samFileName,               
+          k,                         
+          pairedEndReads,            
+          
+          samAlignments,             
+          samHeader                  
+      );
 
-    //std::string samFileName = "SAM";
+      //Convert to BAM
+      sam_hdr_t *header;
+      bam1_t **bamRecords;
 
-    //Create SAM
-    std::vector<char *> samAlignments;
-    std::string samHeader;
+      createBam(
+          samAlignments,
+          samHeader,
+          bamFileName,
 
-    createSam(
-        readSeeds,                 
-        readSequences,             
-        readQuals,                 
-        readNames,                 
-        bestMatchSequence,         
-        seedToRefPositions,        
-        samFileName,               
-        k,                         
-        pairedEndReads,            
-        
-        samAlignments,             
-        samHeader                  
-    );
+          header,
+          bamRecords
+      );
 
+      //std::string mpileupFileName = "MPILEUP";
+      //Convert to Mplp
+      char *mplpString;
 
+      createMplp(
+          bestMatchSequence,
+          header,
+          bamRecords,
+          samAlignments.size(),
+          mpileupFileName,
 
-    //std::string bamFileName = "BAM";
+          mplpString
+      );
 
-    //Convert to BAM
-    sam_hdr_t *header;
-    bam1_t **bamRecords;
+    
+      //std::string vcfFileName = "VCF";
+      //Convert to VCF
+      createVcf(
+          mplpString,
+          mutMat,
+          vcfFileName
+      );
+    } else {
+      // align with bwa aln
+      std::cout << "Preparing arguments for bwa..." << std::endl;
 
-    createBam(
-        samAlignments,
-        samHeader,
-        bamFileName,
+      std::vector<std::string> idx_args = {"bwa", "index", refFileName};
+      std::vector<std::string> aln_args = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads1Path};
+      std::vector<std::string> samse_args = {"bwa", "samse", "-f", samFileName, refFileName, reads1Path + ".tmp.sai", reads1Path};
 
-        header,
-        bamRecords
-    );
+      std::vector<std::vector<char>> idx_argv_buf;
+      std::vector<char*> idx_argv;
 
+      std::cout << "Constructing idx_argv..." << std::endl;
+      for (const auto& arg : idx_args) {
+          std::cout << "Processing argument: " << arg << std::endl;
+          idx_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
+          idx_argv_buf.back().push_back('\0');  // Ensure null termination
+          idx_argv.push_back(idx_argv_buf.back().data());  // Push the C-string pointer
+      }
+      idx_argv.push_back(nullptr);  // Null-terminate the argv array
 
+      std::cout << "Constructed idx_argv:" << std::endl;
+      for (size_t i = 0; i < idx_argv.size(); ++i) {
+          if (idx_argv[i] != nullptr)
+              std::cout << "idx_argv[" << i << "]: " << idx_argv[i] << std::endl;
+          else
+              std::cout << "idx_argv[" << i << "]: (null)" << std::endl;
+      }
 
+      std::vector<std::vector<char>> aln_argv_buf;
+      std::vector<char*> aln_argv;
+      std::cout << "Constructing aln_argv..." << std::endl;
+      for (const auto& arg : aln_args) {
+          std::cout << "Processing argument: " << arg << std::endl;
+          aln_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
+          aln_argv_buf.back().push_back('\0');
+          aln_argv.push_back(aln_argv_buf.back().data());
+      }
+      aln_argv.push_back(nullptr);
 
-    //std::string mpileupFileName = "MPILEUP";
-    //Convert to Mplp
-    char *mplpString;
+      std::cout << "Constructed aln_argv:" << std::endl;
+      for (size_t i = 0; i < aln_argv.size(); ++i) {
+          if (aln_argv[i] != nullptr)
+              std::cout << "aln_argv[" << i << "]: " << aln_argv[i] << std::endl;
+          else
+              std::cout << "aln_argv[" << i << "]: (null)" << std::endl;
+      }
 
-    createMplp(
-        bestMatchSequence,
-        header,
-        bamRecords,
-        samAlignments.size(),
-        mpileupFileName,
+      std::vector<std::vector<char>> samse_argv_buf;
+      std::vector<char*> samse_argv;
+      std::cout << "Constructing samse_argv..." << std::endl;
+      for (const auto& arg : samse_args) {
+          std::cout << "Processing argument: " << arg << std::endl;
+          samse_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
+          samse_argv_buf.back().push_back('\0');
+          samse_argv.push_back(samse_argv_buf.back().data());
+      }
+      samse_argv.push_back(nullptr);
 
-        mplpString
-    );
+      std::cout << "Constructed samse_argv:" << std::endl;
+      for (size_t i = 0; i < samse_argv.size(); ++i) {
+          if (samse_argv[i] != nullptr)
+              std::cout << "samse_argv[" << i << "]: " << samse_argv[i] << std::endl;
+          else
+              std::cout << "samse_argv[" << i << "]: (null)" << std::endl;
+      }
 
-  
-    //std::string vcfFileName = "VCF";
-    //Convert to VCF
-    createVcf(
-        mplpString,
-        mutMat,
-        vcfFileName
-    );
+      std::cout << "About to call run_bwa with idx_argv..." << std::endl;
 
+      try {
+            std::cout << "Running run_bwa with idx_argv..." << std::endl;
+            if (run_bwa(idx_argv.size() - 1, idx_argv.data()) != 0) {
+                throw std::runtime_error("BWA index failed");
+            }
+            fflush(stdout);
+            std::cout << "Finished run_bwa with idx_argv." << std::endl;
+            std::cout << "Running run_bwa with aln_argv..." << std::endl;
+            FILE* readsOutFile = freopen((reads1Path + ".tmp.sai").c_str(), "w", stdout);
+            if (!readsOutFile) {
+                throw std::runtime_error("Failed to open readsOutFile");
+            }
+            if (run_bwa(aln_argv.size() - 1, aln_argv.data()) != 0) {
+                throw std::runtime_error("BWA aln failed");
+            }
+            fflush(stdout);
+            freopen("/dev/tty", "w", stdout);
+            std::cout << "Finished run_bwa with aln_argv." << std::endl;
 
-
-
-
+            std::cout << "Running run_bwa with samse_argv..." << std::endl;
+            if (run_bwa(samse_argv.size() - 1, samse_argv.data()) != 0) {
+                throw std::runtime_error("BWA samse failed");
+            }
+            fflush(stdout);
+            freopen("/dev/tty", "w", stdout);
+            std::cout << "Finished run_bwa with samse_argv." << std::endl;
+      } catch (...) {
+          std::cerr << "run_bwa() caused an exception!" << std::endl;
+      }
+    }
 }
 
 
@@ -3199,4 +3279,9 @@ void pmi::place_per_read(
       abundanceOut << "\t" << node.second << "\n";
   }
   abundanceOut.close();
+
+  FILE* errorLog = freopen("error.log", "w", stderr);
+  if (!errorLog) {
+      throw std::runtime_error("Failed to redirect stderr to error.log");
+  }
 }

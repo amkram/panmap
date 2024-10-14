@@ -52,10 +52,6 @@ Usage:
 <reads1.fastq>  [Optional] Path to first FASTQ file.
 <reads2.fastq>  [Optional] Path to second FASTQ file (for paired-end reads).
 
-Preset options:
-  --fast                    Equivalent to --subsample-reads 5.0 --subsample-seeds 0.8
-  --superfast               Equivalent to --subsample-reads 0.5 --subsample-seeds 0.5
-  --accurate                Equivalent to --subsample-reads 100.0 --subsample-seeds 1.0
 
 Input/output options:
   -p --prefix <prefix>      Prefix for output files. [default: panmap]
@@ -83,8 +79,8 @@ Input/output options:
 Seeding/alignment options:
   -k <k>                             Length of k-mer seeds. [default: 19]
   -s <s>                             Length of s-mers for seed (syncmer) selection. [default: 8]
-  -R --subsample-reads <coverage>    Subsample reads for placement to approximately <coverage> depth. [default: 20.0]
-  -S --subsample-seeds <proportion>  Use only <proportion> of total seeds for placement. [default: 1.0]
+  -a --aligner <method>              The alignment algorithm to use ('minimap2' or 'bwa-aln').
+                                     For very short or damaged reads, use bwa-aln. [default: minimap2]
   -P --prior                         Compute and use a mutation spectrum prior for genotyping.
   -f --reindex                       Don't load index from disk, build it from scratch.
 
@@ -207,6 +203,7 @@ int main(int argc, const char** argv) {
     std::string reads2 = args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";
     std::string prefix = args["--prefix"] ? args["--prefix"].asString() : "panmap";
     std::string outputs = args["-o"] && args["-o"].isString() ? args["-o"].asString() : "bam,vcf,assembly";
+    std::string aligner = args["--aligner"] ? args["--aligner"].asString() == "bwa-aln" ? "bwa-aln" : "minimap2" : "minimap2";
 
 
 
@@ -274,8 +271,6 @@ int main(int argc, const char** argv) {
     }
 
 
-    double subsample_reads = std::stod(args["--subsample-reads"].asString());
-    double subsample_seeds = std::stod(args["--subsample-seeds"].asString());
     bool reindex = args["--reindex"] && args["--reindex"].isBool() ? args["--reindex"].asBool() : false;
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
     bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
@@ -304,8 +299,6 @@ int main(int argc, const char** argv) {
     }
     log("Output prefix: " + prefix);
     log("Outputs: " + outputs);
-    log("Subsample reads: " + std::to_string(subsample_reads));
-    log("Subsample seeds: " + std::to_string(subsample_seeds));
     log("Reindex: " + std::to_string(reindex));
     log("k-mer length: " + std::to_string(k));
     log("s-mer length: " + std::to_string(s));
@@ -423,7 +416,7 @@ int main(int argc, const char** argv) {
         rescueDuplicatesThreshold, filterRound, checkFrequency, removeIteration,
         insigProp, roundsRemove, removeThreshold, leafNodesOnly);
     } else {
-      pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName);
+      pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
