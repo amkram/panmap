@@ -33,8 +33,9 @@ RUN apt-get install -y \
     autoconf \
     libprotobuf-dev \
     protobuf-compiler \
-    libeigen3-dev
-
+    libeigen3-dev \
+    libomp-dev
+    
 COPY . .
 
 ENV CMAKE_BUILD_PARALLEL_LEVEL=4
