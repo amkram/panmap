@@ -767,6 +767,7 @@ namespace mgsr {
     assert(nodes.size() == props.size());
     size_t curIteration = 1;
     while (true) {
+      std::cerr << "\riteration " << curIteration << std::flush;
       Eigen::VectorXd theta1 = getMax(probs, props, numReadDuplicates, numReads);
       normalize(theta1);
       Eigen::VectorXd theta2 = getMax(probs, theta1, numReadDuplicates, numReads);
@@ -903,7 +904,7 @@ namespace mgsr {
     int32_t filterRoundCount = 0;
     std::vector<int> insigCounts(nodes.size());
     while (true) {
-      std::cerr << "filter round " << filterRoundCount + 1 << std::endl;
+      std::cerr << "\nfilter round " << filterRoundCount + 1 << std::endl;
       ++filterRoundCount;
       llh = getExp(probs, props, readDuplicates);
       squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, insigCounts, insigProp, totalNodes);
