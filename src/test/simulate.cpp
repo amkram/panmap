@@ -7,7 +7,7 @@
 #include <vector>
 #include <random>
 #include "panmanUtils.hpp"
-#include "../tree.hpp"
+#include "../seed_annotated_tree.hpp"
 
 
 namespace po = boost::program_options;
@@ -232,6 +232,17 @@ char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat) {
     return getRandomCharWithWeights(bases, wgts);
 }
 
+std::vector<double> convertMap(const std::unordered_map<long, double> &in) {
+    int maxKey = std::max_element(in.begin(), in.end(), 
+                                  [](const std::pair<long, double>& a, const std::pair<long, double>& b) {
+                                      return a.first < b.first;
+                                  })->first;
+    std::vector<double> outVector(maxKey + 1);
+    for (const auto& pair : in) {
+        outVector[pair.first] = pair.second;
+    }
+    return outVector;
+}
 size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type) {
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -244,10 +255,10 @@ size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::m
     std::vector<double> probs;
     switch (type) {
         case 2:
-            probs = mutMat.insmat;
+            probs = convertMap(mutMat.insmat);
             break;
         case 4:
-            probs = mutMat.delmat;
+            probs = convertMap(mutMat.delmat);
             break;
         default:
             break;
