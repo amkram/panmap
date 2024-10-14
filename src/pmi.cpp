@@ -2521,6 +2521,7 @@ void place_per_read_DFS(
       }
 
       std::vector<std::pair<uint32_t, std::vector<int32_t>>> readToAffectedSeedmerIndexVec;
+      readToAffectedSeedmerIndexVec.reserve(readToAffectedSeedmerIndex.size());
       for (const auto& [readIndex, affectedSeedmerIndices] : readToAffectedSeedmerIndex) {
           readToAffectedSeedmerIndexVec.emplace_back(readIndex, affectedSeedmerIndices);
       }
