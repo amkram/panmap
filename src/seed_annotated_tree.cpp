@@ -46,7 +46,7 @@ std::string seed_annotated_tree::getConsensus(Tree *T) {
   return consensus;
 }
 
-std::pair<std::string, int64_t> seed_annotated_tree::getSeedAt(const int64_t &pos, Tree *T, int32_t &k,
+std::pair<std::string, int64_t> seed_annotated_tree::getSeedAt(const int64_t &pos, Tree *T, const int32_t& k,
     std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
     const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const globalCoords_t &globalCoords, CoordNavigator &navigator,
