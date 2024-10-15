@@ -35,7 +35,7 @@ RUN apt-get install -y \
     protobuf-compiler \
     libeigen3-dev \
     libomp-dev \
-    libdeflate-dev \
+    libdeflate-dev
 
     
 COPY ./*.* .

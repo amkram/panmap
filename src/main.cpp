@@ -436,7 +436,6 @@ int main(int argc, const char** argv) {
     //log("Genotyping...");
     // Genotyping logic here
 
-    
 
 
 
