@@ -20,12 +20,16 @@
 #include <capnp/serialize-packed.h>
 #include "index.capnp.h"
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_reduce.h>
 #include <tbb/blocked_range.h>
 #include <tbb/global_control.h>
 #include <tbb/parallel_sort.h>
 #include <boost/icl/interval_map.hpp>
 #include <boost/icl/split_interval_map.hpp>
+#define EIGEN_USE_THREADS
 #include <eigen3/Eigen/Dense>
+// #include <omp.h>
+
 extern "C" {
 #include <bwa/bwa.h>
 }
@@ -2484,6 +2488,7 @@ void place_per_read_DFS(
   std::unordered_set<int64_t>& inverseBlockIds, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const int& rescueDuplicatesThreshold
 ) {
+
   size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
   std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>> seedChanges;
   blockMutationInfo_t blockMutationInfo;
@@ -2548,15 +2553,18 @@ void place_per_read_DFS(
       }
     }
 
+    std::cout << std::endl;
 
-    // std::cout << node->identifier << " true seedmers: ";
-    // auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
-    // auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
-    // for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
-    //   std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
-    // }
-    // std::cout << std::endl;
+
+    std::cout << node->identifier << " true seedmers: ";
+    auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
+    auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
+    for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
+      std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
+    }
+    std::cout << std::endl;
   }
+
 
   tbb::concurrent_vector<std::pair<size_t, boost::icl::split_interval_map<int32_t, int>>> readBackTrack;
   tbb::concurrent_vector<std::pair<size_t, std::unordered_set<int32_t>>> readDuplicateSetsBackTrack;
@@ -2567,10 +2575,10 @@ void place_per_read_DFS(
     tbb::parallel_for(tbb::blocked_range<size_t>(0, reads.size(), reads.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
       for (size_t i = range.begin(); i < range.end(); ++i) {
         mgsr::Read& curRead = reads[i];
-        // curRead.matches.clear();
-        // curRead.duplicates.clear();
+        curRead.matches.clear();
+        curRead.duplicates.clear();
         initializeMatches(curRead, positionMap, hashToPositionsMap);
-        int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold);
+        int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
         double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
         allScores[node->identifier][i] = {pseudoScore, pseudoProb};
         // std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
@@ -2586,27 +2594,35 @@ void place_per_read_DFS(
       identicalPairs[node->identifier] = node->parent->identifier;
     } else {
       std::unordered_map<uint32_t, std::vector<int32_t>> readToAffectedSeedmerIndex;
-      // const std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<int32_t>>>>& seedmerToReads
-      
-      for (const size_t& affectedSeedmer : affectedSeedmers) {
-        const auto& affectedSeedmerToReads = seedmerToReads.find(affectedSeedmer);
+      std::vector<std::pair<uint32_t, std::vector<int32_t>>> readToAffectedSeedmerIndexVec;
 
-        if (affectedSeedmerToReads == seedmerToReads.end()) continue;
-
-        for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
-          for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
-            readToAffectedSeedmerIndex[readIndex].push_back(affectedSeedmerIndex);
+      if (redoReadThreshold > 0) {
+        for (const size_t& affectedSeedmer : affectedSeedmers) {
+          const auto& affectedSeedmerToReads = seedmerToReads.find(affectedSeedmer);
+          if (affectedSeedmerToReads == seedmerToReads.end()) continue;
+          for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
+            for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
+              readToAffectedSeedmerIndex[readIndex].push_back(affectedSeedmerIndex);
+            }
+          }
+        }
+      } else {
+        for (const size_t& affectedSeedmer : affectedSeedmers) {
+          const auto& affectedSeedmerToReads = seedmerToReads.find(affectedSeedmer);
+          if (affectedSeedmerToReads == seedmerToReads.end()) continue;
+          for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
+            readToAffectedSeedmerIndex[readIndex].push_back(0);
           }
         }
       }
 
-      std::vector<std::pair<uint32_t, std::vector<int32_t>>> readToAffectedSeedmerIndexVec;
       readToAffectedSeedmerIndexVec.reserve(readToAffectedSeedmerIndex.size());
       for (const auto& [readIndex, affectedSeedmerIndices] : readToAffectedSeedmerIndex) {
-          readToAffectedSeedmerIndexVec.emplace_back(readIndex, affectedSeedmerIndices);
+          readToAffectedSeedmerIndexVec.emplace_back(readIndex, std::move(affectedSeedmerIndices));
       }
       readToAffectedSeedmerIndex.clear();
 
+      
       tbb::parallel_for(tbb::blocked_range<size_t>(0, readToAffectedSeedmerIndexVec.size(), readToAffectedSeedmerIndexVec.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
         for (size_t i = range.begin(); i < range.end(); ++i) {
           const auto& [readIndex, affectedSeedmerIndices] = readToAffectedSeedmerIndexVec[i];
@@ -2630,12 +2646,14 @@ void place_per_read_DFS(
               const size_t& affectedSeedmer = curRead.seedmersList[index].hash;
 
               const auto& affectedSeedmerHashToPositionIt = hashToPositionsMap.find(affectedSeedmer);
+              
               // if affected seedmer exists and unique in ref
               if (affectedSeedmerHashToPositionIt != hashToPositionsMap.end() && affectedSeedmerHashToPositionIt->second.size() == 1) {
                 if (curRead.duplicates.find(index) != curRead.duplicates.end()) {
                   curRead.duplicates.erase(index);
                   curReadDuplicatesBackTrack.push_back({index, false});
                 }
+
                 // if not inside a range in read matches
                 if (isContained(curRead.matches, index)) {
                   auto curIntervalIt = curRead.matches.find(index);
@@ -2649,7 +2667,6 @@ void place_per_read_DFS(
                 auto rightFlank = curRead.matches.find(index + 1);
                 bool mergedWithLeft = false;
                 bool mergedWithRight = false;
-
 
                 if (leftFlank != curRead.matches.end() && leftFlank->second == currev) {
                   // left flank exists check if mergeable -> left adjacent kminmers matching and in the same direction
@@ -2767,16 +2784,20 @@ void place_per_read_DFS(
             }
           }
 
-
-          int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold);
+          int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
           double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
           allScores[node->identifier][readIndex] = {pseudoScore, pseudoProb};
         }
       });
     }
+
+    // for (size_t i = 0; i < reads.size(); ++i) {
+    //   int64_t pseudoScore = getPseudoScore(reads[i], seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
+    //   std::cout << i << "," << reads[i].seedmersList.size() << "," << pseudoScore << "," << reads[i].duplicates.size() << " ";
+    // }
   }
 
-
+  // std::cout << std::endl;
 
   /* Recursive step */
   dfsIndex++;
@@ -2789,7 +2810,6 @@ void place_per_read_DFS(
       minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold
     );
   }
-
 
   for (const auto &p : seedChanges) {
     const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
@@ -2808,7 +2828,6 @@ void place_per_read_DFS(
       BlocksToSeeds[blockId].erase(pos);
     } 
   }
-  
   // undo gapMap updates
   for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
     const auto& [del, range] = *it;
@@ -2874,7 +2893,6 @@ void place_per_read_DFS(
 
     }
   });
-
 
   // undo read duplicate sets changes
   tbb::parallel_for(tbb::blocked_range<size_t>(0, readDuplicateSetsBackTrack.size(), readDuplicateSetsBackTrack.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range) {
@@ -3081,9 +3099,9 @@ void seedmersFromFastq(
 
   for (int32_t i = 0; i < reads.size(); ++i) {
     for (const auto& seedmer : reads[i].uniqueSeedmers) {
-      seedmerToReads[seedmer.first].push_back(std::make_pair(i, seedmer.second));
+      seedmerToReads[seedmer.first].push_back(std::make_pair(i, std::move(seedmer.second)));
     }
-    reads[i].uniqueSeedmers.clear();
+    // reads[i].uniqueSeedmers.clear();
   }
 }
 
@@ -3223,11 +3241,16 @@ void pmi::place_per_read(
     BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap, minimumCount, minimumScore,
     errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold
   );
-  
+
   auto end_time = std::chrono::high_resolution_clock::now();
   std::cerr << "\nplace_per_read_DFS execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
 
   std::cerr << "finished scoring DFS" << std::endl;
+
+  onSeedsHashMap.clear();
+  seedmersIndex.positionMap.clear();
+  seedmersIndex.hashToPositionsMap.clear();
+  seedmerToReads.clear();
 
   for (const auto& pair : identicalPairs) {
       std::unordered_set<std::string> curIdenticals;
@@ -3295,7 +3318,17 @@ void pmi::place_per_read(
   double insigProp =  insigPropArg <= 0 ? (1.0 / static_cast<double>(T->allNodes.size())) / 10.0 : insigPropArg;
   
   auto start = std::chrono::high_resolution_clock::now();
-  
+
+  size_t numcpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+  std::cerr << "Number of tbb threads: " << numcpus << std::endl;
+  // omp_set_num_threads(numcpus);
+  // Eigen::initParallel();
+  Eigen::setNbThreads(numcpus);
+  // std::cerr << "max omp threads: "<< omp_get_max_threads() << std::endl;
+  // std::cerr << "Number of OMP threads: " << omp_get_thread_num() << std::endl;
+  std::cerr << "Number of Eigen threads: " << Eigen::nbThreads() << std::endl;
+
+
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads,
     leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, filterRound,
