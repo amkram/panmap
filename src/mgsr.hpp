@@ -11,11 +11,14 @@
 #include "index.capnp.h"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
+#define EIGEN_USE_THREADS
 #include <eigen3/Eigen/Dense>
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
 #include <tbb/combinable.h>
 #include <tbb/task_group.h>
+#include <tbb/parallel_reduce.h>
+#include <tbb/blocked_range.h>
 
 
 using namespace boost::icl;
@@ -486,7 +489,7 @@ namespace mgsr {
     }
   }
 
-  bool isColinear(const std::pair<boost::icl::discrete_interval<int32_t>, int>& match1, const std::pair<boost::icl::discrete_interval<int32_t>, int>& match2, const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap) {
+  bool isColinear(const std::pair<boost::icl::discrete_interval<int32_t>, int>& match1, const std::pair<boost::icl::discrete_interval<int32_t>, int>& match2, const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
     bool rev1 = match1.second == 1 ? false : true;
     bool rev2 = match2.second == 1 ? false : true;
     if (rev1 != rev2) {
@@ -547,7 +550,7 @@ namespace mgsr {
   int64_t getPseudoScore(
     const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex,
     const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore,
-    const bool& rescueDuplicates, const int& rescueDuplicatesThreshold
+    const bool& rescueDuplicates, const int& rescueDuplicatesThreshold, const int& dfsIndex
   ) {
     int64_t pseudoScore = 0;
     const boost::icl::discrete_interval<int32_t>* firstMatch = nullptr;
@@ -577,7 +580,6 @@ namespace mgsr {
       }
       reversed = longestInterval.second == 1 ? false : true;
 
-      // find intervals colinear with longest interval and add length to pseudoScore
       auto longestQbeg = curRead.seedmersList[boost::icl::first(longestInterval.first)].begPos;
       curIdx = 0;
       for (const auto& curInterval : curRead.matches) {
@@ -589,30 +591,25 @@ namespace mgsr {
           continue;
         }
 
-        // check if same direction
         if (curInterval.second != longestInterval.second) {
           ++curIdx;
           continue;
         }
 
         auto curQbeg = curRead.seedmersList[boost::icl::first(curInterval.first)].begPos;
-        // check if within maximum gap
         if (longestQbeg < curQbeg) {
-          // longest query beg before current query beg
-          if (isColinear(longestInterval, curInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap)) {
+          if (isColinear(longestInterval, curInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
             pseudoScore += boost::icl::length(curInterval.first);
             if (firstMatch == nullptr) firstMatch = &curInterval.first;
             lastMatch = &curInterval.first;
           }
         } else if (longestQbeg > curQbeg) {
-          // longest query beg after current query beg
-          if (isColinear(curInterval, longestInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap)) {
+          if (isColinear(curInterval, longestInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
             pseudoScore += boost::icl::length(curInterval.first);
             if (firstMatch == nullptr) firstMatch = &curInterval.first;
             lastMatch = &curInterval.first;
           }
         } else {
-          // error
           std::cerr << "Error: Invalid direction in getPseudoScore()" << std::endl;
           exit(1);
         }
@@ -633,14 +630,11 @@ namespace mgsr {
         std::cerr << "Error: Invalid bounds in getPseudoScore()" << std::endl;
         exit(1);
       }
-
       int32_t leftBoundLocal = std::max(static_cast<int64_t>(0), degapGlobal(leftBoundGlobal, degapCoordIndex) - 150);
       int32_t rightBoundLocal = degapGlobal(rightBoundGlobal, degapCoordIndex) + 150;
 
       leftBoundGlobal = regapGlobal(leftBoundLocal, regapCoordIndex);
       rightBoundGlobal = regapGlobal(rightBoundLocal, regapCoordIndex);
-
-
 
       for (const auto& duplicateIndex : curReadDuplicates) {
         const auto& duplicateHash = curRead.seedmersList[duplicateIndex].hash;
@@ -705,16 +699,44 @@ namespace mgsr {
 
       return llh;
   }
+  // double getExp(
+  //   const Eigen::MatrixXd& probs,
+  //   const Eigen::VectorXd& props,
+  //   const Eigen::VectorXd& numReadDuplicates)
+  // {
+  //   assert(props.size() == probs.cols());
+
+  //   size_t numReads = probs.rows();
+
+  //   // Initialize llh (log-likelihood)
+  //   double llh = tbb::parallel_reduce(
+  //     tbb::blocked_range<size_t>(0, numReads),
+  //     0.0,
+  //     [&](const tbb::blocked_range<size_t>& r, double local_llh) {
+  //       for (size_t i = r.begin(); i != r.end(); ++i) {
+  //         double readSum = probs.row(i).dot(props);
+  //         double term = numReadDuplicates[i] * std::log(readSum);
+  //         local_llh += term;
+  //       }
+  //       return local_llh;
+  //     },
+  //     std::plus<double>()
+  //   );
+
+  //   return llh;
+  // }
 
   Eigen::VectorXd getMax(const Eigen::MatrixXd& probs, const Eigen::VectorXd& props, const Eigen::VectorXd& numReadDuplicates, const int32_t& totalReads) {
     size_t numNodes = probs.cols();
 
+    // std::cerr << "calculating demons in getMax" << std::endl;
     Eigen::VectorXd denoms = probs * props;
-
+    // std::cerr << "setting up newProps "<< std::endl;
     Eigen::VectorXd newProps(numNodes);
     newProps.setZero();
     size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
 
+    // std::cerr << "starting parallel for in getMax" << std::endl;
     tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes, numNodes/num_cpus),
       [&](const tbb::blocked_range<size_t>& range) {
         for (size_t i = range.begin(); i < range.end(); ++i) {
@@ -733,8 +755,64 @@ namespace mgsr {
     // }
 
     return newProps;
-
   }
+
+  // Eigen::VectorXd getMax(
+  //     const Eigen::MatrixXd& probs,
+  //     const Eigen::VectorXd& props,
+  //     const Eigen::VectorXd& numReadDuplicates,
+  //     const int32_t& totalReads)
+  // {
+  //     size_t numReads = probs.rows();
+  //     size_t numNodes = probs.cols();
+
+  //     // Initialize denoms vector
+  //     Eigen::VectorXd denoms(numReads);
+
+  //     // Parallel computation of denoms
+  //     tbb::parallel_for(
+  //         tbb::blocked_range<size_t>(0, numReads),
+  //         [&](const tbb::blocked_range<size_t>& r) {
+  //             for (size_t i = r.begin(); i != r.end(); ++i) {
+  //                 denoms[i] = probs.row(i).dot(props);
+  //             }
+  //         }
+  //     );
+
+  //     // Avoid division by zero
+  //     denoms = denoms.array().max(std::numeric_limits<double>::epsilon());
+
+  //     // Compute weights per read
+  //     Eigen::VectorXd weights = numReadDuplicates.array() / denoms.array();
+
+  //     // Initialize thread-local storage for newProps
+  //     tbb::enumerable_thread_specific<Eigen::VectorXd> local_newProps(
+  //         Eigen::VectorXd::Zero(numNodes)
+  //     );
+
+  //     // Parallel computation using thread-local storage
+  //     tbb::parallel_for(
+  //         tbb::blocked_range<size_t>(0, numReads),
+  //         [&](const tbb::blocked_range<size_t>& r) {
+  //             Eigen::VectorXd& local_vec = local_newProps.local();
+  //             for (size_t i = r.begin(); i != r.end(); ++i) {
+  //                 double w = weights[i];
+  //                 // Compute contributions to local newProps
+  //                 local_vec.noalias() += w * (probs.row(i).transpose().cwiseProduct(props));
+  //             }
+  //         }
+  //     );
+
+  //     // Combine results from all threads
+  //     Eigen::VectorXd newProps = Eigen::VectorXd::Zero(numNodes);
+  //     local_newProps.combine_each([&](const Eigen::VectorXd& vec) {
+  //         newProps += vec;
+  //     });
+
+  //     newProps /= totalReads;
+
+  //     return newProps;
+  // }
 
   void normalize(Eigen::VectorXd& props) {    
     for (int i = 0; i < props.size(); ++i) {
@@ -768,11 +846,16 @@ namespace mgsr {
     size_t curIteration = 1;
     while (true) {
       std::cerr << "\riteration " << curIteration << std::flush;
+      // std::cerr << "getting max at theta1" << std::endl;
       Eigen::VectorXd theta1 = getMax(probs, props, numReadDuplicates, numReads);
+      // std::cerr << "normalizing theta1" << std::endl;
       normalize(theta1);
+      // std::cerr << "getting max at theta2" << std::endl;
       Eigen::VectorXd theta2 = getMax(probs, theta1, numReadDuplicates, numReads);
+      // std::cerr << "normalizing theta2" << std::endl;
       normalize(theta2);
 
+      // std::cerr << "calculating r_norm and v_norm" << std::endl;
       Eigen::VectorXd r = theta1 - props;
       Eigen::VectorXd v = theta2 - theta1 - r;
       double r_norm = r.norm();
@@ -790,14 +873,22 @@ namespace mgsr {
       Eigen::VectorXd theta_p;
       if (alpha > -1) {
         alpha = -1;
+        // std::cerr << "calculating theta_p alpha > -1" << std::endl;
         theta_p = props - 2 * alpha * r + alpha * alpha * v;
+        // std::cerr << "getting max at theta_p" << std::endl;
         props = getMax(probs, theta_p, numReadDuplicates, numReads);
+        // std::cerr << "normalizing props" << std::endl;
         normalize(props);
+        // std::cerr << "calculating newllh" << std::endl;
         newllh = getExp(probs, props, numReadDuplicates);
       } else {
+        // std::cerr << "calculating theta_p alpha <= -1" << std::endl;
         theta_p = props - 2 * alpha * r + alpha * alpha * v;
+        // std::cerr << "getting max at theta_p" << std::endl;
         auto newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
+        // std::cerr << "normalizing newProps" << std::endl;
         normalize(newProps);
+        // std::cerr << "calculating newllh" << std::endl;
         newllh = getExp(probs, newProps, numReadDuplicates);
         if (newllh >= llh) {
           props = std::move(newProps);
@@ -805,15 +896,19 @@ namespace mgsr {
           while (llh - newllh > 0.0001) {
             // std::cerr << "it " << curit << "\t" << newllh << "\t" << llh << std::endl;
             alpha = (alpha - 1) / 2;
+            // std::cerr << "calculating theta_p alpha <= -1 inside while loop" << std::endl;
             theta_p = props - 2 * alpha * r + alpha * alpha * v;
+            // std::cerr << "getting max at theta_p" << std::endl;
             newProps = getMax(probs, theta_p, numReadDuplicates, numReads);
+            // std::cerr << "normalizing newProps" << std::endl;
             normalize(newProps);
+            // std::cerr << "calculating newllh" << std::endl;
             newllh   = getExp(probs, newProps, numReadDuplicates);
           }
           props = std::move(newProps);
         }
       }
-
+      // std::cerr << "updating insigCounts" << std::endl;
       updateInsigCounts(props, insigCounts, insigProp, totalNodes);
       // std::cerr << "it " << curit << "\t" << newllh << "\t" << llh << std::endl;
       if (newllh - llh < 0.0001) {
@@ -911,7 +1006,7 @@ namespace mgsr {
       if (converged) {
         break;
       }
-      
+      std::cerr << "filtering round " << filterRoundCount << std::endl;
       std::vector<size_t> significantIndices;
       std::vector<std::string> sigNodes;
       for (size_t i = 0; i < nodes.size(); ++i) {
