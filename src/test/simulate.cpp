@@ -446,8 +446,9 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
 }
 
 void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads) {
-    std::string cmd = "iss generate --model " + model + " --genomes " + fastaOut.string()
-        + " -n " + std::to_string(n_reads) + " --output " + (outReadsObj / fastaOut.stem()).string() + " --cpus 2";
+    std::string cmd = "iss generate --model " + model + " --genomes \'" + fastaOut.string() + "\'"
+        + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus 2";
+    std::cout << "iss cmd: " << cmd << std::endl;
     system(cmd.c_str());
 
     std::string clean = "rm " + (outReadsObj / fs::path("*.iss.tmp*vcf")).string();
@@ -486,8 +487,14 @@ void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& ou
         } else {
             curNode = refNode;
         }
+
+        std::string curNodeID = curNode;
+        std::replace(curNode.begin(), curNode.end(), '/', '_');
+        std::replace(curNode.begin(), curNode.end(), ' ', '_');
+        std::cout << "curNodeID: " << curNodeID << std::endl;
+        std::cout << "Making reference fasta for " << curNode << std::endl;
         // Make reference fasta
-        makeFasta(curNode, T->getStringFromReference(curNode, false), (outRefFastaObj / fs::path(curNode + ".fa")).string());
+        makeFasta(curNode, T->getStringFromReference(curNodeID, false), (outRefFastaObj / fs::path(curNode + ".fa")).string());
 
         // Make variant fasta and vairant vcf
         fs::path fastaOut;
@@ -499,7 +506,7 @@ void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& ou
             fastaOut = outVarFastaObj / fs::path(curNode + ".var." + std::to_string(i) + ".fa");
             vcfOut  = outVCFTrueObj  / fs::path(curNode + ".var." + std::to_string(i) + ".vcf");
         }
-        genMut(curNode, T->getStringFromReference(curNode, false), fastaOut, vcfOut, mutMat, num, indel_len, 500, 500);
+        genMut(curNode, T->getStringFromReference(curNodeID, false), fastaOut, vcfOut, mutMat, num, indel_len, 500, 500);
 
         // Make reads using InSilicoSeq
         simReads(fastaOut, outReadsObj, model, n_reads);
