@@ -2566,9 +2566,8 @@ void place_per_read_DFS(
   }
 
 
-  tbb::concurrent_vector<std::pair<size_t, boost::icl::split_interval_map<int32_t, int>>> readBackTrack;
-  tbb::concurrent_vector<std::pair<size_t, std::unordered_set<int32_t>>> readDuplicateSetsBackTrack;
-  tbb::concurrent_vector<std::pair<size_t, std::vector<std::pair<int32_t, bool>>>> readDuplicatesBackTrack;
+  tbb::concurrent_vector<std::pair<size_t, std::vector<int8_t>> readMatchesSetsBackTrack;
+  tbb::concurrent_vector<std::pair<size_t, std::pair<int32_t, int8_t>>> readMatchesBackTrack;
   // std::cout << node->identifier << " SCORE: ";
   if (node->identifier == T->root->identifier) {
     allScores[node->identifier].resize(reads.size());
@@ -2633,16 +2632,56 @@ void place_per_read_DFS(
             exit(1);
           }
 
-          readBackTrack.emplace_back(std::make_pair(readIndex, curRead.matches));
           if (affectedSeedmerIndices.size() > redoReadThreshold) {
-            readDuplicateSetsBackTrack.emplace_back(std::make_pair(readIndex, curRead.duplicates));
-            curRead.matches.clear();
-            curRead.duplicates.clear();
+            readMatchesSetsBackTrack.emplace_back(std::make_pair(readIndex, curRead.matches));
             initializeMatches(curRead, positionMap, hashToPositionsMap);
           } else {
-            std::vector<std::pair<int32_t, bool>> curReadDuplicatesBackTrack;
-
+            std::vector<std::pair<int32_t, uint8_t>> curReadMatchesBackTrack;
+            std::sort(affectedSeedmerIndices.begin(), affectedSeedmerIndices.end());
+            
             for (const auto& index : affectedSeedmerIndices) {
+              const size_t& affectedSeedmer = curRead.seedmersList[index].hash;
+              const auto& affectedSeedmerHashToPositionIt = hashToPositionsMap.find(affectedSeedmer);
+              bool isUniqueInRef = affectedSeedmerHashToPositionIt != hashToPositionsMap.end() && affectedSeedmerHashToPositionIt->second.size() == 1
+
+              uint8_t oldMatch = curRead.matches[index];
+              if (affectedSeedmerHashToPositionIt != hashToPositionsMap.end()) {
+                if (affectedSeedmerHashToPositionIt->second.size() == 1) {
+                  const auto& affectedPositionRefIt = *(affectedSeedmerHashToPositionIt->second.begin());
+                  uint8_t currev = curRead.seedmersList[index].rev == affectedPositionRefIt->second.rev ? 1 : 2;
+                  curRead.matches[index] = currev;
+                } else {
+                  curRead.matches[index] = -1;
+                }
+              } else {
+                curRead.matches[index] = 0;
+              }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
               const size_t& affectedSeedmer = curRead.seedmersList[index].hash;
 
               const auto& affectedSeedmerHashToPositionIt = hashToPositionsMap.find(affectedSeedmer);

@@ -111,11 +111,17 @@ namespace mgsr {
     const int32_t iorder;
   };
 
+  struct matchInterval {
+    int32_t beg;
+    int32_t end;
+    bool rev;
+  };
+
   class Read {
     public:
     std::vector<readSeedmer> seedmersList;
     std::unordered_map<size_t, std::vector<int32_t>> uniqueSeedmers;
-    boost::icl::split_interval_map<int32_t, int> matches;
+    std::vector<int8_t> matches;
     std::unordered_set<int32_t> duplicates;
     size_t readIndex;
     // std::vector<bool> duplicates;
@@ -426,7 +432,7 @@ namespace mgsr {
     }
   }
 
-  int32_t extend(int64_t& curEnd, mgsr::Read& curRead, int rev, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap, int32_t qidx, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt, int32_t c) {
+  int32_t extend(mgsr::Read& curRead, int rev, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap, int32_t qidx, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt, int32_t c) {
     if (qidx == curRead.seedmersList.size() - 1) return c;
     const auto& [nhash, nqbeg, nqend, nqrev, nqidx] = curRead.seedmersList[qidx+1];
 
@@ -446,16 +452,16 @@ namespace mgsr {
             while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
             if (curRefPositionIt->first == nextRefPositionIt->first) {
               ++c;
-              curEnd = nqidx;
-              return extend(curEnd, curRead, rev, positionMap, hashToPositionsMap, nqidx, curRefPositionIt, c);
+              curRead.matches[nqidx] = rev;
+              return extend(curRead, rev, positionMap, hashToPositionsMap, nqidx, curRefPositionIt, c);
             }
           } else if (rev == 2) {
             auto prevRefPositionIt = std::prev(refPositionIt);
             while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
             if (curRefPositionIt->first == prevRefPositionIt->first) {
               ++c;
-              curEnd = nqidx;
-              return extend(curEnd, curRead, rev, positionMap, hashToPositionsMap, nqidx, curRefPositionIt, c);
+              curRead.matches[nqidx] = rev;
+              return extend(curRead, rev, positionMap, hashToPositionsMap, nqidx, curRefPositionIt, c);
             }
           }
         }
@@ -465,6 +471,8 @@ namespace mgsr {
   }
 
   void initializeMatches(mgsr::Read& curRead, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap) {
+    curRead.matches.clear();
+    curRead.matches.resize(curRead.seedmersList.size(), 0);
     int32_t i = 0;
     while (i < curRead.seedmersList.size()) {
       const auto& [hash, qbeg, qend, qrev, qidx] = curRead.seedmersList[i];
@@ -477,30 +485,29 @@ namespace mgsr {
             exit(1);
           }
           auto curRefPositionIt = *(hashToPositionIt->second.begin());
-          int64_t curEnd = i;
-          int rev = qrev == curRefPositionIt->second.rev? 1 : 2;
-          c = extend(curEnd, curRead, rev, positionMap, hashToPositionsMap, qidx, curRefPositionIt, c);
-          curRead.matches.add({discrete_interval<int32_t>::closed(i, curEnd), rev});
+          int8_t rev = qrev == curRefPositionIt->second.rev? 1 : 2;
+          curRead.matches[i] = rev;
+          c = extend(curRead, rev, positionMap, hashToPositionsMap, qidx, curRefPositionIt, c);
         } else {
-          curRead.duplicates.insert(i);
+          curRead.matches[i] = -1;
         }
       }
       i += c; 
     }
   }
 
-  bool isColinear(const std::pair<boost::icl::discrete_interval<int32_t>, int>& match1, const std::pair<boost::icl::discrete_interval<int32_t>, int>& match2, const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
-    bool rev1 = match1.second == 1 ? false : true;
-    bool rev2 = match2.second == 1 ? false : true;
+  bool isColinear(const mgsr::matchInterval& match1, const mgsr::matchInterval& match2, const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
+    bool rev1 = match1.rev == 1 ? false : true;
+    bool rev2 = match2.rev == 1 ? false : true;
     if (rev1 != rev2) {
       std::cerr << "Error: Invalid direction in isColinear_test()" << std::endl;
       exit(1);
     }
 
-    const auto& first1 = curRead.seedmersList[boost::icl::first(match1.first)];
-    const auto& first2 = curRead.seedmersList[boost::icl::first(match2.first)];
-    const auto& last1  = curRead.seedmersList[boost::icl::last(match1.first)];
-    const auto& last2  = curRead.seedmersList[boost::icl::last(match2.first)];
+    const auto& first1 = curRead.seedmersList[match1.beg];
+    const auto& first2 = curRead.seedmersList[match2.beg];
+    const auto& last1  = curRead.seedmersList[match1.end];
+    const auto& last2  = curRead.seedmersList[match2.end];
 
     if (rev1 == false) {
       // forward direction
@@ -547,81 +554,85 @@ namespace mgsr {
     return false;
   }
 
+  void getMatchIntervals(const mgsr::Read& curRead, std::vector<mgsr::matchInterval>& matchIntervals, std::vector<int32_t>& duplicateIndices) {
+    auto& matches = curRead.matches;
+    int32_t i = 0;
+    while (i < matches.size()) {
+      if (matches[i] > 0) {
+        int32_t start = i;
+        int rev = matches[i];
+        while (i + 1 < matches.size() && matches[i + 1] == rev) ++i;
+        int32_t end = i;
+        matchIntervals.push_back({start, end, rev});
+      } else if (matches[i] == -1) {
+        duplicateIndices.insert(i);
+      }
+      ++i;
+    }
+  }
+
   int64_t getPseudoScore(
     const mgsr::Read& curRead, mgsr::seedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex,
     const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& minimumCount, const int& minimumScore,
     const bool& rescueDuplicates, const int& rescueDuplicatesThreshold, const int& dfsIndex
   ) {
-    int64_t pseudoScore = 0;
-    const boost::icl::discrete_interval<int32_t>* firstMatch = nullptr;
-    const boost::icl::discrete_interval<int32_t>* lastMatch  = nullptr;
+    std::vector<mgsr::matchInterval> matchIntervals;
+    std::vector<int32_t> duplicateIndices;
+    getMatchIntervals(curRead, matchIntervals, duplicateIndices);
+    mgsr::matchInterval* firstMatch = nullptr;
+    mgsr::matchInterval* lastMatch = nullptr;
+
     bool reversed = false;
 
-    // simple cases
-    if (curRead.matches.empty()) {
-      return 0;
-    } else if (curRead.matches.size() == 1) {
-      pseudoScore = boost::icl::length(curRead.matches.begin()->first);
-      firstMatch  = &curRead.matches.begin()->first;
-      lastMatch   = &curRead.matches.begin()->first;
-      reversed    = curRead.matches.begin()->second == 1 ? false : true;
-    } else {
-      // find longest interval
-      std::pair<boost::icl::discrete_interval<int32_t>, int> longestInterval = *curRead.matches.begin();
-      int longestIdx = 0;
-      int curIdx = 1;
-      for (auto it = std::next(curRead.matches.begin()); it != curRead.matches.end(); ++it) {
-        const auto& curInterval = it;
-        if (boost::icl::length(curInterval->first) > boost::icl::length(longestInterval.first)) {
-          longestInterval = *curInterval;
-          longestIdx = curIdx;
-        }
-        ++curIdx;
-      }
-      reversed = longestInterval.second == 1 ? false : true;
-
-      auto longestQbeg = curRead.seedmersList[boost::icl::first(longestInterval.first)].begPos;
-      curIdx = 0;
-      for (const auto& curInterval : curRead.matches) {
-        if (curIdx == longestIdx) {
-          pseudoScore += boost::icl::length(curInterval.first);
-          if (firstMatch == nullptr) firstMatch = &curInterval.first;
-          lastMatch = &curInterval.first;
-          ++curIdx;
-          continue;
-        }
-
-        if (curInterval.second != longestInterval.second) {
-          ++curIdx;
-          continue;
-        }
-
-        auto curQbeg = curRead.seedmersList[boost::icl::first(curInterval.first)].begPos;
-        if (longestQbeg < curQbeg) {
-          if (isColinear(longestInterval, curInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
-            pseudoScore += boost::icl::length(curInterval.first);
-            if (firstMatch == nullptr) firstMatch = &curInterval.first;
-            lastMatch = &curInterval.first;
-          }
-        } else if (longestQbeg > curQbeg) {
-          if (isColinear(curInterval, longestInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
-            pseudoScore += boost::icl::length(curInterval.first);
-            if (firstMatch == nullptr) firstMatch = &curInterval.first;
-            lastMatch = &curInterval.first;
-          }
-        } else {
-          std::cerr << "Error: Invalid direction in getPseudoScore()" << std::endl;
-          exit(1);
-        }
-
-        ++curIdx;
+    int64_t pseudoScore = 0;
+    int longestIdx = -1;
+    int64_t longestLength = 0;
+    for (int i = 0; i < matchIntervals.size(); ++i) {
+      int32_t length = matchIntervals[i].end - matchIntervals[i].beg + 1;
+      if (length > longestLength) {
+        longestLength = length;
+        longestIdx = i;
       }
     }
 
-    const auto& curReadDuplicates = curRead.duplicates;
-    if (rescueDuplicates && !curReadDuplicates.empty() && curReadDuplicates.size() <= rescueDuplicatesThreshold) {
-      const size_t& leftBoundHash  = reversed ? curRead.seedmersList[boost::icl::last(*lastMatch)].hash : curRead.seedmersList[boost::icl::first(*firstMatch)].hash;
-      const size_t& rightBoundHash = reversed ? curRead.seedmersList[boost::icl::first(*firstMatch)].hash : curRead.seedmersList[boost::icl::last(*lastMatch)].hash;
+    if (longestIdx == -1) return 0;
+    const auto& longestInterval = matchIntervals[longestIdx];
+    reversed = longestInterval.rev == 1 ? false : true;
+    pseudoScore += longestLength;
+
+    const auto& longestQbeg = curRead.seedmersList[longestInterval.beg].begPos;
+    for (int i = 0; i < matchIntervals.size(); ++i) {
+      if (i == longestIdx) {
+        if (firstMatch == nullptr) firstMatch = &longestInterval;
+        lastMatch = &longestInterval;
+        continue;
+      }
+
+      const auto& curInterval = matchIntervals[i];
+      if (curInterval.rev != longestInterval.rev) continue;
+      const auto& curQbeg = curRead.seedmersList[curInterval.beg].begPos;
+      if (longestQbeg < curQbeg) {
+        if (isColinear(longestInterval, curInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+          pseudoScore += curInterval.end - curInterval.beg + 1;
+          if (firstMatch == nullptr) firstMatch = &curInterval;
+          lastMatch = &curInterval;
+        }
+      } else if (longestQbeg > curQbeg) {
+        if (isColinear(curInterval, longestInterval, curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+          pseudoScore += curInterval.end - curInterval.beg + 1;
+          if (firstMatch == nullptr) firstMatch = &curInterval;
+          lastMatch = &curInterval;
+        }
+      } else {
+        std::cerr << "Error: Invalid direction in getPseudoScore()" << std::endl;
+        exit(1);
+      }
+    }
+
+
+    if (rescueDuplicates && !duplicateIndices.empty() && duplicateIndices.size() <= rescueDuplicatesThreshold) {
+      const size_t& leftBoundHash  = reversed ? curRead.seedmersList[lastMatch->end].hash : curRead.seedmersList[firstMatch->beg].hash;
+      const size_t& rightBoundHash = reversed ? curRead.seedmersList[firstMatch->beg].hash : curRead.seedmersList[lastMatch->end].hash;
 
       int32_t leftBoundGlobal = seedmersIndex.getBegFromHash(leftBoundHash);
       int32_t rightBoundGlobal = seedmersIndex.getEndFromHash(rightBoundHash);
