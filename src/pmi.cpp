@@ -2034,22 +2034,18 @@ void pmi::build(Tree *T, Index::Builder &index)
     currCoord.nucGapPos = -1;
   }
 
-  tbb::parallel_for(tbb::blocked_range<int64_t>(0, scalarCoordToBlockId.size()), [&](const tbb::blocked_range<int64_t>& range) {
-    for (int64_t i = range.begin(); i < range.end(); i++) {
-      scalarCoordToBlockId[i] = currCoord.blockId;
-      BlockSizes[currCoord.blockId]++;
-      currCoord = navigator.newincrement(currCoord, data.blockStrand);
-    }
-  });
+  for (int64_t i = 0; i < scalarCoordToBlockId.size(); i++) {
+    scalarCoordToBlockId[i] = currCoord.blockId;
+    BlockSizes[currCoord.blockId]++;
+    currCoord = navigator.newincrement(currCoord, data.blockStrand);
+  }
 
-  tbb::parallel_for(tbb::blocked_range<int64_t>(0, blockRanges.size()), [&](const tbb::blocked_range<int64_t>& range) {
-    for (int64_t i = range.begin(); i < range.end(); i++) {
-      int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
-      int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
-      blockRanges[i] = std::make_pair(start, end);
-      if (data.blockStrand[i].first) inverseBlockIds.insert(i);
-    }
-  });
+  for (int64_t i = 0; i < blockRanges.size(); i++) {
+    int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
+    int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
+    blockRanges[i] = std::make_pair(start, end);
+    if (data.blockStrand[i].first) inverseBlockIds.insert(i);
+  }
 
   std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
 
