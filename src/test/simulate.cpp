@@ -1,5 +1,5 @@
 #include <boost/iostreams/filtering_stream.hpp>
-#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filter/lzma.hpp>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
 #include <algorithm>
@@ -111,12 +111,47 @@ int main(int argc, char *argv[]) {
 
 
         // read treeeee
-        std::ifstream ifs(panmatPath);
-        boost::iostreams::filtering_streambuf<boost::iostreams::input> b;
-        b.push(boost::iostreams::gzip_decompressor());
-        b.push(ifs);
-        std::istream is(&b);
-        panmanUtils::Tree* T = new panmanUtils::Tree(is);
+        // If the data structure loaded into memory is a PanMAT, it is pointed to by T
+        panmanUtils::Tree *T = nullptr;
+        // If the data structure loaded into memory is a PanMAN, it is pointed to by TG
+        panmanUtils::TreeGroup *TG = nullptr;
+
+        try {
+          // Try to load PanMAN file directly into memory
+          std::ifstream inputFile(panmatPath);
+          boost::iostreams::filtering_streambuf< boost::iostreams::input> inPMATBuffer;
+          inPMATBuffer.push(boost::iostreams::lzma_decompressor());
+          inPMATBuffer.push(inputFile);
+          std::istream inputStream(&inPMATBuffer);
+
+
+          TG = new panmanUtils::TreeGroup(inputStream);
+
+          
+          inputFile.close();
+        } catch (const std::exception &e) {
+          std::cerr << "Attempting to load as PanMAT...\n";
+          try {
+            std::ifstream inputFile(panmatPath);
+            boost::iostreams::filtering_streambuf< boost::iostreams::input> inPMATBuffer;
+            inPMATBuffer.push(boost::iostreams::lzma_decompressor());
+            inPMATBuffer.push(inputFile);
+            std::istream inputStream(&inPMATBuffer);
+
+
+            T = new panmanUtils::Tree(inputStream);
+
+
+          } catch (const std::exception &e) {
+            std::cerr << "Error: failed to load PanMAT file" << std::endl;
+            return 1;
+          }
+        }
+        if (TG != nullptr) {
+          T = &(TG->trees[0]);
+        }
+
+
 
         // check node
         if (refNode != "RANDOM" && T->allNodes.find(refNode) == T->allNodes.end()) {
