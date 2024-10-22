@@ -3243,6 +3243,19 @@ void pmi::place_per_read(
 
   std::cerr << "finished scoring DFS" << std::endl;
 
+  std::string scoreFile = prefix + ".score";
+  std::ofstream scoreOut(scoreFile);
+  for (const auto& node : allScores) {
+    int32_t score = 0;
+    for (size_t i = 0; i < node.second.size(); ++i) {
+      score += node.second[i].first * readSeedmersDuplicatesIndex[i].size();
+    }
+    scoreOut << node.first << "\t" << score << "\n";
+  }
+  scoreOut.close();
+  return;
+
+
   onSeedsHashMap.clear();
   seedmersIndex.positionMap.clear();
   seedmersIndex.hashToPositionsMap.clear();
@@ -3346,19 +3359,30 @@ void pmi::place_per_read(
   std::string abundanceOutFile = prefix + ".abundance";
   std::ofstream abundanceOut(abundanceOutFile);
   for (size_t i = 0; i < sortedOut.size(); ++i) {
-      const auto& node = sortedOut[i];
-      abundanceOut << node.first;
-      if (identicalSets.find(node.first) != identicalSets.end()) {
-          for (const auto& identicalNode : identicalSets.at(node.first)) {
-              abundanceOut << "," << identicalNode;
-          }
+    const auto& node = sortedOut[i];
+    abundanceOut << node.first;
+    if (identicalSets.find(node.first) != identicalSets.end()) {
+      for (const auto& identicalNode : identicalSets.at(node.first)) {
+        abundanceOut << "," << identicalNode;
       }
-      abundanceOut << "\t" << node.second << "\n";
+    }
+    abundanceOut << "\t" << node.second << "\n";
   }
   abundanceOut.close();
+
+  std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
   FILE* errorLog = freopen("error.log", "w", stderr);
   if (!errorLog) {
       throw std::runtime_error("Failed to redirect stderr to error.log");
   }
+
+  std::cerr << "Wrote error log file: error.log" << std::endl;
+
+  /*
+  Consensus calling
+    1. Align all reads to all estimated haplotypes using bwa
+  */
+
+
 }
