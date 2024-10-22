@@ -699,32 +699,7 @@ namespace mgsr {
 
       return llh;
   }
-  // double getExp(
-  //   const Eigen::MatrixXd& probs,
-  //   const Eigen::VectorXd& props,
-  //   const Eigen::VectorXd& numReadDuplicates)
-  // {
-  //   assert(props.size() == probs.cols());
 
-  //   size_t numReads = probs.rows();
-
-  //   // Initialize llh (log-likelihood)
-  //   double llh = tbb::parallel_reduce(
-  //     tbb::blocked_range<size_t>(0, numReads),
-  //     0.0,
-  //     [&](const tbb::blocked_range<size_t>& r, double local_llh) {
-  //       for (size_t i = r.begin(); i != r.end(); ++i) {
-  //         double readSum = probs.row(i).dot(props);
-  //         double term = numReadDuplicates[i] * std::log(readSum);
-  //         local_llh += term;
-  //       }
-  //       return local_llh;
-  //     },
-  //     std::plus<double>()
-  //   );
-
-  //   return llh;
-  // }
 
   Eigen::VectorXd getMax(const Eigen::MatrixXd& probs, const Eigen::VectorXd& props, const Eigen::VectorXd& numReadDuplicates, const int32_t& totalReads) {
     size_t numNodes = probs.cols();
@@ -747,72 +722,10 @@ namespace mgsr {
         }
       }); 
 
-    // for (size_t i = 0; i < numNodes; ++i) {
-    //   Eigen::VectorXd ratios = (probs.col(i).array() * props[i]) / denoms.array();
-    //   double newProp = (numReadDuplicates.array() * ratios.array()).sum();
-    //   newProp /= totalReads;
-    //   newProps(i) = newProp;
-    // }
 
     return newProps;
   }
 
-  // Eigen::VectorXd getMax(
-  //     const Eigen::MatrixXd& probs,
-  //     const Eigen::VectorXd& props,
-  //     const Eigen::VectorXd& numReadDuplicates,
-  //     const int32_t& totalReads)
-  // {
-  //     size_t numReads = probs.rows();
-  //     size_t numNodes = probs.cols();
-
-  //     // Initialize denoms vector
-  //     Eigen::VectorXd denoms(numReads);
-
-  //     // Parallel computation of denoms
-  //     tbb::parallel_for(
-  //         tbb::blocked_range<size_t>(0, numReads),
-  //         [&](const tbb::blocked_range<size_t>& r) {
-  //             for (size_t i = r.begin(); i != r.end(); ++i) {
-  //                 denoms[i] = probs.row(i).dot(props);
-  //             }
-  //         }
-  //     );
-
-  //     // Avoid division by zero
-  //     denoms = denoms.array().max(std::numeric_limits<double>::epsilon());
-
-  //     // Compute weights per read
-  //     Eigen::VectorXd weights = numReadDuplicates.array() / denoms.array();
-
-  //     // Initialize thread-local storage for newProps
-  //     tbb::enumerable_thread_specific<Eigen::VectorXd> local_newProps(
-  //         Eigen::VectorXd::Zero(numNodes)
-  //     );
-
-  //     // Parallel computation using thread-local storage
-  //     tbb::parallel_for(
-  //         tbb::blocked_range<size_t>(0, numReads),
-  //         [&](const tbb::blocked_range<size_t>& r) {
-  //             Eigen::VectorXd& local_vec = local_newProps.local();
-  //             for (size_t i = r.begin(); i != r.end(); ++i) {
-  //                 double w = weights[i];
-  //                 // Compute contributions to local newProps
-  //                 local_vec.noalias() += w * (probs.row(i).transpose().cwiseProduct(props));
-  //             }
-  //         }
-  //     );
-
-  //     // Combine results from all threads
-  //     Eigen::VectorXd newProps = Eigen::VectorXd::Zero(numNodes);
-  //     local_newProps.combine_each([&](const Eigen::VectorXd& vec) {
-  //         newProps += vec;
-  //     });
-
-  //     newProps /= totalReads;
-
-  //     return newProps;
-  // }
 
   void normalize(Eigen::VectorXd& props) {    
     for (int i = 0; i < props.size(); ++i) {
@@ -839,8 +752,10 @@ namespace mgsr {
     const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
     const Eigen::VectorXd& numReadDuplicates, const int32_t& numReads, 
-    Eigen::VectorXd& props, double& llh, int& curit, bool& converged, size_t iterations, std::vector<int>& insigCounts, const double& insigProp, size_t totalNodes
-    ) {
+    Eigen::VectorXd& props, double& llh, int& curit, bool& converged,
+    const size_t& iterations, const size_t& prefilterIterations,
+    std::vector<int>& insigCounts, const double& insigProp, size_t totalNodes
+  ) {
     assert(nodes.size() == probs.cols());
     assert(nodes.size() == props.size());
     size_t curIteration = 1;
@@ -918,7 +833,11 @@ namespace mgsr {
       } else if (curIteration == iterations) {
         llh = newllh;
         break;
+      } else if (curIteration == prefilterIterations) {
+        llh = newllh;
+        break;
       }
+
       llh = newllh;
       ++curit;
       ++curIteration;
@@ -997,16 +916,20 @@ namespace mgsr {
     int curit = 0;
     bool converged = false;
     int32_t filterRoundCount = 0;
+    size_t prefilterIterations = 5;
     std::vector<int> insigCounts(nodes.size());
+    std::cerr << "\npre-filter round for " << prefilterIterations << " iterations" << std::endl;
+    llh = getExp(probs, props, readDuplicates);
+    squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, prefilterIterations, insigCounts, insigProp, totalNodes);
     while (true) {
       std::cerr << "\nfilter round " << filterRoundCount + 1 << std::endl;
       ++filterRoundCount;
       llh = getExp(probs, props, readDuplicates);
-      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, insigCounts, insigProp, totalNodes);
+      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       if (converged) {
         break;
       }
-      std::cerr << "filtering round " << filterRoundCount << std::endl;
+      std::cerr << "\nfiltering round " << filterRoundCount << std::endl;
       std::vector<size_t> significantIndices;
       std::vector<std::string> sigNodes;
       for (size_t i = 0; i < nodes.size(); ++i) {
@@ -1045,7 +968,7 @@ namespace mgsr {
       std::vector<int> insigCounts(nodes.size());
       std::cerr << "start full EM" << std::endl;
       llh = getExp(probs, props, readDuplicates);
-      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
+      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       assert(converged == true);
     }
 
@@ -1075,7 +998,7 @@ namespace mgsr {
       bool converged = false;
       size_t iterations = std::numeric_limits<size_t>::max();
       std::vector<int> insigCounts(sigNodes.size());
-      squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, iterations, insigCounts, insigProp, totalNodes);
+      squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       assert(converged);
       nodes = std::move(sigNodes);
       probs = std::move(sigProbs);
