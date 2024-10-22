@@ -9,15 +9,22 @@ extern "C" {
 
 //samAlignment is sorted at the end
 
-void addSeeds(std::vector<seeding::seed>& matchingSeeds, const std::vector<uint32_t>& positions, 
-              const seeding::seed& curSeed, bool reverseCondition) {
+void addSeeds(std::vector<seeding::seed>& fwdmatchingSeeds,std::vector<seeding::seed>& bwdmatchingSeeds, const std::vector<uint32_t>& positions, 
+              const seeding::seed& curSeed, bool reverseCondition, int k, int readlen) {
     for (uint32_t rpos : positions) {
         seed thisSeed;
         thisSeed.reversed = curSeed.reversed == reverseCondition;
         thisSeed.hash = curSeed.hash;
-        thisSeed.pos = curSeed.pos;
+        thisSeed.pos = (thisSeed.reversed) ? readlen - curSeed.pos + k - 2 :curSeed.pos;
+        
         thisSeed.rpos = rpos;
-        matchingSeeds.push_back(thisSeed);
+
+        if(thisSeed.reversed){
+            bwdmatchingSeeds.push_back(thisSeed);
+        }else{
+            fwdmatchingSeeds.push_back(thisSeed);
+        }
+        
     }
 }
 
@@ -37,19 +44,38 @@ void createSam(
     std::string &samHeader
 )   {
 
-  
+  /*
+  for(int i = 0; i < readSeeds.size(); i++){
+    std::cerr << "Read " <<i<< " " << readSequences[i] << "\n";
+    for(int j = 0; j < readSeeds[i].size(); j++){
+        std::cerr << readSeeds[i][j].hash << " " << readSeeds[i][j].reversed << " " << readSeeds[i][j].pos << "\n";
+    }
+  }*/
+
   
   for (size_t i = 0; i < readSequences.size(); ++i) {
     std::vector<seeding::seed>& curReadSeeds = readSeeds[i];
-    std::vector<seeding::seed> matchingSeeds;
+    std::vector<seeding::seed> fwdMatchingSeeds;
+    std::vector<seeding::seed> bwdMatchingSeeds;
+    
+
     for (size_t j = 0; j < curReadSeeds.size(); ++j) {
       if (seedToRefPositions.find(curReadSeeds[j].hash) == seedToRefPositions.end()) continue;
       const auto& [forwardSeedToRefPositions, reverseSeedToRefPositions] = seedToRefPositions[curReadSeeds[j].hash];
-      addSeeds(matchingSeeds, forwardSeedToRefPositions, curReadSeeds[j], true);
-      addSeeds(matchingSeeds, reverseSeedToRefPositions, curReadSeeds[j], false);
+
+      
+      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, forwardSeedToRefPositions, curReadSeeds[j], true, k , readSequences[i].size());
+      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, reverseSeedToRefPositions, curReadSeeds[j], false, k, readSequences[i].size());
     }
-    readSeeds[i] = matchingSeeds;
+
+    std::reverse(bwdMatchingSeeds.begin(), bwdMatchingSeeds.end());
+    fwdMatchingSeeds.insert(fwdMatchingSeeds.end(), bwdMatchingSeeds.begin(), bwdMatchingSeeds.end());
+
+    readSeeds[i] = fwdMatchingSeeds;
+    
   }
+
+    
   
 
     

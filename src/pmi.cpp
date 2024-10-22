@@ -2107,7 +2107,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
         line = 0;
         int forwardReads = readSequences.size();
         while ((line = kseq_read(seq)) >= 0) {
-            readSequences.push_back(seq->seq.s);
+            readSequences.push_back(reverseComplement(seq->seq.s));
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
@@ -2239,8 +2239,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::vector<std::optional<seeding::onSeedsHash>> bestNodeOnSeedsHash(globalCoords.back().first.back().first + 1, std::nullopt);
     getBestNodeSeeds(rpath, bestNodeData, bestNodeOnSeedsString, bestNodeOnSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, globalCoords, bestNodeNavigator, scalarCoordToBlockId, bestNodeBlocksToSeeds, bestNodeBlockSizes, bestNodeBlockRanges, bestNodeGapMap, bestNodeInverseBlockIds, dfsIndexes);
 
-    std::cout << "best nods: " << bestNodeId << std::endl;
-    std::cout << "best node score: " << placementScores[0].second << std::endl;
+    //std::cout << "best node: " << bestNodeId << std::endl;
+    //std::cout << "best node score: " << placementScores[0].second << std::endl;
     // Here bestNodeOnSeedsHash contains the best node's seeds
 
 
@@ -2258,19 +2258,6 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     }
 
 
-    /*
-    std::unordered_map<size_t, std::vector<int32_t>> seedToRefPositions;
-    for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
-      if(bestNodeOnSeedsHash[i].has_value()){
-        size_t seed = bestNodeOnSeedsHash[i].value().hash;
-
-        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
-            seedToRefPositions[seed] = {};
-        }
-        seedToRefPositions[seed].push_back(degap[i]);
-      }
-    }
-    */
 
     std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
     for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
@@ -2296,7 +2283,6 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
       }
     }
 
-    //std::string refFileName = "REFERENCE";
     //Print out Reference
     if (refFileName.size() == 0) {
       refFileName = "panmap.reference.fa";
@@ -2348,7 +2334,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           bamRecords
       );
 
-      //std::string mpileupFileName = "MPILEUP";
+      
       //Convert to Mplp
       char *mplpString;
 
@@ -2362,14 +2348,15 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           mplpString
       );
 
-    
-      //std::string vcfFileName = "VCF";
+
       //Convert to VCF
       createVcf(
           mplpString,
           mutMat,
           vcfFileName
       );
+
+
     } else {
       // align with bwa aln
       std::cout << "Preparing arguments for bwa..." << std::endl;
@@ -2993,6 +2980,7 @@ void seedmersFromFastq(
   tbb::parallel_for(tbb::blocked_range<size_t>(0, dupReadsIndex.size(), dupReadsIndex.size() / num_cpus),
     [&](const tbb::blocked_range<size_t>& range){
       for (size_t i = range.begin(); i < range.end(); ++i) {
+        
         const auto& syncmers = seeding::rollingSyncmers(dupReadsIndex[i].first, k, s, openSyncmers, t, false);
         mgsr::Read& curRead = uniqueReadSeedmers[i];
         if (syncmers.size() < l) continue;
@@ -3170,6 +3158,7 @@ void pmi::place_per_read(
   int32_t t = index.getT();
   int32_t l = index.getL();
   bool openSyncmers = index.getOpen();
+  
 
   std::map<int64_t, int64_t> gapMap;
 
