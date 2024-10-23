@@ -3243,17 +3243,22 @@ void pmi::place_per_read(
 
   std::cerr << "finished scoring DFS" << std::endl;
 
-  std::string scoreFile = prefix + ".score";
-  std::ofstream scoreOut(scoreFile);
-  for (const auto& node : allScores) {
-    int32_t score = 0;
-    for (size_t i = 0; i < node.second.size(); ++i) {
-      score += node.second[i].first * readSeedmersDuplicatesIndex[i].size();
-    }
-    scoreOut << node.first << "\t" << score << "\n";
-  }
-  scoreOut.close();
-  return;
+  // std::string scoreFile = prefix + ".score";
+  // std::ofstream scoreOut(scoreFile);
+  // for (const auto& node : allScores) {
+  //   // int32_t score = 0;
+  //   // for (size_t i = 0; i < node.second.size(); ++i) {
+  //   //   score += node.second[i].first * readSeedmersDuplicatesIndex[i].size();
+  //   // }
+  //   // scoreOut << node.first << "\t" << score << "\n";
+  //   scoreOut << node.first << "\t";
+  //   for (const auto& score : node.second) {
+  //     scoreOut << score.first << ",";
+  //   }
+  //   scoreOut << "\n";
+  // }
+  // scoreOut.close();
+  // return;
 
 
   onSeedsHashMap.clear();
