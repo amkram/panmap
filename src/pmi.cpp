@@ -2110,7 +2110,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
         line = 0;
         int forwardReads = readSequences.size();
         while ((line = kseq_read(seq)) >= 0) {
-            readSequences.push_back(seq->seq.s);
+            readSequences.push_back(reverseComplement(seq->seq.s));
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
