@@ -189,8 +189,8 @@ panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
     return T;
 }
 
-void log(const std::string& message) {
-    std::ofstream logFile("panmap.log", std::ios_base::app);
+void log(const std::string& prefix, const std::string& message) {
+    std::ofstream logFile((prefix + ".log").c_str(), std::ios_base::app);
     logFile << message << std::endl;
     std::cout << message << std::endl;
 }
@@ -205,7 +205,6 @@ int main(int argc, const char** argv) {
     std::string prefix = args["--prefix"] ? args["--prefix"].asString() : "panmap";
     std::string outputs = args["-o"] && args["-o"].isString() ? args["-o"].asString() : "bam,vcf,assembly";
     std::string aligner = args["--aligner"] ? args["--aligner"].asString() == "bwa-aln" ? "bwa-aln" : "minimap2" : "minimap2";
-
 
 
     std::vector<std::string> outputs_seperated;
@@ -292,18 +291,18 @@ int main(int argc, const char** argv) {
     }
 
 
-    log("--- Settings ---");
-    log("Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");
+    log(prefix, "--- Settings ---");
+    log(prefix, "Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");
     if (!reads1.empty()) {
-      log("Reads: " + reads1 + (reads2.empty() ? "" : " + " + reads2));
+      log(prefix, "Reads: " + reads1 + (reads2.empty() ? "" : " + " + reads2));
     } else {
-      log("Reads: <none>");
+      log(prefix, "Reads: <none>");
     }
-    log("Output prefix: " + prefix);
-    log("Outputs: " + outputs);
-    log("Reindex: " + std::to_string(reindex));
-    log("k-mer length: " + std::to_string(k));
-    log("s-mer length: " + std::to_string(s));
+    log(prefix, "Output prefix: " + prefix);
+    log(prefix, "Outputs: " + outputs);
+    log(prefix, "Reindex: " + std::to_string(reindex));
+    log(prefix, "k-mer length: " + std::to_string(k));
+    log(prefix, "s-mer length: " + std::to_string(s));
 
 
     bool build = true;
@@ -312,27 +311,27 @@ int main(int argc, const char** argv) {
     std::string default_index_path = guide + ".pmi";
 
     if (!index_path.empty() && !reindex) {
-      log("Index path: " + index_path);
+      log(prefix, "Index path: " + index_path);
     } else {
       if (!reindex && fs::exists(default_index_path)) {
-        log("Index loaded from: " + default_index_path);
+        log(prefix, "Index loaded from: " + default_index_path);
         inMessage = readCapnp(default_index_path);
         build = false;
       } else if (reindex) {
-        log("Reindexing.");
+        log(prefix, "Reindexing.");
       } else {
-        log("Index not found at: " + default_index_path + ", will build.");
+        log(prefix, "Index not found at: " + default_index_path + ", will build.");
       }
     }
     if (args["--stop-after"]) {
         std::string stop_after = args["--stop-after"].asString();
-        log("Will stop after stage: " + stop_after);
+        log(prefix, "Will stop after stage: " + stop_after);
     }
 
     if (build) {
       // build
-      log("--- Run ---");
-      log("Indexing...");
+      log(prefix, "--- Run ---");
+      log(prefix, "Indexing...");
 
       // capnp index object
       Index::Builder index = outMessage.initRoot<Index>();
@@ -347,7 +346,7 @@ int main(int argc, const char** argv) {
       pmi::build(T, index);
       auto end = std::chrono::high_resolution_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-      log("Build time: " + std::to_string(duration.count()) + " milliseconds");
+      log(prefix, "Build time: " + std::to_string(duration.count()) + " milliseconds");
 
       writeCapnp(outMessage, default_index_path);
     }
@@ -359,25 +358,25 @@ int main(int argc, const char** argv) {
     std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
     std::string default_mutmat_path = guide + ".mm";
     if (!mutmat_path.empty()) {
-      log("Loading mutation matrices from: " + mutmat_path);
+      log(prefix, "Loading mutation matrices from: " + mutmat_path);
       std::ifstream mutmat_file(mutmat_path);
       sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
     } else if (fs::exists(default_mutmat_path)) {
-      log("Loading default mutation matrices from: " + default_mutmat_path);
+      log(prefix, "Loading default mutation matrices from: " + default_mutmat_path);
       std::ifstream mutmat_file(default_mutmat_path);
       sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
     } else {
-      log("No mutation matrices found, building...");
+      log(prefix, "No mutation matrices found, building...");
       sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
     }
 
 
     // Placement
-    log("Reading...");
+    log(prefix, "Reading...");
     inMessage = readCapnp(default_index_path);
     Index::Reader index_input = inMessage->getRoot<Index>();
 
-    log("Placing...");
+    log(prefix, "Placing...");
     auto start = std::chrono::high_resolution_clock::now();
     if (placement_per_read) {
       int maximumGap                = args["--maximum-gap"] ? std::stoi(args["--maximum-gap"].asString()) : 10;
@@ -397,7 +396,7 @@ int main(int argc, const char** argv) {
       bool keepAllReads             = args["--keep-all-reads"] && args["--keep-all-reads"].isBool() ? args["--keep-all-reads"].asBool() : false;
       bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
 
-      log("Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
+      log(prefix, "Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
         "\nminimum-count: " + std::to_string(minimumCount) +
         "\nminimum-score: " + std::to_string(minimumScore) +
         "\nerror-rate: " + std::to_string(errorRate) +
@@ -425,7 +424,7 @@ int main(int argc, const char** argv) {
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    log("Placement time: " + std::to_string(duration.count()) + " milliseconds");
+    log(prefix, "Placement time: " + std::to_string(duration.count()) + " milliseconds");
 
 
 
@@ -445,7 +444,7 @@ int main(int argc, const char** argv) {
     //log("Assembly...");
     // Assembly logic here
 
-    log("panmap run completed.");
+    log(prefix, "panmap run completed.");
 
     // // Keep the application running
     // std::cout << "Press Ctrl+C to exit." << std::endl;

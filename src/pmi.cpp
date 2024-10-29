@@ -2224,60 +2224,33 @@ void prepareAndRunBwa(const std::vector<std::string>& idx_args, const std::vecto
 
   try {
     std::cout << "Running run_bwa with idx_argv..." << std::endl;
+    optind = 1;
     if (run_bwa(idx_argv.size() - 1, idx_argv.data()) != 0) {
       throw std::runtime_error("BWA index failed");
     }
-    optind = 1;
-    fflush(stdout);
     std::cout << "Finished run_bwa with idx_argv." << std::endl;
 
     std::cout << "Running run_bwa with aln_argv1..." << std::endl;
-    int original_stdout = dup(fileno(stdout));
-    FILE* readsOutFile1 = freopen((reads1Path + ".tmp.sai").c_str(), "w", stdout);
-    if (!readsOutFile1) {
-      throw std::runtime_error("Failed to open readsOutFile1");
-    }
-
+    optind = 1;
     if (run_bwa(aln_argv1.size() - 1, aln_argv1.data()) != 0) {
       throw std::runtime_error("BWA aln failed");
     }
-    optind = 1;
-    fflush(stdout);
-    dup2(original_stdout, fileno(stdout));
-    close(original_stdout);
     std::cout << "Finished run_bwa with aln_argv1." << std::endl;
 
     if (aln_args2.size() > 0) {
       std::cout << "Running run_bwa with aln_argv2..." << std::endl;
-      int original_stdout2 = dup(fileno(stdout));
-      fflush(stdout);
-      FILE* readsOutFile2 = freopen((reads2Path + ".tmp.sai").c_str(), "w", stdout);
-      if (!readsOutFile2) {
-        throw std::runtime_error("Failed to open readsOutFile2");
-      }
+      optind = 1;
       if (run_bwa(aln_argv2.size() - 1, aln_argv2.data()) != 0) {
         throw std::runtime_error("BWA aln failed");
       }
-      optind = 1;
-      fflush(stdout);
-      dup2(original_stdout2, fileno(stdout));
-      close(original_stdout2);
       std::cout << "Finished run_bwa with aln_argv2." << std::endl;
     }
 
     std::cout << "Running run_bwa with samaln_argv..." << std::endl;
-    int original_stdout3 = dup(fileno(stdout));
-    FILE* samOutFile = freopen(samPath.c_str(), "w", stdout);
-    if (!samOutFile) {
-      throw std::runtime_error("Failed to open samOutFile");
-    }
+    optind = 1;
     if (run_bwa(samaln_argv.size() - 1, samaln_argv.data()) != 0) {
       throw std::runtime_error("BWA samaln failed");
     }
-    optind = 1;
-    fflush(stdout);
-    dup2(original_stdout3, fileno(stdout));
-    close(original_stdout3);
     std::cout << "Finished run_bwa with samaln_argv." << std::endl;
   } catch (...) {
     std::cerr << "run_bwa() caused an exception!" << std::endl;
@@ -2526,12 +2499,12 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
       std::vector<std::string> aln_args2;
       std::vector<std::string> samaln_args;
       if (reads2Path.empty()) {
-        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads1Path};
-        samaln_args = {"bwa", "samse", refFileName, reads1Path + ".tmp.sai", reads1Path};
+        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", reads1Path + ".tmp.sai", refFileName, reads1Path};
+        samaln_args = {"bwa", "samse", "-f", samFileName, refFileName, reads1Path + ".tmp.sai", reads1Path};
       } else {
-        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads1Path};
-        aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads2Path};
-        samaln_args = {"bwa", "sampe", "-a", "500", refFileName, reads1Path + ".tmp.sai", reads2Path + ".tmp.sai", reads1Path, reads2Path};
+        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", reads1Path + ".tmp.sai", refFileName, reads1Path};
+        aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", reads2Path + ".tmp.sai", refFileName, reads2Path};
+        samaln_args = {"bwa", "sampe", "-f", samFileName, refFileName, reads1Path + ".tmp.sai", reads2Path + ".tmp.sai", reads1Path, reads2Path};
       }
 
       prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, reads1Path, reads2Path, samFileName);
@@ -3445,12 +3418,12 @@ void pmi::place_per_read(
 
   std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
-  FILE* errorLog = freopen("error.log", "w", stderr);
+  FILE* errorLog = freopen((prefix + ".error.log").c_str(), "w", stderr);
   if (!errorLog) {
       throw std::runtime_error("Failed to redirect stderr to error.log");
   }
 
-  std::cerr << "Wrote error log file: error.log" << std::endl;
+  std::cerr << "Wrote error log file: " << prefix + ".error.log" << std::endl;
 
   // calling consensus
   std::cerr << "Calling consensus" << std::endl;
@@ -3506,12 +3479,12 @@ void pmi::place_per_read(
     std::vector<std::string> aln_args2;
     std::vector<std::string> samaln_args;
     if (fastqPath2.size() > 0) { 
-      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refPath, fastqPath1};
-      aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refPath, fastqPath2};
-      samaln_args = {"bwa", "sampe", "-a", "500", refPath, fastqPath1 + ".tmp.sai", fastqPath2 + ".tmp.sai", fastqPath1, fastqPath2};
+      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
+      aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath2 + ".tmp.sai", refPath, fastqPath2};
+      samaln_args = {"bwa", "sampe", "-f", samPath, refPath, fastqPath1 + ".tmp.sai", fastqPath2 + ".tmp.sai", fastqPath1, fastqPath2};
     } else {
-      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refPath, fastqPath1};
-      samaln_args = {"bwa", "samse", refPath, fastqPath1 + ".tmp.sai", fastqPath1};
+      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
+      samaln_args = {"bwa", "samse", "-f", samPath, refPath, fastqPath1 + ".tmp.sai", fastqPath1};
     }
 
     prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, fastqPath1, fastqPath2, samPath);
