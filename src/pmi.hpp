@@ -23,7 +23,9 @@ namespace pmi { // functions and types for seed indexing
     void place(
       Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
       seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName,
-      std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner);
+      std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner,
+      const std::string& refNode
+    );
 
     void place_per_read(
       Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
