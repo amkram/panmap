@@ -222,7 +222,7 @@ void createSam(
                 }
             }
 
-            std::cout << "Wrote sam data to " << samFileName << std::endl;
+            std::cerr << "Wrote sam data to " << samFileName << std::endl;
         } else {
             std::cerr << "Error: failed to write to file " << samFileName << std::endl;
         }
@@ -373,7 +373,7 @@ void createMplp(
             
             outFile << mplp_string.s;
 
-            std::cout << "Wrote mpileup data to " << mpileupFileName << std::endl;
+            std::cerr << "Wrote mpileup data to " << mpileupFileName << std::endl;
         } else {
             std::cerr << "Error: failed to write to file " << mpileupFileName << std::endl;
         }
@@ -405,7 +405,7 @@ void createVcf(
 
             genotype::printSamplePlacementVCF(mpileipStream, mutMat, true, 0, vcfOutFile);
 
-            std::cout << "Wrote vcf data to " << vcfFileName << std::endl;
+            std::cerr << "Wrote vcf data to " << vcfFileName << std::endl;
         }else{
 
             std::cerr << "Error: failed to write to file " << vcfFileName << std::endl;
