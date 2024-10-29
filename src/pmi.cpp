@@ -2006,6 +2006,14 @@ void getBestNodeSeeds(std::vector<Node *> &rpath, mutableTreeData& data, std::ve
   }
 }
 
+void fillDfsIndexes(Tree *T, Node *node, int64_t &dfsIndex, std::unordered_map<std::string, int64_t> &dfsIndexes) {
+  dfsIndexes[node->identifier] = dfsIndex;
+  dfsIndex++;
+  for (Node *child : node->children) {
+    fillDfsIndexes(T, child, dfsIndex, dfsIndexes);
+  }
+}
+
 void pmi::build(Tree *T, Index::Builder &index)
 {
   // Setup for seed indexing
@@ -2110,7 +2118,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
         line = 0;
         int forwardReads = readSequences.size();
         while ((line = kseq_read(seq)) >= 0) {
-            readSequences.push_back(seq->seq.s);
+            readSequences.push_back(reverseComplement(seq->seq.s));
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
@@ -2257,7 +2265,7 @@ void prepareAndRunBwa(const std::vector<std::string>& idx_args, const std::vecto
   }
 }
 
-void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner)
+void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode)
 {
     // Setup for seed indexing
     seed_annotated_tree::mutableTreeData data;
@@ -2313,7 +2321,6 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
     ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader= index.getPerNodeSeedMutations();
   
-    int64_t dfsIndex = 0;
     
     // std::vector<std::optional<std::string>> onSeedsString(globalCoords.back().first.back().first + 1, std::nullopt);
     std::vector<std::optional<std::string>> onSeedsString;
@@ -2331,24 +2338,37 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     int64_t jacNumer = 0;
     int64_t jacDenom = 0;    
     std::vector<std::pair<std::string, float>> placementScores;
-    for (const auto& count : readSeedCounts) {
-      jacDenom += count.second.first + count.second.second;
-      // std::cout << count.first << " " << count.second.first << " " << count.second.second << std::endl;
+    std::string bestNodeId;
+    Node *bestNode;
+    Node *curr;
+    int64_t dfsIndex = 0;
+    std::unordered_map<std::string, int64_t> dfsIndexes;
+    
+    if (refNode.empty()) {
+      for (const auto& count : readSeedCounts) {
+        jacDenom += count.second.first + count.second.second;
+        // std::cout << count.first << " " << count.second.first << " " << count.second.second << std::endl;
+      }
+
+      // buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
+      buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
+        Step::PLACE, data, placementScores, onSeedsString, onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes
+      );
+
+      std::sort(placementScores.begin(), placementScores.end(), [](auto &left, auto &right) {
+        return left.second > right.second;
+      });
+
+      bestNodeId = placementScores[0].first;
+      bestNode = T->allNodes[bestNodeId];
+      curr = bestNode;
+    } else {
+      fillDfsIndexes(T, T->root, dfsIndex, dfsIndexes);
+      bestNodeId = refNode;
+      bestNode = T->allNodes[refNode];
+      curr = bestNode;
     }
 
-    // buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
-    std::unordered_map<std::string, int64_t> dfsIndexes;
-    buildOrPlace<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
-      Step::PLACE, data, placementScores, onSeedsString, onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes
-    );
-
-    std::sort(placementScores.begin(), placementScores.end(), [](auto &left, auto &right) {
-      return left.second > right.second;
-    });
-
-    std::string bestNodeId = placementScores[0].first;
-    Node *bestNode = T->allNodes[bestNodeId];
-    Node *curr = bestNode;
     std::vector<Node *> rpath;
     while (curr != nullptr) {
       rpath.push_back(curr);
@@ -2359,8 +2379,12 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::vector<std::optional<seeding::onSeedsHash>> bestNodeOnSeedsHash(globalCoords.back().first.back().first + 1, std::nullopt);
     getBestNodeSeeds(rpath, bestNodeData, bestNodeOnSeedsString, bestNodeOnSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, globalCoords, bestNodeNavigator, scalarCoordToBlockId, bestNodeBlocksToSeeds, bestNodeBlockSizes, bestNodeBlockRanges, bestNodeGapMap, bestNodeInverseBlockIds, dfsIndexes);
 
-    std::cout << "best nods: " << bestNodeId << std::endl;
-    std::cout << "best node score: " << placementScores[0].second << std::endl;
+    if (refNode.empty()) {
+      std::cout << "best nods: " << bestNodeId << std::endl;
+      std::cout << "best node score: " << placementScores[0].second << std::endl;
+    } else {
+      std::cout << "specified reference node: " << refNode << std::endl;
+    }
     // Here bestNodeOnSeedsHash contains the best node's seeds
 
 
@@ -2481,7 +2505,6 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
           mplpString
       );
-
     
       //std::string vcfFileName = "VCF";
       //Convert to VCF
