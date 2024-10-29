@@ -81,6 +81,7 @@ Seeding/alignment options:
   -s <s>                             Length of s-mers for seed (syncmer) selection. [default: 8]
   -a --aligner <method>              The alignment algorithm to use ('minimap2' or 'bwa-aln').
                                      For very short or damaged reads, use bwa-aln. [default: minimap2]
+  -r --ref <node_id>                 Provide a reference node to align reads to (skip placement) [default: ].    
   -P --prior                         Compute and use a mutation spectrum prior for genotyping.
   -f --reindex                       Don't load index from disk, build it from scratch.
 
@@ -205,6 +206,7 @@ int main(int argc, const char** argv) {
     std::string prefix = args["--prefix"] ? args["--prefix"].asString() : "panmap";
     std::string outputs = args["-o"] && args["-o"].isString() ? args["-o"].asString() : "bam,vcf,assembly";
     std::string aligner = args["--aligner"] ? args["--aligner"].asString() == "bwa-aln" ? "bwa-aln" : "minimap2" : "minimap2";
+    std::string refNode = args["--ref"] ? args["--ref"].asString() : "";
 
 
     std::vector<std::string> outputs_seperated;
@@ -419,7 +421,11 @@ int main(int argc, const char** argv) {
         rescueDuplicatesThreshold, filterRound, checkFrequency, removeIteration,
         insigProp, roundsRemove, removeThreshold, leafNodesOnly, prefix);
     } else {
-      pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner);
+      if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
+        std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
+        return 1;
+      }
+      pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
