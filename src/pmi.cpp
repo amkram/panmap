@@ -26,6 +26,7 @@
 #include <tbb/parallel_sort.h>
 #include <boost/icl/interval_map.hpp>
 #include <boost/icl/split_interval_map.hpp>
+#include <boost/filesystem.hpp>
 #define EIGEN_USE_THREADS
 #include <eigen3/Eigen/Dense>
 // #include <omp.h>
@@ -33,8 +34,10 @@
 extern "C" {
 #include <bwa/bwa.h>
 }
+
 using namespace boost::icl;
 using namespace mgsr;
+namespace fs = boost::filesystem;
 
 enum Step {
   BUILD,
@@ -2107,7 +2110,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
         line = 0;
         int forwardReads = readSequences.size();
         while ((line = kseq_read(seq)) >= 0) {
-            readSequences.push_back(reverseComplement(seq->seq.s));
+            readSequences.push_back(seq->seq.s);
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
@@ -2135,6 +2138,150 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
       }
       readSeeds.push_back(std::move(curReadSeeds));
     }
+}
+
+void prepareAndRunBwa(const std::vector<std::string>& idx_args, const std::vector<std::string>& aln_args1, const std::vector<std::string>& aln_args2, const std::vector<std::string>& samaln_args, const std::string& reads1Path, const std::string& reads2Path, const std::string& samPath) {
+  std::vector<std::vector<char>> idx_argv_buf;
+  std::vector<char*> idx_argv;
+
+  std::cout << "Constructing idx_argv..." << std::endl;
+  for (const auto& arg : idx_args) {
+    std::cout << "Processing argument: " << arg << std::endl;
+    idx_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
+    idx_argv_buf.back().push_back('\0');  // Ensure null termination
+    idx_argv.push_back(idx_argv_buf.back().data());  // Push the C-string pointer
+  }
+  idx_argv.push_back(nullptr);  // Null-terminate the argv array
+
+  std::cout << "Constructed idx_argv:" << std::endl;
+  for (size_t i = 0; i < idx_argv.size(); ++i) {
+    if (idx_argv[i] != nullptr)
+      std::cout << "idx_argv[" << i << "]: " << idx_argv[i] << std::endl;
+    else
+      std::cout << "idx_argv[" << i << "]: (null)" << std::endl;
+  }
+
+  std::vector<std::vector<char>> aln_argv_buf1;
+  std::vector<char*> aln_argv1;
+  std::cout << "Constructing aln_argv1..." << std::endl;
+  for (const auto& arg : aln_args1) {
+    std::cout << "Processing argument: " << arg << std::endl;
+    aln_argv_buf1.push_back(std::vector<char>(arg.begin(), arg.end()));
+    aln_argv_buf1.back().push_back('\0');
+    aln_argv1.push_back(aln_argv_buf1.back().data());
+  }
+  aln_argv1.push_back(nullptr);
+
+  std::cout << "Constructed aln_argv1:" << std::endl;
+  for (size_t i = 0; i < aln_argv1.size(); ++i) {
+    if (aln_argv1[i] != nullptr)
+      std::cout << "aln_argv1[" << i << "]: " << aln_argv1[i] << std::endl;
+    else
+      std::cout << "aln_argv1[" << i << "]: (null)" << std::endl;
+  }
+
+  std::vector<std::vector<char>> aln_argv_buf2;
+  std::vector<char*> aln_argv2;
+  if (aln_args2.size() > 0) {
+    std::cout << "Constructing aln_argv2..." << std::endl;
+    for (const auto& arg : aln_args2) {
+      std::cout << "Processing argument: " << arg << std::endl;
+      aln_argv_buf2.push_back(std::vector<char>(arg.begin(), arg.end()));
+      aln_argv_buf2.back().push_back('\0');
+      aln_argv2.push_back(aln_argv_buf2.back().data());
+    }
+    aln_argv2.push_back(nullptr);
+
+    std::cout << "Constructed aln_argv2:" << std::endl;
+    for (size_t i = 0; i < aln_argv2.size(); ++i) {
+      if (aln_argv2[i] != nullptr)
+        std::cout << "aln_argv2[" << i << "]: " << aln_argv2[i] << std::endl;
+      else
+        std::cout << "aln_argv2[" << i << "]: (null)" << std::endl;
+    }
+  }
+
+  std::vector<std::vector<char>> samaln_argv_buf;
+  std::vector<char*> samaln_argv;
+  std::cout << "Constructing samaln_argv..." << std::endl;
+  for (const auto& arg : samaln_args) {
+    std::cout << "Processing argument: " << arg << std::endl;
+    samaln_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
+    samaln_argv_buf.back().push_back('\0');
+    samaln_argv.push_back(samaln_argv_buf.back().data());
+  }
+  samaln_argv.push_back(nullptr);
+
+  std::cout << "Constructed samaln_argv:" << std::endl;
+  for (size_t i = 0; i < samaln_argv.size(); ++i) {
+    if (samaln_argv[i] != nullptr)
+      std::cout << "samaln_argv[" << i << "]: " << samaln_argv[i] << std::endl;
+    else
+      std::cout << "samaln_argv[" << i << "]: (null)" << std::endl;
+  }
+
+  std::cout << "About to call run_bwa with idx_argv..." << std::endl;
+
+  try {
+    std::cout << "Running run_bwa with idx_argv..." << std::endl;
+    if (run_bwa(idx_argv.size() - 1, idx_argv.data()) != 0) {
+      throw std::runtime_error("BWA index failed");
+    }
+    optind = 1;
+    fflush(stdout);
+    std::cout << "Finished run_bwa with idx_argv." << std::endl;
+
+    std::cout << "Running run_bwa with aln_argv1..." << std::endl;
+    int original_stdout = dup(fileno(stdout));
+    FILE* readsOutFile1 = freopen((reads1Path + ".tmp.sai").c_str(), "w", stdout);
+    if (!readsOutFile1) {
+      throw std::runtime_error("Failed to open readsOutFile1");
+    }
+
+    if (run_bwa(aln_argv1.size() - 1, aln_argv1.data()) != 0) {
+      throw std::runtime_error("BWA aln failed");
+    }
+    optind = 1;
+    fflush(stdout);
+    dup2(original_stdout, fileno(stdout));
+    close(original_stdout);
+    std::cout << "Finished run_bwa with aln_argv1." << std::endl;
+
+    if (aln_args2.size() > 0) {
+      std::cout << "Running run_bwa with aln_argv2..." << std::endl;
+      int original_stdout2 = dup(fileno(stdout));
+      fflush(stdout);
+      FILE* readsOutFile2 = freopen((reads2Path + ".tmp.sai").c_str(), "w", stdout);
+      if (!readsOutFile2) {
+        throw std::runtime_error("Failed to open readsOutFile2");
+      }
+      if (run_bwa(aln_argv2.size() - 1, aln_argv2.data()) != 0) {
+        throw std::runtime_error("BWA aln failed");
+      }
+      optind = 1;
+      fflush(stdout);
+      dup2(original_stdout2, fileno(stdout));
+      close(original_stdout2);
+      std::cout << "Finished run_bwa with aln_argv2." << std::endl;
+    }
+
+    std::cout << "Running run_bwa with samaln_argv..." << std::endl;
+    int original_stdout3 = dup(fileno(stdout));
+    FILE* samOutFile = freopen(samPath.c_str(), "w", stdout);
+    if (!samOutFile) {
+      throw std::runtime_error("Failed to open samOutFile");
+    }
+    if (run_bwa(samaln_argv.size() - 1, samaln_argv.data()) != 0) {
+      throw std::runtime_error("BWA samaln failed");
+    }
+    optind = 1;
+    fflush(stdout);
+    dup2(original_stdout3, fileno(stdout));
+    close(original_stdout3);
+    std::cout << "Finished run_bwa with samaln_argv." << std::endl;
+  } catch (...) {
+    std::cerr << "run_bwa() caused an exception!" << std::endl;
+  }
 }
 
 void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner)
@@ -2239,8 +2386,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     std::vector<std::optional<seeding::onSeedsHash>> bestNodeOnSeedsHash(globalCoords.back().first.back().first + 1, std::nullopt);
     getBestNodeSeeds(rpath, bestNodeData, bestNodeOnSeedsString, bestNodeOnSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, globalCoords, bestNodeNavigator, scalarCoordToBlockId, bestNodeBlocksToSeeds, bestNodeBlockSizes, bestNodeBlockRanges, bestNodeGapMap, bestNodeInverseBlockIds, dfsIndexes);
 
-    //std::cout << "best node: " << bestNodeId << std::endl;
-    //std::cout << "best node score: " << placementScores[0].second << std::endl;
+    std::cout << "best nods: " << bestNodeId << std::endl;
+    std::cout << "best node score: " << placementScores[0].second << std::endl;
     // Here bestNodeOnSeedsHash contains the best node's seeds
 
 
@@ -2258,6 +2405,19 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     }
 
 
+    /*
+    std::unordered_map<size_t, std::vector<int32_t>> seedToRefPositions;
+    for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
+      if(bestNodeOnSeedsHash[i].has_value()){
+        size_t seed = bestNodeOnSeedsHash[i].value().hash;
+
+        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
+            seedToRefPositions[seed] = {};
+        }
+        seedToRefPositions[seed].push_back(degap[i]);
+      }
+    }
+    */
 
     std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
     for(int i = 0; i < bestNodeOnSeedsHash.size(); i++){
@@ -2283,6 +2443,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
       }
     }
 
+    //std::string refFileName = "REFERENCE";
     //Print out Reference
     if (refFileName.size() == 0) {
       refFileName = "panmap.reference.fa";
@@ -2334,7 +2495,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           bamRecords
       );
 
-      
+      //std::string mpileupFileName = "MPILEUP";
       //Convert to Mplp
       char *mplpString;
 
@@ -2348,112 +2509,32 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           mplpString
       );
 
-
+    
+      //std::string vcfFileName = "VCF";
       //Convert to VCF
       createVcf(
           mplpString,
           mutMat,
           vcfFileName
       );
-
-
     } else {
       // align with bwa aln
       std::cout << "Preparing arguments for bwa..." << std::endl;
 
       std::vector<std::string> idx_args = {"bwa", "index", refFileName};
-      std::vector<std::string> aln_args = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads1Path};
-      std::vector<std::string> samse_args = {"bwa", "samse", "-f", samFileName, refFileName, reads1Path + ".tmp.sai", reads1Path};
-
-      std::vector<std::vector<char>> idx_argv_buf;
-      std::vector<char*> idx_argv;
-
-      std::cout << "Constructing idx_argv..." << std::endl;
-      for (const auto& arg : idx_args) {
-          std::cout << "Processing argument: " << arg << std::endl;
-          idx_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
-          idx_argv_buf.back().push_back('\0');  // Ensure null termination
-          idx_argv.push_back(idx_argv_buf.back().data());  // Push the C-string pointer
-      }
-      idx_argv.push_back(nullptr);  // Null-terminate the argv array
-
-      std::cout << "Constructed idx_argv:" << std::endl;
-      for (size_t i = 0; i < idx_argv.size(); ++i) {
-          if (idx_argv[i] != nullptr)
-              std::cout << "idx_argv[" << i << "]: " << idx_argv[i] << std::endl;
-          else
-              std::cout << "idx_argv[" << i << "]: (null)" << std::endl;
+      std::vector<std::string> aln_args1;
+      std::vector<std::string> aln_args2;
+      std::vector<std::string> samaln_args;
+      if (reads2Path.empty()) {
+        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads1Path};
+        samaln_args = {"bwa", "samse", refFileName, reads1Path + ".tmp.sai", reads1Path};
+      } else {
+        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads1Path};
+        aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refFileName, reads2Path};
+        samaln_args = {"bwa", "sampe", "-a", "500", refFileName, reads1Path + ".tmp.sai", reads2Path + ".tmp.sai", reads1Path, reads2Path};
       }
 
-      std::vector<std::vector<char>> aln_argv_buf;
-      std::vector<char*> aln_argv;
-      std::cout << "Constructing aln_argv..." << std::endl;
-      for (const auto& arg : aln_args) {
-          std::cout << "Processing argument: " << arg << std::endl;
-          aln_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
-          aln_argv_buf.back().push_back('\0');
-          aln_argv.push_back(aln_argv_buf.back().data());
-      }
-      aln_argv.push_back(nullptr);
-
-      std::cout << "Constructed aln_argv:" << std::endl;
-      for (size_t i = 0; i < aln_argv.size(); ++i) {
-          if (aln_argv[i] != nullptr)
-              std::cout << "aln_argv[" << i << "]: " << aln_argv[i] << std::endl;
-          else
-              std::cout << "aln_argv[" << i << "]: (null)" << std::endl;
-      }
-
-      std::vector<std::vector<char>> samse_argv_buf;
-      std::vector<char*> samse_argv;
-      std::cout << "Constructing samse_argv..." << std::endl;
-      for (const auto& arg : samse_args) {
-          std::cout << "Processing argument: " << arg << std::endl;
-          samse_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
-          samse_argv_buf.back().push_back('\0');
-          samse_argv.push_back(samse_argv_buf.back().data());
-      }
-      samse_argv.push_back(nullptr);
-
-      std::cout << "Constructed samse_argv:" << std::endl;
-      for (size_t i = 0; i < samse_argv.size(); ++i) {
-          if (samse_argv[i] != nullptr)
-              std::cout << "samse_argv[" << i << "]: " << samse_argv[i] << std::endl;
-          else
-              std::cout << "samse_argv[" << i << "]: (null)" << std::endl;
-      }
-
-      std::cout << "About to call run_bwa with idx_argv..." << std::endl;
-
-      try {
-            std::cout << "Running run_bwa with idx_argv..." << std::endl;
-            if (run_bwa(idx_argv.size() - 1, idx_argv.data()) != 0) {
-                throw std::runtime_error("BWA index failed");
-            }
-            fflush(stdout);
-            std::cout << "Finished run_bwa with idx_argv." << std::endl;
-            std::cout << "Running run_bwa with aln_argv..." << std::endl;
-            FILE* readsOutFile = freopen((reads1Path + ".tmp.sai").c_str(), "w", stdout);
-            if (!readsOutFile) {
-                throw std::runtime_error("Failed to open readsOutFile");
-            }
-            if (run_bwa(aln_argv.size() - 1, aln_argv.data()) != 0) {
-                throw std::runtime_error("BWA aln failed");
-            }
-            fflush(stdout);
-            freopen("/dev/tty", "w", stdout);
-            std::cout << "Finished run_bwa with aln_argv." << std::endl;
-
-            std::cout << "Running run_bwa with samse_argv..." << std::endl;
-            if (run_bwa(samse_argv.size() - 1, samse_argv.data()) != 0) {
-                throw std::runtime_error("BWA samse failed");
-            }
-            fflush(stdout);
-            freopen("/dev/tty", "w", stdout);
-            std::cout << "Finished run_bwa with samse_argv." << std::endl;
-      } catch (...) {
-          std::cerr << "run_bwa() caused an exception!" << std::endl;
-      }
+      prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, reads1Path, reads2Path, samFileName);
     }
 }
 
@@ -2980,7 +3061,6 @@ void seedmersFromFastq(
   tbb::parallel_for(tbb::blocked_range<size_t>(0, dupReadsIndex.size(), dupReadsIndex.size() / num_cpus),
     [&](const tbb::blocked_range<size_t>& range){
       for (size_t i = range.begin(); i < range.end(); ++i) {
-        
         const auto& syncmers = seeding::rollingSyncmers(dupReadsIndex[i].first, k, s, openSyncmers, t, false);
         mgsr::Read& curRead = uniqueReadSeedmers[i];
         if (syncmers.size() < l) continue;
@@ -3158,7 +3238,6 @@ void pmi::place_per_read(
   int32_t t = index.getT();
   int32_t l = index.getL();
   bool openSyncmers = index.getOpen();
-  
 
   std::map<int64_t, int64_t> gapMap;
 
@@ -3373,10 +3452,82 @@ void pmi::place_per_read(
 
   std::cerr << "Wrote error log file: error.log" << std::endl;
 
-  /*
-  Consensus calling
-    1. Align all reads to all estimated haplotypes using bwa
-  */
+  // calling consensus
+  std::cerr << "Calling consensus" << std::endl;
+
+  std::unordered_map<std::string, std::vector<size_t>> assignedReads;
+
+  mgsr::assignReadsToNodes(allScores, nodes, probs, props, readSeedmersDuplicatesIndex, assignedReads);
+
+  for (const auto& node : sortedOut) {
+    // write reference fastas
+    std::cerr << "Writing reference fastas for " << node.first << std::endl;
+    std::string refPath = prefix + "." + node.first + ".fasta";
+    std::ofstream refOut(refPath);
+    refOut << ">" << node.first << "\n" << T->getStringFromReference(node.first, false) << "\n";
+    refOut.close();
+    std::cerr << "Finished writing reference fastas for " << node.first << std::endl;
 
 
+    // write reads to fastq
+    std::cerr << "Writing assigned reads assigned to " << node.first << std::endl;
+    std::string fastqPath1 = "";
+    std::string fastqPath2 = "";
+    if (reads2Path.size() > 0) {
+      fastqPath1 = prefix + "." + node.first + "_R1.fastq";
+      fastqPath2 = prefix + "." + node.first + "_R2.fastq";
+      std::unordered_set<size_t> assigned;
+      std::ofstream fastqOut1(fastqPath1);
+      std::ofstream fastqOut2(fastqPath2);
+      for (size_t readIdx : assignedReads[node.first]) {
+        readIdx = readIdx % 2 == 0 ? readIdx : readIdx - 1;
+        if (assigned.find(readIdx) != assigned.end()) continue;
+        fastqOut1 << "@" << readNames[readIdx] << "\n" << readSequences[readIdx] << "\n+\n" << readQuals[readIdx] << "\n";
+        fastqOut2 << "@" << readNames[readIdx + 1] << "\n" << readSequences[readIdx + 1] << "\n+\n" << readQuals[readIdx + 1] << "\n";
+        assigned.insert(readIdx);
+      }
+      fastqOut1.close();
+      fastqOut2.close();
+    } else {
+      fastqPath1 = prefix + "." + node.first + ".fastq";
+      std::ofstream fastqOut(fastqPath1);
+      for (const auto& readIndex : assignedReads[node.first]) {
+        fastqOut << "@" << readNames[readIndex] << "\n" << readSequences[readIndex] << "\n+\n" << readQuals[readIndex] << "\n";
+      }
+      fastqOut.close();
+    }
+    std::cerr << "Finished writing assigned reads assigned to " << node.first << std::endl;
+
+    // run bwa index, aln, sampe
+    std::cerr << "Running bwa aln for " << node.first << std::endl;
+    std::string samPath = prefix + "." + node.first + ".sam";
+    std::vector<std::string> idx_args = {"bwa", "index", refPath};
+    std::vector<std::string> aln_args1;
+    std::vector<std::string> aln_args2;
+    std::vector<std::string> samaln_args;
+    if (fastqPath2.size() > 0) { 
+      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refPath, fastqPath1};
+      aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refPath, fastqPath2};
+      samaln_args = {"bwa", "sampe", "-a", "500", refPath, fastqPath1 + ".tmp.sai", fastqPath2 + ".tmp.sai", fastqPath1, fastqPath2};
+    } else {
+      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", refPath, fastqPath1};
+      samaln_args = {"bwa", "samse", refPath, fastqPath1 + ".tmp.sai", fastqPath1};
+    }
+
+    prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, fastqPath1, fastqPath2, samPath);
+    std::cerr << "Finished running bwa aln for " << node.first << std::endl;
+
+    // delete intermediate files
+    // std::cerr << "Cleaning up intermediate files for " << node.first << std::endl;
+    // fs::remove(refPath);
+    // fs::remove(refPath + ".amb");
+    // fs::remove(refPath + ".ann");
+    // fs::remove(refPath + ".bwt");
+    // fs::remove(refPath + ".pac");
+    // fs::remove(refPath + ".sa");
+
+    // get vcf
+    // resolve genotype conflicts
+    // write consensus fasta
+  }
 }
