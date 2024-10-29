@@ -2295,7 +2295,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
             outFile << ">ref\n";
             outFile << bestMatchSequence << "\n";
 
-            std::cout << "Wrote reference fasta to " << refFileName << std::endl;
+            std::cerr << "Wrote reference fasta to " << refFileName << std::endl;
         } else {
             std::cerr << "Error: failed to write to file " << refFileName << std::endl;
         }
