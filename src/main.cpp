@@ -256,6 +256,7 @@ int main(int argc, const char** argv) {
             }else if(output == "sam"){
               samFileName = prefix + ".sam";
             }else if(output == "bam"){
+              samFileName = prefix + ".sam";
               bamFileName = prefix + ".bam";
             }else if(output == "mpileup"){
               mpileupFileName = prefix + ".mpileup";

@@ -982,7 +982,7 @@ namespace mgsr {
           }
       }
       if (significantIndices.size() == nodes.size()) break;
-      std::cerr << "remove round " << i + 1 << std::endl;
+      std::cerr << "\nremove round " << i + 1 << std::endl;
 
       for (size_t idx : significantIndices) {
           sigNodes.push_back(nodes[idx]);
@@ -1024,12 +1024,32 @@ namespace mgsr {
 
     if (exclude.empty()) {
       std::stringstream msg;
-      msg << "Finished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
+      msg << "\nFinished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
       std::cerr << msg.str();
     } else {
       std::stringstream msg;
-      msg << "Finished EM estimation of haplotype proportions excluding " << exclude << ". Total EM iterations: " << curit<< "\n";
+      msg << "\nFinished EM estimation of haplotype proportions excluding " << exclude << ". Total EM iterations: " << curit<< "\n";
       std::cerr << msg.str();
+    }
+  }
+
+  void assignReadsToNodes(
+    const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
+    const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs, const Eigen::VectorXd& props,
+    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::unordered_map<std::string, std::vector<size_t>>& assignedReads
+  ) {
+    size_t rowindex = 0;
+    for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
+      const Eigen::VectorXd& curProbs = probs.row(rowindex);
+      double curmax = curProbs.maxCoeff();
+      for (size_t j = 0; j < curProbs.size(); ++j) {
+        if (curProbs(j) == curmax) {
+          for (size_t k = 0; k < readSeedmersDuplicatesIndex[i].size(); ++k) {
+            assignedReads[nodes[j]].push_back(readSeedmersDuplicatesIndex[i][k]);
+          }
+        }
+      }
+      ++rowindex;
     }
   }
 }
