@@ -290,10 +290,8 @@ void createBam(
     bam1_t ** &bamRecords
 )   {
 
-    
     // Parse SAM header
     header = sam_hdr_parse(samHeader.length(), samHeader.c_str());
-
     htsFile *bam_file = NULL;
 
     if (bamFileName.size() > 0) {
