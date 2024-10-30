@@ -2148,7 +2148,44 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
     }
 }
 
-void prepareAndRunBwa(const std::vector<std::string>& idx_args, const std::vector<std::string>& aln_args1, const std::vector<std::string>& aln_args2, const std::vector<std::string>& samaln_args, const std::string& reads1Path, const std::string& reads2Path, const std::string& samPath) {
+int extractPosition(char *line) {
+    int fieldCount = 0;
+    char *ptr = line;
+    char *fieldStart = ptr;
+
+    while (*ptr != '\0') {
+        if (*ptr == '\t') {
+            fieldCount++;
+            if (fieldCount == 4) {
+                // We've found the end of the 4th field
+                *ptr = '\0';  // Temporarily terminate the 4th field string
+
+                // Convert the 4th field to an integer
+                int position = atoi(fieldStart);
+
+                *ptr = '\t';  // Restore the original character
+                return position;
+            }
+            // Move to the start of the next field
+            fieldStart = ptr + 1;
+        }
+        ptr++;
+    }
+
+    // Check if the line ends exactly after the 4th field
+    if (fieldCount == 3) {
+        // Line ends after the 4th field
+        int position = atoi(fieldStart);
+        return position;
+    }
+
+    // If we reach here, the line doesn't have at least 4 fields
+    throw std::runtime_error("Line does not have at least 4 fields.");
+}
+
+void prepareAndRunBwa(
+  const std::vector<std::string>& idx_args, const std::vector<std::string>& aln_args1, const std::vector<std::string>& aln_args2, const std::vector<std::string>& samaln_args, const std::string& reads1Path, const std::string& reads2Path, std::vector<std::pair<int, char*>> &samAlignmentPairs, std::vector<std::string> &samHeaders
+  ) {
   std::vector<std::vector<char>> idx_argv_buf;
   std::vector<char*> idx_argv;
 
@@ -2240,26 +2277,80 @@ void prepareAndRunBwa(const std::vector<std::string>& idx_args, const std::vecto
 
     std::cout << "Running run_bwa with aln_argv1..." << std::endl;
     optind = 1;
+    int stdoutFd = dup(fileno(stdout));
     if (run_bwa(aln_argv1.size() - 1, aln_argv1.data()) != 0) {
       throw std::runtime_error("BWA aln failed");
     }
+    fflush(stdout);
+    dup2(stdoutFd, fileno(stdout));
+    close(stdoutFd);
     std::cout << "Finished run_bwa with aln_argv1." << std::endl;
 
     if (aln_args2.size() > 0) {
       std::cout << "Running run_bwa with aln_argv2..." << std::endl;
       optind = 1;
+      int stdoutFd2 = dup(fileno(stdout));
       if (run_bwa(aln_argv2.size() - 1, aln_argv2.data()) != 0) {
         throw std::runtime_error("BWA aln failed");
       }
+      fflush(stdout);
+      dup2(stdoutFd2, fileno(stdout));
+      close(stdoutFd2);
       std::cout << "Finished run_bwa with aln_argv2." << std::endl;
     }
 
     std::cout << "Running run_bwa with samaln_argv..." << std::endl;
     optind = 1;
+    FILE *tempFile = std::tmpfile();
+    if (!tempFile) {
+      std::cerr << "Failed to create temporary file for capturing bwa SAM alignments." << std::endl;
+      return;
+    }
+    int stdoutFd3 = dup(fileno(stdout));
+    if (stdoutFd3 == -1) {
+      std::cerr << "Failed to duplicate stdout file descriptor for capturing bwa SAM alignments." << std::endl;
+      return;
+    }
+    if (dup2(fileno(tempFile), fileno(stdout)) == -1) {
+      std::cerr << "Failed to redirect stdout to temporary file for capturing bwa SAM alignments." << std::endl;
+      return;
+    }
     if (run_bwa(samaln_argv.size() - 1, samaln_argv.data()) != 0) {
       throw std::runtime_error("BWA samaln failed");
     }
+    fflush(stdout);
+    dup2(stdoutFd3, fileno(stdout));
+    close(stdoutFd3);
+    rewind(tempFile); 
+    char buffer[512];
+    size_t i = 0;
+    while (fgets(buffer, sizeof(buffer), tempFile)) {
+      char *line = new char[strlen(buffer) + 1];
+      std::strcpy(line, buffer);
+      if (aln_args2.size() > 0) {
+        if (i < 4) {
+          samHeaders.push_back(line);
+        } else {
+          size_t len = strlen(line);
+          if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+          int pos = extractPosition(line);
+          samAlignmentPairs.push_back(std::make_pair(pos, line));
+        }
+      } else {
+        if (i < 3) {
+          samHeaders.push_back(line);
+        } else {
+          size_t len = strlen(line);
+          if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+          int pos = extractPosition(line);
+          samAlignmentPairs.push_back(std::make_pair(pos, line));
+        }
+      }
+      ++i;
+    }
+    fclose(tempFile);
     std::cout << "Finished run_bwa with samaln_argv." << std::endl;
+    
   } catch (...) {
     std::cerr << "run_bwa() caused an exception!" << std::endl;
   }
@@ -2423,8 +2514,6 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
         bool reversed = bestNodeOnSeedsHash[i].value().isReverse;
         int pos = degap[i];
 
-
-
         if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
             std::vector<uint32_t> a;
             std::vector<uint32_t> b;
@@ -2478,7 +2567,6 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           samAlignments,             
           samHeader                  
       );
-
       //Convert to BAM
       sam_hdr_t *header;
       bam1_t **bamRecords;
@@ -2505,7 +2593,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
           mplpString
       );
-    
+
       //std::string vcfFileName = "VCF";
       //Convert to VCF
       createVcf(
@@ -2521,16 +2609,39 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
       std::vector<std::string> aln_args1;
       std::vector<std::string> aln_args2;
       std::vector<std::string> samaln_args;
+      std::vector<std::pair<int, char*>> samAlignmentPairs;
+      std::vector<std::string> samHeaders;
       if (reads2Path.empty()) {
         aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", reads1Path + ".tmp.sai", refFileName, reads1Path};
-        samaln_args = {"bwa", "samse", "-f", samFileName, refFileName, reads1Path + ".tmp.sai", reads1Path};
+        samaln_args = {"bwa", "samse", refFileName, reads1Path + ".tmp.sai", reads1Path};
       } else {
         aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", reads1Path + ".tmp.sai", refFileName, reads1Path};
         aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", reads2Path + ".tmp.sai", refFileName, reads2Path};
-        samaln_args = {"bwa", "sampe", "-f", samFileName, refFileName, reads1Path + ".tmp.sai", reads2Path + ".tmp.sai", reads1Path, reads2Path};
+        samaln_args = {"bwa", "sampe", refFileName, reads1Path + ".tmp.sai", reads2Path + ".tmp.sai", reads1Path, reads2Path};
       }
 
-      prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, reads1Path, reads2Path, samFileName);
+      prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, reads1Path, reads2Path, samAlignmentPairs, samHeaders);
+
+
+      std::sort(samAlignmentPairs.begin(), samAlignmentPairs.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
+          return a.first < b.first;
+      });
+
+      std::vector<char*> samAlignments(samAlignmentPairs.size());
+      for (size_t i = 0; i < samAlignmentPairs.size(); ++i) {
+        samAlignments[i] = samAlignmentPairs[i].second;
+      }
+
+
+      std::ofstream samOut{samFileName};
+      for (const auto& header : samHeaders) {
+        samOut << header;
+      }
+      for (const auto& line : samAlignments) {
+        samOut << line << "\n";
+      }
+      samOut.close();
+      std::cout << "Wrote sam data to " << samFileName << std::endl;
     }
 }
 
@@ -3459,8 +3570,9 @@ void pmi::place_per_read(
     // write reference fastas
     std::cerr << "Writing reference fastas for " << node.first << std::endl;
     std::string refPath = prefix + "." + node.first + ".fasta";
+    std::string refSeq = T->getStringFromReference(node.first, false);
     std::ofstream refOut(refPath);
-    refOut << ">" << node.first << "\n" << T->getStringFromReference(node.first, false) << "\n";
+    refOut << ">" << node.first << "\n" << refSeq << "\n";
     refOut.close();
     std::cerr << "Finished writing reference fastas for " << node.first << std::endl;
 
@@ -3501,17 +3613,68 @@ void pmi::place_per_read(
     std::vector<std::string> aln_args1;
     std::vector<std::string> aln_args2;
     std::vector<std::string> samaln_args;
+    std::vector<std::pair<int, char*>> samAlignmentPairs;
+    std::vector<std::string> samHeaders;
     if (fastqPath2.size() > 0) { 
       aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
       aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath2 + ".tmp.sai", refPath, fastqPath2};
-      samaln_args = {"bwa", "sampe", "-f", samPath, refPath, fastqPath1 + ".tmp.sai", fastqPath2 + ".tmp.sai", fastqPath1, fastqPath2};
+      samaln_args = {"bwa", "sampe", refPath, fastqPath1 + ".tmp.sai", fastqPath2 + ".tmp.sai", fastqPath1, fastqPath2};
     } else {
       aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
-      samaln_args = {"bwa", "samse", "-f", samPath, refPath, fastqPath1 + ".tmp.sai", fastqPath1};
+      samaln_args = {"bwa", "samse", refPath, fastqPath1 + ".tmp.sai", fastqPath1};
+    }
+    
+    prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, fastqPath1, fastqPath2, samAlignmentPairs, samHeaders);
+    std::cerr << "Finished running bwa aln for " << node.first << std::endl;
+
+
+
+    std::sort(samAlignmentPairs.begin(), samAlignmentPairs.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
+        return a.first < b.first;
+    });
+
+    std::vector<char*> samAlignments(samAlignmentPairs.size());
+    for (size_t i = 0; i < samAlignmentPairs.size(); ++i) {
+      samAlignments[i] = samAlignmentPairs[i].second;
     }
 
-    prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, fastqPath1, fastqPath2, samPath);
-    std::cerr << "Finished running bwa aln for " << node.first << std::endl;
+    std::ofstream samOut{samPath};
+    for (const auto& header : samHeaders) {
+      samOut << header;
+    }
+    for (const auto& line : samAlignments) {
+      samOut << line << "\n";
+    }
+    samOut.close();
+    std::cout << "Wrote sam data to " << samPath << std::endl;
+
+    sam_hdr_t *header;
+    bam1_t **bamRecords;
+    std::string bamPath = prefix + "." + node.first + ".bam";
+    std::cout << "Creating bam file for " << node.first << std::endl;
+    std::string samHeader = samHeaders[0].substr(0, samHeaders[0].size() - 1);
+    createBam(
+        samAlignments,
+        samHeader,
+        bamPath,
+        header,
+        bamRecords
+    );
+    std::cout << "Finished creating bam file for " << node.first << std::endl;
+
+    std::cout << "Creating mpileup file for " << node.first << std::endl;
+    char *mplpString;
+    std::string mpileupPath = prefix + "." + node.first + ".mpileup";
+    createMplp(
+        refSeq,
+        header,
+        bamRecords,
+        samAlignments.size(),
+        mpileupPath,
+        mplpString
+    );
+    std::cout << "Finished creating mpileup file for " << node.first << std::endl;
+
 
     // delete intermediate files
     // std::cerr << "Cleaning up intermediate files for " << node.first << std::endl;
@@ -3525,5 +3688,6 @@ void pmi::place_per_read(
     // get vcf
     // resolve genotype conflicts
     // write consensus fasta
+    break;
   }
 }
