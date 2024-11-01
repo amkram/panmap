@@ -31,9 +31,10 @@ namespace pmi { // functions and types for seed indexing
       Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
       const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
       const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
-      const int& rescueDuplicatesThreshold, const int& filterRound, const int& checkFrequency,
+      const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold,
+      const std::string& preEMFilterMethod, const int& emFilterRound, const int& checkFrequency,
       const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold,
-      const bool& leafNodesOnly, const std::string& prefix);
+      const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix);
 
 } // namespace pmi
 
