@@ -2189,83 +2189,83 @@ void prepareAndRunBwa(
   std::vector<std::vector<char>> idx_argv_buf;
   std::vector<char*> idx_argv;
 
-  std::cout << "Constructing idx_argv..." << std::endl;
+  std::cerr << "Constructing idx_argv..." << std::endl;
   for (const auto& arg : idx_args) {
-    std::cout << "Processing argument: " << arg << std::endl;
+    std::cerr << "Processing argument: " << arg << std::endl;
     idx_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
     idx_argv_buf.back().push_back('\0');  // Ensure null termination
     idx_argv.push_back(idx_argv_buf.back().data());  // Push the C-string pointer
   }
   idx_argv.push_back(nullptr);  // Null-terminate the argv array
 
-  std::cout << "Constructed idx_argv:" << std::endl;
+  std::cerr << "Constructed idx_argv:" << std::endl;
   for (size_t i = 0; i < idx_argv.size(); ++i) {
     if (idx_argv[i] != nullptr)
-      std::cout << "idx_argv[" << i << "]: " << idx_argv[i] << std::endl;
+      std::cerr << "idx_argv[" << i << "]: " << idx_argv[i] << std::endl;
     else
-      std::cout << "idx_argv[" << i << "]: (null)" << std::endl;
+      std::cerr << "idx_argv[" << i << "]: (null)" << std::endl;
   }
 
   std::vector<std::vector<char>> aln_argv_buf1;
   std::vector<char*> aln_argv1;
-  std::cout << "Constructing aln_argv1..." << std::endl;
+  std::cerr << "Constructing aln_argv1..." << std::endl;
   for (const auto& arg : aln_args1) {
-    std::cout << "Processing argument: " << arg << std::endl;
+    std::cerr << "Processing argument: " << arg << std::endl;
     aln_argv_buf1.push_back(std::vector<char>(arg.begin(), arg.end()));
     aln_argv_buf1.back().push_back('\0');
     aln_argv1.push_back(aln_argv_buf1.back().data());
   }
   aln_argv1.push_back(nullptr);
 
-  std::cout << "Constructed aln_argv1:" << std::endl;
+  std::cerr << "Constructed aln_argv1:" << std::endl;
   for (size_t i = 0; i < aln_argv1.size(); ++i) {
     if (aln_argv1[i] != nullptr)
-      std::cout << "aln_argv1[" << i << "]: " << aln_argv1[i] << std::endl;
+      std::cerr << "aln_argv1[" << i << "]: " << aln_argv1[i] << std::endl;
     else
-      std::cout << "aln_argv1[" << i << "]: (null)" << std::endl;
+      std::cerr << "aln_argv1[" << i << "]: (null)" << std::endl;
   }
 
   std::vector<std::vector<char>> aln_argv_buf2;
   std::vector<char*> aln_argv2;
   if (aln_args2.size() > 0) {
-    std::cout << "Constructing aln_argv2..." << std::endl;
+    std::cerr << "Constructing aln_argv2..." << std::endl;
     for (const auto& arg : aln_args2) {
-      std::cout << "Processing argument: " << arg << std::endl;
+      std::cerr << "Processing argument: " << arg << std::endl;
       aln_argv_buf2.push_back(std::vector<char>(arg.begin(), arg.end()));
       aln_argv_buf2.back().push_back('\0');
       aln_argv2.push_back(aln_argv_buf2.back().data());
     }
     aln_argv2.push_back(nullptr);
 
-    std::cout << "Constructed aln_argv2:" << std::endl;
+    std::cerr << "Constructed aln_argv2:" << std::endl;
     for (size_t i = 0; i < aln_argv2.size(); ++i) {
       if (aln_argv2[i] != nullptr)
-        std::cout << "aln_argv2[" << i << "]: " << aln_argv2[i] << std::endl;
+        std::cerr << "aln_argv2[" << i << "]: " << aln_argv2[i] << std::endl;
       else
-        std::cout << "aln_argv2[" << i << "]: (null)" << std::endl;
+        std::cerr << "aln_argv2[" << i << "]: (null)" << std::endl;
     }
   }
 
   std::vector<std::vector<char>> samaln_argv_buf;
   std::vector<char*> samaln_argv;
-  std::cout << "Constructing samaln_argv..." << std::endl;
+  std::cerr << "Constructing samaln_argv..." << std::endl;
   for (const auto& arg : samaln_args) {
-    std::cout << "Processing argument: " << arg << std::endl;
+    std::cerr << "Processing argument: " << arg << std::endl;
     samaln_argv_buf.push_back(std::vector<char>(arg.begin(), arg.end()));
     samaln_argv_buf.back().push_back('\0');
     samaln_argv.push_back(samaln_argv_buf.back().data());
   }
   samaln_argv.push_back(nullptr);
 
-  std::cout << "Constructed samaln_argv:" << std::endl;
+  std::cerr << "Constructed samaln_argv:" << std::endl;
   for (size_t i = 0; i < samaln_argv.size(); ++i) {
     if (samaln_argv[i] != nullptr)
-      std::cout << "samaln_argv[" << i << "]: " << samaln_argv[i] << std::endl;
+      std::cerr << "samaln_argv[" << i << "]: " << samaln_argv[i] << std::endl;
     else
-      std::cout << "samaln_argv[" << i << "]: (null)" << std::endl;
+      std::cerr << "samaln_argv[" << i << "]: (null)" << std::endl;
   }
 
-  std::cout << "About to call run_bwa with idx_argv..." << std::endl;
+  std::cerr << "About to call run_bwa with idx_argv..." << std::endl;
 
   try {
     std::cout << "Running run_bwa with idx_argv..." << std::endl;
@@ -2657,7 +2657,7 @@ void place_per_read_DFS(
   std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes,
   std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap,
   std::unordered_set<int64_t>& inverseBlockIds, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
-  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const int& rescueDuplicatesThreshold
+  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<bool>& excludeReads
 ) {
 
   size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
@@ -2752,6 +2752,7 @@ void place_per_read_DFS(
         int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
         double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
         allScores[node->identifier][i] = {pseudoScore, pseudoProb};
+        if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) excludeReads[i] = true;
         // std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
         
       }
@@ -2958,6 +2959,7 @@ void place_per_read_DFS(
           int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
           double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
           allScores[node->identifier][readIndex] = {pseudoScore, pseudoProb};
+          if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) excludeReads[readIndex] = true;
         }
       });
     }
@@ -2978,7 +2980,7 @@ void place_per_read_DFS(
       data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, reads, seedmerToReads,
       allScores, identicalPairs, seedK, seedS, seedT, seedL, openSyncmers, T, child, globalCoords, navigator,
       scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap,
-      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold
+      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads
     );
   }
 
@@ -3318,13 +3320,43 @@ void updateIdenticalSeedmerSets(
     }
 }
 
+
+void getConsensus(const char *lineStart, size_t lineLength) {
+    char *line = new char[lineLength + 1];
+    std::strncpy(line, lineStart, lineLength);
+    line[lineLength] = '\0';
+
+    std::vector<std::string> fields;
+    stringSplit(line, '\t', fields);
+    std::cout << fields[0] << "\t" << fields[1] << std::endl;
+
+    delete[] line;
+}
+
+void getConsensusHelper(char *mplpString) {
+  char *lineStart = mplpString;
+  char *ptr = mplpString;
+
+  while (*ptr != '\0') {
+    if (*ptr == '\n') {
+      getConsensus(lineStart, ptr - lineStart);
+      lineStart = ptr + 1;
+    }
+    ++ptr;
+  }
+
+  if (lineStart != ptr) {
+    getConsensus(lineStart, ptr - lineStart);
+  }
+}
+
 void pmi::place_per_read(
   Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
   const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
-  const int& rescueDuplicatesThreshold, const int& filterRound, const int& checkFrequency,
+  const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, const std::string& preEMFilterMethod, const int& emFilterRound, const int& checkFrequency,
   const int& removeIteration, const double& insigPropArg, const int& roundsRemove, const double& removeThreshold,
-  const bool& leafNodesOnly, const std::string& prefix
+  const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix
 )
 {
   // Setup for seed indexing
@@ -3401,6 +3433,7 @@ void pmi::place_per_read(
   std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
   std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
   std::unordered_map<std::string, std::string> identicalPairs;
+  std::vector<bool> excludeReads(reads.size(), false);
 
   std::cerr << "start scoring DFS" << std::endl;
   
@@ -3410,7 +3443,7 @@ void pmi::place_per_read(
     data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, reads, seedmerToReads,
     allScores, identicalPairs, k, s, t, l, openSyncmers, T, T->root, globalCoords, navigator, scalarCoordToBlockId,
     BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap, minimumCount, minimumScore,
-    errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold
+    errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads
   );
 
   auto end_time = std::chrono::high_resolution_clock::now();
@@ -3519,9 +3552,9 @@ void pmi::place_per_read(
 
 
   mgsr::squaremHelper_test_1(
-    T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads,
-    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, filterRound,
-    checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
+    T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
+    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod,
+    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
   
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
@@ -3566,128 +3599,136 @@ void pmi::place_per_read(
 
   mgsr::assignReadsToNodes(allScores, nodes, probs, props, readSeedmersDuplicatesIndex, assignedReads);
 
-  for (const auto& node : sortedOut) {
-    // write reference fastas
-    std::cerr << "Writing reference fastas for " << node.first << std::endl;
-    std::string refPath = prefix + "." + node.first + ".fasta";
-    std::string refSeq = T->getStringFromReference(node.first, false);
-    std::ofstream refOut(refPath);
-    refOut << ">" << node.first << "\n" << refSeq << "\n";
-    refOut.close();
-    std::cerr << "Finished writing reference fastas for " << node.first << std::endl;
+  // run bwa index, aln, sampe
+  if (callSubconsensus) {
+    for (const auto& node : sortedOut) {
+      // write reference fastas
+      std::cerr << "Writing reference fastas for " << node.first << std::endl;
+      std::string refPath = prefix + "." + node.first + ".fasta";
+      std::string refSeq = T->getStringFromReference(node.first, false);
+      std::ofstream refOut(refPath);
+      refOut << ">" << node.first << "\n" << refSeq << "\n";
+      refOut.close();
+      std::cerr << "Finished writing reference fastas for " << node.first << std::endl;
 
 
-    // write reads to fastq
-    std::cerr << "Writing assigned reads assigned to " << node.first << std::endl;
-    std::string fastqPath1 = "";
-    std::string fastqPath2 = "";
-    if (reads2Path.size() > 0) {
-      fastqPath1 = prefix + "." + node.first + "_R1.fastq";
-      fastqPath2 = prefix + "." + node.first + "_R2.fastq";
-      std::unordered_set<size_t> assigned;
-      std::ofstream fastqOut1(fastqPath1);
-      std::ofstream fastqOut2(fastqPath2);
-      for (size_t readIdx : assignedReads[node.first]) {
-        readIdx = readIdx % 2 == 0 ? readIdx : readIdx - 1;
-        if (assigned.find(readIdx) != assigned.end()) continue;
-        fastqOut1 << "@" << readNames[readIdx] << "\n" << readSequences[readIdx] << "\n+\n" << readQuals[readIdx] << "\n";
-        fastqOut2 << "@" << readNames[readIdx + 1] << "\n" << readSequences[readIdx + 1] << "\n+\n" << readQuals[readIdx + 1] << "\n";
-        assigned.insert(readIdx);
+      // write reads to fastq
+      std::cerr << "Writing assigned reads assigned to " << node.first << std::endl;
+      std::string fastqPath1 = "";
+      std::string fastqPath2 = "";
+      if (reads2Path.size() > 0) {
+        fastqPath1 = prefix + "." + node.first + "_R1.fastq";
+        fastqPath2 = prefix + "." + node.first + "_R2.fastq";
+        std::unordered_set<size_t> assigned;
+        std::ofstream fastqOut1(fastqPath1);
+        std::ofstream fastqOut2(fastqPath2);
+        for (size_t readIdx : assignedReads[node.first]) {
+          readIdx = readIdx % 2 == 0 ? readIdx : readIdx - 1;
+          if (assigned.find(readIdx) != assigned.end()) continue;
+          fastqOut1 << "@" << readNames[readIdx] << "\n" << readSequences[readIdx] << "\n+\n" << readQuals[readIdx] << "\n";
+          fastqOut2 << "@" << readNames[readIdx + 1] << "\n" << readSequences[readIdx + 1] << "\n+\n" << readQuals[readIdx + 1] << "\n";
+          assigned.insert(readIdx);
+        }
+        fastqOut1.close();
+        fastqOut2.close();
+      } else {
+        fastqPath1 = prefix + "." + node.first + ".fastq";
+        std::ofstream fastqOut(fastqPath1);
+        for (const auto& readIndex : assignedReads[node.first]) {
+          fastqOut << "@" << readNames[readIndex] << "\n" << readSequences[readIndex] << "\n+\n" << readQuals[readIndex] << "\n";
+        }
+        fastqOut.close();
       }
-      fastqOut1.close();
-      fastqOut2.close();
-    } else {
-      fastqPath1 = prefix + "." + node.first + ".fastq";
-      std::ofstream fastqOut(fastqPath1);
-      for (const auto& readIndex : assignedReads[node.first]) {
-        fastqOut << "@" << readNames[readIndex] << "\n" << readSequences[readIndex] << "\n+\n" << readQuals[readIndex] << "\n";
+      std::cerr << "Finished writing assigned reads assigned to " << node.first << std::endl;
+
+      std::cerr << "Running bwa aln for " << node.first << std::endl;
+      std::string samPath = prefix + "." + node.first + ".sam";
+      std::vector<std::string> idx_args = {"bwa", "index", refPath};
+      std::vector<std::string> aln_args1;
+      std::vector<std::string> aln_args2;
+      std::vector<std::string> samaln_args;
+      std::vector<std::pair<int, char*>> samAlignmentPairs;
+      std::vector<std::string> samHeaders;
+      if (fastqPath2.size() > 0) { 
+        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
+        aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath2 + ".tmp.sai", refPath, fastqPath2};
+        samaln_args = {"bwa", "sampe", refPath, fastqPath1 + ".tmp.sai", fastqPath2 + ".tmp.sai", fastqPath1, fastqPath2};
+      } else {
+        aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
+        samaln_args = {"bwa", "samse", refPath, fastqPath1 + ".tmp.sai", fastqPath1};
       }
-      fastqOut.close();
-    }
-    std::cerr << "Finished writing assigned reads assigned to " << node.first << std::endl;
-
-    // run bwa index, aln, sampe
-    std::cerr << "Running bwa aln for " << node.first << std::endl;
-    std::string samPath = prefix + "." + node.first + ".sam";
-    std::vector<std::string> idx_args = {"bwa", "index", refPath};
-    std::vector<std::string> aln_args1;
-    std::vector<std::string> aln_args2;
-    std::vector<std::string> samaln_args;
-    std::vector<std::pair<int, char*>> samAlignmentPairs;
-    std::vector<std::string> samHeaders;
-    if (fastqPath2.size() > 0) { 
-      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
-      aln_args2 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath2 + ".tmp.sai", refPath, fastqPath2};
-      samaln_args = {"bwa", "sampe", refPath, fastqPath1 + ".tmp.sai", fastqPath2 + ".tmp.sai", fastqPath1, fastqPath2};
-    } else {
-      aln_args1 = {"bwa", "aln", "-l", "1024", "-n", "0.01", "-o", "2", "-f", fastqPath1 + ".tmp.sai", refPath, fastqPath1};
-      samaln_args = {"bwa", "samse", refPath, fastqPath1 + ".tmp.sai", fastqPath1};
-    }
-    
-    prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, fastqPath1, fastqPath2, samAlignmentPairs, samHeaders);
-    std::cerr << "Finished running bwa aln for " << node.first << std::endl;
+      
+      prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, fastqPath1, fastqPath2, samAlignmentPairs, samHeaders);
+      std::cerr << "Finished running bwa aln for " << node.first << std::endl;
 
 
 
-    std::sort(samAlignmentPairs.begin(), samAlignmentPairs.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
-        return a.first < b.first;
-    });
+      std::sort(samAlignmentPairs.begin(), samAlignmentPairs.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {
+          return a.first < b.first;
+      });
 
-    std::vector<char*> samAlignments(samAlignmentPairs.size());
-    for (size_t i = 0; i < samAlignmentPairs.size(); ++i) {
-      samAlignments[i] = samAlignmentPairs[i].second;
-    }
+      std::vector<char*> samAlignments(samAlignmentPairs.size());
+      for (size_t i = 0; i < samAlignmentPairs.size(); ++i) {
+        samAlignments[i] = samAlignmentPairs[i].second;
+      }
 
-    std::ofstream samOut{samPath};
-    for (const auto& header : samHeaders) {
-      samOut << header;
-    }
-    for (const auto& line : samAlignments) {
-      samOut << line << "\n";
-    }
-    samOut.close();
-    std::cout << "Wrote sam data to " << samPath << std::endl;
+      std::ofstream samOut{samPath};
+      for (const auto& header : samHeaders) {
+        samOut << header;
+      }
+      for (const auto& line : samAlignments) {
+        samOut << line << "\n";
+      }
+      samOut.close();
+      std::cout << "Wrote sam data to " << samPath << std::endl;
 
-    sam_hdr_t *header;
-    bam1_t **bamRecords;
-    std::string bamPath = prefix + "." + node.first + ".bam";
-    std::cout << "Creating bam file for " << node.first << std::endl;
-    std::string samHeader = samHeaders[0].substr(0, samHeaders[0].size() - 1);
-    createBam(
-        samAlignments,
-        samHeader,
-        bamPath,
-        header,
-        bamRecords
-    );
-    std::cout << "Finished creating bam file for " << node.first << std::endl;
+      sam_hdr_t *header;
+      bam1_t **bamRecords;
+      std::string bamPath = prefix + "." + node.first + ".bam";
+      std::cout << "Creating bam file for " << node.first << std::endl;
+      std::string samHeader = samHeaders[0].substr(0, samHeaders[0].size() - 1);
+      createBam(
+          samAlignments,
+          samHeader,
+          bamPath,
+          header,
+          bamRecords
+      );
+      std::cout << "Finished creating bam file for " << node.first << std::endl;
 
-    std::cout << "Creating mpileup file for " << node.first << std::endl;
-    char *mplpString;
-    std::string mpileupPath = prefix + "." + node.first + ".mpileup";
-    createMplp(
-        refSeq,
-        header,
-        bamRecords,
-        samAlignments.size(),
-        mpileupPath,
-        mplpString
-    );
-    std::cout << "Finished creating mpileup file for " << node.first << std::endl;
+      int numAlignments = samAlignments.size();
+      samAlignments.clear();
+      samAlignmentPairs.clear();
 
+      std::cout << "Creating mpileup file for " << node.first << std::endl;
 
-    // delete intermediate files
-    // std::cerr << "Cleaning up intermediate files for " << node.first << std::endl;
-    // fs::remove(refPath);
-    // fs::remove(refPath + ".amb");
-    // fs::remove(refPath + ".ann");
-    // fs::remove(refPath + ".bwt");
-    // fs::remove(refPath + ".pac");
-    // fs::remove(refPath + ".sa");
+      char *mplpString;
+      std::string mpileupPath = prefix + "." + node.first + ".mpileup";
+      createMplp(
+          refSeq,
+          header,
+          bamRecords,
+          numAlignments,
+          mpileupPath,
+          mplpString
+      );
+      std::cout << "Finished creating mpileup file for " << node.first << std::endl;
 
-    // get vcf
-    // resolve genotype conflicts
-    // write consensus fasta
-    break;
+      // getConsensusHelper(mplpString);
+
+      // // delete intermediate files
+      // std::cerr << "Cleaning up intermediate files for " << node.first << std::endl;
+      // fs::remove(refPath);
+      // fs::remove(refPath + ".amb");
+      // fs::remove(refPath + ".ann");
+      // fs::remove(refPath + ".bwt");
+      // fs::remove(refPath + ".pac");
+      // fs::remove(refPath + ".sa");
+      
+
+      // get vcf
+      // resolve genotype conflicts
+      // write consensus fasta
+    }    
   }
 }
