@@ -101,23 +101,27 @@ Other options:
   -X --dump-real            Dump true seeds to file.
 
 Placement-per-read options:
-  --place-per-read                      Place reads per read (panmama)
+  --place-per-read                       Place reads per read (panmama)
   --maximum-gap <int>                   Maximum gap between matches. [default: 10]
   --minimum-count <int>                 Minimum count of seeds in a match. [default: 0]
   --minimum-score <int>                 Minimum score of seeds in a match. [default: 0]
   --error-rate <double>                 Error rate of kminmer [default: 0.005]
   --redo-read-threshold <int>           Re-chain reads when the number of kminmers need to be updated exceeds this threshold [default: 5]
   --recalculate-score                   Recalculate chain scores for every read at each node (Sometimes, although rarely, a read's kminmer matches are not affected but the coordinate of the kminmer changes, which can affect the chaining score. This typically affects the scores very slightly.)
-  --rescue-duplicates                   Rescue duplicate seeds.
-  --rescue-duplicates-threshold <int>   Rescue reads with number of duplicates not greater than <threshold>. [default: 5]
-  --filter-round <int>                  Maximum number of rounds to filter low probability haplotypes before EM. [default: 5]
-  --check-frequency <int>               Number of iterations between each filter-round. [default: 20]
-  --remove-iteration <int>              Remove haplotypes that has probability less than insig-prob for more than remove-count consecutive iterations. [default: 20]
+  --rescue-duplicates-threshold <double>  Rescue reads with ratio of duplicates to total seeds not greater than <threshold>. Default is 0, which means no rescue. [default: 0]
+  --exclude-duplicates-threshold <double> Exclude reads with ratio of duplicates to total seeds greater than <threshold>. To include all reads, set to 1. [default: 0.5]
+  --preem-filter-method <method>        Pre-filter method for haplotype filtering. Accepted values:
+                                          'null' - No pre-filtering.
+                                          'uhs' - Keep haplotypes with at least one highest score read with no ties.
+                                          [default: null]
+  --em-filter-round <int>               Maximum number of rounds to filter low probability haplotypes during EM filtering. [default: 5]
+  --check-frequency <int>               Number of iterations between each em-filter-round. [default: 20]
+  --remove-iteration <int>              Remove haplotypes that has probability less than insig-prob for more than remove-iteration consecutive iterations. [default: 20]
   --insig-prop <double>                 As described in --remove-iteration. (default is calculated from total number of nodes, where default = 1 / (total number of nodes * 10))
   --rounds-remove <int>                 Number of rounds to clean up and remove low probability haplotypes after EM. [default: 3]
   --remove-threshold <double>           Remove haplotypes with probability less than this threshold during rounds-remove. [default: 0.005]
-  --keep-all-reads                      Keep all reads for EM. By default, reads containing number of matching kminmers that are duplicate in any haplotype greater than [rescue-duplicates-threshold] are removed. 
   --leaf-nodes-only                     Only consider leaf nodes when placing reads.
+  --call-subconsensus                   Call subconsensus sequence from reads.
 )";
 
 
@@ -387,39 +391,43 @@ int main(int argc, const char** argv) {
       double errorRate              = args["--error-rate"] ? std::stod(args["--error-rate"].asString()) : 0.005;
       int redoReadThreshold         = args["--redo-read-threshold"] ? std::stoi(args["--redo-read-threshold"].asString()) : 5;
       bool recalculateScore         = args["--recalculate-score"] && args["--recalculate-score"].isBool() ? args["--recalculate-score"].asBool() : false;
-      bool rescueDuplicates         = args["--rescue-duplicates"] && args["--rescue-duplicates"].isBool() ? args["--rescue-duplicates"].asBool() : false;
-      int rescueDuplicatesThreshold = args["--rescue-duplicates-threshold"] ? std::stoi(args["--rescue-duplicates-threshold"].asString()) : 5;
-      int filterRound               = args["--filter-round"] ? std::stoi(args["--filter-round"].asString()) : 5;
+      double rescueDuplicatesThreshold = args["--rescue-duplicates-threshold"] ? std::stod(args["--rescue-duplicates-threshold"].asString()) : 0.5;
+      double excludeDuplicatesThreshold = args["--exclude-duplicates-threshold"] ? std::stod(args["--exclude-duplicates-threshold"].asString()) : 0.5;
+      std::string preEMFilterMethod = args["--preem-filter-method"] ? args["--preem-filter-method"].asString() : "null";
+      int emFilterRound             = args["--em-filter-round"] ? std::stoi(args["--em-filter-round"].asString()) : 5;
       int checkFrequency            = args["--check-frequency"] ? std::stoi(args["--check-frequency"].asString()) : 20;
       int removeIteration           = args["--remove-iteration"] ? std::stoi(args["--remove-iteration"].asString()) : 20;
       double insigProp              = args["--insig-prop"] ? std::stod(args["--insig-prop"].asString()) : -1;
       int roundsRemove              = args["--rounds-remove"] ? std::stoi(args["--rounds-remove"].asString()) : 3;
       double removeThreshold        = args["--remove-threshold"] ? std::stod(args["--remove-threshold"].asString()) : 0.005;
-      bool keepAllReads             = args["--keep-all-reads"] && args["--keep-all-reads"].isBool() ? args["--keep-all-reads"].asBool() : false;
       bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
-
+      bool callSubconsensus         = args["--call-subconsensus"] && args["--call-subconsensus"].isBool() ? args["--call-subconsensus"].asBool() : false;
+      
       log(prefix, "Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
         "\nminimum-count: " + std::to_string(minimumCount) +
         "\nminimum-score: " + std::to_string(minimumScore) +
         "\nerror-rate: " + std::to_string(errorRate) +
         "\nredo-read-threshold: " + std::to_string(redoReadThreshold) +
         "\nrecalculate-score: " + (recalculateScore ? "true" : "false") +
-        "\nrescue-duplicates: " + (rescueDuplicates ? "true" : "false") +
         "\nrescue-duplicates-threshold: " + std::to_string(rescueDuplicatesThreshold) +
-        "\nfilter-round: " + std::to_string(filterRound) +
+        "\nexclude-duplicates-threshold: " + std::to_string(excludeDuplicatesThreshold) +
+        "\npre-em-filter-method: " + preEMFilterMethod +
+        "\nem-filter-round: " + std::to_string(emFilterRound) +
         "\ncheck-frequency: " + std::to_string(checkFrequency) +
         "\nremove-iteration: " + std::to_string(removeIteration) +
         "\ninsig-prop: " + std::to_string(insigProp) +
         "\nrounds-remove: " + std::to_string(roundsRemove) +
         "\nremove-threshold: " + std::to_string(removeThreshold) +
-        "\nkeep-all-reads: " + (keepAllReads ? "true" : "false") +
-        "\nleaf-nodes-only: " + (leafNodesOnly ? "true" : "false") + "\n");
+        "\nleaf-nodes-only: " + (leafNodesOnly ? "true" : "false") + "\n" +
+        "\ncall-subconsensus: " + (callSubconsensus ? "true" : "false") + "\n");
 
+      bool rescueDuplicates = rescueDuplicatesThreshold > 0;
       pmi::place_per_read(
         T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
         errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
-        rescueDuplicatesThreshold, filterRound, checkFrequency, removeIteration,
-        insigProp, roundsRemove, removeThreshold, leafNodesOnly, prefix);
+        rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod,
+        emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
+        removeThreshold, leafNodesOnly, callSubconsensus, prefix);
     } else {
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
