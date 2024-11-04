@@ -18,7 +18,7 @@ void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double, unsigned seed);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed);
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -36,6 +36,7 @@ int main(int argc, char *argv[]) {
             ("rep",       po::value<int>()->default_value(1), "Number of replicates to simulate [1].")
             ("n_reads",   po::value<int>()->default_value(2000), "Number of reads to simulate [2000].")
             ("model",     po::value<std::string>()->default_value("NovaSeq"), "InSilicoSeq error model [HiSeq]. Options: HiSeq, NextSeq, NovaSeq, MiSeq. For detail, visit InSilicoSeq github (https://github.com/HadrienG/InSilicoSeq).")
+            ("cpus",      po::value<int>()->default_value(1), "Number of CPUs to use [1].")
             ("seed",      po::value<std::string>()->default_value("RANDOM"), "Random seed for simulation [default: random]")
         ;
 
@@ -61,7 +62,8 @@ int main(int argc, char *argv[]) {
         std::string seedstr    = vm["seed"].as<std::string>();
         int n_reads            = vm["n_reads"].as<int>();
         int rep                = vm["rep"].as<int>();
-        
+        int cpus               = vm["cpus"].as<int>();
+
         // Check mut_spec
        seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
         if (out_dir != "") {
@@ -90,6 +92,7 @@ int main(int argc, char *argv[]) {
                 << "Number of reads: " << n_reads << "\n"
                 << "Number of replicates: " << rep << "\n"
                 << "Error model: " << model << "\n"
+                << "Number of CPUs: " << cpus << "\n"
                 << "Random seed: " << seedstr << "\n";
 
         // Check multitoken inputs
@@ -184,7 +187,7 @@ int main(int argc, char *argv[]) {
         }
         logFile << "Using seed: " << seed << "\n";
         logFile.close();
-        sim(T, refNode, out_dir, prefix, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed);
+        sim(T, refNode, out_dir, prefix, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
@@ -467,9 +470,9 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
     faos.close();
 }
 
-void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads) {
+void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus) {
     std::string cmd = "iss generate --model " + model + " --genomes \'" + fastaOut.string() + "\'"
-        + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus 2";
+        + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus " + std::to_string(cpus);
     std::cout << "iss cmd: " << cmd << std::endl;
     system(cmd.c_str());
 
@@ -479,7 +482,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed)
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
@@ -532,7 +535,7 @@ void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& ou
         genMut(curNode, T->getStringFromReference(curNodeID, false), fastaOut, vcfOut, mutMat, num, indel_len, 500, 500, seed);
 
         // Make reads using InSilicoSeq
-        simReads(fastaOut, outReadsObj, model, n_reads);
+        simReads(fastaOut, outReadsObj, model, n_reads, cpus);
     }
 }
 
