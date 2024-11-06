@@ -6,6 +6,7 @@
 #include <iostream>
 #include <vector>
 #include <random>
+#include <functional>
 #include "panmanUtils.hpp"
 #include "../seed_annotated_tree.hpp"
 
@@ -18,7 +19,7 @@ void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double, unsigned seed);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus);
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -175,10 +176,11 @@ int main(int argc, char *argv[]) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
         // GO time
-        unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+        size_t seed = std::chrono::system_clock::now().time_since_epoch().count();
         if (seedstr != "RANDOM") {
             try {
-                seed = std::stoul(seedstr);
+                std::hash<std::string> hasher;
+                seed = hasher(seedstr);
             } catch (const std::invalid_argument& e) {
                 throw std::invalid_argument("Invalid seed value: cannot convert to unsigned");
             } catch (const std::out_of_range& e) {
@@ -482,7 +484,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus)
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
