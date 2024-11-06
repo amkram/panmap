@@ -391,7 +391,8 @@ void createMplp(
 void createVcf(
     char *mplpString,
     const seed_annotated_tree::mutationMatrices& mutMat,
-    std::string &vcfFileName
+    std::string &vcfFileName,
+    bool keep_alts
 )   {
     // Convert c string of mpileup to ifstream
     std::istringstream mpileipStream(mplpString);
@@ -401,7 +402,7 @@ void createVcf(
         vcfOutFile.open(vcfFileName);
         if (vcfOutFile.is_open()) {
 
-            genotype::printSamplePlacementVCF(mpileipStream, mutMat, true, 0, vcfOutFile);
+            genotype::printSamplePlacementVCF(mpileipStream, mutMat, keep_alts, 0, vcfOutFile);
 
             std::cerr << "Wrote vcf data to " << vcfFileName << std::endl;
         }else{

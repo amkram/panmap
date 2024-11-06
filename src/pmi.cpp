@@ -2268,14 +2268,14 @@ void prepareAndRunBwa(
   std::cerr << "About to call run_bwa with idx_argv..." << std::endl;
 
   try {
-    std::cout << "Running run_bwa with idx_argv..." << std::endl;
+    std::cerr << "Running run_bwa with idx_argv..." << std::endl;
     optind = 1;
     if (run_bwa(idx_argv.size() - 1, idx_argv.data()) != 0) {
       throw std::runtime_error("BWA index failed");
     }
-    std::cout << "Finished run_bwa with idx_argv." << std::endl;
+    std::cerr << "Finished run_bwa with idx_argv." << std::endl;
 
-    std::cout << "Running run_bwa with aln_argv1..." << std::endl;
+    std::cerr << "Running run_bwa with aln_argv1..." << std::endl;
     optind = 1;
     int stdoutFd = dup(fileno(stdout));
     if (run_bwa(aln_argv1.size() - 1, aln_argv1.data()) != 0) {
@@ -2284,10 +2284,10 @@ void prepareAndRunBwa(
     fflush(stdout);
     dup2(stdoutFd, fileno(stdout));
     close(stdoutFd);
-    std::cout << "Finished run_bwa with aln_argv1." << std::endl;
+    std::cerr << "Finished run_bwa with aln_argv1." << std::endl;
 
     if (aln_args2.size() > 0) {
-      std::cout << "Running run_bwa with aln_argv2..." << std::endl;
+      std::cerr << "Running run_bwa with aln_argv2..." << std::endl;
       optind = 1;
       int stdoutFd2 = dup(fileno(stdout));
       if (run_bwa(aln_argv2.size() - 1, aln_argv2.data()) != 0) {
@@ -2296,10 +2296,10 @@ void prepareAndRunBwa(
       fflush(stdout);
       dup2(stdoutFd2, fileno(stdout));
       close(stdoutFd2);
-      std::cout << "Finished run_bwa with aln_argv2." << std::endl;
+      std::cerr << "Finished run_bwa with aln_argv2." << std::endl;
     }
 
-    std::cout << "Running run_bwa with samaln_argv..." << std::endl;
+    std::cerr << "Running run_bwa with samaln_argv..." << std::endl;
     optind = 1;
     FILE *tempFile = std::tmpfile();
     if (!tempFile) {
@@ -2349,7 +2349,7 @@ void prepareAndRunBwa(
       ++i;
     }
     fclose(tempFile);
-    std::cout << "Finished run_bwa with samaln_argv." << std::endl;
+    std::cerr << "Finished run_bwa with samaln_argv." << std::endl;
     
   } catch (...) {
     std::cerr << "run_bwa() caused an exception!" << std::endl;
@@ -2599,7 +2599,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
       createVcf(
           mplpString,
           mutMat,
-          vcfFileName
+          vcfFileName,
+          false
       );
     } else {
       // align with bwa aln
@@ -2974,7 +2975,7 @@ void place_per_read_DFS(
 
   /* Recursive step */
   dfsIndex++;
-  std::cerr << "\rprocessed " << dfsIndex << " / " <<  T->allNodes.size() << " haplotypes" << std::flush;
+  std::cout << "\rprocessed " << dfsIndex << " / " <<  T->allNodes.size() << " haplotypes" << std::flush;
   for (Node *child : node->children) {
     place_per_read_DFS(
       data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, reads, seedmerToReads,
@@ -3359,6 +3360,15 @@ void pmi::place_per_read(
   const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix
 )
 {
+
+  FILE* errorLog = freopen((prefix + ".error.log").c_str(), "w", stderr);
+  if (!errorLog) {
+      throw std::runtime_error("Failed to redirect stderr to error.log");
+  }
+
+  std::cout << "Wrote error log file: " << prefix + ".error.log" << std::endl;
+  std::cerr << "Wrote error log file: " << prefix + ".error.log" << std::endl;
+
   // Setup for seed indexing
   seed_annotated_tree::mutableTreeData data;
   seed_annotated_tree::globalCoords_t globalCoords;
@@ -3422,7 +3432,9 @@ void pmi::place_per_read(
   std::cerr << "Read processing time: " << std::chrono::duration_cast<std::chrono::milliseconds>(read_processing_end - read_processing_start).count() << " milliseconds" << std::endl;
 
   std::cerr << "Total reads: " << readNames.size() << std::endl;
+  std::cout << "Total reads: " << readNames.size() << std::endl;
   std::cerr << "Total unique read kminmer sets: " << reads.size() << std::endl;
+  std::cout << "Total unique read kminmer sets: " << reads.size() << std::endl;
   if (reads.size() != readSeedmersDuplicatesIndex.size()) {
     std::cerr << "Error: readSeedmersDuplicatesIndex size does not match reads size" << std::endl;
     exit(0);
@@ -3436,6 +3448,7 @@ void pmi::place_per_read(
   std::vector<bool> excludeReads(reads.size(), false);
 
   std::cerr << "start scoring DFS" << std::endl;
+  std::cout << "start scoring DFS" << std::endl;
   
   auto start_time = std::chrono::high_resolution_clock::now();
   
@@ -3447,8 +3460,10 @@ void pmi::place_per_read(
   );
 
   auto end_time = std::chrono::high_resolution_clock::now();
-  std::cerr << "\nplace_per_read_DFS execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
+  std::cerr << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
+  std::cout << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
 
+  std::cout << "finished scoring DFS" << std::endl;
   std::cerr << "finished scoring DFS" << std::endl;
 
   // std::string scoreFile = prefix + ".score";
@@ -3495,6 +3510,7 @@ void pmi::place_per_read(
       }
   }
 
+  std::cout << "First round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
   std::cerr << "First round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
 
   std::vector<std::pair<std::string, int32_t>> scores;
@@ -3528,6 +3544,7 @@ void pmi::place_per_read(
   if (!identicalGroup.empty()) {
       updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
   }
+  std::cout << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
   std::cerr << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << "\n" << std::endl;
 
   size_t numReads = readSequences.size();
@@ -3542,13 +3559,8 @@ void pmi::place_per_read(
   auto start = std::chrono::high_resolution_clock::now();
 
   size_t numcpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-  std::cerr << "Number of tbb threads: " << numcpus << std::endl;
-  // omp_set_num_threads(numcpus);
-  // Eigen::initParallel();
+
   Eigen::setNbThreads(numcpus);
-  // std::cerr << "max omp threads: "<< omp_get_max_threads() << std::endl;
-  // std::cerr << "Number of OMP threads: " << omp_get_thread_num() << std::endl;
-  std::cerr << "Number of Eigen threads: " << Eigen::nbThreads() << std::endl;
 
 
   mgsr::squaremHelper_test_1(
@@ -3558,7 +3570,8 @@ void pmi::place_per_read(
   
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
-  std::cerr << "squaremHelper_test_1 execution time: " << elapsed.count() << " seconds" << std::endl;
+  std::cout << "EM execution time: " << elapsed.count() << " seconds" << std::endl;
+  std::cerr << "EM execution time: " << elapsed.count() << " seconds" << std::endl;
   
   std::vector<std::pair<std::string, double>> sortedOut(nodes.size());
   for (size_t i = 0; i < nodes.size(); ++i) {
@@ -3583,16 +3596,12 @@ void pmi::place_per_read(
   }
   abundanceOut.close();
 
+  std::cout << "Wrote abundance file: " << abundanceOutFile << std::endl;
   std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
-  FILE* errorLog = freopen((prefix + ".error.log").c_str(), "w", stderr);
-  if (!errorLog) {
-      throw std::runtime_error("Failed to redirect stderr to error.log");
-  }
-
-  std::cerr << "Wrote error log file: " << prefix + ".error.log" << std::endl;
 
   // calling consensus
+  std::cout << "Calling consensus" << std::endl;
   std::cerr << "Calling consensus" << std::endl;
 
   std::unordered_map<std::string, std::vector<size_t>> assignedReads;
@@ -3602,6 +3611,7 @@ void pmi::place_per_read(
   // run bwa index, aln, sampe
   if (callSubconsensus) {
     for (const auto& node : sortedOut) {
+      std::cout << "Calling consensus for " << node.first << std::endl;
       // write reference fastas
       std::cerr << "Writing reference fastas for " << node.first << std::endl;
       std::string refPath = prefix + "." + node.first + ".fasta";
@@ -3610,6 +3620,7 @@ void pmi::place_per_read(
       refOut << ">" << node.first << "\n" << refSeq << "\n";
       refOut.close();
       std::cerr << "Finished writing reference fastas for " << node.first << std::endl;
+      std::cout << "Finished writing reference fastas for " << node.first << std::endl;
 
 
       // write reads to fastq
@@ -3640,7 +3651,7 @@ void pmi::place_per_read(
         fastqOut.close();
       }
       std::cerr << "Finished writing assigned reads assigned to " << node.first << std::endl;
-
+      std::cout << "Finished writing assigned reads assigned to " << node.first << std::endl;
       std::cerr << "Running bwa aln for " << node.first << std::endl;
       std::string samPath = prefix + "." + node.first + ".sam";
       std::vector<std::string> idx_args = {"bwa", "index", refPath};
@@ -3660,7 +3671,7 @@ void pmi::place_per_read(
       
       prepareAndRunBwa(idx_args, aln_args1, aln_args2, samaln_args, fastqPath1, fastqPath2, samAlignmentPairs, samHeaders);
       std::cerr << "Finished running bwa aln for " << node.first << std::endl;
-
+      std::cout << "Finished running bwa aln for " << node.first << std::endl;
 
 
       std::sort(samAlignmentPairs.begin(), samAlignmentPairs.end(), [](const std::pair<int, char*>& a, const std::pair<int, char*>& b) {

@@ -16,7 +16,7 @@ namespace fs = boost::filesystem;
 
 void makeFasta(const std::string& name, const std::string& seq, const std::string& path);
 void makeDir(const std::string& path);
-std::vector<int> genMutNum(const std::vector<double>& mutNum_double, unsigned seed);
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double, size_t seed);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
     int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus);
@@ -37,6 +37,7 @@ int main(int argc, char *argv[]) {
             ("rep",       po::value<int>()->default_value(1), "Number of replicates to simulate [1].")
             ("n_reads",   po::value<int>()->default_value(2000), "Number of reads to simulate [2000].")
             ("model",     po::value<std::string>()->default_value("NovaSeq"), "InSilicoSeq error model [HiSeq]. Options: HiSeq, NextSeq, NovaSeq, MiSeq. For detail, visit InSilicoSeq github (https://github.com/HadrienG/InSilicoSeq).")
+            ("no-reads",  po::bool_switch()->default_value(false), "Do not simulate reads")
             ("cpus",      po::value<int>()->default_value(1), "Number of CPUs to use [1].")
             ("seed",      po::value<std::string>()->default_value("RANDOM"), "Random seed for simulation [default: random]")
         ;
@@ -64,6 +65,7 @@ int main(int argc, char *argv[]) {
         int n_reads            = vm["n_reads"].as<int>();
         int rep                = vm["rep"].as<int>();
         int cpus               = vm["cpus"].as<int>();
+        bool no_reads          = vm["no-reads"].as<bool>();
 
         // Check mut_spec
        seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
@@ -94,7 +96,8 @@ int main(int argc, char *argv[]) {
                 << "Number of replicates: " << rep << "\n"
                 << "Error model: " << model << "\n"
                 << "Number of CPUs: " << cpus << "\n"
-                << "Random seed: " << seedstr << "\n";
+                << "Random seed: " << seedstr << "\n"
+                << "No reads: " << no_reads << "\n";
 
         // Check multitoken inputs
         std::pair<int, int> indel_len;
@@ -189,7 +192,7 @@ int main(int argc, char *argv[]) {
         }
         logFile << "Using seed: " << seed << "\n";
         logFile.close();
-        sim(T, refNode, out_dir, prefix, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus);
+        sim(T, refNode, out_dir, prefix, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus, no_reads);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
@@ -216,7 +219,7 @@ void makeDir(const std::string& path) {
     }
 }
 
-char getRandomChar(const std::vector<char>& charList, unsigned seed) {
+char getRandomChar(const std::vector<char>& charList, size_t seed) {
     std::mt19937 gen(seed);
     std::uniform_int_distribution<> distr(0, charList.size() - 1);
     int index = distr(gen);
@@ -256,7 +259,7 @@ double getMinDouble(const std::vector<double>& doubles) {
 
 }
 
-char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<int>& weights, unsigned seed) {
+char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<int>& weights, size_t seed) {
     // Create a random device and generator
     std::mt19937 gen(seed);
 
@@ -270,7 +273,7 @@ char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<
     return chars[index];
 }
 
-char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed) {
+char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed) {
     std::vector<char> bases = {'A', 'C', 'G', 'T'};
     int refIdx = getIndexFromNucleotide(ref);
     if (refIdx > 3) {
@@ -307,7 +310,7 @@ std::vector<double> convertMap(const std::unordered_map<long, double> &in) {
     }
     return outVector;
 }
-size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type, unsigned seed) {
+size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type, size_t seed) {
     std::mt19937 gen(seed);
 
     if (!mutMat.filled) {
@@ -342,7 +345,7 @@ size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::m
 
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
     const seed_annotated_tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
-    size_t beg, size_t end, unsigned seed)
+    size_t beg, size_t end, size_t seed)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
         return;
@@ -472,9 +475,9 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
     faos.close();
 }
 
-void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus) {
+void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus, size_t seed) {
     std::string cmd = "iss generate --model " + model + " --genomes \'" + fastaOut.string() + "\'"
-        + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus " + std::to_string(cpus);
+        + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus " + std::to_string(cpus) + " --seed " + std::to_string(seed);
     std::cout << "iss cmd: " << cmd << std::endl;
     system(cmd.c_str());
 
@@ -537,7 +540,9 @@ void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& ou
         genMut(curNode, T->getStringFromReference(curNodeID, false), fastaOut, vcfOut, mutMat, num, indel_len, 500, 500, seed);
 
         // Make reads using InSilicoSeq
-        simReads(fastaOut, outReadsObj, model, n_reads, cpus);
+        if (!no_reads) {
+            simReads(fastaOut, outReadsObj, model, n_reads, cpus, seed);
+        }
     }
 }
 
@@ -550,7 +555,7 @@ bool close_to_int(double num_double) {
     return false;
 }
 
-int genInt(double num_double, unsigned seed) {
+int genInt(double num_double, size_t seed) {
     std::mt19937 gen(seed);
     std::uniform_real_distribution<> dist(0, 1);
     int i = int(num_double);
@@ -561,7 +566,7 @@ int genInt(double num_double, unsigned seed) {
     return i;
 }
 
-std::vector<int> genMutNum(const std::vector<double>& mutNum_double, unsigned seed) {
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double, size_t seed) {
     std::vector<int> mutNum_int;
     for (double num : mutNum_double) {
         if (close_to_int(num)) {

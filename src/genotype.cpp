@@ -19,6 +19,11 @@ double phred_complement(double q) {
     return -10 * log10(1 - p);
 }
 
+double third_phred(double q) {
+    double p = pow(10, (-q / 10)) / 3.0;
+    return -10 * log10(p);
+}
+
 void to_upper(string& str) {
     for (char& c : str) {
         c = toupper(c);
@@ -73,11 +78,14 @@ double likelihood(
     for (int i = 0; i < read_errs.size(); i++) {
         const auto& row = read_errs[i];
         if ((variation_type & variationType::SNP) && (genotype_idx == i)) {
-            for (const auto& prob : row) {
-                genotype_probs.push_back(phred_complement(prob));
-            }
+          for (const auto& prob : row) {
+              genotype_probs.push_back(phred_complement(prob));
+          }
         } else {
-            variants_probs.insert(variants_probs.end(), row.begin(), row.end());
+          // variants_probs.insert(variants_probs.end(), row.begin(), row.end());
+          for (const auto& prob : row) {
+            variants_probs.push_back(third_phred(prob));
+          }
         }
     }
 
@@ -539,7 +547,7 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     fout << pl[pl.size() - 1] << endl;
 }
 
-void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices& mutMat, bool variantOnly, size_t maskSize, std::ofstream& fout) {
+void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices& mutMat, bool keep_alts, size_t maskSize, std::ofstream& fout) {
     pair< vector<VariationSite>, pair<size_t, size_t> > variantSites = getVariantSites(fin, mutMat);
     const vector<VariationSite> candidateVariants = variantSites.first;
     if (candidateVariants.empty()) {
@@ -569,7 +577,7 @@ void genotype::printSamplePlacementVCF(std::istream& fin, const mutationMatrices
             continue;
         }
 
-        if (variantOnly && curSite.most_probable_idx == (curSite.site_info >> 3)) {
+        if (!keep_alts && curSite.most_probable_idx == (curSite.site_info >> 3)) {
             continue;
         }
 
