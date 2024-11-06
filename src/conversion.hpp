@@ -45,5 +45,6 @@ void createMplp(
 void createVcf(
     char *mplpString,
     const seed_annotated_tree::mutationMatrices& mutMat,
-    std::string &vcfFileName
+    std::string &vcfFileName,
+    bool keep_alts
 );

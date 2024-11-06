@@ -958,7 +958,7 @@ static void applyMutations(mutableTreeData &data,
                     std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> &gapRunBacktracks,
                     blockExists_t& oldBlockExists, blockStrand_t& oldBlockStrand,
                     std::vector<int64_t> &curBaseCounts, std::vector<int64_t> &parentBaseCountsBacktrack,
-                    std::vector<std::vector<int64_t>> &subCount, bool& isMutated)
+                    std::vector<std::vector<int64_t>> &subCount, bool& isMutatedNuc)
 {
   blockExists_t &blockExists = data.blockExists;
   blockStrand_t &blockStrand = data.blockStrand;
@@ -1376,7 +1376,7 @@ static void applyMutations(mutableTreeData &data,
         --parentBaseCountsBacktrack[getIndexFromNucleotide(curChar)];
       }
       if (getIndexFromNucleotide(parChar) <= 3 && getIndexFromNucleotide(curChar) <= 3) {
-        isMutated = true;
+        isMutatedNuc = true;
         ++subCount[getIndexFromNucleotide(parChar)][getIndexFromNucleotide(curChar)];
       }
 
@@ -1488,11 +1488,11 @@ void buildMutationMatricesHelper_test(
 
   std::vector<int64_t> curBaseCounts = parentBaseCounts;
   std::vector<int64_t> parentBaseCountsBacktrack(4);
-  bool isMutated = false;
+  bool isMutatedNuc = false;
 
   applyMutations(data, blockMutationInfo, mutationInfo, T, node, globalCoords,
     navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists,
-    oldBlockStrand, curBaseCounts, parentBaseCountsBacktrack, subCount, isMutated);
+    oldBlockStrand, curBaseCounts, parentBaseCountsBacktrack, subCount, isMutatedNuc);
 
 
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
@@ -1618,7 +1618,7 @@ void buildMutationMatricesHelper_test(
 
     // std::cout << node->identifier << " test base counts: " << curBaseCounts[0] << " " << curBaseCounts[1] << " " << curBaseCounts[2] << " " << curBaseCounts[3] << std::endl;
     
-    if (isMutated || !insertionSet.empty() || !deletionSet.empty()) {
+    if (isMutatedNuc || !insertionSet.empty() || !deletionSet.empty()) {
       for (const auto& interval : insertionSet) {
         int64_t size = boost::icl::last(interval) - boost::icl::first(interval) + 1;
         assert(size > 0);

@@ -113,6 +113,7 @@ Placement-per-read options:
   --preem-filter-method <method>        Pre-filter method for haplotype filtering. Accepted values:
                                           'null' - No pre-filtering.
                                           'uhs' - Keep haplotypes with at least one highest score read with no ties.
+                                          'hsc' - Keep haplotypes with at least one highest score read, allowing ties.
                                           [default: null]
   --em-filter-round <int>               Maximum number of rounds to filter low probability haplotypes during EM filtering. [default: 5]
   --check-frequency <int>               Number of iterations between each em-filter-round. [default: 20]
@@ -122,6 +123,11 @@ Placement-per-read options:
   --remove-threshold <double>           Remove haplotypes with probability less than this threshold during rounds-remove. [default: 0.005]
   --leaf-nodes-only                     Only consider leaf nodes when placing reads.
   --call-subconsensus                   Call subconsensus sequence from reads.
+
+Developer options:
+  --genotype-from-sam                   Generate VCF from SAM file using mutation spectrum as prior.
+  --sam-file <path>                     Path to SAM file to generate VCF from.
+  --ref-file <path>                     Path to reference FASTA file to generate VCF from.
 )";
 
 
@@ -281,7 +287,8 @@ int main(int argc, const char** argv) {
     bool reindex = args["--reindex"] && args["--reindex"].isBool() ? args["--reindex"].asBool() : false;
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
     bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
-  
+    bool genotype_from_sam = args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool() ? args["--genotype-from-sam"].asBool() : false;
+
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
     std::string index_path = args["--index"] ? args["--index"].asString() : "";
@@ -384,7 +391,11 @@ int main(int argc, const char** argv) {
 
     log(prefix, "Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    if (placement_per_read) {
+    if (genotype_from_sam) {
+      std::string samFileName = args["--sam-file"] ? args["--sam-file"].asString() : "";
+      std::string refFileName = args["--ref-file"] ? args["--ref-file"].asString() : "";
+      callVariantsFromSAM(samFileName, refFileName, mutMat, prefix);
+    } else if (placement_per_read) {
       int maximumGap                = args["--maximum-gap"] ? std::stoi(args["--maximum-gap"].asString()) : 10;
       int minimumCount              = args["--minimum-count"] ? std::stoi(args["--minimum-count"].asString()) : 0;
       int minimumScore              = args["--minimum-score"] ? std::stoi(args["--minimum-score"].asString()) : 0;
