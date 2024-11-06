@@ -763,7 +763,7 @@ namespace mgsr {
     assert(nodes.size() == props.size());
     size_t curIteration = 1;
     while (true) {
-      std::cerr << "\riteration " << curIteration << std::flush;
+      std::cout << "\riteration " << curIteration << std::flush;
       // std::cerr << "getting max at theta1" << std::endl;
       Eigen::VectorXd theta1 = getMax(probs, props, numReadDuplicates, numReads);
       // std::cerr << "normalizing theta1" << std::endl;
@@ -864,22 +864,29 @@ namespace mgsr {
     if (excludeNode.empty()) {
       std::stringstream msg;
       msg << "starting to set up EM" << "\n";
-      std::cerr << msg.str();
+      std::cout << msg.str();
     } else {
       std::stringstream msg;
       msg << "starting to set up EM excluding " << excludeNode << "\n";
-      std::cerr << msg.str();
+      std::cout << msg.str();
     }
 
-
+    std::cout << "pre-EM filter nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() << std::endl;
     if (preEMFilterMethod == "null") {  
       haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "uhs") {
       haplotype_filter::filter_method_1(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
+    } else if (preEMFilterMethod == "hsc1") {
+      haplotype_filter::filter_method_2(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, 1);
+    } else if (preEMFilterMethod == "hsc2") {
+      size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
+      haplotype_filter::filter_method_2(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, static_cast<size_t>(static_cast<double>(allScores.begin()->second.size() - numExcludedReads) * 0.01));
     } else {
       std::cerr << "pre-EM filter method not recognized" << std::endl;
       exit(1);
     }
+    std::cout << "post-EM filter nodes size: " << nodes.size() << std::endl;
+    std::cout << "post-EM filter reduced nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() - nodes.size() << std::endl;
 
     props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
     size_t totalNodes = allScores.size() - leastRecentIdenticalAncestors.size();
@@ -898,11 +905,11 @@ namespace mgsr {
     if (excludeNode.empty()) {
       std::stringstream msg;
       msg << "starting EM estimation of haplotype proportions" << "\n";
-      std::cerr << msg.str();
+      std::cout << msg.str();
     } else {
       std::stringstream msg;
       msg << "starting EM estimation of haplotype proportions excluding " << excludeNode << "\n";
-      std::cerr << msg.str();
+      std::cout << msg.str();
     }
 
 
@@ -911,19 +918,19 @@ namespace mgsr {
     int32_t filterRoundCount = 0;
     size_t prefilterIterations = 5;
     std::vector<int> insigCounts(nodes.size());
-    std::cerr << "\npre-filter round for " << prefilterIterations << " iterations" << std::endl;
+    std::cout << "\npre-filter round for " << prefilterIterations << " iterations" << std::endl;
     llh = getExp(probs, props, readDuplicates);
     squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, prefilterIterations, insigCounts, insigProp, totalNodes);
     while (true && nodes.size() > std::max(static_cast<int>(totalNodes) / 20, 100)) {
       if (filterRoundCount >= emFilterRound) break;
-      std::cerr << "\nfilter round " << filterRoundCount + 1 << " out of " << emFilterRound << std::endl;
+      std::cout << "\nfilter round " << filterRoundCount + 1 << " out of " << emFilterRound << std::endl;
       ++filterRoundCount;
       llh = getExp(probs, props, readDuplicates);
       squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       if (converged) {
         break;
       }
-      std::cerr << "\nfiltering round " << filterRoundCount << std::endl;
+      std::cout << "\nfiltering round " << filterRoundCount << std::endl;
       std::vector<size_t> significantIndices;
       std::vector<std::string> sigNodes;
       for (size_t i = 0; i < nodes.size(); ++i) {
@@ -946,8 +953,8 @@ namespace mgsr {
         sigProbs.col(i) = probs.col(significantIndices[i]);
         sigProps(i) = props(i);
       }
-      std::cerr << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
-      std::cerr << sigNodes.size() << " nodes left" << std::endl;
+      std::cout << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
+      std::cout << sigNodes.size() << " nodes left" << std::endl;
       nodes = std::move(sigNodes);
       probs = std::move(sigProbs);
       props = std::move(sigProps);
@@ -960,7 +967,7 @@ namespace mgsr {
 
     if (!converged) {
       std::vector<int> insigCounts(nodes.size());
-      std::cerr << "start full EM" << std::endl;
+      std::cout << "start full EM" << std::endl;
       llh = getExp(probs, props, readDuplicates);
       squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       assert(converged == true);
@@ -976,7 +983,7 @@ namespace mgsr {
           }
       }
       if (significantIndices.size() == nodes.size()) break;
-      std::cerr << "\nremove round " << i + 1 << std::endl;
+      std::cout << "\nremove round " << i + 1 << std::endl;
 
       for (size_t idx : significantIndices) {
           sigNodes.push_back(nodes[idx]);
@@ -1019,11 +1026,11 @@ namespace mgsr {
     if (excludeNode.empty()) {
       std::stringstream msg;
       msg << "\nFinished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
-      std::cerr << msg.str();
+      std::cout << msg.str();
     } else {
       std::stringstream msg;
       msg << "\nFinished EM estimation of haplotype proportions excluding " << excludeNode << ". Total EM iterations: " << curit<< "\n";
-      std::cerr << msg.str();
+      std::cout << msg.str();
     }
   }
 
