@@ -1318,7 +1318,8 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
   std::vector<std::pair<bool, int64_t>> inverseBlockIdsBacktrack;
-  std::map<int64_t, int64_t> coordIndex;
+  std::map<int64_t, int64_t> degapCoordIndex;
+  std::map<int64_t, int64_t> regapCoordIndex;
   std::vector<tupleRange> recompRanges;
   blockExists_t oldBlockExists = data.blockExists;
   blockStrand_t oldBlockStrand = data.blockStrand;
@@ -1392,7 +1393,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
       invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks, gapMapUpdates);
     }
 
-    // makeCoordIndex(coordIndex, gapMap, blockRanges);
+    // makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
     
     for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
       const auto& [del, range] = *it;
@@ -1672,7 +1673,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
       }
     }
 
-    // makeCoordIndex(coordIndex, gapMap, blockRanges);
+    // makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
 
     auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
     auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
@@ -1799,7 +1800,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
       std::cout << node->identifier << " place syncmers: ";
       for (int i = 0; i < onSeedsHash.size(); i++) {
         if (onSeedsHash[i].has_value()) {
-          std::cout << mgsr::degapGlobal(i, coordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
+          std::cout << mgsr::degapGlobal(i, degapCoordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
         }
       }
       std::cout << std::endl;
@@ -1807,7 +1808,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
       std::cout << node->identifier << " build syncmers: ";
       for (int i = 0; i < onSeedsHash.size(); i++) {
         if (onSeedsHash[i].has_value()) {
-          std::cout << mgsr::degapGlobal(i, coordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
+          std::cout << mgsr::degapGlobal(i, degapCoordIndex) << ":" << onSeedsHash[i].value().hash << "|" << onSeedsHash[i].value().isReverse << " ";
         }
       }
       std::cout << std::endl;
@@ -1823,15 +1824,15 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
     // }
     // std::cout << std::endl;
 
-
-    // std::cout << node->identifier << " true syncmers: ";
-    // auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
-    // auto syncmers = extractSyncmers(seq, seedK, seedS, seedT, open);
-    // for (const auto &[kmer, hash, isReverse, startPos] : syncmers) {
-    //   // std::cout << startPos << ":" << hash << " ";
-    //   std::cout << startPos << ":" << hash << "|" << isReverse << " ";
-    // }
-    // std::cout << std::endl;
+    if (method == Step::BUILD) {
+      std::cout << node->identifier << " true syncmers: ";
+      auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
+      auto syncmers = extractSyncmers(seq, seedK, seedS, seedT, open);
+      for (const auto &[kmer, hash, isReverse, startPos] : syncmers) {
+        std::cout << startPos << ":" << hash << "|" << isReverse << " ";
+      }
+      std::cout << std::endl;
+    }
   }
 
 
@@ -2713,6 +2714,7 @@ void place_per_read_DFS(
 
   if (debug) {
     // print out seeds at node
+    std::cout << std::endl;
     if (method == Step::PLACE) {
       std::cout << node->identifier << " place seedmers: ";
       for (const auto& seedmer : positionMap) {
@@ -2725,6 +2727,23 @@ void place_per_read_DFS(
       }
     }
 
+    for (const auto& [hash, positions] : hashToPositionsMap) {
+      if (positions.size() == 0) {
+        std::cout << "Error: hashToPositionsMap contains empty positions" << std::endl;
+        exit(1);
+      }
+      for (const auto& position : positions) {
+        if (position->second.fhash != position->second.rhash) {
+          if (std::min(position->second.fhash, position->second.rhash) != hash) {
+            std::cout << "Error: min(fhash, rhash) != hash" << std::endl;
+            exit(1);
+          }
+        } else {
+          std::cout << "Error: fhash == rhash" << std::endl;
+          exit(1);
+        }
+      }
+    }
     std::cout << std::endl;
 
 
@@ -2735,6 +2754,7 @@ void place_per_read_DFS(
       std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
     }
     std::cout << std::endl;
+
   }
 
 
@@ -2956,7 +2976,6 @@ void place_per_read_DFS(
               readDuplicatesBackTrack.emplace_back(std::make_pair(readIndex, std::move(curReadDuplicatesBackTrack)));
             }
           }
-
           int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
           double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
           allScores[node->identifier][readIndex] = {pseudoScore, pseudoProb};
@@ -3183,11 +3202,13 @@ void seedmersFromFastq(
           reverseRolledHash = rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-i-1]);
         }
 
+        int32_t iorder = 0;
         if (forwardRolledHash != reverseRolledHash) {
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
           curRead.uniqueSeedmers.emplace(minHash, std::vector<int32_t>{0});
           curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-            minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, 0});
+            minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+          ++iorder;
         }
 
         // rest of kminmer
@@ -3207,11 +3228,13 @@ void seedmersFromFastq(
             if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
               curRead.uniqueSeedmers.emplace(minHash, std::vector<int32_t>{i});
               curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-                minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, i});
+                minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+              ++iorder;
             } else {
               uniqueSeedmersIt->second.push_back(i);
               curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-                uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, i});
+                uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+              ++iorder;
             }
           }
         }
