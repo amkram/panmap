@@ -429,7 +429,11 @@ namespace mgsr {
     }
   }
 
-  int32_t extend(int64_t& curEnd, mgsr::Read& curRead, int rev, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap, int32_t qidx, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt, int32_t c) {
+  int32_t extend(
+    int64_t& curEnd, mgsr::Read& curRead, int rev, std::map<int32_t, mgsr::positionInfo>& positionMap,
+    std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap,
+    int32_t qidx, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt, int32_t c
+  ) {
     if (qidx == curRead.seedmersList.size() - 1) return c;
     const auto& [nhash, nqbeg, nqend, nqrev, nqidx] = curRead.seedmersList[qidx+1];
 
@@ -516,6 +520,7 @@ namespace mgsr {
       const auto& qend1 = last1.endPos;
       const auto& qbeg2 = first2.begPos;
       const auto& qend2 = last2.endPos;
+
       auto rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
       auto rend1 = degapGlobal(rglobalend1, degapCoordIndex);
       auto rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
