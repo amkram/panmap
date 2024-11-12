@@ -1393,7 +1393,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
       invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks, gapMapUpdates);
     }
 
-    // makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
+    makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
     
     for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
       const auto& [del, range] = *it;
@@ -1673,7 +1673,7 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
       }
     }
 
-    // makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
+    makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
 
     auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
     auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
@@ -1827,9 +1827,11 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
     if (method == Step::BUILD) {
       std::cout << node->identifier << " true syncmers: ";
       auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
-      auto syncmers = extractSyncmers(seq, seedK, seedS, seedT, open);
-      for (const auto &[kmer, hash, isReverse, startPos] : syncmers) {
-        std::cout << startPos << ":" << hash << "|" << isReverse << " ";
+      if (seq.size() > 0) {
+        auto syncmers = extractSyncmers(seq, seedK, seedS, seedT, open);
+        for (const auto &[kmer, hash, isReverse, startPos] : syncmers) {
+          std::cout << startPos << ":" << hash << "|" << isReverse << " ";
+        }
       }
       std::cout << std::endl;
     }
@@ -2661,7 +2663,6 @@ void place_per_read_DFS(
   std::unordered_set<int64_t>& inverseBlockIds, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<bool>& excludeReads
 ) {
-
   size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
   std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>> seedChanges;
   blockMutationInfo_t blockMutationInfo;
@@ -2711,7 +2712,6 @@ void place_per_read_DFS(
   auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
   updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, backTrackPositionMapChAdd, backTrackPositionMapErase);
 
-
   if (debug) {
     // print out seeds at node
     std::cout << std::endl;
@@ -2754,7 +2754,6 @@ void place_per_read_DFS(
       std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
     }
     std::cout << std::endl;
-
   }
 
 
@@ -2775,7 +2774,6 @@ void place_per_read_DFS(
         allScores[node->identifier][i] = {pseudoScore, pseudoProb};
         if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) excludeReads[i] = true;
         // std::cout << i << "," << reads[i].seedmersList.size() << "," << allScores[node->identifier][i].first << "," << curRead.duplicates.size() << " ";
-        
       }
     });
     // std::cout << std::endl;
@@ -2785,6 +2783,14 @@ void place_per_read_DFS(
     allScores[node->identifier] = allScores[node->parent->identifier];
     if (affectedSeedmers.empty()) {
       identicalPairs[node->identifier] = node->parent->identifier;
+    } else if (positionMap.empty()) {
+      for (size_t i = 0; i < reads.size(); ++i) {
+        allScores[node->identifier][i] = std::make_pair(0, 0);
+        readBackTrack.emplace_back(std::make_pair(i, reads[i].matches));
+        readDuplicateSetsBackTrack.emplace_back(std::make_pair(i, reads[i].duplicates));
+        reads[i].matches.clear();
+        reads[i].duplicates.clear();
+      }
     } else {
       std::unordered_map<uint32_t, std::vector<int32_t>> readToAffectedSeedmerIndex;
       std::vector<std::pair<uint32_t, std::vector<int32_t>>> readToAffectedSeedmerIndexVec;
