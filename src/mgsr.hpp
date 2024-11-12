@@ -335,9 +335,24 @@ namespace mgsr {
                           const int& seedL,
                           std::vector<std::tuple<int32_t, int32_t, size_t, size_t, bool>>& backTrackPositionMapChAdd,
                           std::vector<int32_t>& backTrackPositionMapErase
-) {
+  ) {
     auto& positionMap = seedmersIndex.positionMap;
     auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
+
+
+
+    if (onSeedsHashMap.size() < seedL) {
+      if (positionMap.empty()) return;
+      auto positionMapIt = positionMap.begin();
+      while (positionMapIt != positionMap.end()) {
+        const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = positionMapIt->second;
+        backTrackPositionMapChAdd.emplace_back(std::make_tuple(positionMapIt->first, toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev));
+        seedmersIndex.delPosition(positionMapIt, affectedSeedmers);
+        ++positionMapIt;
+      }
+      return;
+    }
+
     int64_t maxBegCoord = std::prev(onSeedsHashMap.end(), seedL)->first;
     std::unordered_set<int64_t> processedSeedBegs;
     
@@ -420,6 +435,7 @@ namespace mgsr {
       }
     }
 
+    if (positionMap.empty()) return;
     auto lastPositionMapIt = std::prev(positionMap.end());
     while (lastPositionMapIt->first > maxBegCoord) {
       const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = lastPositionMapIt->second;
