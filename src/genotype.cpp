@@ -33,12 +33,16 @@ void to_upper(string& str) {
 static int getIndexFromNucleotide(char nuc) {
     switch(nuc) {
         case 'A':
+        case 'a':
             return 0;
         case 'C':
+        case 'c':
             return 1;
         case 'G':
+        case 'g':
             return 2;
         case 'T':
+        case 't':
             return 3;
         case '*':
             return 4;
@@ -82,10 +86,10 @@ double likelihood(
               genotype_probs.push_back(phred_complement(prob));
           }
         } else {
-          // variants_probs.insert(variants_probs.end(), row.begin(), row.end());
-          for (const auto& prob : row) {
-            variants_probs.push_back(third_phred(prob));
-          }
+          variants_probs.insert(variants_probs.end(), row.begin(), row.end());
+          // for (const auto& prob : row) {
+          //   variants_probs.push_back(third_phred(prob));
+          // }
         }
     }
 
@@ -122,7 +126,7 @@ double likelihood(
 
 vector<double> genotype_likelihoods(
     const vector< vector<double> >& read_errs, const map<string, vector<double> >& deletions,
-    const map<string, vector<double> >& insertions, const int8_t& site_info
+    const map<string, vector<double> >& insertions, const int8_t& site_info, const char& ref_nuc
 ) {
     vector<double> likelihoods;
     likelihoods.resize(5);
@@ -131,10 +135,10 @@ vector<double> genotype_likelihoods(
     }
 
     auto variation_types = site_info & 7;
-    auto ref_nuc = site_info >> 3;
+    auto ref_nuc_idx = site_info >> 3;
 
     for (int i = 0; i < read_errs.size(); ++i) {
-        if (read_errs[i].empty() && i != ref_nuc) { continue; }
+        if (read_errs[i].empty() && i != ref_nuc_idx) { continue; }
         likelihoods[i] = likelihood(i, read_errs, deletions, insertions, variationType::SNP);
     }
 
@@ -224,6 +228,7 @@ genotype::VariationSite::VariationSite(
     this->ref_position = position;
     size_t offset = 0;
     this->site_info = (getIndexFromNucleotide(ref) << 3) + variation_types;
+    this->ref_nuc = ref;
     this->read_errs.resize(5);
     assert(errors.size() == nucs.size() + insertion_seqs.size() + deletion_seqs.size());
 
@@ -251,7 +256,7 @@ genotype::VariationSite::VariationSite(
         }
     }
 
-    this->likelihoods = genotype_likelihoods(this->read_errs, this->deletions, this->insertions, this->site_info);
+    this->likelihoods = genotype_likelihoods(this->read_errs, this->deletions, this->insertions, this->site_info, this->ref_nuc);
     this->posteriors = genotype_posteriors(this->likelihoods, this->deletions, this->insertions, this->site_info, mutMat);
     
     for (size_t i = 0; i < 4; i++) {
@@ -427,6 +432,32 @@ pair< vector<VariationSite>, pair<size_t, size_t> > genotype::getVariantSites(st
     return make_pair(candidateVariants, maskRange);
 }
 
+static double get_qual_for_ambiguous_ref(const VariationSite& site) {
+  double qual = 0.0;
+  for (int i = 0; i < 4; i++) {
+      const auto& row = site.read_errs[i];
+      qual += accumulate(row.begin(), row.end(), 0.0);
+  }
+
+  for (const auto& insertion : site.insertions) {
+    qual += accumulate(insertion.second.begin(), insertion.second.end(), 0.0);
+  }
+
+  for (const auto& deletion : site.deletions) {
+    qual += accumulate(deletion.second.begin(), deletion.second.end(), 0.0);
+  }
+
+  vector<double> filtered_likelihoods;
+  for (size_t i = 0; i < site.likelihoods.size(); ++i) {
+      if (i != 3 || site.likelihoods[i] != std::numeric_limits<double>::max()) {
+          filtered_likelihoods.push_back(site.likelihoods[i]);
+      }
+  }
+
+
+  return qual - *min_element(filtered_likelihoods.begin(), filtered_likelihoods.end());
+}
+
 static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     size_t position  = site.ref_position + 1;
     int ref_nuc_idx  = site.site_info >> 3;
@@ -436,20 +467,17 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     vector<int> pl;
     string refAllele;
     int gt;
+
     
 
     string quality;
     if (ref_nuc_idx == 5) {
-        quality = ".";
+        quality = to_string(int(get_qual_for_ambiguous_ref(site)));
     } else {
         quality = to_string(int(site.posteriors[ref_nuc_idx]));
     }
-
-    for (const auto& depth : site.read_depth) {
-        readDepth += depth;
-    }
    
-    refAllele += getNucleotideFromIndex(ref_nuc_idx);
+    refAllele += site.ref_nuc;
 
     // find longest deletion
     size_t ldl = 0; // longest deletion length
@@ -468,10 +496,11 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     // depth and likelihood for reference
     if (ref_nuc_idx == 5) {
         ad.push_back(0);
-        pl.push_back(-1);
+        pl.push_back(stoi(quality));
     } else {
         ad.push_back(site.read_depth[ref_nuc_idx]);
         pl.push_back(site.posteriors[ref_nuc_idx]);
+        readDepth += site.read_depth[ref_nuc_idx];
     }
     if (pl.back() == 0.0) {
         gt = 0;
@@ -486,6 +515,7 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
             altAlleles.push_back(getNucleotideFromIndex(i) + lds);
             ad.push_back(site.read_depth[i]);
             pl.push_back(site.posteriors[i]);
+            readDepth += site.read_depth[i];
             if (pl.back() == 0.0) {
                 gt = altAlleles.size();
             }
@@ -495,9 +525,10 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
     // insertions
     size_t indelIdx = 0;
     for (const auto& ins : site.insertions) {
-        altAlleles.push_back(getNucleotideFromIndex(ref_nuc_idx) + ins.first + lds);
+        altAlleles.push_back(site.ref_nuc + ins.first + lds);
         ad.push_back(site.read_depth[4 + indelIdx]);
         pl.push_back(site.posteriors[4 + indelIdx]);
+        readDepth += site.read_depth[4 + indelIdx];
         if (pl.back() == 0.0) {
             gt = altAlleles.size();
         }
@@ -510,10 +541,11 @@ static void printVCFLine(const VariationSite& site, std::ofstream& fout) {
         if (delSize == ldl) {
             altAlleles.push_back(refAllele.substr(0, 1));
         } else {
-            altAlleles.push_back(getNucleotideFromIndex(ref_nuc_idx) + lds.substr(delSize, ldl - delSize));
+            altAlleles.push_back(site.ref_nuc + lds.substr(delSize, ldl - delSize));
         }
         ad.push_back(site.read_depth[4 + indelIdx]);
         pl.push_back(site.posteriors[4 + indelIdx]);
+        readDepth += site.read_depth[4 + indelIdx];
         if (pl.back() == 0.0) {
             gt = altAlleles.size();
         }

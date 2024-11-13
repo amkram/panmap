@@ -20,6 +20,7 @@ namespace genotype {
         size_t site_id;
         size_t ref_position;
         int8_t site_info; // 2 bit -> reference nuc, 3 bit -> varaition types
+        char ref_nuc;
         
         // substitution
         vector< vector<double> > read_errs;
