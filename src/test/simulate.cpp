@@ -16,10 +16,10 @@ namespace fs = boost::filesystem;
 
 void makeFasta(const std::string& name, const std::string& seq, const std::string& path);
 void makeDir(const std::string& path);
-std::vector<int> genMutNum(const std::vector<double>& mutNum_double, size_t seed);
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double, unsigned seed);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus, bool no_reads);
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -179,11 +179,11 @@ int main(int argc, char *argv[]) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
         // GO time
-        size_t seed = std::chrono::system_clock::now().time_since_epoch().count();
+        unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
         if (seedstr != "RANDOM") {
             try {
                 std::hash<std::string> hasher;
-                seed = hasher(seedstr);
+                seed = (unsigned)hasher(seedstr);
             } catch (const std::invalid_argument& e) {
                 throw std::invalid_argument("Invalid seed value: cannot convert to unsigned");
             } catch (const std::out_of_range& e) {
@@ -219,7 +219,7 @@ void makeDir(const std::string& path) {
     }
 }
 
-char getRandomChar(const std::vector<char>& charList, size_t seed) {
+char getRandomChar(const std::vector<char>& charList, unsigned seed) {
     std::mt19937 gen(seed);
     std::uniform_int_distribution<> distr(0, charList.size() - 1);
     int index = distr(gen);
@@ -259,7 +259,7 @@ double getMinDouble(const std::vector<double>& doubles) {
 
 }
 
-char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<int>& weights, size_t seed) {
+char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<int>& weights, unsigned seed) {
     // Create a random device and generator
     std::mt19937 gen(seed);
 
@@ -273,7 +273,7 @@ char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<
     return chars[index];
 }
 
-char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed) {
+char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed) {
     std::vector<char> bases = {'A', 'C', 'G', 'T'};
     int refIdx = getIndexFromNucleotide(ref);
     if (refIdx > 3) {
@@ -310,7 +310,7 @@ std::vector<double> convertMap(const std::unordered_map<long, double> &in) {
     }
     return outVector;
 }
-size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type, size_t seed) {
+size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type, unsigned seed) {
     std::mt19937 gen(seed);
 
     if (!mutMat.filled) {
@@ -345,7 +345,7 @@ size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::m
 
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
     const seed_annotated_tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
-    size_t beg, size_t end, size_t seed)
+    size_t beg, size_t end, unsigned seed)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
         return;
@@ -475,7 +475,7 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
     faos.close();
 }
 
-void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus, size_t seed) {
+void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus, unsigned seed) {
     std::string cmd = "iss generate --model " + model + " --genomes \'" + fastaOut.string() + "\'"
         + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus " + std::to_string(cpus) + " --seed " + std::to_string(seed);
     std::cout << "iss cmd: " << cmd << std::endl;
@@ -487,7 +487,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus, bool no_reads)
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
@@ -555,7 +555,7 @@ bool close_to_int(double num_double) {
     return false;
 }
 
-int genInt(double num_double, size_t seed) {
+int genInt(double num_double, unsigned seed) {
     std::mt19937 gen(seed);
     std::uniform_real_distribution<> dist(0, 1);
     int i = int(num_double);
@@ -566,7 +566,7 @@ int genInt(double num_double, size_t seed) {
     return i;
 }
 
-std::vector<int> genMutNum(const std::vector<double>& mutNum_double, size_t seed) {
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double, unsigned seed) {
     std::vector<int> mutNum_int;
     for (double num : mutNum_double) {
         if (close_to_int(num)) {
