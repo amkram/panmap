@@ -20,6 +20,7 @@ std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt1993
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
   const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
   int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads);
+void scaleMutationMatrices(seed_annotated_tree::mutationMatrices& mutMat, double mutation_rate);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -35,6 +36,7 @@ int main(int argc, char *argv[]) {
             ("indel_len", po::value<std::vector<int>>()->multitoken(), "Min and max indel length [1 9]. Uniform distribution.")
             ("mut_spec",  po::value<std::string>()->default_value(""), "Use input mutation matrix file to model mutations")
             ("mut_spec_type", po::value<std::string>()->default_value(""), "Type of mutation matrix to use. Options: snp, indel, both. Default: none. Currently only supports snp. When using snp, the number of mutations and reference nucleotide to mutate are also modeled by the mutation matrix.")
+            ("mutation_rate", po::value<double>()->default_value(-1), "Mutation rate for snp. Default: no scaling")
             ("rep",       po::value<int>()->default_value(1), "Number of replicates to simulate [1].")
             ("n_reads",   po::value<int>()->default_value(2000), "Number of reads to simulate [2000].")
             ("model",     po::value<std::string>()->default_value("NovaSeq"), "InSilicoSeq error model [HiSeq]. Options: HiSeq, NextSeq, NovaSeq, MiSeq. For detail, visit InSilicoSeq github (https://github.com/HadrienG/InSilicoSeq).")
@@ -64,6 +66,7 @@ int main(int argc, char *argv[]) {
         std::string prefix        = vm["prefix"].as<std::string>();
         std::string model         = vm["model"].as<std::string>();
         std::string seedstr       = vm["seed"].as<std::string>();
+        double mutation_rate      = vm["mutation_rate"].as<double>();
         int n_reads               = vm["n_reads"].as<int>();
         int rep                   = vm["rep"].as<int>();
         int cpus                  = vm["cpus"].as<int>();
@@ -81,6 +84,9 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        if (mutation_rate != -1) {
+          scaleMutationMatrices(mutMat, mutation_rate);
+        }
 
         // Check out_dir input
         if (!fs::is_directory(fs::path(out_dir))) {
@@ -635,4 +641,64 @@ std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt1993
         }
     }
     return mutNum_int;
+}
+
+inline std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector<std::vector<double>>& phredMatrix) {
+  std::vector<std::vector<double>> prob_matrix = phredMatrix;
+  for(int i = 0; i < prob_matrix.size(); i++) {
+    for(int j = 0; j < prob_matrix[i].size(); j++) {
+      prob_matrix[i][j] = pow(10, -prob_matrix[i][j] / 10);
+    }
+  }
+  return prob_matrix;
+}
+
+inline std::vector<std::vector<double>> probMatrix2PhredMatrix(const std::vector<std::vector<double>>& probMatrix) {
+  std::vector<std::vector<double>> phred_matrix = probMatrix;
+  for(int i = 0; i < phred_matrix.size(); i++) {
+    for(int j = 0; j < phred_matrix[i].size(); j++) {
+      phred_matrix[i][j] = -10 * log10(phred_matrix[i][j]);
+    }
+  }
+  return phred_matrix;
+}
+
+inline double getAverageMutationRate(const std::vector<std::vector<double>>& matrix) {
+  if (matrix.empty() || matrix.size() != matrix[0].size()) throw std::invalid_argument("Matrix must be square and non-empty.");
+
+  double sum = 0.0;
+  size_t count = 0;
+  for (size_t i = 0; i < matrix.size(); ++i) {
+    for (size_t j = 0; j < matrix.size(); ++j) {
+      if (i != j) {
+        sum += matrix[i][j];
+        ++count;
+      }
+    }
+  }
+
+  if (count == 0) throw std::runtime_error("No off-diagonal elements to calculate average.");
+  return sum / count;
+}
+
+void scaleMutationMatrices(seed_annotated_tree::mutationMatrices& mutMat, double mutation_rate) {
+  std::vector<std::vector<double>> scaled_submat_phred = mutMat.submat;
+  std::vector<std::vector<double>> scaled_submat_prob = phredMatrix2ProbMatrix(scaled_submat_phred);
+  double avg_mutation_rate = getAverageMutationRate(scaled_submat_prob);
+  double scale_factor = mutation_rate / avg_mutation_rate;
+
+  std::vector<double> scaled_submat_prob_row_sums(scaled_submat_prob.size());
+  for(int i = 0; i < scaled_submat_prob.size(); i++) {
+    for(int j = 0; j < scaled_submat_prob[i].size(); j++) {
+      if (i == j) continue;
+      scaled_submat_prob[i][j] *= scale_factor;
+      scaled_submat_prob_row_sums[i] += scaled_submat_prob[i][j];
+    }
+  }
+
+  for (int i = 0; i < scaled_submat_prob.size(); i++) {
+    scaled_submat_prob[i][i] = 1 - scaled_submat_prob_row_sums[i];
+  }
+
+  mutMat.submat = probMatrix2PhredMatrix(scaled_submat_prob);
 }
