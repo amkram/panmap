@@ -20,7 +20,6 @@ Example command below simulates 20 mutant replicates using the mutation spectrum
 ```
 
 
-
 Output directory structure:
 
 `prefix_refFasta/` contains the original reference genome sequence, `USA/CA-CDPH-500076119/2022|OP769690.1|2022-08-27`
@@ -51,3 +50,15 @@ Example command below plots the ROC curves for the SNPs evaluated for 20 replica
 ```
 python3 plot_roc.py "USA_CA-CDPH-500076119_2022|OP769690.1|2022-08-27" snps_eval_novaseq/snps 20 16.5
 ```
+
+
+```
+./evaluate_simulated_mutations_panmap.sh ../panman/sars_20000.panman 1,2,3,4,5,6,7,8,9,10 100 /scratch1/alan/data/genotype_eval/snps_eval_miseq_panmap_scaled/snps > /scratch1/alan/data/genotype_eval/snps_eval_miseq_panmap_scaled.stdout 2> /scratch1/alan/data/genotype_eval/snps_eval_miseq_panmap_scaled.stderr
+
+python3 plot_roc_avg.py "USA_CA-CDPH-500076119_2022|OP769690.1|2022-08-27" /scratch1/alan/data/genotype_eval/snps_eval_miseq_panmap_scaled/snps 100 16.5 && mv /scratch1/alan/data/genotype_eval/snps_eval_miseq_panmap_scaled/snps*png
+```
+
+![alt text](https://github.com/amkram/panmap/tree/main/dev/genotype_eval/snps_mean_auc_comparison_miseq_scaled.png)
+
+![alt text](https://github.com/amkram/panmap/tree/main/dev/genotype_eval/snps_mean_precision_recall_curve_miseq_scaled.png)
+
