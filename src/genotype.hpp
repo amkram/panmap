@@ -95,12 +95,13 @@ inline void callVariantsFromSAM(
 
   extractSam(samFileName, samAlignments, samHeader);
   extractRef(refFileName, bestMatchSequence);
-  
+  std::string current_prefix = prefix;
+  std::string current_refFileName = refFileName;
 
   //Convert to BAM
   sam_hdr_t *header;
   bam1_t **bamRecords;
-  std::string bamFileName = prefix + ".bam";
+  std::string bamFileName = current_prefix + ".bam";
   createBam(
       samAlignments,
       samHeader,
@@ -109,26 +110,42 @@ inline void callVariantsFromSAM(
       bamRecords
   );
 
-  std::string mpileupFileName = prefix + ".mplp";
-  //Convert to Mplp
-  char *mplpString;
-  createMplp(
-      bestMatchSequence,
-      header,
-      bamRecords,
-      samAlignments.size(),
-      mpileupFileName,
+  std::string mpileupFileName = current_prefix + ".mpileup";
+  // //Convert to Mplp
+  // char *mplpString;
+  // createMplp(
+  //     bestMatchSequence,
+  //     header,
+  //     bamRecords,
+  //     samAlignments.size(),
+  //     mpileupFileName,
 
-      mplpString
+  //     mplpString
+  // );
+  createMplpBcf(
+    current_prefix,
+    current_refFileName,
+    bestMatchSequence,
+    bamFileName,
+    mpileupFileName
   );
 
-  std::string vcfFileName = prefix + ".vcf";
-  //Convert to VCF
-  createVcf(
-      mplpString,
-      mutMat,
-      vcfFileName,
-      true
+
+  std::string vcfFileName = current_prefix + ".vcf";
+  // //Convert to VCF
+  // createVcf(
+  //     mplpString,
+  //     mutMat,
+  //     vcfFileName,
+  //     true
+  // );
+
+  createVcfWithMutationMatrices(
+    current_prefix,
+    mpileupFileName,
+    mutMat,
+    vcfFileName,
+    0.0011
   );
 }
 
