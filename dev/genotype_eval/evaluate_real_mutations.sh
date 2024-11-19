@@ -1,0 +1,8 @@
+#! /bin/bash
+
+# Command line options
+TREE_PATH=$1
+COVERAGES=$2
+NUM_REPLICATES=$3
+NODE_TYPE=$4
+OUTPUT_PREFIX=$5

@@ -51,13 +51,13 @@ typedef struct {
 		} \
 		l[i] = tmp; \
 	} \
-	void ks_heapmake_##name(size_t lsize, type_t l[]) \
+	__attribute__((weak)) void ks_heapmake_##name(size_t lsize, type_t l[]) \
 	{ \
 		size_t i; \
 		for (i = (lsize >> 1) - 1; i != (size_t)(-1); --i) \
 			ks_heapdown_##name(i, lsize, l); \
 	} \
-	type_t ks_ksmall_##name(size_t n, type_t arr[], size_t kk)			\
+	__attribute__((weak)) type_t ks_ksmall_##name(size_t n, type_t arr[], size_t kk)			\
 	{																	\
 		type_t *low, *high, *k, *ll, *hh, *mid;							\
 		low = arr; high = arr + n - 1; k = arr + kk;					\
