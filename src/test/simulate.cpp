@@ -184,11 +184,11 @@ int main(int argc, char *argv[]) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
         // GO time
-        size_t seed = std::chrono::system_clock::now().time_since_epoch().count();
+        unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
         if (seedstr != "RANDOM") {
             try {
                 std::hash<std::string> hasher;
-                seed = hasher(seedstr);
+                seed = (unsigned)hasher(seedstr);
             } catch (const std::invalid_argument& e) {
                 throw std::invalid_argument("Invalid seed value: cannot convert to unsigned");
             } catch (const std::out_of_range& e) {
