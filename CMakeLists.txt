@@ -177,6 +177,12 @@ set(BWA_SOURCES
 add_library(bwa STATIC ${BWA_SOURCES})
 target_include_directories(bwa PUBLIC src/3rdparty/bwa)
 
+file(GLOB BCFTOOLS_SOURCES src/3rdparty/bcftools/*.c)
+add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
+
+target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
+
+
 add_custom_target(build-deps DEPENDS
     ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
     ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
@@ -235,7 +241,7 @@ add_executable(simulate
     src/mm_align.c
     src/pileup.c
 )
-target_link_libraries(simulate PRIVATE bwa minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy deflate m)
+target_link_libraries(simulate PRIVATE bwa bcftools minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy deflate m)
 target_compile_options(simulate PUBLIC -g -O3)
 target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
@@ -274,8 +280,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(docopt)
 
 target_compile_options(bwa PRIVATE -fPIC)
+target_compile_options(bcftools PRIVATE -fPIC)
 
-target_link_libraries(panmap PRIVATE bwa minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy deflate m)
+target_link_libraries(panmap PRIVATE bwa bcftools minimap2 samtools htslib docopt capnp kj Boost::iostreams Boost::filesystem Boost::system ZLIB::ZLIB panman tbb tbbmalloc tbbmalloc_proxy deflate m)
 target_link_options(panmap PRIVATE -lm -lpthread)
 target_compile_options(panmap PRIVATE -Wall)
 target_compile_features(panmap PRIVATE cxx_std_20)
@@ -284,7 +291,7 @@ target_compile_features(panmap PRIVATE cxx_std_20)
 if (OPTION_BUILD_TESTS)
 target_sources(tests PUBLIC ${CAPNP_SRCS})
 target_include_directories(tests PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(tests bwa minimap2 samtools htslib
+target_link_libraries(tests bwa bcftools minimap2 samtools htslib
                      ${Boost_FILESYSTEM_LIBRARY}
                      ${Boost_SYSTEM_LIBRARY}
                      ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}

@@ -16,10 +16,10 @@ namespace fs = boost::filesystem;
 
 void makeFasta(const std::string& name, const std::string& seq, const std::string& path);
 void makeDir(const std::string& path);
-std::vector<int> genMutNum(const std::vector<double>& mutNum_double, size_t seed);
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt19937& gen);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
-    const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus, bool no_reads);
+  const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
+  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus, bool no_reads);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -34,6 +34,7 @@ int main(int argc, char *argv[]) {
             ("mutnum",    po::value<std::vector<double>>()->multitoken(), "Number of mutations for snp, insertion, and deletion [10 0 0].")
             ("indel_len", po::value<std::vector<int>>()->multitoken(), "Min and max indel length [1 9]. Uniform distribution.")
             ("mut_spec",  po::value<std::string>()->default_value(""), "Use input mutation matrix file to model mutations")
+            ("mut_spec_type", po::value<std::string>()->default_value(""), "Type of mutation matrix to use. Options: snp, indel, both. Default: none. Currently only supports snp. When using snp, the number of mutations and reference nucleotide to mutate are also modeled by the mutation matrix.")
             ("rep",       po::value<int>()->default_value(1), "Number of replicates to simulate [1].")
             ("n_reads",   po::value<int>()->default_value(2000), "Number of reads to simulate [2000].")
             ("model",     po::value<std::string>()->default_value("NovaSeq"), "InSilicoSeq error model [HiSeq]. Options: HiSeq, NextSeq, NovaSeq, MiSeq. For detail, visit InSilicoSeq github (https://github.com/HadrienG/InSilicoSeq).")
@@ -55,17 +56,18 @@ int main(int argc, char *argv[]) {
         po::notify(vm);
         
         // input variables
-        std::string panmatPath = vm["panmat"].as<std::string>();
-        std::string mut_spec   = vm["mut_spec"].as<std::string>();
-        std::string out_dir    = vm["out_dir"].as<std::string>();
-        std::string refNode    = vm["ref"].as<std::string>();
-        std::string prefix     = vm["prefix"].as<std::string>();
-        std::string model      = vm["model"].as<std::string>();
-        std::string seedstr    = vm["seed"].as<std::string>();
-        int n_reads            = vm["n_reads"].as<int>();
-        int rep                = vm["rep"].as<int>();
-        int cpus               = vm["cpus"].as<int>();
-        bool no_reads          = vm["no-reads"].as<bool>();
+        std::string panmatPath    = vm["panmat"].as<std::string>();
+        std::string mut_spec      = vm["mut_spec"].as<std::string>();
+        std::string mut_spec_type = vm["mut_spec_type"].as<std::string>();
+        std::string out_dir       = vm["out_dir"].as<std::string>();
+        std::string refNode       = vm["ref"].as<std::string>();
+        std::string prefix        = vm["prefix"].as<std::string>();
+        std::string model         = vm["model"].as<std::string>();
+        std::string seedstr       = vm["seed"].as<std::string>();
+        int n_reads               = vm["n_reads"].as<int>();
+        int rep                   = vm["rep"].as<int>();
+        int cpus                  = vm["cpus"].as<int>();
+        bool no_reads             = vm["no-reads"].as<bool>();
 
         // Check mut_spec
        seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
@@ -122,6 +124,9 @@ int main(int argc, char *argv[]) {
             if (mutnum_double.size() != 3) {
                 throw std::invalid_argument("--num must have 3 inputs");
             }
+        }
+        if (mut_spec_type != "" && mut_spec_type != "snp") {
+            throw std::invalid_argument("--mut_spec_type only supports snp");
         }
 
         // check model input
@@ -192,7 +197,7 @@ int main(int argc, char *argv[]) {
         }
         logFile << "Using seed: " << seed << "\n";
         logFile.close();
-        sim(T, refNode, out_dir, prefix, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus, no_reads);
+        sim(T, refNode, out_dir, prefix, mut_spec_type, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus, no_reads);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
@@ -219,8 +224,7 @@ void makeDir(const std::string& path) {
     }
 }
 
-char getRandomChar(const std::vector<char>& charList, size_t seed) {
-    std::mt19937 gen(seed);
+char getRandomChar(const std::vector<char>& charList, std::mt19937& gen) {
     std::uniform_int_distribution<> distr(0, charList.size() - 1);
     int index = distr(gen);
 
@@ -259,44 +263,35 @@ double getMinDouble(const std::vector<double>& doubles) {
 
 }
 
-char getRandomCharWithWeights(const std::vector<char>& chars, const std::vector<int>& weights, size_t seed) {
-    // Create a random device and generator
-    std::mt19937 gen(seed);
 
-    // Create a discrete distribution with the given weights
-    std::discrete_distribution<> distr(weights.begin(), weights.end());
-
-    // Get a random index based on the weights
-    int index = distr(gen);
-
-    // Return the character at the random index
-    return chars[index];
-}
-
-char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed) {
+char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, std::mt19937& gen) {
     std::vector<char> bases = {'A', 'C', 'G', 'T'};
     int refIdx = getIndexFromNucleotide(ref);
     if (refIdx > 3) {
-        return getRandomChar(bases, seed);
+        return getRandomChar(bases, gen);
     }
 
     if (!mutMat.filled) {
         bases.erase(bases.begin() + refIdx);
-        return getRandomChar(bases, seed);
+        return getRandomChar(bases, gen);
     }
 
     std::vector<double> probs = mutMat.submat[refIdx];
     bases.erase(bases.begin() + refIdx);
     probs.erase(probs.begin() + refIdx);
     
-    std::vector<int> wgts;
-    double minProb = getMinDouble(probs);
-    for (const auto& prob : probs) {
-        double deci = pow(10, (minProb - prob) / 10);
-        wgts.push_back(deci * 1000);
+    double sum = 0;
+    for (size_t i = 0; i < probs.size(); i++) {
+      probs[i] = pow(10, -probs[i] / 10);
+      sum += probs[i];
+    }
+    for (size_t i = 0; i < probs.size(); i++) {
+      probs[i] /= sum;
     }
 
-    return getRandomCharWithWeights(bases, wgts, seed);
+    std::discrete_distribution<> distr(probs.begin(), probs.end());
+    int index = distr(gen);
+    return bases[index];
 }
 
 std::vector<double> convertMap(const std::unordered_map<long, double> &in) {
@@ -310,9 +305,7 @@ std::vector<double> convertMap(const std::unordered_map<long, double> &in) {
     }
     return outVector;
 }
-size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type, size_t seed) {
-    std::mt19937 gen(seed);
-
+size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type, std::mt19937& gen) {
     if (!mutMat.filled) {
         std::uniform_int_distribution<> distribLen(indel_len.first, indel_len.second);
         return distribLen(gen);
@@ -345,7 +338,7 @@ size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::m
 
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
     const seed_annotated_tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
-    size_t beg, size_t end, size_t seed)
+    size_t beg, size_t end, std::mt19937& gen, size_t seed)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
         return;
@@ -359,7 +352,7 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
     std::vector< std::tuple<int, int, int> > muts;
     std::vector<std::string> vref;
     std::vector<int> vtp;
-    std::vector<int> num = genMutNum(mutnum_double, seed);
+    std::vector<int> num = genMutNum(mutnum_double, gen);
     for (int i = 0; i < num.size(); i++) {
         for (int j = 0; j < num[i]; j++) {
             switch (i) {
@@ -375,7 +368,6 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
             }
         }
     }
-    std::mt19937 gen(seed);
     std::uniform_int_distribution<> distribPos(beg, seq.size() - end);
 
     int c = 0;
@@ -387,9 +379,9 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
         if (varType == 1) {
             length = 1;
         } else if (varType == 2) {
-            length = genLen(indel_len, mutMat, 2, seed);
+            length = genLen(indel_len, mutMat, 2, gen);
         } else {
-            length = genLen(indel_len, mutMat, 4, seed);
+            length = genLen(indel_len, mutMat, 4, gen);
         }
         
         bool posConflict = false;
@@ -432,7 +424,7 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
                     vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
                     // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                     char ref  = seq[pos];
-                    char mut  = subNuc(ref, mutMat, seed);
+                    char mut  = subNuc(ref, mutMat, gen);
                     nseq[pos + offset] = mut;
                     vros << ref << "\t" << mut << "\t.\t.\t.\tGT\t1\n";
                     break;
@@ -444,7 +436,7 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
                     char ref = seq[pos];
                     std::string inss;
                     for (size_t j = 0; j < get<2>(muts[i]); j++) {
-                        inss += getRandomChar(bases, seed);
+                        inss += getRandomChar(bases, gen);
                     }
                     nseq = nseq.substr(0, pos + offset + 1) + inss + nseq.substr(pos + offset + 1, nseq.size() - (pos + offset + 1));
                     vros << ref << "\t" << ref << inss << "\t.\t.\t.\tGT\t1\n";
@@ -475,6 +467,52 @@ void genMut(const std::string& curNode, const std::string& seq, const fs::path& 
     faos.close();
 }
 
+struct snpInfo {
+  size_t pos;
+  char ref;
+  char mut;
+};
+
+void genMutSNP(
+  const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
+  const seed_annotated_tree::mutationMatrices& mutMat, std::mt19937& gen, std::vector<std::discrete_distribution<>>& distributions, std::vector<char>& bases
+) {
+  std::string nseq = seq;
+  std::vector<snpInfo> snps;
+  for (size_t i = 0; i < seq.size(); i++) {
+    const char& ref = seq[i];
+    int refidx = getIndexFromNucleotide(ref);
+    if (refidx > 3) continue;
+    int mutidx = distributions[refidx](gen);
+    if (mutidx == refidx) continue;
+    char mut = bases[mutidx];
+    nseq[i] = mut;
+    snps.push_back({i, ref, mut});
+  }
+
+  std::ofstream faos(fastaOut.string(), std::ofstream::trunc);
+  std::ofstream vros(vcfOut.string(), std::ofstream::trunc);
+
+
+  vros << "##fileformat=VCFv4.3\n"
+      //  << "##contig=<ID=" + curNode + ">\n"
+        << "##contig=<ID=ref>\n"
+        << "##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>\n";
+  vros << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + fastaOut.stem().string() + "\n";
+  for (const auto& snp : snps) {
+    vros << "ref\t" << std::to_string(snp.pos + 1) + "\t.\t" << snp.ref << "\t" << snp.mut << "\t.\t.\t.\tGT\t1\n";
+  }
+
+  faos << '>' << fastaOut.stem().string() << '\n';
+  size_t linesize = 80;
+  for (size_t i = 0; i < nseq.size(); i += linesize) {
+      faos << nseq.substr(i, std::min(linesize, nseq.size() - i)) << '\n';
+  }
+  
+  vros.close();
+  faos.close();
+}
+
 void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus, size_t seed) {
     std::string cmd = "iss generate --model " + model + " --genomes \'" + fastaOut.string() + "\'"
         + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus " + std::to_string(cpus) + " --seed " + std::to_string(seed);
@@ -486,7 +524,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 }
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
-    const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
+    const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
     int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus, bool no_reads)
 {
     fs::path outDirObj = outDir;
@@ -511,38 +549,60 @@ void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& ou
         std::shuffle(begin(nodeNames), end(nodeNames), rng);
     }
 
+    std::mt19937 gen(seed);
+    std::vector<char> bases = {'A', 'C', 'G', 'T'};
+    std::vector<std::discrete_distribution<>> distributions(4);
+
+    for (size_t i = 0; i < 4; i++) {
+      std::vector<double> probs = mutMat.submat[i];
+      double sum = 0;
+      for (size_t j = 0; j < 4; j++) {
+        probs[j] = pow(10, -probs[j] / 10);
+        sum += probs[j];
+      }
+      for (size_t j = 0; j < 4; j++) {
+        probs[j] /= sum;
+      }
+      distributions[i] = std::discrete_distribution<>(probs.begin(), probs.end());
+    }
+    
     for (int i = 0; i < rep; i++) {
-        std::string curNode;
-        if (refNode == "RANDOM") {
-            curNode = nodeNames[i];
-        } else {
-            curNode = refNode;
-        }
+      std::string curNode;
+      if (refNode == "RANDOM") {
+          curNode = nodeNames[i];
+      } else {
+          curNode = refNode;
+      }
 
-        std::string curNodeID = curNode;
-        std::replace(curNode.begin(), curNode.end(), '/', '_');
-        std::replace(curNode.begin(), curNode.end(), ' ', '_');
-        std::cout << "curNodeID: " << curNodeID << std::endl;
-        std::cout << "Making reference fasta for " << curNode << std::endl;
-        // Make reference fasta
-        makeFasta(curNode, T->getStringFromReference(curNodeID, false), (outRefFastaObj / fs::path(curNode + ".fa")).string());
+      std::string curNodeID = curNode;
+      std::replace(curNode.begin(), curNode.end(), '/', '_');
+      std::replace(curNode.begin(), curNode.end(), ' ', '_');
+      std::cout << "curNodeID: " << curNodeID << std::endl;
+      std::cout << "Making reference fasta for " << curNode << std::endl;
+      // Make reference fasta
+      makeFasta(curNode, T->getStringFromReference(curNodeID, false), (outRefFastaObj / fs::path(curNode + ".fa")).string());
 
-        // Make variant fasta and vairant vcf
-        fs::path fastaOut;
-        fs::path vcfOut;
-        if (refNode == "RANDOM") {
-            fastaOut = outVarFastaObj / fs::path(curNode + ".var.fa");
-            vcfOut  = outVCFTrueObj  / fs::path(curNode + ".var.vcf");
-        } else {
-            fastaOut = outVarFastaObj / fs::path(curNode + ".var." + std::to_string(i) + ".fa");
-            vcfOut  = outVCFTrueObj  / fs::path(curNode + ".var." + std::to_string(i) + ".vcf");
-        }
-        genMut(curNode, T->getStringFromReference(curNodeID, false), fastaOut, vcfOut, mutMat, num, indel_len, 500, 500, seed);
+      // Make variant fasta and vairant vcf
+      fs::path fastaOut;
+      fs::path vcfOut;
+      if (refNode == "RANDOM") {
+          fastaOut = outVarFastaObj / fs::path(curNode + ".var.fa");
+          vcfOut  = outVCFTrueObj  / fs::path(curNode + ".var.vcf");
+      } else {
+          fastaOut = outVarFastaObj / fs::path(curNode + ".var." + std::to_string(i) + ".fa");
+          vcfOut  = outVCFTrueObj  / fs::path(curNode + ".var." + std::to_string(i) + ".vcf");
+      }
+      
+      if (mut_spec_type == "snp") {
+        genMutSNP(curNode, T->getStringFromReference(curNodeID, false), fastaOut, vcfOut, mutMat, gen, distributions, bases);
+      } else {
+        genMut(curNode, T->getStringFromReference(curNodeID, false), fastaOut, vcfOut, mutMat, num, indel_len, 500, 500, gen, seed);
+      }
 
-        // Make reads using InSilicoSeq
-        if (!no_reads) {
-            simReads(fastaOut, outReadsObj, model, n_reads, cpus, seed);
-        }
+      // Make reads using InSilicoSeq
+      if (!no_reads) {
+          simReads(fastaOut, outReadsObj, model, n_reads, cpus, seed);
+      }
     }
 }
 
@@ -555,8 +615,7 @@ bool close_to_int(double num_double) {
     return false;
 }
 
-int genInt(double num_double, size_t seed) {
-    std::mt19937 gen(seed);
+int genInt(double num_double, std::mt19937& gen) {
     std::uniform_real_distribution<> dist(0, 1);
     int i = int(num_double);
     double prob_to_add = num_double - double(i);
@@ -566,13 +625,13 @@ int genInt(double num_double, size_t seed) {
     return i;
 }
 
-std::vector<int> genMutNum(const std::vector<double>& mutNum_double, size_t seed) {
+std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt19937& gen) {
     std::vector<int> mutNum_int;
     for (double num : mutNum_double) {
         if (close_to_int(num)) {
             mutNum_int.push_back(num + 0.5);
         } else {
-            mutNum_int.push_back(genInt(num, seed));
+            mutNum_int.push_back(genInt(num, gen));
         }
     }
     return mutNum_int;

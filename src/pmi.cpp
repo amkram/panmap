@@ -2359,7 +2359,7 @@ void prepareAndRunBwa(
   }
 }
 
-void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode)
+void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode)
 {
     // Setup for seed indexing
     seed_annotated_tree::mutableTreeData data;
@@ -2582,6 +2582,22 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           header,
           bamRecords
       );
+
+      // createMplpBcf(
+      //   prefix,
+      //   refFileName,
+      //   bestMatchSequence,
+      //   bamFileName,
+      //   mpileupFileName
+      // );
+
+      // createVcfWithMutationMatrices(
+      //   prefix,
+      //   mpileupFileName,
+      //   mutMat,
+      //   vcfFileName,
+      //   0.0011
+      // );
 
       //std::string mpileupFileName = "MPILEUP";
       //Convert to Mplp
