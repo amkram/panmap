@@ -61,9 +61,9 @@ Input/output options:
                                   assembly / a:   Save consensus assembly to <prefix>.assembly.fa
                                   reference / r:  Save panmap's selected reference to <prefix>.reference.fa
                                   spectrum / c:   Save mutation spectrum matrix to <prefix>.mm
-                                  mpileup / m:    Save read pileup to <prefix>.mpileup
                                   sam / s:        Save aligned reads to <prefix>.sam
                                   bam / b:        Save aligned reads to <prefix>.bam
+                                  mpileup / m:    Save read pileup to <prefix>.mpileup
                                   vcf / v:        Save variant calls and likelihoods to <prefix>.vcf
                                   all / A:        Save all possible outputs, each to <prefix>.<ext>
                               [default: bam,vcf,assembly]
@@ -444,7 +444,7 @@ int main(int argc, const char** argv) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
         return 1;
       }
-      pmi::place(T, index_input, reads1, reads2, mutMat, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode);
+      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode);
     }
 
     auto end = std::chrono::high_resolution_clock::now();

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <numeric>
 #include <string>
+#include <iomanip>
 
 using namespace std;
 using namespace   seed_annotated_tree;
@@ -67,6 +68,175 @@ static char getNucleotideFromIndex(int index) {
         default:
             return 'N';
     }
+}
+
+std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector<std::vector<double>>& phredMatrix) {
+  std::vector<std::vector<double>> prob_matrix = phredMatrix;
+  for(int i = 0; i < prob_matrix.size(); i++) {
+    for(int j = 0; j < prob_matrix[i].size(); j++) {
+      prob_matrix[i][j] = pow(10, -prob_matrix[i][j] / 10);
+    }
+  }
+  return prob_matrix;
+}
+
+std::vector<std::vector<double>> probMatrix2PhredMatrix(const std::vector<std::vector<double>>& probMatrix) {
+  std::vector<std::vector<double>> phred_matrix = probMatrix;
+  for(int i = 0; i < phred_matrix.size(); i++) {
+    for(int j = 0; j < phred_matrix[i].size(); j++) {
+      phred_matrix[i][j] = -10 * log10(phred_matrix[i][j]);
+    }
+  }
+  return phred_matrix;
+}
+
+double getAverageMutationRate(const std::vector<std::vector<double>>& matrix) {
+  if (matrix.empty() || matrix.size() != matrix[0].size()) throw std::invalid_argument("Matrix must be square and non-empty.");
+
+  double sum = 0.0;
+  size_t count = 0;
+  for (size_t i = 0; i < matrix.size(); ++i) {
+    for (size_t j = 0; j < matrix.size(); ++j) {
+      if (i != j) {
+        sum += matrix[i][j];
+        ++count;
+      }
+    }
+  }
+
+  if (count == 0) throw std::runtime_error("No off-diagonal elements to calculate average.");
+  return sum / count;
+}
+
+vector<std::vector<double>> genotype::scaleMutationSpectrum(const mutationMatrices& mutMat, double mutationRate) {
+  vector<std::vector<double>> scaled_submat_phred = mutMat.submat;
+  vector<std::vector<double>> scaled_submat_prob = phredMatrix2ProbMatrix(scaled_submat_phred);
+  double avg_mutation_rate = getAverageMutationRate(scaled_submat_prob);
+  double scale_factor = mutationRate / avg_mutation_rate;
+
+  std::vector<double> scaled_submat_prob_row_sums(scaled_submat_prob.size());
+  for(int i = 0; i < scaled_submat_prob.size(); i++) {
+    for(int j = 0; j < scaled_submat_prob[i].size(); j++) {
+      if (i == j) continue;
+      scaled_submat_prob[i][j] *= scale_factor;
+      scaled_submat_prob_row_sums[i] += scaled_submat_prob[i][j];
+    }
+  }
+
+  for (int i = 0; i < scaled_submat_prob.size(); i++) {
+    scaled_submat_prob[i][i] = 1 - scaled_submat_prob_row_sums[i];
+  }
+
+  return probMatrix2PhredMatrix(scaled_submat_prob);
+}
+
+std::vector<char> parse_alts(const std::string& alts_str) {
+  std::vector<char> alts;
+  std::istringstream alts_stream(alts_str);
+  std::string alt;
+  while (std::getline(alts_stream, alt, ',')) {
+    if (alt.size() > 1) {
+      throw std::runtime_error("Error: alt allel parsing error..");
+    }
+    alts.push_back(alt[0]);
+  }
+  return alts;
+}
+
+std::tuple<int, std::vector<double>, std::vector<int>, std::string, std::string> parse_sample_formats(const std::string& sample_formats_str) {
+  std::vector<std::string> sample_formats;
+  std::istringstream sample_formats_stream(sample_formats_str);
+  std::string sample_format;
+  while (std::getline(sample_formats_stream, sample_format, ':')) {
+    sample_formats.push_back(sample_format);
+  }
+
+  int gt = std::stoi(sample_formats[0]);
+  std::vector<double> pls;
+  std::istringstream pls_stream(sample_formats[1]);
+  std::string pl;
+  while (std::getline(pls_stream, pl, ',')) {
+    pls.push_back(std::stod(pl));
+  }
+
+  std::vector<int> ads;
+  std::istringstream ads_stream(sample_formats[2]);
+  std::string ad;
+  while (std::getline(ads_stream, ad, ',')) {
+    ads.push_back(std::stoi(ad));
+  }
+
+  return std::make_tuple(gt, pls, ads, sample_formats[1], sample_formats[2]);
+}
+
+std::string genotype::applyMutationSpectrum(const std::string& line, const std::vector<std::vector<double>>& scaled_submat) {
+  std::vector<std::string> fields;
+  std::istringstream line_stream(line);
+  std::string field;
+  while (std::getline(line_stream, field, '\t')) {
+    fields.push_back(field);
+  }
+
+  if (fields.size() < 10 || fields[0] == "#CHROM") {
+    return line;
+  }
+  
+  if (fields.size() != 10) {
+    throw std::runtime_error("Couldn't parse VCF. Unrecognized number of fields.");
+  }
+
+  if (fields[4] == ".") {
+    return "";
+  } else if (fields[7].substr(0, 2) != "DP") {
+    if (fields[9][0] == '0') return "";
+    else                     return line;
+  } else if (getIndexFromNucleotide(fields[3][0]) > 3) {
+    if (fields[9][0] == '0') return "";
+    else                     return line;
+  }
+
+  if (fields[3].size() > 1) {
+    throw std::runtime_error("Error: reference allele parsing error.");
+  }
+
+  int ref_nuc_idx = getIndexFromNucleotide(fields[3][0]);
+  std::vector<char> alts = parse_alts(fields[4]);
+
+
+  auto [gt, pls, ads, pls_string, ads_string] = parse_sample_formats(fields[9]);
+
+  std::vector<double> gls;
+  if (alts.size() + 1 == pls.size()) {
+    gls = pls;
+  } else {
+    for (int i = 0; i < pls.size(); i += 2) {
+      gls.push_back(pls[i]);
+      if (gls.size() == alts.size() + 1) {
+        break;
+      }
+    }
+  }
+
+  gls[0] += scaled_submat[ref_nuc_idx][ref_nuc_idx];
+  for (int i = 1; i < gls.size(); i++) {
+    gls[i] = gls[i] + scaled_submat[ref_nuc_idx][getIndexFromNucleotide(alts[i - 1])];
+  }
+
+  double min_gl = *std::min_element(gls.begin(), gls.end());
+  int min_gl_index;
+  for (int i = 0; i < gls.size(); i++) {
+    gls[i] -= min_gl;
+    if (gls[i] == 0) min_gl_index = i;
+  }
+
+  if (min_gl_index == 0) return "";
+
+  gt = min_gl_index;
+  double qual = gls[0];
+
+  std::stringstream ss;
+  ss << fields[0] << "\t" << fields[1] << "\t" << fields[2] << "\t" << fields[3] << "\t" << fields[4] << "\t" << std::fixed << std::setprecision(4) << qual << "\t" << fields[6] << "\t" << fields[7] << "\t" << fields[8] << "\t" << gt << ":" << pls_string << ":" << ads_string;
+  return ss.str();
 }
 
 double likelihood(

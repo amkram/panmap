@@ -38,7 +38,9 @@ namespace genotype {
         vector<double> posteriors;
         vector<size_t> read_depth;
     };
-
+  
+    vector<std::vector<double>> scaleMutationSpectrum(const mutationMatrices& mutMat, double mutationRate);
+    std::string applyMutationSpectrum(const std::string& line, const std::vector<std::vector<double>>& scaled_submat);
     pair< vector<VariationSite>, pair<size_t, size_t> > getVariantSites(std::istream& fin, const mutationMatrices& mutMat);
     void printSamplePlacementVCF(std::istream& fin, const mutationMatrices& mutMat, bool variantOnly, size_t maskSize, std::ofstream& fout);
 }

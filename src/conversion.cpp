@@ -5,6 +5,7 @@
 extern "C" {
     #include "pileup.h"
     #include "mm_align.h"
+    #include <bcftools/bcftools.h>
 }
 
 //samAlignment is sorted at the end
@@ -384,6 +385,74 @@ void createMplp(
     }
     
     free(bamRecords);
+}
+
+
+
+
+void createMplpBcf(
+  std::string &prefix,
+  std::string &refFileName,
+  std::string &bestMatchSequence,
+  std::string &bamFileName,
+  std::string &mpileupFileName
+) {
+  std::string outRefFileName = "";
+  if (refFileName.size() == 0) {
+    outRefFileName = prefix + ".tmp.reference.fa";
+    std::ofstream outRefFile{outRefFileName};
+    outRefFile << ">ref\n";
+    outRefFile << bestMatchSequence << "\n";
+    outRefFile.close();
+  } else {
+    outRefFileName = refFileName;
+  }
+
+  if (mpileupFileName.size() == 0) {
+    mpileupFileName = prefix + ".mpileup";
+  }
+
+  optind = 1;
+  const char *mpileup_args[] = {"mpileup", "-Ou", "-f", outRefFileName.c_str(), bamFileName.c_str(), "-o", mpileupFileName.c_str()};
+  main_mpileup(7, const_cast<char**>(mpileup_args));
+
+}
+
+void createVcfWithMutationMatrices(
+  std::string &prefix,
+  std::string &mpileupFileName,
+  const seed_annotated_tree::mutationMatrices& mutMat,
+  std::string &vcfFileName,
+  double mutationRate
+) {
+  if (mpileupFileName.size() == 0) {
+    mpileupFileName = prefix + ".mpileup";
+  }
+
+  FILE *tempFile = std::tmpfile();
+  int stdoutFd = dup(fileno(stdout));
+  dup2(fileno(tempFile), fileno(stdout));
+  optind = 1;
+  const char *mpileup_args[] = {"call", "--ploidy", "1", "-c", "-A", "-O", "v", mpileupFileName.c_str()};
+  main_vcfcall(8, const_cast<char**>(mpileup_args));
+
+  fflush(stdout);
+  dup2(stdoutFd, fileno(stdout));
+  close(stdoutFd);
+  rewind(tempFile); 
+
+  std::vector<std::vector<double>> scaled_submat = genotype::scaleMutationSpectrum(mutMat, mutationRate);
+  std::ofstream vcfOutFile{vcfFileName};
+  std::vector<std::string> vcfLines;
+  char buffer[512];
+  while (fgets(buffer, sizeof(buffer), tempFile)) {
+    std::string line(buffer);
+    if (line.size() > 0 && line[line.size() - 1] == '\n') line.pop_back();
+    std::string spectrum_applied_line = genotype::applyMutationSpectrum(line, scaled_submat);
+    if (spectrum_applied_line.size() > 0) vcfOutFile << spectrum_applied_line << "\n";
+  }
+  fclose(tempFile);
+
 }
 
 

@@ -42,9 +42,25 @@ void createMplp(
     char * &mplpString
 );
 
+void createMplpBcf(
+    std::string &prefix,
+    std::string &refFileName,
+    std::string &bestMatchSequence,
+    std::string &bamFileName,
+    std::string &mpileupFileName
+);
+
 void createVcf(
     char *mplpString,
     const seed_annotated_tree::mutationMatrices& mutMat,
     std::string &vcfFileName,
     bool keep_alts
+);
+
+void createVcfWithMutationMatrices(
+  std::string &prefix,
+  std::string &mpileupFileName,
+  const seed_annotated_tree::mutationMatrices& mutMat,
+  std::string &vcfFileName,
+  double mutationRate
 );
