@@ -58,7 +58,7 @@ python3 plot_roc.py "USA_CA-CDPH-500076119_2022|OP769690.1|2022-08-27" snps_eval
 python3 plot_roc_avg.py "USA_CA-CDPH-500076119_2022|OP769690.1|2022-08-27" /scratch1/alan/data/genotype_eval/snps_eval_miseq_panmap_scaled/snps 100 16.5 && mv /scratch1/alan/data/genotype_eval/snps_eval_miseq_panmap_scaled/snps*png
 ```
 
-![alt text](https://github.com/amkram/panmap/tree/main/dev/genotype_eval/snps_mean_auc_comparison_miseq_scaled.png)
+![alt text](https://github.com/amkram/panmap/tree/main/dev/genotype_eval/snps_mean_auc_comparison_miseq_scaled.png "AUC")
 
-![alt text](https://github.com/amkram/panmap/tree/main/dev/genotype_eval/snps_mean_precision_recall_curve_miseq_scaled.png)
+![alt text](https://github.com/amkram/panmap/tree/main/dev/genotype_eval/snps_mean_precision_recall_curve_miseq_scaled.png "PRC")
 
