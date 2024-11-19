@@ -2583,44 +2583,44 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           bamRecords
       );
 
-      // createMplpBcf(
-      //   prefix,
-      //   refFileName,
-      //   bestMatchSequence,
-      //   bamFileName,
-      //   mpileupFileName
-      // );
-
-      // createVcfWithMutationMatrices(
-      //   prefix,
-      //   mpileupFileName,
-      //   mutMat,
-      //   vcfFileName,
-      //   0.0011
-      // );
-
-      //std::string mpileupFileName = "MPILEUP";
-      //Convert to Mplp
-      char *mplpString;
-
-      createMplp(
-          bestMatchSequence,
-          header,
-          bamRecords,
-          samAlignments.size(),
-          mpileupFileName,
-
-          mplpString
+      createMplpBcf(
+        prefix,
+        refFileName,
+        bestMatchSequence,
+        bamFileName,
+        mpileupFileName
       );
 
-      //std::string vcfFileName = "VCF";
-      //Convert to VCF
-      createVcf(
-          mplpString,
-          mutMat,
-          vcfFileName,
-          false
+      createVcfWithMutationMatrices(
+        prefix,
+        mpileupFileName,
+        mutMat,
+        vcfFileName,
+        0.0011
       );
+
+      // //std::string mpileupFileName = "MPILEUP";
+      // //Convert to Mplp
+      // char *mplpString;
+
+      // createMplp(
+      //     bestMatchSequence,
+      //     header,
+      //     bamRecords,
+      //     samAlignments.size(),
+      //     mpileupFileName,
+
+      //     mplpString
+      // );
+
+      // //std::string vcfFileName = "VCF";
+      // //Convert to VCF
+      // createVcf(
+      //     mplpString,
+      //     mutMat,
+      //     vcfFileName,
+      //     false
+      // );
     } else {
       // align with bwa aln
       std::cout << "Preparing arguments for bwa..." << std::endl;
