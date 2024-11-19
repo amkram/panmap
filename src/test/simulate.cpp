@@ -19,7 +19,7 @@ void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt19937& gen);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
   const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus, bool no_reads);
+  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -338,7 +338,7 @@ size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::m
 
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
     const seed_annotated_tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
-    size_t beg, size_t end, std::mt19937& gen, size_t seed)
+    size_t beg, size_t end, std::mt19937& gen, unsigned seed)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
         return;
@@ -513,7 +513,7 @@ void genMutSNP(
   faos.close();
 }
 
-void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus, size_t seed) {
+void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::string& model, int n_reads, int cpus, unsigned seed) {
     std::string cmd = "iss generate --model " + model + " --genomes \'" + fastaOut.string() + "\'"
         + " -n " + std::to_string(n_reads) + " --output \'" + (outReadsObj / fastaOut.stem()).string() + "\'" + " --cpus " + std::to_string(cpus) + " --seed " + std::to_string(seed);
     std::cout << "iss cmd: " << cmd << std::endl;
@@ -525,7 +525,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, size_t seed, int cpus, bool no_reads)
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
