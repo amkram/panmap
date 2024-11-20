@@ -70,7 +70,7 @@ static char getNucleotideFromIndex(int index) {
     }
 }
 
-std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector<std::vector<double>>& phredMatrix) {
+inline std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector<std::vector<double>>& phredMatrix) {
   std::vector<std::vector<double>> prob_matrix = phredMatrix;
   for(int i = 0; i < prob_matrix.size(); i++) {
     for(int j = 0; j < prob_matrix[i].size(); j++) {
@@ -80,7 +80,7 @@ std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector<std::v
   return prob_matrix;
 }
 
-std::vector<std::vector<double>> probMatrix2PhredMatrix(const std::vector<std::vector<double>>& probMatrix) {
+inline std::vector<std::vector<double>> probMatrix2PhredMatrix(const std::vector<std::vector<double>>& probMatrix) {
   std::vector<std::vector<double>> phred_matrix = probMatrix;
   for(int i = 0; i < phred_matrix.size(); i++) {
     for(int j = 0; j < phred_matrix[i].size(); j++) {
@@ -90,7 +90,7 @@ std::vector<std::vector<double>> probMatrix2PhredMatrix(const std::vector<std::v
   return phred_matrix;
 }
 
-double getAverageMutationRate(const std::vector<std::vector<double>>& matrix) {
+inline double getAverageMutationRate(const std::vector<std::vector<double>>& matrix) {
   if (matrix.empty() || matrix.size() != matrix[0].size()) throw std::invalid_argument("Matrix must be square and non-empty.");
 
   double sum = 0.0;

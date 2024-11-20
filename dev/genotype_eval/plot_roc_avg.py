@@ -172,15 +172,15 @@ coverages = np.array(coverages)  # Convert coverages to numpy array if it isn't 
 
 # Create the plot for Mean AUC comparison
 plt.figure(figsize=(10, 6))
-plt.errorbar(coverages, mean_aucs_msp, yerr=std_aucs_msp, fmt='o-', color='blue', label='MSP', capsize=5)
-plt.errorbar(coverages, mean_aucs_bcf, yerr=std_aucs_bcf, fmt='s-', color='orange', label='BCF', capsize=5)
+plt.errorbar(coverages, mean_aucs_msp, yerr=std_aucs_msp, fmt='o-', color='blue', label='tree-specific prior', capsize=5, markersize=4)
+plt.errorbar(coverages, mean_aucs_bcf, yerr=std_aucs_bcf, fmt='s-', color='orange', label='BCFtools flat prior', capsize=5, markersize=4)
 
 # Add labels, legend, and grid
 plt.xlabel('Coverage')
 plt.xticks(coverages, [f'{i}X' for i in coverages])
 plt.ylabel('Mean AUC')
 plt.ylim(0, 1)
-plt.title('Comparison of Mean AUCs Between MSP and BCF Across Coverages')
+plt.title('Comparison of Mean AUCs Between Tree-specific Prior and BCFtools Flat Prior Across Coverages')
 plt.legend()
 plt.grid(True, linestyle='--', alpha=0.7)
 
