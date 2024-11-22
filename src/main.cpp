@@ -115,6 +115,7 @@ Placement-per-read options:
                                           'uhs' - Keep haplotypes with at least one highest score read with no ties.
                                           'hsc' - Keep haplotypes with at least one highest score read, allowing ties.
                                           [default: null]
+  --preem-filter-n-order <int>          Order of neighbors to consider when filtering haplotypes with ties in highest score reads. [default: 1]
   --em-filter-round <int>               Maximum number of rounds to filter low probability haplotypes during EM filtering. [default: 5]
   --check-frequency <int>               Number of iterations between each em-filter-round. [default: 20]
   --remove-iteration <int>              Remove haplotypes that has probability less than insig-prob for more than remove-iteration consecutive iterations. [default: 20]
@@ -405,6 +406,7 @@ int main(int argc, const char** argv) {
       double rescueDuplicatesThreshold = args["--rescue-duplicates-threshold"] ? std::stod(args["--rescue-duplicates-threshold"].asString()) : 0.5;
       double excludeDuplicatesThreshold = args["--exclude-duplicates-threshold"] ? std::stod(args["--exclude-duplicates-threshold"].asString()) : 0.5;
       std::string preEMFilterMethod = args["--preem-filter-method"] ? args["--preem-filter-method"].asString() : "null";
+      int preEMFilterNOrder         = args["--preem-filter-n-order"] ? std::stoi(args["--preem-filter-n-order"].asString()) : 1;
       int emFilterRound             = args["--em-filter-round"] ? std::stoi(args["--em-filter-round"].asString()) : 5;
       int checkFrequency            = args["--check-frequency"] ? std::stoi(args["--check-frequency"].asString()) : 20;
       int removeIteration           = args["--remove-iteration"] ? std::stoi(args["--remove-iteration"].asString()) : 20;
@@ -437,7 +439,7 @@ int main(int argc, const char** argv) {
         T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
         errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
         rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod,
-        emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
+        preEMFilterNOrder, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
         removeThreshold, leafNodesOnly, callSubconsensus, prefix);
     } else {
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {

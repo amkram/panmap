@@ -878,7 +878,7 @@ namespace mgsr {
     const int32_t& numReads, const size_t& numLowScoreReads, const std::vector<bool>& excludeReads,
     const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs,
-    std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod,
+    std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod, const int& preEMFilterNOrder,
     const int& emFilterRound, const int& checkFrequency, const int& removeIteration, const double& insigProp,
     const int& roundsRemove, const double& removeThreshold, std::string excludeNode
   ) {
@@ -896,7 +896,7 @@ namespace mgsr {
     if (preEMFilterMethod == "null") {  
       haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "uhs") {
-      haplotype_filter::filter_method_1(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
+      haplotype_filter::filter_method_1(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder);
     } else if (preEMFilterMethod == "hsc1") {
       haplotype_filter::filter_method_2(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, 1);
     } else if (preEMFilterMethod == "hsc2") {
@@ -905,6 +905,11 @@ namespace mgsr {
     } else {
       std::cerr << "pre-EM filter method not recognized" << std::endl;
       exit(1);
+    }
+    std::string filtedNodesFile = "filted_nodes.txt";
+    std::ofstream filtedNodesStream(filtedNodesFile);
+    for (const auto& node : nodes) {
+      filtedNodesStream << node << std::endl;
     }
     std::cout << "post-EM filter nodes size: " << nodes.size() << std::endl;
     std::cout << "post-EM filter reduced nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() - nodes.size() << std::endl;
