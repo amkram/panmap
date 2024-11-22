@@ -3333,37 +3333,41 @@ bool identicalReadScores(const tbb::concurrent_vector<std::pair<int32_t, double>
 }
 
 void updateIdenticalSeedmerSets(
-    const std::unordered_set<std::string>& identicalGroup,
-    const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
-    std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
-    std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets
-    ) {
-    std::unordered_set<std::string> seenNodes;
-    std::unordered_set<std::string> unseenNodes = identicalGroup;
-    for (const std::string& currNode : identicalGroup) {
-        if (seenNodes.find(currNode) != seenNodes.end()) continue;
-        seenNodes.insert(currNode);
-        unseenNodes.erase(currNode);
-        std::unordered_set<std::string> identicals;
-        for (const std::string& idenNode : unseenNodes) {
-            if (identicalReadScores(allScores.at(currNode), allScores.at(idenNode))) {
-                leastRecentIdenticalAncestor[idenNode] = currNode;
-                identicalSets[currNode].insert(idenNode);
-                if (identicalSets.find(idenNode) != identicalSets.end()) {
-                    for (const auto& idenOffspring : identicalSets[idenNode]) {
-                        leastRecentIdenticalAncestor[idenOffspring] = currNode;
-                        identicalSets[currNode].insert(idenOffspring);
-                    }
-                    identicalSets.erase(idenNode);
-                }
-                identicals.insert(idenNode);
-            }
-        }
-        for (const auto& identical : identicals) {
-            seenNodes.insert(identical);
-            unseenNodes.erase(identical);
-        }
+  const std::unordered_set<std::string>& identicalGroup,
+  const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
+  std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor,
+  std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets
+) {
+  std::unordered_set<std::string> seenNodes;
+  std::unordered_set<std::string> unseenNodes = identicalGroup;
+  for (const std::string& currNode : identicalGroup) {
+    if (seenNodes.find(currNode) != seenNodes.end()) continue;
+    if (leastRecentIdenticalAncestor.find(currNode) != leastRecentIdenticalAncestor.end()) {
+      std::cerr << "Error: Node " << currNode << " already has a least recent identical ancestor." << std::endl;
+      exit(1);
     }
+    seenNodes.insert(currNode);
+    unseenNodes.erase(currNode);
+    std::unordered_set<std::string> identicals;
+    for (const std::string& idenNode : unseenNodes) {
+      if (identicalReadScores(allScores.at(currNode), allScores.at(idenNode))) {
+        identicals.insert(idenNode);
+        identicalSets[currNode].insert(idenNode);
+        leastRecentIdenticalAncestor[idenNode] = currNode;
+        if (identicalSets.find(idenNode) != identicalSets.end()) {
+          for (const auto& idenOffspring : identicalSets[idenNode]) {
+            leastRecentIdenticalAncestor[idenOffspring] = currNode;
+            identicalSets[currNode].insert(idenOffspring);
+          }
+          identicalSets.erase(idenNode);
+        }
+      }
+    }
+    for (const auto& identical : identicals) {
+      seenNodes.insert(identical);
+      unseenNodes.erase(identical);
+    }
+  }
 }
 
 
@@ -3400,9 +3404,10 @@ void pmi::place_per_read(
   Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
   const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
-  const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, const std::string& preEMFilterMethod, const int& emFilterRound, const int& checkFrequency,
-  const int& removeIteration, const double& insigPropArg, const int& roundsRemove, const double& removeThreshold,
-  const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix
+  const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold,
+  const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& emFilterRound,
+  const int& checkFrequency, const int& removeIteration, const double& insigPropArg, const int& roundsRemove,
+  const double& removeThreshold, const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix
 )
 {
 
@@ -3555,8 +3560,11 @@ void pmi::place_per_read(
       }
   }
 
+
   std::cout << "First round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
   std::cerr << "First round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
+
+
 
   std::vector<std::pair<std::string, int32_t>> scores;
   scores.reserve(allScores.size() - leastRecentIdenticalAncestor.size());
@@ -3572,23 +3580,45 @@ void pmi::place_per_read(
       return a.second > b.second;
   });
 
-  std::unordered_set<std::string> identicalGroup;
-  for (size_t i = 0; i < scores.size() - 1; ++i) {
-      const auto& currScore = scores[i];
-      const auto& nextScore = scores[i+1];
-      if (currScore.second == nextScore.second) {
-          identicalGroup.insert(currScore.first);
-          identicalGroup.insert(nextScore.first);
-      } else {
-          if (!identicalGroup.empty()) {
-              updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
-              std::unordered_set<std::string>().swap(identicalGroup);
-          }
+  std::unordered_set<std::string> identicalGroup{scores[0].first};
+  int32_t currGroupScore = scores[0].second;
+  for (size_t i = 1; i < scores.size(); ++i) {
+    const auto& currScore = scores[i];
+    if (currScore.second == currGroupScore) {
+      identicalGroup.insert(currScore.first);
+    } else {
+      if (!identicalGroup.empty()) {
+        updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
       }
+      std::unordered_set<std::string>().swap(identicalGroup);
+      identicalGroup.insert(currScore.first);
+      currGroupScore = currScore.second;
+    }
   }
   if (!identicalGroup.empty()) {
-      updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
+    updateIdenticalSeedmerSets(identicalGroup, allScores, leastRecentIdenticalAncestor, identicalSets);
   }
+
+
+  // Sanity check
+  for (const auto& node : identicalSets) {
+    if (leastRecentIdenticalAncestor.find(node.first) != leastRecentIdenticalAncestor.end()) {
+      std::cerr << "Error: Node " << node.first << " is in identicalSets but has a least recent identical ancestor." << std::endl;
+      exit(1);
+    }
+    for (const auto& identicalNode : node.second) {
+      if (leastRecentIdenticalAncestor.find(identicalNode) != leastRecentIdenticalAncestor.end()) {
+        if (leastRecentIdenticalAncestor.at(identicalNode) != node.first) {
+          std::cerr << "Error: Node " << identicalNode << " has a least recent identical ancestor of " << leastRecentIdenticalAncestor.at(identicalNode) << " but is in the identical set of " << node.first << "." << std::endl;
+          exit(1);
+        }
+      } else {
+        std::cerr << "Error: Node " << identicalNode << " is in identicalSets but does not have a least recent identical ancestor." << std::endl;
+        exit(1);
+      }
+    }
+  }
+
   std::cout << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
   std::cerr << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << "\n" << std::endl;
 
@@ -3610,7 +3640,7 @@ void pmi::place_per_read(
 
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
-    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod,
+    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder,
     emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
   
   auto end = std::chrono::high_resolution_clock::now();
