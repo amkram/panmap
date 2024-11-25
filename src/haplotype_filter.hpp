@@ -151,11 +151,9 @@ void filter_method_1(
 
   std::unordered_set<std::string> nodes_seen;
   for (const auto& filteredNode : filteredNodes) {
-    std::unordered_set<std::string> identicalSet;
+    std::unordered_set<std::string> identicalSet{filteredNode};
     if (identicalSets.find(filteredNode) != identicalSets.end()) {
       identicalSet = identicalSets.at(filteredNode);
-    } else {
-      identicalSet.insert(filteredNode);
     }
     for (const auto& node : identicalSet) {
       std::unordered_set<std::string> nth_order_neighbors = get_nth_order_neighbors(T, node, n_order);
@@ -181,7 +179,11 @@ void filter_method_1(
     }
   }
 
+<<<<<<< HEAD
   std::cerr << "Finished filter method 1: " << nodes.size() << " nodes" << std::endl;
+=======
+  std::cout << "Finished filter method 1: " << nodes.size() << " nodes.. prob matrix size: " << probs.rows() << " x " << probs.cols() << std::endl;
+>>>>>>> feb6b0b3347f27b45a748234e20805b56c8bf1bf
 }
 
 void filter_method_2(
