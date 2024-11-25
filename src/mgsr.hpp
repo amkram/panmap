@@ -909,6 +909,11 @@ namespace mgsr {
     std::string filtedNodesFile = "filted_nodes.txt";
     std::ofstream filtedNodesStream(filtedNodesFile);
     for (const auto& node : nodes) {
+      if (leastRecentIdenticalAncestors.find(node) != leastRecentIdenticalAncestors.end()) { 
+        // sanity check
+        std::cerr << "Error: Node " << node << " has a least recent identical ancestor." << std::endl;
+        exit(1);
+      }
       filtedNodesStream << node << std::endl;
     }
     std::cout << "post-EM filter nodes size: " << nodes.size() << std::endl;
@@ -916,17 +921,22 @@ namespace mgsr {
 
     props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
     size_t totalNodes = allScores.size() - leastRecentIdenticalAncestors.size();
-    Eigen::VectorXd readDuplicates(allScores.begin()->second.size() - numLowScoreReads);
+    size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
+    Eigen::VectorXd readDuplicates(allScores.begin()->second.size() - numLowScoreReads - numExcludedReads);
     
     size_t indexReadDuplicates = 0;
     size_t numHighScoreReads = 0;
     for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
+      if (excludeReads[i]) continue;
       if (!lowScoreReads[i]) {
         readDuplicates(indexReadDuplicates) = readSeedmersDuplicatesIndex[i].size();
         numHighScoreReads += readSeedmersDuplicatesIndex[i].size();
         ++indexReadDuplicates;
       }
     }
+
+    std::cout << "readDuplicates size: " << readDuplicates.size() << std::endl;
+    std::cout << "probs size: " << probs.rows() << " x " << probs.cols() << std::endl;
 
     if (excludeNode.empty()) {
       std::stringstream msg;
