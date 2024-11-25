@@ -893,6 +893,7 @@ namespace mgsr {
     }
 
     std::cout << "pre-EM filter nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() << std::endl;
+    std::cerr << "pre-EM filter nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() << "\n" << std::endl;
     if (preEMFilterMethod == "null") {  
       haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "uhs") {
@@ -912,7 +913,9 @@ namespace mgsr {
       filtedNodesStream << node << std::endl;
     }
     std::cout << "post-EM filter nodes size: " << nodes.size() << std::endl;
+    std::cerr << "post-EM filter nodes size: " << nodes.size() << "\n" << std::endl;
     std::cout << "post-EM filter reduced nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() - nodes.size() << std::endl;
+    std::cerr << "post-EM filter reduced nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() - nodes.size() << "\n" << std::endl;
 
     props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
     size_t totalNodes = allScores.size() - leastRecentIdenticalAncestors.size();
@@ -932,10 +935,12 @@ namespace mgsr {
       std::stringstream msg;
       msg << "starting EM estimation of haplotype proportions" << "\n";
       std::cout << msg.str();
+      std::cerr << msg.str();
     } else {
       std::stringstream msg;
       msg << "starting EM estimation of haplotype proportions excluding " << excludeNode << "\n";
       std::cout << msg.str();
+      std::cerr << msg.str();
     }
 
 
@@ -945,11 +950,13 @@ namespace mgsr {
     size_t prefilterIterations = 5;
     std::vector<int> insigCounts(nodes.size());
     std::cout << "\npre-filter round for " << prefilterIterations << " iterations" << std::endl;
+    std::cerr << "\npre-filter round for " << prefilterIterations << " iterations" << std::endl;
     llh = getExp(probs, props, readDuplicates);
     squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, prefilterIterations, insigCounts, insigProp, totalNodes);
     while (true && nodes.size() > std::max(static_cast<int>(totalNodes) / 20, 100)) {
       if (filterRoundCount >= emFilterRound) break;
       std::cout << "\nfilter round " << filterRoundCount + 1 << " out of " << emFilterRound << std::endl;
+      std::cerr << "\nfilter round " << filterRoundCount + 1 << " out of " << emFilterRound << std::endl;
       ++filterRoundCount;
       llh = getExp(probs, props, readDuplicates);
       squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
@@ -957,6 +964,7 @@ namespace mgsr {
         break;
       }
       std::cout << "\nfiltering round " << filterRoundCount << std::endl;
+      std::cerr << "\nfiltering round " << filterRoundCount << std::endl;
       std::vector<size_t> significantIndices;
       std::vector<std::string> sigNodes;
       for (size_t i = 0; i < nodes.size(); ++i) {
@@ -980,7 +988,9 @@ namespace mgsr {
         sigProps(i) = props(i);
       }
       std::cout << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
+      std::cerr << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
       std::cout << sigNodes.size() << " nodes left" << std::endl;
+      std::cerr << sigNodes.size() << " nodes left" << std::endl;
       nodes = std::move(sigNodes);
       probs = std::move(sigProbs);
       props = std::move(sigProps);
@@ -994,6 +1004,7 @@ namespace mgsr {
     if (!converged) {
       std::vector<int> insigCounts(nodes.size());
       std::cout << "start full EM" << std::endl;
+      std::cerr << "start full EM" << std::endl;
       llh = getExp(probs, props, readDuplicates);
       squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       assert(converged == true);
@@ -1010,7 +1021,7 @@ namespace mgsr {
       }
       if (significantIndices.size() == nodes.size()) break;
       std::cout << "\nremove round " << i + 1 << std::endl;
-
+      std::cerr << "\nremove round " << i + 1 << std::endl;
       for (size_t idx : significantIndices) {
           sigNodes.push_back(nodes[idx]);
       }
@@ -1053,10 +1064,12 @@ namespace mgsr {
       std::stringstream msg;
       msg << "\nFinished EM estimation of haplotype proportions. Total EM iterations: " << curit << "\n";
       std::cout << msg.str();
+      std::cerr << msg.str();
     } else {
       std::stringstream msg;
       msg << "\nFinished EM estimation of haplotype proportions excluding " << excludeNode << ". Total EM iterations: " << curit<< "\n";
       std::cout << msg.str();
+      std::cerr << msg.str();
     }
   }
 
