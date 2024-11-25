@@ -179,11 +179,7 @@ void filter_method_1(
     }
   }
 
-<<<<<<< HEAD
-  std::cerr << "Finished filter method 1: " << nodes.size() << " nodes" << std::endl;
-=======
   std::cout << "Finished filter method 1: " << nodes.size() << " nodes.. prob matrix size: " << probs.rows() << " x " << probs.cols() << std::endl;
->>>>>>> feb6b0b3347f27b45a748234e20805b56c8bf1bf
 }
 
 void filter_method_2(
