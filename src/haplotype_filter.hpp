@@ -31,11 +31,11 @@ void noFilter(
   const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads,
   const std::string& excludeNode, const std::vector<bool>& excludeReads
 ) {
-  std::cout << "No preEM filtering" << std::endl;
+  std::cerr << "No preEM filtering" << std::endl;
 
   size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
 
-  std::cout << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
+  std::cerr << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
   
   if (!excludeNode.empty()) {
     probs.resize(allScores.begin()->second.size() - numExcludedReads, allScores.size() - leastRecentIdenticalAncestors.size() - 1);
@@ -58,7 +58,7 @@ void noFilter(
     nodes.push_back(node.first);
     ++colIndex;
   }
-  std::cout << "Finished noFilter: " << nodes.size() << " nodes" << std::endl;
+  std::cerr << "Finished noFilter: " << nodes.size() << " nodes" << std::endl;
 }
 
 std::unordered_set<std::string> get_nth_order_neighbors(Tree *T, const std::string& node, int n_order) {
@@ -108,12 +108,12 @@ void filter_method_1(
   const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
   const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, const std::vector<bool>& excludeReads, Tree *T, int n_order
 ) {
-  std::cout << "Filter method 1: filter out haplotypes that do not have a unique best read score" << std::endl;
+  std::cerr << "Filter method 1: filter out haplotypes that do not have a unique best read score" << std::endl;
 
   std::unordered_set<std::string> filteredNodes;
   size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
 
-  std::cout << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
+  std::cerr << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
 
   std::vector<std::vector<int32_t>> scoresMatrix(allScores.begin()->second.size() - numExcludedReads);
   for (auto& vec : scoresMatrix) vec.resize(allScores.size() - leastRecentIdenticalAncestors.size());
@@ -181,7 +181,7 @@ void filter_method_1(
     }
   }
 
-  std::cout << "Finished filter method 1: " << nodes.size() << " nodes" << std::endl;
+  std::cerr << "Finished filter method 1: " << nodes.size() << " nodes" << std::endl;
 }
 
 void filter_method_2(
@@ -189,12 +189,12 @@ void filter_method_2(
   const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads,
   const std::string& excludeNode, const std::vector<bool>& excludeReads, size_t minHighestScoreCount
 ) {
-  std::cout << "Filter method 2: filter out haplotypes that do not have a best read score" << std::endl;
+  std::cerr << "Filter method 2: filter out haplotypes that do not have a best read score" << std::endl;
 
   std::unordered_map<std::string, size_t> highestScoreCounts;
   size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
 
-  std::cout << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
+  std::cerr << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
 
   std::vector<std::vector<int32_t>> scoresMatrix(allScores.begin()->second.size() - numExcludedReads);
   for (auto& vec : scoresMatrix) vec.resize(allScores.size() - leastRecentIdenticalAncestors.size());
@@ -248,7 +248,7 @@ void filter_method_2(
     }
   }
 
-  std::cout << "Finished filter method 2: " << nodes.size() << " nodes" << std::endl;
+  std::cerr << "Finished filter method 2: " << nodes.size() << " nodes" << std::endl;
 }
 
 
@@ -257,12 +257,12 @@ void filter_method_3(
   const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads,
   const std::string& excludeNode, const std::vector<bool>& excludeReads, Tree *T, int n_order
 ) {
-  std::cout << "Filter method 3: select nodes that are local optima and their n-th order neighbors" << std::endl;
+  std::cerr << "Filter method 3: select nodes that are local optima and their n-th order neighbors" << std::endl;
 
   std::unordered_set<std::string> filteredNodes;
   size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
 
-  std::cout << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
+  std::cerr << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
 
   std::vector<std::vector<int32_t>> scoresMatrix(allScores.begin()->second.size() - numExcludedReads);
   for (auto& vec : scoresMatrix) vec.resize(allScores.size());
@@ -314,7 +314,7 @@ void filter_method_3(
     }
   }
 
-  std::cout << "Finished filter method 3: " << nodes.size() << " nodes" << std::endl;
+  std::cerr << "Finished filter method 3: " << nodes.size() << " nodes" << std::endl;
 }
 
 }
