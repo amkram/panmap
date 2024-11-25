@@ -151,10 +151,11 @@ void filter_method_1(
 
   std::unordered_set<std::string> nodes_seen;
   for (const auto& filteredNode : filteredNodes) {
-    std::unordered_set<std::string> identicalSet{filteredNode};
+    std::unordered_set<std::string> identicalSet{};
     if (identicalSets.find(filteredNode) != identicalSets.end()) {
       identicalSet = identicalSets.at(filteredNode);
     }
+    identicalSet.insert(filteredNode);
     for (const auto& node : identicalSet) {
       std::unordered_set<std::string> nth_order_neighbors = get_nth_order_neighbors(T, node, n_order);
       for (const auto& neighbor : nth_order_neighbors) {
