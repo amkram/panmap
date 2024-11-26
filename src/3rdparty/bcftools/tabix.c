@@ -28,8 +28,8 @@ THE SOFTWARE.  */
 #include <unistd.h>
 #include <string.h>
 #include <strings.h>
-#include <htslib/bgzf.h>
-#include <htslib/tbx.h>
+#include "../samtools/htslib-1.20/htslib/bgzf.h"
+#include "../samtools/htslib-1.20/htslib/tbx.h"
 
 int main_tabix(int argc, char *argv[])
 {

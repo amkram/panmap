@@ -29,8 +29,8 @@ THE SOFTWARE.  */
 #include <stdlib.h>
 #include <unistd.h>
 
-#include <htslib/kstring.h>
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/kstring.h"
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 
 #include "bcftools.h"
 

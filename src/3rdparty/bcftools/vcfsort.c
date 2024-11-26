@@ -38,11 +38,11 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include <htslib/vcf.h>
-#include <htslib/kstring.h>
-#include <htslib/hts_os.h>
-#include <htslib/hts_defs.h>
-#include <htslib/bgzf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/kstring.h"
+#include "../samtools/htslib-1.20/htslib/hts_os.h"
+#include "../samtools/htslib-1.20/htslib/hts_defs.h"
+#include "../samtools/htslib-1.20/htslib/bgzf.h"
 #include "kheap.h"
 #include "bcftools.h"
 

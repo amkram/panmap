@@ -22,9 +22,9 @@
     THE SOFTWARE.
 */
 
-#include <htslib/khash_str2int.h>
-#include <htslib/kseq.h>
-#include <htslib/hts.h>
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
+#include "../samtools/htslib-1.20/htslib/kseq.h"
+#include "../samtools/htslib-1.20/htslib/hts.h"
 #include "bcftools.h"
 #include "ploidy.h"
 

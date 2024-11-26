@@ -30,10 +30,10 @@ THE SOFTWARE.  */
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/khash_str2int.h>
-#include <htslib/vcfutils.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
+#include "../samtools/htslib-1.20/htslib/vcfutils.h"
 #include "bcftools.h"
 #include "filter.h"
 #include "convert.h"

@@ -32,9 +32,9 @@
 #include <unistd.h>
 #include <gsl/gsl_vector.h>
 #include <gsl/gsl_multifit_nlin.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/hts_defs.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/hts_defs.h"
 #include "bcftools.h"
 #include "peakfit.h"
 

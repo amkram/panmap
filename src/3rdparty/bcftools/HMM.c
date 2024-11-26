@@ -28,7 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <htslib/hts.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
 #include "HMM.h"
 
 typedef struct

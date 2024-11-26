@@ -26,7 +26,7 @@
 #ifndef __TSV2VCF_H__
 #define __TSV2VCF_H__
 
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 
 typedef struct _tsv_t tsv_t;
 typedef int (*tsv_setter_t)(tsv_t *, bcf1_t *, void *);

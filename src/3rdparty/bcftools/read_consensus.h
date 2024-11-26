@@ -26,8 +26,8 @@
 #define READ_CONSENSUS_H
 
 #include <stdint.h>
-#include <htslib/hts.h>
-#include <htslib/sam.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
+#include "../samtools/htslib-1.20/htslib/sam.h"
 
 #ifndef DEBUG_RCNS
 #define DEBUG_RCNS 0

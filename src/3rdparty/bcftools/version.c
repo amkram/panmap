@@ -27,7 +27,7 @@ DEALINGS IN THE SOFTWARE.  */
 #include <stdio.h>
 #include <strings.h>
 #include <errno.h>
-#include <htslib/hts.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
 #include "bcftools.h"
 #include "version.h"
 

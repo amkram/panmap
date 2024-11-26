@@ -31,7 +31,7 @@
 #ifndef __VCFBUF_H__
 #define __VCFBUF_H__
 
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 
 typedef struct _vcfbuf_t vcfbuf_t;
 

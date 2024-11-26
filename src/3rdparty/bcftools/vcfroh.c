@@ -27,11 +27,11 @@ THE SOFTWARE.  */
 #include <getopt.h>
 #include <math.h>
 #include <inttypes.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/kstring.h>
-#include <htslib/kseq.h>
-#include <htslib/bgzf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/kstring.h"
+#include "../samtools/htslib-1.20/htslib/kseq.h"
+#include "../samtools/htslib-1.20/htslib/bgzf.h"
 #include <errno.h>
 #include "bcftools.h"
 #include "HMM.h"

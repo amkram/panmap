@@ -33,10 +33,10 @@ THE SOFTWARE.  */
 #include <getopt.h>
 #include <assert.h>
 #include <math.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/vcfutils.h>
-#include <htslib/faidx.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/vcfutils.h"
+#include "../samtools/htslib-1.20/htslib/faidx.h"
 #include <inttypes.h>
 #include "bcftools.h"
 #include "filter.h"

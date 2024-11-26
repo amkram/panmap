@@ -26,7 +26,7 @@ THE SOFTWARE.  */
 #ifndef BCF_PROB1_H
 #define BCF_PROB1_H
 
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 #include "call.h"
 
 typedef struct {

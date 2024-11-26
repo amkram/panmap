@@ -35,10 +35,10 @@ THE SOFTWARE.  */
 #include <dirent.h>
 #include <math.h>
 #include <inttypes.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/kseq.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/kseq.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #include "bcftools.h"
 #include "vcmp.h"
 #include "filter.h"
@@ -279,7 +279,7 @@ void remove_format(args_t *args, bcf1_t *line, rm_tag_t *tag)
     }
 }
 
-#include "htslib/khash.h"
+#include "../samtools/htslib-1.20/htslib/khash.h"
 KHASH_MAP_INIT_STR(vdict, bcf_idinfo_t)
 typedef khash_t(vdict) vdict_t;
 
