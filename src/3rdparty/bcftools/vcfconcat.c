@@ -31,13 +31,13 @@ THE SOFTWARE.  */
 #include <math.h>
 #include <stdint.h>
 #include <inttypes.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/kseq.h>
-#include <htslib/bgzf.h>
-#include <htslib/tbx.h> // for hts_get_bgzfp()
-#include <htslib/thread_pool.h>
-#include <htslib/hts_endian.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/kseq.h"
+#include "../samtools/htslib-1.20/htslib/bgzf.h"
+#include "../samtools/htslib-1.20/htslib/tbx.h" // for hts_get_bgzfp()
+#include "../samtools/htslib-1.20/htslib/thread_pool.h"
+#include "../samtools/htslib-1.20/htslib/hts_endian.h"
 #include <sys/time.h>
 #include "bcftools.h"
 

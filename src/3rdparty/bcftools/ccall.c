@@ -25,7 +25,7 @@ THE SOFTWARE.  */
 
 #include <math.h>
 #include <assert.h>
-#include <htslib/kfunc.h>
+#include "../samtools/htslib-1.20/htslib/kfunc.h"
 #include "call.h"
 #include "kmin.h"
 #include "prob1.h"

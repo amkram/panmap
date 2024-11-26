@@ -34,10 +34,10 @@ THE SOFTWARE.  */
 #include <sys/types.h>
 #include <dirent.h>
 #include <math.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/kseq.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/kseq.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #ifdef _WIN32
 #include <windows.h>
 #else

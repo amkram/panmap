@@ -27,13 +27,13 @@ DEALINGS IN THE SOFTWARE.  */
 #include <strings.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <htslib/vcf.h>
-#include <htslib/tbx.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/tbx.h"
 #include <sys/stat.h>
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
-#include <htslib/kstring.h>
-#include <htslib/bgzf.h>
+#include "../samtools/htslib-1.20/htslib/kstring.h"
+#include "../samtools/htslib-1.20/htslib/bgzf.h"
 #include "bcftools.h"
 
 #define BCF_LIDX_SHIFT    14

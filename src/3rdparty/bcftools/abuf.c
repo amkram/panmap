@@ -26,7 +26,7 @@
 
 #include <assert.h>
 #include <strings.h>
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 #include <ctype.h>
 #include "bcftools.h"
 #include "abuf.h"

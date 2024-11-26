@@ -26,7 +26,7 @@ DEALINGS IN THE SOFTWARE.  */
 #ifndef BAM_SAMPLE_H
 #define BAM_SAMPLE_H
 
-#include <htslib/sam.h>
+#include "../samtools/htslib-1.20/htslib/sam.h"
 
 typedef struct _bam_smpl_t bam_smpl_t;
 

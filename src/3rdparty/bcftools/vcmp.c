@@ -25,8 +25,8 @@ THE SOFTWARE.  */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <htslib/hts.h>
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 #include <ctype.h>
 #include "vcmp.h"
 

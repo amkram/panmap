@@ -26,10 +26,10 @@
 
 #include <assert.h>
 #include <strings.h>
-#include <htslib/vcf.h>
-#include <htslib/vcfutils.h>
-#include <htslib/hts_os.h>
-#include <htslib/kbitset.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/vcfutils.h"
+#include "../samtools/htslib-1.20/htslib/hts_os.h"
+#include "../samtools/htslib-1.20/htslib/kbitset.h"
 #include "bcftools.h"
 #include "vcfbuf.h"
 #include "rbuf.h"

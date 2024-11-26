@@ -35,11 +35,11 @@ DEALINGS IN THE SOFTWARE.  */
 #include <errno.h>
 #include <sys/stat.h>
 #include <getopt.h>
-#include <htslib/sam.h>
-#include <htslib/faidx.h>
-#include <htslib/kstring.h>
-#include <htslib/khash_str2int.h>
-#include <htslib/hts_os.h>
+#include "../samtools/htslib-1.20/htslib/sam.h"
+#include "../samtools/htslib-1.20/htslib/faidx.h"
+#include "../samtools/htslib-1.20/htslib/kstring.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
+#include "../samtools/htslib-1.20/htslib/hts_os.h"
 #include <assert.h>
 #include "regidx.h"
 #include "bcftools.h"

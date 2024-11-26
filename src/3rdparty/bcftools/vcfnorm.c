@@ -33,10 +33,10 @@ THE SOFTWARE.  */
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <inttypes.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/faidx.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/faidx.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #include "bcftools.h"
 #include "rbuf.h"
 #include "abuf.h"

@@ -30,12 +30,12 @@ THE SOFTWARE.  */
 #include <unistd.h>
 #include <getopt.h>
 #include <inttypes.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/vcfutils.h>
-#include <htslib/faidx.h>
-#include <htslib/kbitset.h>
-#include <htslib/hts_endian.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/vcfutils.h"
+#include "../samtools/htslib-1.20/htslib/faidx.h"
+#include "../samtools/htslib-1.20/htslib/kbitset.h"
+#include "../samtools/htslib-1.20/htslib/hts_endian.h"
 #include <math.h>
 #include <ctype.h>
 #include <time.h>
@@ -48,7 +48,7 @@ THE SOFTWARE.  */
 
 #define COLLAPSE_SNP_INS_DEL (1<<10)
 
-#include <htslib/khash.h>
+#include "../samtools/htslib-1.20/htslib/khash.h"
 KHASH_MAP_INIT_STR(strdict, int)
 typedef khash_t(strdict) strdict_t;
 

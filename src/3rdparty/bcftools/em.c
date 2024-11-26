@@ -26,7 +26,7 @@ THE SOFTWARE.  */
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 #include "kmin.h"
 #include "call.h"
 

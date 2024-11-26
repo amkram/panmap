@@ -27,8 +27,8 @@ DEALINGS IN THE SOFTWARE.  */
 #define BAM2BCF_H
 
 #include <stdint.h>
-#include <htslib/hts.h>
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 
 /**
  *  A simplified version of Mann-Whitney U-test is calculated

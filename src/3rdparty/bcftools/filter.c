@@ -35,11 +35,11 @@ THE SOFTWARE.  */
 #include <pwd.h>
 #endif
 #include <regex.h>
-#include <htslib/khash_str2int.h>
-#include <htslib/hts_defs.h>
-#include <htslib/vcfutils.h>
-#include <htslib/kfunc.h>
-#include <htslib/hts_endian.h>
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
+#include "../samtools/htslib-1.20/htslib/hts_defs.h"
+#include "../samtools/htslib-1.20/htslib/vcfutils.h"
+#include "../samtools/htslib-1.20/htslib/kfunc.h"
+#include "../samtools/htslib-1.20/htslib/hts_endian.h"
 #include "config.h"
 #include "filter.h"
 #include "bcftools.h"

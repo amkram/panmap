@@ -24,8 +24,8 @@
 
  */
 
-#include <htslib/hts.h>
-#include <htslib/kstring.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
+#include "../samtools/htslib-1.20/htslib/kstring.h"
 #include <stdlib.h>
 #include <assert.h>
 #include "bcftools.h"
