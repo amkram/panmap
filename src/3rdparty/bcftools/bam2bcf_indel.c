@@ -27,13 +27,13 @@ DEALINGS IN THE SOFTWARE.  */
 #include <ctype.h>
 #include <string.h>
 #include <math.h>
-#include <htslib/hts.h>
-#include <htslib/sam.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
+#include "../samtools/htslib-1.20/htslib/sam.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #include "bam2bcf.h"
 #include "str_finder.h"
 
-#include "htslib/ksort.h"
+#include "../samtools/htslib-1.20/htslib/ksort.h"
 
 KSORT_INIT_GENERIC(uint32_t)
 

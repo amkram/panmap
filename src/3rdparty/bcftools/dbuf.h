@@ -31,7 +31,7 @@
 #ifndef __DBUF_H__
 #define __DBUF_H__
 
-#include <htslib/hts.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
 
 typedef struct
 {

@@ -26,9 +26,9 @@ DEALINGS IN THE SOFTWARE.  */
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <htslib/hts.h>
-#include <htslib/kstring.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
+#include "../samtools/htslib-1.20/htslib/kstring.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #include <khash_str2str.h>
 #include "bam_sample.h"
 #include "bcftools.h"

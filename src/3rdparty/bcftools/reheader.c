@@ -36,13 +36,13 @@ THE SOFTWARE.  */
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include <htslib/vcf.h>
-#include <htslib/bgzf.h>
-#include <htslib/tbx.h> // for hts_get_bgzfp()
-#include <htslib/kseq.h>
-#include <htslib/thread_pool.h>
-#include <htslib/faidx.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/bgzf.h"
+#include "../samtools/htslib-1.20/htslib/tbx.h" // for hts_get_bgzfp()
+#include "../samtools/htslib-1.20/htslib/kseq.h"
+#include "../samtools/htslib-1.20/htslib/thread_pool.h"
+#include "../samtools/htslib-1.20/htslib/faidx.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #include "bcftools.h"
 #include "khash_str2str.h"
 

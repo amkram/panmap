@@ -28,7 +28,7 @@ THE SOFTWARE.  */
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
-#include <htslib/hts.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
 #include "version.h"
 #include "bcftools.h"
 

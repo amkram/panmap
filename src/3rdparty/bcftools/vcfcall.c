@@ -30,12 +30,12 @@ THE SOFTWARE.  */
 #include <unistd.h>
 #include <getopt.h>
 #include <math.h>
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 #include <time.h>
 #include <stdarg.h>
-#include <htslib/kfunc.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/kfunc.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #include <ctype.h>
 #include "bcftools.h"
 #include "call.h"

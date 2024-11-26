@@ -28,7 +28,7 @@
 #ifndef __SMPL_ILIST_H__
 #define __SMPL_ILIST_H__
 
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 
 #define SMPL_NONE     0   // flexible error recovery
 #define SMPL_STRICT   1   // samples must exist

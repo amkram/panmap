@@ -25,8 +25,8 @@ THE SOFTWARE.  */
 #ifndef __CALL_H__
 #define __CALL_H__
 
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
 #include "vcmp.h"
 
 #define CALL_KEEPALT        1

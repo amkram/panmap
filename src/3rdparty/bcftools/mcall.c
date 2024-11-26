@@ -26,8 +26,8 @@ THE SOFTWARE.  */
 #include <math.h>
 #include <inttypes.h>
 #include <ctype.h>
-#include <htslib/kfunc.h>
-#include <htslib/khash_str2int.h>
+#include "../samtools/htslib-1.20/htslib/kfunc.h"
+#include "../samtools/htslib-1.20/htslib/khash_str2int.h"
 #include "call.h"
 #include "prob1.h"
 

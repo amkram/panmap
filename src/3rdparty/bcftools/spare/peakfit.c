@@ -29,8 +29,8 @@
 #include <gsl/gsl_version.h>
 #include <gsl/gsl_vector.h>
 #include <gsl/gsl_multifit_nlin.h>
-#include <htslib/hts.h>
-#include <htslib/kstring.h>
+#include "../samtools/htslib-1.20/htslib/hts.h"
+#include "../samtools/htslib-1.20/htslib/kstring.h"
 #include <assert.h>
 #include <math.h>
 

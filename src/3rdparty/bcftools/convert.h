@@ -25,7 +25,7 @@ THE SOFTWARE.  */
 #ifndef __CONVERT_H__
 #define __CONVERT_H__
 
-#include <htslib/vcf.h>
+#include "../samtools/htslib-1.20/htslib/vcf.h"
 
 typedef struct _convert_t convert_t;
 enum convert_option

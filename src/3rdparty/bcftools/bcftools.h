@@ -26,10 +26,10 @@ THE SOFTWARE.  */
 #define BCFTOOLS_H
 
 #include <stdarg.h>
-#include <htslib/hts_defs.h>
-#include <htslib/vcf.h>
-#include <htslib/synced_bcf_reader.h>
-#include <htslib/kfunc.h>
+#include "../samtools/htslib-1.20/htslib/hts_defs.h"
+#include "../samtools/htslib-1.20/htslib/vcf.h"
+#include "../samtools/htslib-1.20/htslib/synced_bcf_reader.h"
+#include "../samtools/htslib-1.20/htslib/kfunc.h"
 #include <math.h>
 
 #define FT_TAB_TEXT 0       // custom tab-delimited text file
