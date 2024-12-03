@@ -3674,17 +3674,15 @@ void pmi::place_per_read(
   std::cout << "Wrote abundance file: " << abundanceOutFile << std::endl;
   std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
-
-  // calling consensus
-  std::cout << "Calling consensus" << std::endl;
-  std::cerr << "Calling consensus" << std::endl;
-
-  std::unordered_map<std::string, std::vector<size_t>> assignedReads;
-
-  mgsr::assignReadsToNodes(allScores, nodes, probs, props, readSeedmersDuplicatesIndex, assignedReads);
-
+  std::cout << "callSubconsensus: " << callSubconsensus << std::endl;
   // run bwa index, aln, sampe
   if (callSubconsensus) {
+    // calling consensus
+    std::cout << "Calling consensus" << std::endl;
+    std::cerr << "Calling consensus" << std::endl;
+
+    std::unordered_map<std::string, std::vector<size_t>> assignedReads;
+    mgsr::assignReadsToNodes(allScores, nodes, probs, props, readSeedmersDuplicatesIndex, assignedReads);
     for (const auto& node : sortedOut) {
       std::cout << "Calling consensus for " << node.first << std::endl;
       // write reference fastas
@@ -3817,4 +3815,9 @@ void pmi::place_per_read(
       // write consensus fasta
     }    
   }
+
+  if (fclose(errorLog) != 0) {
+      throw std::runtime_error("Failed to close error.log");
+  }
+  freopen("/dev/tty", "w", stderr); // For Linux/Mac
 }

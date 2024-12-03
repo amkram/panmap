@@ -42,9 +42,8 @@ void noFilter(
   } else {
     probs.resize(allScores.begin()->second.size() - numExcludedReads, allScores.size() - leastRecentIdenticalAncestors.size());
   }
+
   size_t colIndex = 0;
-
-
   for (const auto& node : allScores) {
     if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
     if (!excludeNode.empty() && node.first == excludeNode) continue;
@@ -84,7 +83,7 @@ std::unordered_set<std::string> get_nth_order_neighbors(Tree *T, const std::stri
 
       if (level < n_order) {
         // Add children to the queue
-        for (Node* child : T->allNodes[current_node]->children) {
+        for (Node* child : T->allNodes.at(current_node)->children) {
           if (visited.find(child->identifier) == visited.end()) {
             bfs_queue.push({child->identifier, level + 1});
             visited.insert(child->identifier);
@@ -92,9 +91,9 @@ std::unordered_set<std::string> get_nth_order_neighbors(Tree *T, const std::stri
         }
       }
       // Add parent to the queue (if exists)
-      if (T->allNodes[current_node]->parent && visited.find(T->allNodes[current_node]->parent->identifier) == visited.end()) {
-        bfs_queue.push({T->allNodes[current_node]->parent->identifier, level + 1});
-        visited.insert(T->allNodes[current_node]->parent->identifier);
+      if (T->allNodes.at(current_node)->parent && visited.find(T->allNodes.at(current_node)->parent->identifier) == visited.end()) {
+        bfs_queue.push({T->allNodes.at(current_node)->parent->identifier, level + 1});
+        visited.insert(T->allNodes.at(current_node)->parent->identifier);
       }
     }
   }
@@ -115,23 +114,36 @@ void filter_method_1(
 
   std::cerr << "Excluding " << numExcludedReads << " reads with high number of duplicates" << std::endl;
 
-  std::vector<std::vector<int32_t>> scoresMatrix(allScores.begin()->second.size() - numExcludedReads);
+  size_t totalNumReads = allScores.begin()->second.size();
+  if (totalNumReads < numExcludedReads) {
+    std::cerr << "Error: total number of reads (" << totalNumReads << ") is less than the number of excluded reads (" << numExcludedReads << ")" << std::endl;
+    exit(1);
+  }
+  std::vector<std::vector<int32_t>> scoresMatrix(totalNumReads - numExcludedReads);
+  if (allScores.size() < leastRecentIdenticalAncestors.size()) {
+    std::cerr << "Error: number of nodes (" << allScores.size() << ") is less than the number of least recent identical ancestors (" << leastRecentIdenticalAncestors.size() << ")" << std::endl;
+    exit(1);
+  }
   for (auto& vec : scoresMatrix) vec.resize(allScores.size() - leastRecentIdenticalAncestors.size());
 
-  std::vector<std::string> allNodes(allScores.size() - leastRecentIdenticalAncestors.size());
-  size_t colIndex = 0;
-  for (const auto& node : allScores) {
-    if (leastRecentIdenticalAncestors.find(node.first) != leastRecentIdenticalAncestors.end()) continue;
-    allNodes[colIndex] = node.first;
-    const auto& curNodeScores = node.second;
-    size_t rowIndex = 0;
-    for (size_t j = 0; j < curNodeScores.size(); ++j) {
-      if (excludeReads[j]) continue;
-      scoresMatrix[rowIndex][colIndex] = curNodeScores[j].first;
-      ++rowIndex;
-    }
-    ++colIndex;
+
+std::vector<std::string> allNodes(allScores.size() - leastRecentIdenticalAncestors.size());
+size_t colIndex = 0;
+for (const auto& [nodeName, nodeScores] : allScores) {
+  if (leastRecentIdenticalAncestors.count(nodeName)) {
+    continue;
   }
+  allNodes[colIndex] = nodeName;
+  size_t rowIndex = 0;
+  for (size_t j = 0; j < nodeScores.size(); ++j) {
+    if (excludeReads[j]) {
+      continue;
+    }
+    scoresMatrix[rowIndex][colIndex] = nodeScores[j].first;
+    ++rowIndex;
+  }
+  ++colIndex;
+}
 
   for (size_t i = 0; i < scoresMatrix.size(); ++i) {
     const auto& curReadScores = scoresMatrix[i];
@@ -173,11 +185,16 @@ void filter_method_1(
   } 
 
   probs.resize(scoresMatrix.size(), nodes.size());
-  for (size_t i = 0; i < nodes.size(); ++i) {
-    const auto& curNodeScores = allScores.find(nodes[i])->second;
+  colIndex = 0;
+  for (const auto& node : nodes) {
+    const auto& curNodeScores = allScores.find(node)->second;
+    size_t rowIndex = 0;
     for (size_t j = 0; j < curNodeScores.size(); ++j) {
-      probs(j, i) = curNodeScores[j].second;
+      if (excludeReads[j]) continue;
+      probs(rowIndex, colIndex) = curNodeScores[j].second;
+      ++rowIndex;
     }
+    ++colIndex;
   }
 
   std::cout << "Finished filter method 1: " << nodes.size() << " nodes.. prob matrix size: " << probs.rows() << " x " << probs.cols() << std::endl;

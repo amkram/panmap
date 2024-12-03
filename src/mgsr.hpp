@@ -917,6 +917,8 @@ namespace mgsr {
       }
       filtedNodesStream << node << std::endl;
     }
+    filtedNodesStream.close();
+
     std::cout << "post-EM filter nodes size: " << nodes.size() << std::endl;
     std::cerr << "post-EM filter nodes size: " << nodes.size() << "\n" << std::endl;
     std::cout << "post-EM filter reduced nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() - nodes.size() << std::endl;
@@ -1001,9 +1003,9 @@ namespace mgsr {
       std::cerr << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
       std::cout << sigNodes.size() << " nodes left" << std::endl;
       std::cerr << sigNodes.size() << " nodes left" << std::endl;
-      nodes = std::move(sigNodes);
-      probs = std::move(sigProbs);
-      props = std::move(sigProps);
+      nodes = sigNodes;
+      probs = sigProbs;
+      props = sigProps;
       normalize(props);
       insigCounts.assign(nodes.size(), 0);
       if (nodes.size() <= std::max(static_cast<int>(totalNodes) / 20, 100) || filterRoundCount >= emFilterRound) {
@@ -1048,9 +1050,9 @@ namespace mgsr {
       std::vector<int> insigCounts(sigNodes.size());
       squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       assert(converged);
-      nodes = std::move(sigNodes);
-      probs = std::move(sigProbs);
-      props = std::move(sigProps);
+      nodes = sigNodes;
+      probs = sigProbs;
+      props = sigProps;
     }
 
     if (!excludeNode.empty()) {

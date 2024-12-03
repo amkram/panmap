@@ -448,7 +448,7 @@ int main(int argc, const char** argv) {
       }
       pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode);
     }
-
+    
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     log(prefix, "Placement time: " + std::to_string(duration.count()) + " milliseconds");
