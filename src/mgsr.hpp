@@ -50,23 +50,26 @@ namespace mgsr {
     //                 hash                       begs
     std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>> hashToPositionsMap;
 
-    void addPosition(const int32_t& beg, const int32_t& end, const size_t& fhash, const size_t& rhash, const bool& rev, std::unordered_set<size_t>& affectedSeedmers) {
+    void addPosition(const int32_t& beg, const int32_t& end, const size_t& fhash, const size_t& rhash, const bool& rev, std::unordered_set<size_t>& affectedSeedmers, std::vector<int32_t>& add_kminmerChangesVec) {
       auto it = positionMap.emplace(beg, positionInfo(end, fhash, rhash, rev)).first;
       if (fhash != rhash) {
         size_t minHash = std::min(fhash, rhash);
         hashToPositionsMap[minHash].insert(it);
         affectedSeedmers.insert(minHash);
+        add_kminmerChangesVec.push_back(beg);
       }
     }
 
-    void subPosition(std::map<int32_t, positionInfo>::iterator& it, const int32_t& end, const size_t& fhash, const size_t& rhash, const bool& rev, std::unordered_set<size_t>& affectedSeedmers) {
+    void subPosition(std::map<int32_t, positionInfo>::iterator& it, const int32_t& end, const size_t& fhash, const size_t& rhash, const bool& rev, std::unordered_set<size_t>& affectedSeedmers, std::vector<int32_t>& add_kminmerChangesVec, std::vector<int32_t>& del_kminmerChangesVec) {
       const auto& [oldEnd, oldFHash, oldRHash, oldRev] = it->second;
+      const auto& beg = it->first;
       if (oldFHash != oldRHash) {
         size_t minHash = std::min(oldFHash, oldRHash);
         auto hashToPositionIt = hashToPositionsMap.find(minHash);
         hashToPositionIt->second.erase(it);
         if (hashToPositionIt->second.empty()) hashToPositionsMap.erase(hashToPositionIt);
         affectedSeedmers.insert(minHash);
+        del_kminmerChangesVec.push_back(beg);
       }
 
       it->second.endPos = end;
@@ -77,17 +80,20 @@ namespace mgsr {
         size_t minHash = std::min(fhash, rhash);
         hashToPositionsMap[minHash].insert(it);
         affectedSeedmers.insert(minHash);
+        add_kminmerChangesVec.push_back(beg);
       }
     }
 
-    void delPosition(std::map<int32_t, positionInfo>::iterator& it, std::unordered_set<size_t>& affectedSeedmers) {
+    void delPosition(std::map<int32_t, positionInfo>::iterator& it, std::unordered_set<size_t>& affectedSeedmers, std::vector<int32_t>& del_kminmerChangesVec) {
       const auto& [end, fhash, rhash, rev] = it->second;
+      const auto& beg = it->first;
       if (fhash != rhash) {
         size_t minHash = std::min(fhash, rhash);
         auto hashToPositionIt = hashToPositionsMap.find(minHash);
         hashToPositionIt->second.erase(it);
         if (hashToPositionIt->second.empty()) hashToPositionsMap.erase(hashToPositionIt);
         affectedSeedmers.insert(minHash);
+        del_kminmerChangesVec.push_back(beg);
       }
       positionMap.erase(it);
     }
@@ -330,6 +336,8 @@ namespace mgsr {
   void updateSeedmersIndex(const std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges, 
                           std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap,
                           mgsr::seedmers& seedmersIndex,
+                          std::vector<int32_t>& add_kminmerChanges,
+                          std::vector<int32_t>& del_kminmerChanges,
                           std::unordered_set<size_t>& affectedSeedmers,
                           const int& seedK,
                           const int& seedL,
@@ -347,7 +355,7 @@ namespace mgsr {
       while (positionMapIt != positionMap.end()) {
         const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = positionMapIt->second;
         backTrackPositionMapChAdd.emplace_back(std::make_tuple(positionMapIt->first, toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev));
-        seedmersIndex.delPosition(positionMapIt, affectedSeedmers);
+        seedmersIndex.delPosition(positionMapIt, affectedSeedmers, del_kminmerChanges);
         ++positionMapIt;
       }
       return;
@@ -386,10 +394,10 @@ namespace mgsr {
           if (isReplacement) {
             const auto& [oldEnd, oldFHash, oldRHash, oldRev] = curKminmerPositionIt->second;
             backTrackPositionMapChAdd.emplace_back(std::make_tuple(curKminmerPositionIt->first, oldEnd, oldFHash, oldRHash, oldRev));
-            seedmersIndex.subPosition(curKminmerPositionIt, lastKminmerSeedIt->second.endPos, curforwardHash, curReverseHash, curReverseHash < curforwardHash, affectedSeedmers);
+            seedmersIndex.subPosition(curKminmerPositionIt, lastKminmerSeedIt->second.endPos, curforwardHash, curReverseHash, curReverseHash < curforwardHash, affectedSeedmers, add_kminmerChanges, del_kminmerChanges);
           } else {
             backTrackPositionMapErase.emplace_back(firstKminmerSeedIt->first);
-            seedmersIndex.addPosition(firstKminmerSeedIt->first, lastKminmerSeedIt->second.endPos, curforwardHash, curReverseHash, curReverseHash < curforwardHash, affectedSeedmers);
+            seedmersIndex.addPosition(firstKminmerSeedIt->first, lastKminmerSeedIt->second.endPos, curforwardHash, curReverseHash, curReverseHash < curforwardHash, affectedSeedmers, add_kminmerChanges);
           }
 
           processedSeedBegs.insert(firstKminmerSeedIt->first);
@@ -409,10 +417,10 @@ namespace mgsr {
           if (isReplacement) {
             const auto& [oldEnd, oldFHash, oldRHash, oldRev] = curKminmerPositionIt->second;
             backTrackPositionMapChAdd.emplace_back(std::make_tuple(curKminmerPositionIt->first, oldEnd, oldFHash, oldRHash, oldRev));
-            seedmersIndex.subPosition(curKminmerPositionIt, lastKminmerSeedIt->second.endPos, forwardKminmerHash, reverseKminmerHash, reverseKminmerHash < forwardKminmerHash, affectedSeedmers);
+            seedmersIndex.subPosition(curKminmerPositionIt, lastKminmerSeedIt->second.endPos, forwardKminmerHash, reverseKminmerHash, reverseKminmerHash < forwardKminmerHash, affectedSeedmers, add_kminmerChanges, del_kminmerChanges);
           } else {
             backTrackPositionMapErase.emplace_back(firstKminmerSeedIt->first);
-            seedmersIndex.addPosition(firstKminmerSeedIt->first, lastKminmerSeedIt->second.endPos, forwardKminmerHash, reverseKminmerHash, reverseKminmerHash < forwardKminmerHash, affectedSeedmers);
+            seedmersIndex.addPosition(firstKminmerSeedIt->first, lastKminmerSeedIt->second.endPos, forwardKminmerHash, reverseKminmerHash, reverseKminmerHash < forwardKminmerHash, affectedSeedmers, add_kminmerChanges);
           }
           
           processedSeedBegs.insert(firstKminmerSeedIt->first);
@@ -430,7 +438,7 @@ namespace mgsr {
           const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = toEraseIt->second;
           backTrackPositionMapChAdd.emplace_back(std::make_tuple(toEraseIt->first, toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev));
           processedSeedBegs.insert(toEraseIt->first);
-          seedmersIndex.delPosition(toEraseIt, affectedSeedmers);
+          seedmersIndex.delPosition(toEraseIt, affectedSeedmers, del_kminmerChanges);
         }
       }
     }
@@ -440,7 +448,7 @@ namespace mgsr {
     while (lastPositionMapIt->first > maxBegCoord) {
       const auto& [toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev] = lastPositionMapIt->second;
       backTrackPositionMapChAdd.emplace_back(std::make_tuple(lastPositionMapIt->first, toEraseEnd, toEraseFHash, toEraseRHash, toEraseRev));
-      seedmersIndex.delPosition(lastPositionMapIt, affectedSeedmers);
+      seedmersIndex.delPosition(lastPositionMapIt, affectedSeedmers, del_kminmerChanges);
       --lastPositionMapIt;
     }
   }
@@ -875,12 +883,13 @@ namespace mgsr {
   void squaremHelper_test_1(
     Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
     const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, const std::vector<bool>& lowScoreReads,
-    const int32_t& numReads, const size_t& numLowScoreReads, const std::vector<bool>& excludeReads,
+    const int32_t& numReads, const size_t& numLowScoreReads, std::vector<bool>& excludeReads,
     const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs,
     std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod, const int& preEMFilterNOrder,
     const int& emFilterRound, const int& checkFrequency, const int& removeIteration, const double& insigProp,
-    const int& roundsRemove, const double& removeThreshold, std::string excludeNode
+    const int& roundsRemove, const double& removeThreshold, const bool& leafNodesOnly, std::unordered_map<std::string,std::pair<std::vector<int32_t>, std::vector<int32_t>>>& kminmerChanges,
+    std::string excludeNode
   ) {
     if (excludeNode.empty()) {
       std::stringstream msg;
@@ -897,7 +906,9 @@ namespace mgsr {
     if (preEMFilterMethod == "null") {  
       haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "uhs") {
-      haplotype_filter::filter_method_1(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder);
+      haplotype_filter::filter_method_uhs(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder, kminmerChanges);
+    } else if (preEMFilterMethod == "uhs2") {
+      haplotype_filter::filter_method_uhs_2(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder);
     } else if (preEMFilterMethod == "hsc1") {
       haplotype_filter::filter_method_2(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, 1);
     } else if (preEMFilterMethod == "hsc2") {

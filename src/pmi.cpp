@@ -2670,8 +2670,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 template <typename SeedMutationsType, typename GapMutationsType>
 void place_per_read_DFS(
   mutableTreeData& data, std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap, mgsr::seedmers& seedmersIndex,
-  SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, std::vector<mgsr::Read>& reads,
-  const std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<int32_t>>>>& seedmerToReads,
+  SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, std::unordered_map<std::string, std::pair<std::vector<int32_t>, std::vector<int32_t>>>& kminmerChanges,
+  std::vector<mgsr::Read>& reads, const std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<int32_t>>>>& seedmerToReads,
   std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, std::unordered_map<std::string, std::string>& identicalPairs,
   int seedK, int seedS, int seedT, int seedL, bool openSyncmers, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator,
   std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes,
@@ -2726,7 +2726,9 @@ void place_per_read_DFS(
   std::unordered_set<size_t> affectedSeedmers;
   auto& positionMap = seedmersIndex.positionMap;
   auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
-  updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, backTrackPositionMapChAdd, backTrackPositionMapErase);
+  auto& add_kminmerChanges = kminmerChanges[node->identifier].first;
+  auto& del_kminmerChanges = kminmerChanges[node->identifier].second;
+  updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, add_kminmerChanges, del_kminmerChanges, affectedSeedmers, seedK, seedL, backTrackPositionMapChAdd, backTrackPositionMapErase);
 
   if (debug) {
     // print out seeds at node
@@ -3019,7 +3021,7 @@ void place_per_read_DFS(
   std::cout << "\rprocessed " << dfsIndex << " / " <<  T->allNodes.size() << " haplotypes" << std::flush;
   for (Node *child : node->children) {
     place_per_read_DFS(
-      data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, reads, seedmerToReads,
+      data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, kminmerChanges, reads, seedmerToReads,
       allScores, identicalPairs, seedK, seedS, seedT, seedL, openSyncmers, T, child, globalCoords, navigator,
       scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap,
       minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads
@@ -3492,6 +3494,7 @@ void pmi::place_per_read(
 
   mgsr::seedmers seedmersIndex;
   std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>> allScores;
+  std::unordered_map<std::string, std::pair<std::vector<int32_t>, std::vector<int32_t>>> kminmerChanges;
   std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
   std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
   std::unordered_map<std::string, std::string> identicalPairs;
@@ -3503,7 +3506,7 @@ void pmi::place_per_read(
   auto start_time = std::chrono::high_resolution_clock::now();
   
   place_per_read_DFS<decltype(perNodeSeedMutations_Reader), decltype(perNodeGapMutations_Reader)>(
-    data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, reads, seedmerToReads,
+    data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, kminmerChanges, reads, seedmerToReads,
     allScores, identicalPairs, k, s, t, l, openSyncmers, T, T->root, globalCoords, navigator, scalarCoordToBlockId,
     BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap, minimumCount, minimumScore,
     errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads
@@ -3641,7 +3644,7 @@ void pmi::place_per_read(
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
     leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder,
-    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
+    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmerChanges, "");
   
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
