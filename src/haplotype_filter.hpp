@@ -113,7 +113,72 @@ void noFilter(
   std::cerr << "Finished noFilter: " << nodes.size() << " nodes" << std::endl;
 }
 
-std::unordered_set<std::string> get_nth_order_neighbors(Tree *T, const std::string& node, int n_order, std::unordered_map<std::string, std::pair<std::vector<int32_t>, std::vector<int32_t>>>& kminmerChanges) {
+void filter_method_mbc(
+  std::vector<std::string>& nodes, Eigen::MatrixXd& probs, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
+  const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+  const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, std::vector<bool>& excludeReads,
+  const std::unordered_map<std::string, double>& kminmer_binary_coverage
+) {
+  std::cerr << "Filter method mbc: filter out haplotypes that do not have a unique best read score" << std::endl;
+
+  std::vector<std::pair<std::string, double>> kminmer_binary_coverage_vec;
+  for (const auto& node : kminmer_binary_coverage) {
+    if (leastRecentIdenticalAncestor.find(node.first) != leastRecentIdenticalAncestor.end()) continue;
+    double curCoverage = node.second;
+    if (identicalSets.find(node.first) != identicalSets.end()) {
+      for (const auto& identicalNode : identicalSets.at(node.first)) {
+        if (kminmer_binary_coverage.at(identicalNode) > curCoverage) {
+          curCoverage = kminmer_binary_coverage.at(identicalNode);
+        }
+      }
+    }
+    kminmer_binary_coverage_vec.emplace_back(std::make_pair(node.first, curCoverage));
+  }
+
+  std::sort(kminmer_binary_coverage_vec.begin(), kminmer_binary_coverage_vec.end(), [](const auto& a, const auto& b) {
+    return a.second > b.second;
+  });
+
+  std::vector<std::string> probableNodes;
+  int numProbableNodes = 0;
+  for (const auto& [node, coverage] : kminmer_binary_coverage_vec) {
+    if (coverage == 1.0) {
+      probableNodes.push_back(node);
+    } else if (numProbableNodes < 1000) {
+      probableNodes.push_back(node);
+      ++numProbableNodes;
+    }
+  }
+
+  exclude_noninformative_reads(excludeReads, probableNodes, allScores);
+
+  size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
+
+  std::cerr << "Excluding " << numExcludedReads << " reads in total" << std::endl;
+  
+  probs.resize(allScores.begin()->second.size() - numExcludedReads, probableNodes.size());
+
+  size_t colIndex = 0;
+  for (const auto& node : probableNodes) {
+    if (leastRecentIdenticalAncestor.find(node) != leastRecentIdenticalAncestor.end()) {
+      std::cerr << "Error: Node " << node << " has a least recent identical ancestor." << std::endl;
+      exit(1);
+    }
+    const auto& curNodeScores = allScores.at(node);
+    size_t rowIndex = 0;
+    for (size_t i = 0; i < curNodeScores.size(); ++i) {
+      if (excludeReads[i]) continue;
+      probs(rowIndex, colIndex) = curNodeScores[i].second;
+      ++rowIndex;
+    }
+    nodes.push_back(node);
+    ++colIndex;
+  }
+  std::cerr << "Finished mbc filter: " << nodes.size() << " nodes" << std::endl;
+
+}
+
+std::unordered_set<std::string> get_nth_order_neighbors(Tree *T, const std::string& node, int n_order) {
   std::unordered_set<std::string> result;
 
   if (T->allNodes.find(node) == T->allNodes.end()) {
@@ -138,24 +203,14 @@ std::unordered_set<std::string> get_nth_order_neighbors(Tree *T, const std::stri
         // Add children to the queue
         for (Node* child : T->allNodes.at(current_node)->children) {
           if (visited.find(child->identifier) == visited.end()) {
-            const auto& childKminmerChanges = kminmerChanges.find(child->identifier)->second;
-            if (childKminmerChanges.first.size() > 0) {
-              bfs_queue.push({child->identifier, level + 1});
-            } else {
-              bfs_queue.push({child->identifier, level});
-            }
+            bfs_queue.push({child->identifier, level + 1});
             visited.insert(child->identifier);
           }
         }
       }
       // Add parent to the queue (if exists)
       if (T->allNodes.at(current_node)->parent && visited.find(T->allNodes.at(current_node)->parent->identifier) == visited.end()) {
-        const auto& parentKminmerChanges = kminmerChanges.find(T->allNodes.at(current_node)->parent->identifier)->second;
-        if (parentKminmerChanges.first.size() > 0) {
-          bfs_queue.push({T->allNodes.at(current_node)->parent->identifier, level + 1});
-        } else {
-          bfs_queue.push({T->allNodes.at(current_node)->parent->identifier, level});
-        }
+        bfs_queue.push({T->allNodes.at(current_node)->parent->identifier, level + 1});
         visited.insert(T->allNodes.at(current_node)->parent->identifier);
       }
     }
@@ -168,8 +223,7 @@ std::unordered_set<std::string> get_nth_order_neighbors(Tree *T, const std::stri
 void filter_method_uhs(
   std::vector<std::string>& nodes, Eigen::MatrixXd& probs, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
   const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
-  const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, const std::vector<bool>& excludeReads, Tree *T, int n_order,
-  std::unordered_map<std::string, std::pair<std::vector<int32_t>, std::vector<int32_t>>>& kminmerChanges
+  const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, const std::vector<bool>& excludeReads, Tree *T, int n_order
 ) {
   std::cerr << "Filter method 1: filter out haplotypes that do not have a unique best read score" << std::endl;
 
@@ -233,7 +287,7 @@ void filter_method_uhs(
     }
     identicalSet.insert(filteredNode);
     for (const auto& node : identicalSet) {
-      std::unordered_set<std::string> nth_order_neighbors = get_nth_order_neighbors(T, node, n_order, kminmerChanges);
+      std::unordered_set<std::string> nth_order_neighbors = get_nth_order_neighbors(T, node, n_order);
       for (const auto& neighbor : nth_order_neighbors) {
         std::string neighbor_leastRecentIdenticalAncestor = neighbor;
         if (leastRecentIdenticalAncestors.find(neighbor) != leastRecentIdenticalAncestors.end()) {

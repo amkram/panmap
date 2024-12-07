@@ -129,6 +129,7 @@ Developer options:
   --genotype-from-sam                   Generate VCF from SAM file using mutation spectrum as prior.
   --sam-file <path>                     Path to SAM file to generate VCF from.
   --ref-file <path>                     Path to reference FASTA file to generate VCF from.
+  --save-jaccard                        Save jaccard index between reads and haplotypes to <prefix>.jaccard.txt
 )";
 
 
@@ -289,6 +290,7 @@ int main(int argc, const char** argv) {
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
     bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
     bool genotype_from_sam = args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool() ? args["--genotype-from-sam"].asBool() : false;
+    bool save_jaccard = args["--save-jaccard"] && args["--save-jaccard"].isBool() ? args["--save-jaccard"].asBool() : false;
 
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
@@ -446,7 +448,7 @@ int main(int argc, const char** argv) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
         return 1;
       }
-      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode);
+      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard);
     }
     
     auto end = std::chrono::high_resolution_clock::now();
