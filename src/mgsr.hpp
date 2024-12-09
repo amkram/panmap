@@ -880,10 +880,10 @@ namespace mgsr {
     const int32_t& numReads, const size_t& numLowScoreReads, std::vector<bool>& excludeReads,
     const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs,
-    std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod, const int& preEMFilterNOrder,
+    std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum,
     const int& emFilterRound, const int& checkFrequency, const int& removeIteration, const double& insigProp,
     const int& roundsRemove, const double& removeThreshold, const bool& leafNodesOnly, const std::unordered_map<std::string, double>& kminmer_binary_coverage,
-    std::string excludeNode
+    std::string excludeNode, const bool& save_kminmer_binary_coverage, const std::string& prefix
   ) {
     if (excludeNode.empty()) {
       std::stringstream msg;
@@ -900,7 +900,7 @@ namespace mgsr {
     if (preEMFilterMethod == "null") {  
       haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "mbc") {
-      haplotype_filter::filter_method_mbc(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, kminmer_binary_coverage);
+      haplotype_filter::filter_method_mbc(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
     } else if (preEMFilterMethod == "uhs") {
       haplotype_filter::filter_method_uhs(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder);
     } else if (preEMFilterMethod == "uhs2") {

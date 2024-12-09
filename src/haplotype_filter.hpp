@@ -84,7 +84,7 @@ void noFilter(
     ++index;
   }
 
-  exclude_noninformative_reads(excludeReads, allNodes, allScores);
+  // exclude_noninformative_reads(excludeReads, allNodes, allScores);
 
   size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
 
@@ -117,7 +117,7 @@ void filter_method_mbc(
   std::vector<std::string>& nodes, Eigen::MatrixXd& probs, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
   const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
   const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, std::vector<bool>& excludeReads,
-  const std::unordered_map<std::string, double>& kminmer_binary_coverage
+  const std::unordered_map<std::string, double>& kminmer_binary_coverage, const int& preEMFilterMBCNum, const bool& save_kminmer_binary_coverage, const std::string& prefix
 ) {
   std::cerr << "Filter method mbc: filter out haplotypes that do not have a unique best read score" << std::endl;
 
@@ -139,18 +139,31 @@ void filter_method_mbc(
     return a.second > b.second;
   });
 
+  if (save_kminmer_binary_coverage) {
+    std::ofstream kminmer_binary_coverage_file(prefix + ".kminmer_binary_coverage.txt");
+    for (const auto& [node, coverage] : kminmer_binary_coverage_vec) {
+      kminmer_binary_coverage_file << node;
+      if (identicalSets.find(node) != identicalSets.end()) {
+        for (const auto& identicalNode : identicalSets.at(node)) {
+          kminmer_binary_coverage_file << "," << identicalNode;
+        }
+      }
+      kminmer_binary_coverage_file << "\t" << coverage << std::endl;
+    }
+  }
+
   std::vector<std::string> probableNodes;
   int numProbableNodes = 0;
   for (const auto& [node, coverage] : kminmer_binary_coverage_vec) {
     if (coverage == 1.0) {
       probableNodes.push_back(node);
-    } else if (numProbableNodes < 1000) {
+    } else if (numProbableNodes < preEMFilterMBCNum) {
       probableNodes.push_back(node);
       ++numProbableNodes;
     }
   }
 
-  exclude_noninformative_reads(excludeReads, probableNodes, allScores);
+  // exclude_noninformative_reads(excludeReads, probableNodes, allScores);
 
   size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
 

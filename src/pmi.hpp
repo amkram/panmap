@@ -32,9 +32,9 @@ namespace pmi { // functions and types for seed indexing
       const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
       const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
       const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold,
-      const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& emFilterRound, const int& checkFrequency,
+      const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum, const int& emFilterRound, const int& checkFrequency,
       const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold,
-      const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix);
+      const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix, const bool& save_kminmer_binary_coverage);
 
 } // namespace pmi
 

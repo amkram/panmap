@@ -3431,9 +3431,9 @@ void pmi::place_per_read(
   const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
   const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold,
-  const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& emFilterRound,
+  const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum, const int& emFilterRound,
   const int& checkFrequency, const int& removeIteration, const double& insigPropArg, const int& roundsRemove,
-  const double& removeThreshold, const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix
+  const double& removeThreshold, const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix, const bool& save_kminmer_binary_coverage
 )
 {
 
@@ -3673,8 +3673,8 @@ void pmi::place_per_read(
 
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
-    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder,
-    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "");
+    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder, preEMFilterMBCNum,
+    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "", save_kminmer_binary_coverage, prefix);
   
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;

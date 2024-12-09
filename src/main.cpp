@@ -116,6 +116,7 @@ Placement-per-read options:
                                           'hsc' - Keep haplotypes with at least one highest score read, allowing ties.
                                           [default: null]
   --preem-filter-n-order <int>          Order of neighbors to consider when filtering haplotypes with ties in highest score reads. [default: 1]
+  --preem-filter-mbc-num <int>          Top <int> nodes to include in the MBC filter not including nodes with 100% coverage. [default: 1000]
   --em-filter-round <int>               Maximum number of rounds to filter low probability haplotypes during EM filtering. [default: 5]
   --check-frequency <int>               Number of iterations between each em-filter-round. [default: 20]
   --remove-iteration <int>              Remove haplotypes that has probability less than insig-prob for more than remove-iteration consecutive iterations. [default: 20]
@@ -130,6 +131,7 @@ Developer options:
   --sam-file <path>                     Path to SAM file to generate VCF from.
   --ref-file <path>                     Path to reference FASTA file to generate VCF from.
   --save-jaccard                        Save jaccard index between reads and haplotypes to <prefix>.jaccard.txt
+  --save-kminmer-binary-coverage        Save kminmer binary coverage to <prefix>.kminmer_binary_coverage.txt
 )";
 
 
@@ -409,6 +411,7 @@ int main(int argc, const char** argv) {
       double excludeDuplicatesThreshold = args["--exclude-duplicates-threshold"] ? std::stod(args["--exclude-duplicates-threshold"].asString()) : 0.5;
       std::string preEMFilterMethod = args["--preem-filter-method"] ? args["--preem-filter-method"].asString() : "null";
       int preEMFilterNOrder         = args["--preem-filter-n-order"] ? std::stoi(args["--preem-filter-n-order"].asString()) : 1;
+      int preEMFilterMBCNum         = args["--preem-filter-mbc-num"] ? std::stoi(args["--preem-filter-mbc-num"].asString()) : 1000;
       int emFilterRound             = args["--em-filter-round"] ? std::stoi(args["--em-filter-round"].asString()) : 5;
       int checkFrequency            = args["--check-frequency"] ? std::stoi(args["--check-frequency"].asString()) : 20;
       int removeIteration           = args["--remove-iteration"] ? std::stoi(args["--remove-iteration"].asString()) : 20;
@@ -417,7 +420,8 @@ int main(int argc, const char** argv) {
       double removeThreshold        = args["--remove-threshold"] ? std::stod(args["--remove-threshold"].asString()) : 0.005;
       bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
       bool callSubconsensus         = args["--call-subconsensus"] && args["--call-subconsensus"].isBool() ? args["--call-subconsensus"].asBool() : false;
-      
+      bool save_kminmer_binary_coverage = args["--save-kminmer-binary-coverage"] && args["--save-kminmer-binary-coverage"].isBool() ? args["--save-kminmer-binary-coverage"].asBool() : false;
+
       log(prefix, "Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
         "\nminimum-count: " + std::to_string(minimumCount) +
         "\nminimum-score: " + std::to_string(minimumScore) +
@@ -434,15 +438,17 @@ int main(int argc, const char** argv) {
         "\nrounds-remove: " + std::to_string(roundsRemove) +
         "\nremove-threshold: " + std::to_string(removeThreshold) +
         "\nleaf-nodes-only: " + (leafNodesOnly ? "true" : "false") + "\n" +
-        "\ncall-subconsensus: " + (callSubconsensus ? "true" : "false") + "\n");
+        "\ncall-subconsensus: " + (callSubconsensus ? "true" : "false") + "\n" +
+        "\npreem-filter-mbc-num: " + std::to_string(preEMFilterMBCNum) + "\n" +
+        "\nsave-kminmer-binary-coverage: " + (save_kminmer_binary_coverage ? "true" : "false") + "\n");
 
       bool rescueDuplicates = rescueDuplicatesThreshold > 0;
       pmi::place_per_read(
         T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
         errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
         rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod,
-        preEMFilterNOrder, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
-        removeThreshold, leafNodesOnly, callSubconsensus, prefix);
+        preEMFilterNOrder, preEMFilterMBCNum, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
+        removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage);
     } else {
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
