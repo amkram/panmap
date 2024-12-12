@@ -914,8 +914,8 @@ namespace mgsr {
       std::cerr << "pre-EM filter method not recognized" << std::endl;
       exit(1);
     }
-    std::string filtedNodesFile = "filted_nodes.txt";
-    std::ofstream filtedNodesStream(filtedNodesFile);
+    std::string filteredNodesFile = prefix + "_filtered_nodes.txt";
+    std::ofstream filtedNodesStream(filteredNodesFile);
     for (const auto& node : nodes) {
       if (leastRecentIdenticalAncestors.find(node) != leastRecentIdenticalAncestors.end()) { 
         // sanity check
