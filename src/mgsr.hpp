@@ -1094,21 +1094,31 @@ namespace mgsr {
 
   void assignReadsToNodes(
     const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
-    const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs, const Eigen::VectorXd& props,
-    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::unordered_map<std::string, std::vector<size_t>>& assignedReads
-  ) {
-    size_t rowindex = 0;
+    const std::vector<std::string>& nodes,
+    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
+    std::unordered_map<std::string, std::vector<size_t>>& assignedReads) {
+
     for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
-      const Eigen::VectorXd& curProbs = probs.row(rowindex);
-      double curmax = curProbs.maxCoeff();
-      for (size_t j = 0; j < curProbs.size(); ++j) {
-        if (curProbs(j) == curmax) {
-          for (size_t k = 0; k < readSeedmersDuplicatesIndex[i].size(); ++k) {
-            assignedReads[nodes[j]].push_back(readSeedmersDuplicatesIndex[i][k]);
-          }
+      int32_t maxScore = std::numeric_limits<int32_t>::min();
+      std::vector<size_t> bestNodes;
+
+      for (size_t j = 0; j < nodes.size(); ++j) {
+        const auto& nodeScores = allScores.at(nodes[j]);
+        int32_t curScore = nodeScores[i].first;
+        if (curScore > maxScore) {
+          maxScore = curScore;
+          bestNodes.clear();
+          bestNodes.push_back(j);
+        } else if (curScore == maxScore) {
+          bestNodes.push_back(j);
         }
       }
-      ++rowindex;
+
+      for (size_t nodeIdx : bestNodes) {
+        for (size_t readIdx : readSeedmersDuplicatesIndex[i]) {
+          assignedReads[nodes[nodeIdx]].push_back(readIdx);
+        }
+      }
     }
   }
 }

@@ -3707,15 +3707,54 @@ void pmi::place_per_read(
   std::cout << "Wrote abundance file: " << abundanceOutFile << std::endl;
   std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
-  std::cout << "callSubconsensus: " << callSubconsensus << std::endl;
-  // run bwa index, aln, sampe
   if (callSubconsensus) {
     // calling consensus
     std::cout << "Calling consensus" << std::endl;
     std::cerr << "Calling consensus" << std::endl;
 
     std::unordered_map<std::string, std::vector<size_t>> assignedReads;
-    mgsr::assignReadsToNodes(allScores, nodes, probs, props, readSeedmersDuplicatesIndex, assignedReads);
+    mgsr::assignReadsToNodes(allScores, nodes, readSeedmersDuplicatesIndex, assignedReads);
+
+    boost::filesystem::path readsDir(prefix + "_reads");
+    if (!boost::filesystem::exists(readsDir)) {
+      if (!boost::filesystem::create_directory(readsDir)) {
+        std::cerr << "Error: Unable to create directory " << readsDir.string() << std::endl;
+        exit(1);
+      }
+    }
+    
+    for (const auto& node : sortedOut) {
+      // write reads to fastq
+      std::cout << "Writing assigned reads assigned to " << node.first << std::endl;
+      std::cerr << "Writing assigned reads assigned to " << node.first << std::endl;
+      std::string fastqPath1 = "";
+      std::string fastqPath2 = "";
+      if (reads2Path.size() > 0) {
+        fastqPath1 = (readsDir / (node.first + "_R1.fastq")).string();
+        fastqPath2 = (readsDir / (node.first + "_R2.fastq")).string();
+        std::ofstream fastqOut1(fastqPath1);
+        std::ofstream fastqOut2(fastqPath2);
+        for (size_t readIdx : assignedReads[node.first]) {
+          if (readIdx % 2 != 0) continue;
+          fastqOut1 << "@" << readNames[readIdx] << "\n" << readSequences[readIdx] << "\n+\n" << readQuals[readIdx] << "\n";
+          fastqOut2 << "@" << readNames[readIdx + 1] << "\n" << readSequences[readIdx + 1] << "\n+\n" << readQuals[readIdx + 1] << "\n";
+        }
+        fastqOut1.close();
+        fastqOut2.close();
+      } else {
+        fastqPath1 = prefix + "." + node.first + ".fastq";
+        std::ofstream fastqOut(fastqPath1);
+        for (const auto& readIndex : assignedReads[node.first]) {
+          fastqOut << "@" << readNames[readIndex] << "\n" << readSequences[readIndex] << "\n+\n" << readQuals[readIndex] << "\n";
+        }
+        fastqOut.close();
+      }
+      
+
+    }
+
+
+    exit(0);
     for (const auto& node : sortedOut) {
       std::cout << "Calling consensus for " << node.first << std::endl;
       // write reference fastas
