@@ -129,6 +129,7 @@ Developer options:
   --genotype-from-sam                   Generate VCF from SAM file using mutation spectrum as prior.
   --sam-file <path>                     Path to SAM file to generate VCF from.
   --ref-file <path>                     Path to reference FASTA file to generate VCF from.
+  --parallel-tester                     Run parallel tester.
 )";
 
 
@@ -289,6 +290,7 @@ int main(int argc, const char** argv) {
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
     bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
     bool genotype_from_sam = args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool() ? args["--genotype-from-sam"].asBool() : false;
+    bool parallel_tester = args["--parallel-tester"] && args["--parallel-tester"].isBool() ? args["--parallel-tester"].asBool() : false;
 
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
@@ -392,7 +394,10 @@ int main(int argc, const char** argv) {
 
     log(prefix, "Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    if (genotype_from_sam) {
+    if (parallel_tester) {
+      pmi::parallel_tester(T, index_input, reads1, reads2, prefix);
+    }
+    else if (genotype_from_sam) {
       std::string samFileName = args["--sam-file"] ? args["--sam-file"].asString() : "";
       std::string refFileName = args["--ref-file"] ? args["--ref-file"].asString() : "";
       callVariantsFromSAM(samFileName, refFileName, mutMat, prefix);
