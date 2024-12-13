@@ -19,7 +19,7 @@ void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt19937& gen);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
   const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads);
+  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads, bool leaf_node_only, bool sim_ref_reads);
 void scaleMutationMatrices(seed_annotated_tree::mutationMatrices& mutMat, double mutation_rate);
 
 int main(int argc, char *argv[]) {
@@ -40,6 +40,8 @@ int main(int argc, char *argv[]) {
             ("rep",       po::value<int>()->default_value(1), "Number of replicates to simulate [1].")
             ("n_reads",   po::value<int>()->default_value(2000), "Number of reads to simulate [2000].")
             ("model",     po::value<std::string>()->default_value("NovaSeq"), "InSilicoSeq error model [HiSeq]. Options: HiSeq, NextSeq, NovaSeq, MiSeq. For detail, visit InSilicoSeq github (https://github.com/HadrienG/InSilicoSeq).")
+            ("leaf-node-only", po::bool_switch()->default_value(false), "Only simulate reads on leaf nodes")
+            ("sim-ref-reads", po::bool_switch()->default_value(false), "Simulate reads on the reference node")
             ("no-reads",  po::bool_switch()->default_value(false), "Do not simulate reads")
             ("cpus",      po::value<int>()->default_value(1), "Number of CPUs to use [1].")
             ("seed",      po::value<std::string>()->default_value("RANDOM"), "Random seed for simulation [default: random]")
@@ -71,7 +73,8 @@ int main(int argc, char *argv[]) {
         int rep                   = vm["rep"].as<int>();
         int cpus                  = vm["cpus"].as<int>();
         bool no_reads             = vm["no-reads"].as<bool>();
-
+        bool leaf_node_only       = vm["leaf-node-only"].as<bool>();
+        bool sim_ref_reads        = vm["sim-ref-reads"].as<bool>();
         // Check mut_spec
        seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
         if (out_dir != "") {
@@ -105,7 +108,8 @@ int main(int argc, char *argv[]) {
                 << "Error model: " << model << "\n"
                 << "Number of CPUs: " << cpus << "\n"
                 << "Random seed: " << seedstr << "\n"
-                << "No reads: " << no_reads << "\n";
+                << "No reads: " << no_reads << "\n"
+                << "Leaf node only: " << leaf_node_only << "\n";
 
         // Check multitoken inputs
         std::pair<int, int> indel_len;
@@ -203,7 +207,7 @@ int main(int argc, char *argv[]) {
         }
         logFile << "Using seed: " << seed << "\n";
         logFile.close();
-        sim(T, refNode, out_dir, prefix, mut_spec_type, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus, no_reads);
+        sim(T, refNode, out_dir, prefix, mut_spec_type, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus, no_reads, leaf_node_only, sim_ref_reads);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
@@ -531,25 +535,34 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads)
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads, bool leaf_node_only, bool sim_ref_reads)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
     fs::path outVarFastaObj = outDir / fs::path(prefix + "_varFasta");
     fs::path outVCFTrueObj  = outDir / fs::path(prefix + "_vcfTrue");
     fs::path outReadsObj    = outDir / fs::path(prefix + "_reads");
+    fs::path outRefReadsObj = outDir / fs::path(prefix + "_refReads");
 
     makeDir(outRefFastaObj.string());
     makeDir(outVarFastaObj.string());
     makeDir(outVCFTrueObj.string());
     makeDir(outReadsObj.string());
 
-
+    if (sim_ref_reads) {
+      makeDir(outRefReadsObj.string());
+    }
 
     std::vector<std::string> nodeNames;
     if (refNode == "RANDOM") {
         for (const auto& pair : T->allNodes) {
+          if (leaf_node_only) {
+            if (pair.second->children.empty()) {
+              nodeNames.push_back(pair.first);
+            }
+          } else {
             nodeNames.push_back(pair.first);
+          }
         }
         std::default_random_engine rng(seed);
         std::shuffle(begin(nodeNames), end(nodeNames), rng);
@@ -608,6 +621,10 @@ void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& ou
       // Make reads using InSilicoSeq
       if (!no_reads) {
           simReads(fastaOut, outReadsObj, model, n_reads, cpus, seed);
+          if (sim_ref_reads) {
+            fs::path refFastaOut = outRefFastaObj / fs::path(curNode + ".fa");
+            simReads(refFastaOut, outRefReadsObj, model, n_reads, cpus, seed);
+          }
       }
     }
 }
