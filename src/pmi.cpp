@@ -5,6 +5,9 @@
 #include "seed_annotated_tree.hpp"
 #include "conversion.hpp"
 
+#include <thread> // For multithreading features
+#include <mutex>  // If you use mutex for thread safety
+
 #include <algorithm>
 #include <iostream>
 #include <ranges>
@@ -2665,6 +2668,383 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     }
 }
 
+// // Function to compute the DFS order of nodes starting from the root
+// std::vector<Node*> computeDFSOrder(Node* root) {
+//     std::vector<Node*> dfsOrder;
+//     if (!root) return dfsOrder;
+
+//     std::stack<Node*> stack;
+//     stack.push(root);
+
+//     while (!stack.empty()) {
+//         Node* current = stack.top();
+//         stack.pop();
+//         dfsOrder.push_back(current);
+
+//         // Push children in reverse order to process leftmost child first
+//         for (auto it = current->children.rbegin(); it != current->children.rend(); ++it) {
+//             stack.push(*it);
+//         }
+//     }
+
+//     return dfsOrder;
+// }
+
+// // Function to split the DFS order into groups
+// std::vector<std::vector<Node*>> splitDFSIntoGroups(const std::vector<Node*>& dfsOrder, int numGroups) {
+//     std::vector<std::vector<Node*>> groups;
+//     if (numGroups <= 0 || dfsOrder.size() <= 1) return groups;
+
+//     size_t totalNodes = dfsOrder.size() - 1; // Exclude root
+//     size_t groupSize = (totalNodes + numGroups) / numGroups; // Ceiling division
+
+//     for (int i = 0; i < numGroups; ++i) {
+//         size_t start = i * groupSize;  // Start after the root
+//         size_t end = std::min(start + groupSize, dfsOrder.size());
+//         groups.emplace_back(dfsOrder.begin() + start, dfsOrder.begin() + end);
+//     }
+
+//     return groups;
+// }
+
+// // Function to backtrack from a node to the root
+// std::vector<Node*> backtrackToRoot(Node* start) {
+//     std::vector<Node*> path;
+//     while (start) {
+//         path.push_back(start);
+//         start = start->parent;
+//     }
+//     std::reverse(path.begin(), path.end()); // Reverse to get root-to-node order
+//     return path;
+// }
+
+// // Function to apply seed changes while traversing
+// void traverseWithSeedChanges(Node* node, const std::vector<std::string>& sequencingReads) {
+//     if (!node) return;
+
+//     // Example logic: Apply changes at this node
+//     std::cout << "Node: " << node->identifier << " - Applying seed changes" << std::endl;
+
+//     // Recursively traverse children
+//     for (Node* child : node->children) {
+//         traverseWithSeedChanges(child, sequencingReads);
+//     }
+// }
+
+// // Function to process nodes with seed changes
+// void processDFSOrderWithSeedChanges(Node* root, const std::vector<std::string>& sequencingReads) {
+//     if (!root) return;
+
+//     std::stack<Node*> stack;
+//     stack.push(root);
+
+//     while (!stack.empty()) {
+//         Node* current = stack.top();
+//         stack.pop();
+
+//         // Process the current node
+//         std::cout << "Processing node: " << current->identifier << std::endl;
+
+//         // Apply seed changes
+//         traverseWithSeedChanges(current, sequencingReads);
+
+//         // Push children in reverse order for DFS
+//         for (auto it = current->children.rbegin(); it != current->children.rend(); ++it) {
+//             stack.push(*it);
+//         }
+//     }
+// }
+
+// // Main parallel_tester function
+// void pmi::parallel_tester(Tree* T, Index::Reader& index, const std::string& reads1Path, const std::string& reads2Path, const std::string& prefix) {
+//     std::cout << "Parallel tester" << std::endl;
+
+//     // Step 1: Compute the DFS order
+//     std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
+
+//     // Step 2: Set the number of groups manually
+//     int numGroups = 16; // Manually specify the number of groups
+
+//     // Step 3: Split DFS order into groups
+//     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numGroups);
+
+//     // Step 4: Process only the starting node of each group
+//     for (int i = 0; i < groups.size(); ++i) {
+//         if (groups[i].empty()) continue; // Skip empty groups
+
+//         // Get the starting node of the group
+//         Node* startNode = groups[i].front();
+
+//         // Backtrack to the root from the starting node
+//         std::vector<Node*> path = backtrackToRoot(startNode);
+
+//         // Print the group and the path
+//         std::cout << "Group " << i + 1 << " (Start Node: " << startNode->identifier << "):\n";
+//         std::cout << "  Path to root: ";
+//         for (Node* node : path) {
+//             std::cout << node->identifier << " ";
+//         }
+//         std::cout << "\n";
+
+//       // Initialize thread logic here if needed
+//       // Example: Perform parallel tasks for each group starting from `startNode`
+//   }
+
+//     std::cout << "Finished processing groups." << std::endl;
+// }
+
+// Function to compute the DFS order of nodes starting from the root
+std::vector<Node*> computeDFSOrder(Node* root) {
+    std::vector<Node*> dfsOrder;
+    if (!root) return dfsOrder;
+
+    std::stack<Node*> stack;
+    stack.push(root);
+
+    while (!stack.empty()) {
+        Node* current = stack.top();
+        stack.pop();
+        dfsOrder.push_back(current);
+
+        // Push children in reverse order to process leftmost child first
+        for (auto it = current->children.rbegin(); it != current->children.rend(); ++it) {
+            stack.push(*it);
+        }
+    }
+
+    return dfsOrder;
+}
+
+// Function to split the DFS order into groups
+std::vector<std::vector<Node*>> splitDFSIntoGroups(const std::vector<Node*>& dfsOrder, int numGroups) {
+    std::vector<std::vector<Node*>> groups;
+    if (numGroups <= 0 || dfsOrder.size() <= 1) return groups;
+
+    size_t totalNodes = dfsOrder.size() - 1; // Exclude root
+    size_t groupSize = (totalNodes + numGroups) / numGroups; // Ceiling division
+
+    for (int i = 0; i < numGroups; ++i) {
+        size_t start = i * groupSize;  // Start after the root
+        size_t end = std::min(start + groupSize, dfsOrder.size());
+        groups.emplace_back(dfsOrder.begin() + start, dfsOrder.begin() + end);
+    }
+
+    return groups;
+}
+
+// Function to backtrack from a node to the root
+std::vector<Node*> backtrackToRoot(Node* start) {
+    std::vector<Node*> path;
+    while (start) {
+        path.push_back(start);
+        start = start->parent;
+    }
+    std::reverse(path.begin(), path.end()); // Reverse to get root-to-node order
+    return path;
+}
+
+// Function to apply seed changes while traversing
+void traverseWithSeedChanges(Node* node, const std::vector<std::string>& sequencingReads) {
+    if (!node) return;
+
+    // Example logic: Apply changes at this node
+    std::cout << "Node: " << node->identifier << " - Applying seed changes" << std::endl;
+
+    // Recursively traverse children
+    for (Node* child : node->children) {
+        traverseWithSeedChanges(child, sequencingReads);
+    }
+}
+
+// Perform recursive DFS
+void performRecursiveDFS(Node* current, Node* stopNode, std::vector<std::string>& dfsResult, std::ostringstream& logStream) {
+    if (!current) {
+        // logStream << "[Thread " << std::this_thread::get_id() << "] NULL node encountered, returning.\n";
+        return;
+    }
+
+    // Visit the current node
+    // logStream << "[Thread " << std::this_thread::get_id() << "] Visiting node: " << current->identifier << "\n";
+    dfsResult.push_back(current->identifier);
+
+    // Stop if the stopping node is reached
+    if (current == stopNode) {
+        // logStream << "[Thread " << std::this_thread::get_id() << "] Stopping node " << stopNode->identifier << " reached.\n";
+        return;
+    }
+
+    // Traverse children
+    for (Node* child : current->children) {
+        // logStream << "[Thread " << std::this_thread::get_id() << "] Moving to child node: " << child->identifier << " of " << current->identifier << "\n";
+        performRecursiveDFS(child, stopNode, dfsResult, logStream);
+        if (!dfsResult.empty() && dfsResult.back() == stopNode->identifier) {
+            // logStream << "[Thread " << std::this_thread::get_id() << "] Stop node " << stopNode->identifier << " reached. Returning from child traversal.\n";
+            return;
+        }
+    }
+
+    // Backtrack and find a right sibling to continue DFS
+    Node* parent = current->parent;
+    while (parent) {
+        // logStream << "[Thread " << std::this_thread::get_id() << "] Backtracking to parent node: " << parent->identifier << " from " << current->identifier << "\n";
+        auto it = std::find(parent->children.begin(), parent->children.end(), current);
+        if (it != parent->children.end()) {
+            for (auto siblingIt = it + 1; siblingIt != parent->children.end(); ++siblingIt) {
+                // logStream << "[Thread " << std::this_thread::get_id() << "] Found right sibling: " << (*siblingIt)->identifier << " of " << parent->identifier << "\n";
+                performRecursiveDFS(*siblingIt, stopNode, dfsResult, logStream);
+                if (!dfsResult.empty() && dfsResult.back() == stopNode->identifier) {
+                    // logStream << "[Thread " << std::this_thread::get_id() << "] Stop node " << stopNode->identifier << " reached. Returning from sibling traversal.\n";
+                    return;
+                }
+            }
+        }
+        // Move up to the parent node
+        current = parent;
+        parent = current->parent;
+    }
+
+    // logStream << "[Thread " << std::this_thread::get_id() << "] No more unexplored right siblings or parents. DFS complete.\n";
+}
+
+// Perform grouped DFS
+void performGroupedDFS(Node* startNode, Node* stopNode, std::vector<std::string>& dfsResult, std::ostringstream& logStream) {
+    logStream << "===== [Thread " << std::this_thread::get_id() << "] Starting grouped DFS =====\n";
+    logStream << "[Thread " << std::this_thread::get_id() << "] Start node: " << startNode->identifier
+              << ", Stop node: " << (stopNode ? stopNode->identifier : "nullptr") << "\n";
+
+    std::vector<Node*> pathToRoot = backtrackToRoot(startNode);
+    logStream << "[Thread " << std::this_thread::get_id() << "] Path to root for start node " << startNode->identifier << ": ";
+    for (Node* node : pathToRoot) {
+        logStream << node->identifier << " ";
+    }
+    logStream << "\n";
+
+    performRecursiveDFS(startNode, stopNode, dfsResult, logStream);
+
+    logStream << "[Thread " << std::this_thread::get_id() << "] DFS Result for group starting at " << startNode->identifier << ": ";
+    for (const auto& id : dfsResult) {
+        logStream << id << " ";
+    }
+    logStream << "\n============================================\n";
+}
+
+// Print the DFS order
+void printDFSOrder(const std::vector<Node*>& dfsOrder) {
+    std::cout << "DFS Order: ";
+    for (const auto& node : dfsOrder) {
+        std::cout << node->identifier << " ";
+    }
+    std::cout << "\n";
+}
+
+// Function to process nodes with seed changes
+void processDFSOrderWithSeedChanges(Node* root, const std::vector<std::string>& sequencingReads) {
+    if (!root) return;
+
+    std::stack<Node*> stack;
+    stack.push(root);
+
+    while (!stack.empty()) {
+        Node* current = stack.top();
+        stack.pop();
+
+        // Process the current node
+        std::cout << "Processing node: " << current->identifier << std::endl;
+
+        // Apply seed changes
+        traverseWithSeedChanges(current, sequencingReads);
+
+        // Push children in reverse order for DFS
+        for (auto it = current->children.rbegin(); it != current->children.rend(); ++it) {
+            stack.push(*it);
+        }
+    }
+}
+
+// // Main parallel_tester function
+// void pmi::parallel_tester(Tree* T, Index::Reader& index, const std::string& reads1Path, const std::string& reads2Path, const std::string& prefix) {
+//     std::cout << "Parallel tester" << std::endl;
+
+//     // Step 1: Compute the DFS order
+//     std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
+
+//     // Step 2: Set the number of groups manually
+//     int numGroups = 16; // Manually specify the number of groups
+
+//     // Step 3: Split DFS order into groups
+//     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numGroups);
+
+//     // Step 4: Process only the starting node of each group
+//     for (int i = 0; i < groups.size(); ++i) {
+//         if (groups[i].empty()) continue; // Skip empty groups
+
+//         // Get the starting node of the group
+//         Node* startNode = groups[i].front();
+
+//         // Backtrack to the root from the starting node
+//         std::vector<Node*> path = backtrackToRoot(startNode);
+
+//         // Print the group and the path
+//         std::cout << "Group " << i + 1 << " (Start Node: " << startNode->identifier << "):\n";
+//         std::cout << "  Path to root: ";
+//         for (Node* node : path) {
+//             std::cout << node->identifier << " ";
+//         }
+//         std::cout << "\n";
+
+//       // Initialize thread logic here if needed
+//       // Example: Perform parallel tasks for each group starting from `startNode`
+//   }
+
+//     std::cout << "Finished processing groups." << std::endl;
+// }
+
+// Main parallel_tester function
+void pmi::parallel_tester(Tree* T, Index::Reader& index, const std::string& reads1Path, const std::string& reads2Path, const std::string& prefix) {
+    std::cout << "Parallel tester" << std::endl;
+
+    // Step 1: Compute the DFS order
+    std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
+
+    // Step 2: Print the DFS order
+    // printDFSOrder(dfsOrder);
+
+    // Step 4: Set the number of groups manually
+    int numThreads = 16; // Manually specify the number of groups
+
+    // Step 5: Split DFS order into groups based on number of threads
+    std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);
+
+    // Step 6: Perform grouped DFS
+    std::cout << "\nDFS Traversals for Each Group:\n";
+    std::vector<std::thread> dfsThreads;
+    std::mutex outputMutex;
+
+    for (const auto& group : groups) {
+        if (!group.empty()) {
+            Node* startNode = group.front();
+            Node* stoppingNode = group.back();
+            dfsThreads.emplace_back([=, &outputMutex]() {
+                std::ostringstream logStream;
+                std::vector<std::string> dfsResult;
+                performGroupedDFS(startNode, stoppingNode, dfsResult, logStream);
+
+                std::lock_guard<std::mutex> lock(outputMutex);
+                std::cout << logStream.str();
+            });
+        }
+    }
+
+    // Wait for all DFS threads to complete
+    for (auto& thread : dfsThreads) {
+        thread.join();
+    }
+
+    // Clean up memory
+    delete T;
+
+    std::cout << "Finished processing groups." << std::endl;
+}
 
 
 template <typename SeedMutationsType, typename GapMutationsType>
