@@ -3730,8 +3730,11 @@ void pmi::place_per_read(
       std::string fastqPath1 = "";
       std::string fastqPath2 = "";
       if (reads2Path.size() > 0) {
-        fastqPath1 = (readsDir / (node.first + "_R1.fastq")).string();
-        fastqPath2 = (readsDir / (node.first + "_R2.fastq")).string();
+        std::string sanitizedNodeFirst = node.first;
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '/', '_');
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '|', '_');
+        fastqPath1 = (readsDir / (sanitizedNodeFirst + "_R1.fastq")).string();
+        fastqPath2 = (readsDir / (sanitizedNodeFirst + "_R2.fastq")).string();
         std::ofstream fastqOut1(fastqPath1);
         std::ofstream fastqOut2(fastqPath2);
         for (size_t readIdx : assignedReads[node.first]) {
@@ -3742,7 +3745,10 @@ void pmi::place_per_read(
         fastqOut1.close();
         fastqOut2.close();
       } else {
-        fastqPath1 = prefix + "." + node.first + ".fastq";
+        std::string sanitizedNodeFirst = node.first;
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '/', '_');
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '|', '_');
+        fastqPath1 = (readsDir / (sanitizedNodeFirst + ".fastq")).string();
         std::ofstream fastqOut(fastqPath1);
         for (const auto& readIndex : assignedReads[node.first]) {
           fastqOut << "@" << readNames[readIndex] << "\n" << readSequences[readIndex] << "\n+\n" << readQuals[readIndex] << "\n";
