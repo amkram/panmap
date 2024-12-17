@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-void time_stamp();
+double time_stamp();
 
 using namespace seeding;
 

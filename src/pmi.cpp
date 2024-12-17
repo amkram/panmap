@@ -2363,8 +2363,9 @@ void pmi::place(
   Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
   seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName,
   std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName,
-  std::string aligner, const std::string& refNode, const bool& save_jaccard)
+  std::string aligner, const std::string& refNode, const bool& save_jaccard, bool show_time)
 {
+    time_stamp();
     // Setup for seed indexing
     seed_annotated_tree::mutableTreeData data;
 
@@ -2564,6 +2565,10 @@ void pmi::place(
     }
 
     if (aligner == "minimap2") {
+      double time = time_stamp();
+      if(show_time){
+        std::cerr << "Placement time: " << time << "\n";
+      }
       //Create SAM
       std::vector<char *> samAlignments;
       std::string samHeader;
@@ -2582,6 +2587,12 @@ void pmi::place(
           samAlignments,             
           samHeader                  
       );
+
+      time = time_stamp();
+      if(show_time){
+        std::cerr << "Alignment time: " << time << "\n";
+      }
+
       //Convert to BAM
       sam_hdr_t *header;
       bam1_t **bamRecords;
@@ -2610,6 +2621,11 @@ void pmi::place(
         vcfFileName,
         0.0011
       );
+
+      time = time_stamp();
+      if(show_time){
+        std::cerr << "Genotyping time: " << time << "\n";
+      }
 
       // //std::string mpileupFileName = "MPILEUP";
       // //Convert to Mplp

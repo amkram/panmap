@@ -15,12 +15,12 @@ std::chrono::time_point<std::chrono::high_resolution_clock> global_timer =
     std::chrono::high_resolution_clock::now();
 
 
-void time_stamp() {
+double time_stamp() {
   std::chrono::time_point<std::chrono::high_resolution_clock> newtime =
       std::chrono::high_resolution_clock::now();
   std::chrono::duration<float> duration = newtime - global_timer;
-  std::cerr << "timing " << duration.count() << "\n\n";
   global_timer = newtime;
+  return duration.count();
 }
 
 

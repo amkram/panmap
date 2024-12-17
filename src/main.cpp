@@ -96,6 +96,7 @@ Other options:
                                  [default: ]
   -Q <seed>                 Integer seed for random number generation. [default: 42]
   -V --version              Show version.
+  --time                    Show time taken at each step
   -h --help                 Show this screen.
   -D --dump                 Dump all seeds to file.
   -X --dump-real            Dump true seeds to file.
@@ -293,6 +294,8 @@ int main(int argc, const char** argv) {
     bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
     bool genotype_from_sam = args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool() ? args["--genotype-from-sam"].asBool() : false;
     bool save_jaccard = args["--save-jaccard"] && args["--save-jaccard"].isBool() ? args["--save-jaccard"].asBool() : false;
+    bool show_time = args["--time"] && args["--time"].isBool() ? args["--time"].asBool() : false;
+
 
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
@@ -454,7 +457,7 @@ int main(int argc, const char** argv) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
         return 1;
       }
-      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard);
+      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time);
     }
     
     auto end = std::chrono::high_resolution_clock::now();
