@@ -19,7 +19,7 @@ void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt19937& gen);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
   const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads);
+  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads, bool tips_only);
 void scaleMutationMatrices(seed_annotated_tree::mutationMatrices& mutMat, double mutation_rate);
 
 int main(int argc, char *argv[]) {
@@ -43,6 +43,7 @@ int main(int argc, char *argv[]) {
             ("no-reads",  po::bool_switch()->default_value(false), "Do not simulate reads")
             ("cpus",      po::value<int>()->default_value(1), "Number of CPUs to use [1].")
             ("seed",      po::value<std::string>()->default_value("RANDOM"), "Random seed for simulation [default: random]")
+            ("tips-only", po::bool_switch()->default_value(false), "Only choose tips as reference")
         ;
 
         po::positional_options_description p;
@@ -71,6 +72,7 @@ int main(int argc, char *argv[]) {
         int rep                   = vm["rep"].as<int>();
         int cpus                  = vm["cpus"].as<int>();
         bool no_reads             = vm["no-reads"].as<bool>();
+        bool tips_only            = vm["tips-only"].as<bool>();
 
         // Check mut_spec
        seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
@@ -203,7 +205,7 @@ int main(int argc, char *argv[]) {
         }
         logFile << "Using seed: " << seed << "\n";
         logFile.close();
-        sim(T, refNode, out_dir, prefix, mut_spec_type, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus, no_reads);
+        sim(T, refNode, out_dir, prefix, mut_spec_type, mutnum_double, indel_len, model, n_reads, rep, mutMat, seed, cpus, no_reads, tips_only);
 
     } catch (const std::exception &e) {
         std::cerr << "Error: " << e.what() << std::endl;
@@ -531,7 +533,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads)
+    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads, bool tips_only)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
@@ -548,9 +550,19 @@ void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& ou
 
     std::vector<std::string> nodeNames;
     if (refNode == "RANDOM") {
-        for (const auto& pair : T->allNodes) {
-            nodeNames.push_back(pair.first);
+        if(tips_only){
+            for (const auto& pair : T->allNodes) {
+                if (pair.second->children.size() == 0){
+                    nodeNames.push_back(pair.first);
+                }
+            }
+        }else{
+            for (const auto& pair : T->allNodes) {
+                nodeNames.push_back(pair.first);
+            }
         }
+        
+
         std::default_random_engine rng(seed);
         std::shuffle(begin(nodeNames), end(nodeNames), rng);
     }
