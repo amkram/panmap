@@ -30,7 +30,7 @@
 #define EIGEN_USE_THREADS
 #include <eigen3/Eigen/Dense>
 // #include <omp.h>
-
+#include <numeric>
 extern "C" {
 #include <bwa/bwa.h>
 }
@@ -2359,7 +2359,11 @@ void prepareAndRunBwa(
   }
 }
 
-void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode)
+void pmi::place(
+  Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
+  seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName,
+  std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName,
+  std::string aligner, const std::string& refNode, const bool& save_jaccard)
 {
     // Setup for seed indexing
     seed_annotated_tree::mutableTreeData data;
@@ -2452,6 +2456,14 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
       std::sort(placementScores.begin(), placementScores.end(), [](auto &left, auto &right) {
         return left.second > right.second;
       });
+
+      if (save_jaccard) {
+        std::ofstream jaccardFile(prefix + ".jaccard.txt");
+        for (const auto& score : placementScores) {
+          jaccardFile << score.first << "\t" << score.second << "\n";
+        }
+        jaccardFile.close();
+      }
 
       bestNodeId = placementScores[0].first;
       bestNode = T->allNodes[bestNodeId];
@@ -2670,14 +2682,15 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 template <typename SeedMutationsType, typename GapMutationsType>
 void place_per_read_DFS(
   mutableTreeData& data, std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap, mgsr::seedmers& seedmersIndex,
-  SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, std::vector<mgsr::Read>& reads,
-  const std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<int32_t>>>>& seedmerToReads,
+  SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index,
+  std::vector<mgsr::Read>& reads, const std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<int32_t>>>>& seedmerToReads,
   std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores, std::unordered_map<std::string, std::string>& identicalPairs,
   int seedK, int seedS, int seedT, int seedL, bool openSyncmers, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator,
   std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes,
   std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap,
   std::unordered_set<int64_t>& inverseBlockIds, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
-  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<bool>& excludeReads
+  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<bool>& excludeReads,
+  std::unordered_map<std::string, double>& kminmer_binary_coverage
 ) {
   size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
   std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>> seedChanges;
@@ -2698,7 +2711,7 @@ void place_per_read_DFS(
   recompRanges.clear();
   
   processNodeMutations(perNodeGapMutations_Index, perNodeSeedMutations_Index, dfsIndex, gapMap, gapRunBacktracks, gapRunBlocksBacktracks, inverseBlockIds, blockRanges, data, onSeedsHashMap, seedChanges, T, seedK, globalCoords, navigator, num_cpus);
-  
+
   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, blockRanges);
 
   for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
@@ -2727,6 +2740,18 @@ void place_per_read_DFS(
   auto& positionMap = seedmersIndex.positionMap;
   auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
   updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, backTrackPositionMapChAdd, backTrackPositionMapErase);
+
+  double binary_intersect_kminmer_count = 0;
+  double unique_ref_kminmer_count = 0;
+  for (const auto& [hash, positions] : hashToPositionsMap) {
+    if (positions.size() == 1) {
+      unique_ref_kminmer_count += 1.0;
+      if (seedmerToReads.find(hash) != seedmerToReads.end()) {
+        binary_intersect_kminmer_count += 1.0;
+      }
+    }
+  }
+  kminmer_binary_coverage[node->identifier] = binary_intersect_kminmer_count / unique_ref_kminmer_count;
 
   if (debug) {
     // print out seeds at node
@@ -3022,7 +3047,8 @@ void place_per_read_DFS(
       data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, reads, seedmerToReads,
       allScores, identicalPairs, seedK, seedS, seedT, seedL, openSyncmers, T, child, globalCoords, navigator,
       scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap,
-      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads
+      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads,
+      kminmer_binary_coverage
     );
   }
 
@@ -3405,9 +3431,9 @@ void pmi::place_per_read(
   const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
   const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold,
-  const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& emFilterRound,
+  const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum, const int& emFilterRound,
   const int& checkFrequency, const int& removeIteration, const double& insigPropArg, const int& roundsRemove,
-  const double& removeThreshold, const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix
+  const double& removeThreshold, const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix, const bool& save_kminmer_binary_coverage
 )
 {
 
@@ -3495,6 +3521,10 @@ void pmi::place_per_read(
   std::unordered_map<std::string, std::unordered_set<std::string>> identicalSets;
   std::unordered_map<std::string, std::string> leastRecentIdenticalAncestor;
   std::unordered_map<std::string, std::string> identicalPairs;
+  
+  // A = ref kminmers, B = read kminmers
+  // kminmer_binary_coverage = A intersect B / A
+  std::unordered_map<std::string, double> kminmer_binary_coverage;
   std::vector<bool> excludeReads(reads.size(), false);
 
   std::cerr << "start scoring DFS" << std::endl;
@@ -3506,10 +3536,12 @@ void pmi::place_per_read(
     data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, reads, seedmerToReads,
     allScores, identicalPairs, k, s, t, l, openSyncmers, T, T->root, globalCoords, navigator, scalarCoordToBlockId,
     BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap, minimumCount, minimumScore,
-    errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads
+    errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads, kminmer_binary_coverage
   );
 
   auto end_time = std::chrono::high_resolution_clock::now();
+
+
   std::cerr << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
   std::cout << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
 
@@ -3622,6 +3654,7 @@ void pmi::place_per_read(
   std::cout << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
   std::cerr << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << "\n" << std::endl;
 
+
   size_t numReads = readSequences.size();
   std::atomic<size_t> numLowScoreReads = 0;
   std::vector<bool> lowScoreReads(reads.size(), false);
@@ -3640,8 +3673,8 @@ void pmi::place_per_read(
 
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
-    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder,
-    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
+    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder, preEMFilterMBCNum,
+    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "", save_kminmer_binary_coverage, prefix);
   
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
@@ -3674,17 +3707,60 @@ void pmi::place_per_read(
   std::cout << "Wrote abundance file: " << abundanceOutFile << std::endl;
   std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
-
-  // calling consensus
-  std::cout << "Calling consensus" << std::endl;
-  std::cerr << "Calling consensus" << std::endl;
-
-  std::unordered_map<std::string, std::vector<size_t>> assignedReads;
-
-  mgsr::assignReadsToNodes(allScores, nodes, probs, props, readSeedmersDuplicatesIndex, assignedReads);
-
-  // run bwa index, aln, sampe
   if (callSubconsensus) {
+    // calling consensus
+    std::cout << "Calling consensus" << std::endl;
+    std::cerr << "Calling consensus" << std::endl;
+
+    std::unordered_map<std::string, std::vector<size_t>> assignedReads;
+    mgsr::assignReadsToNodes(allScores, nodes, readSeedmersDuplicatesIndex, assignedReads);
+
+    boost::filesystem::path readsDir(prefix + "_reads");
+    if (!boost::filesystem::exists(readsDir)) {
+      if (!boost::filesystem::create_directory(readsDir)) {
+        std::cerr << "Error: Unable to create directory " << readsDir.string() << std::endl;
+        exit(1);
+      }
+    }
+    
+    for (const auto& node : sortedOut) {
+      // write reads to fastq
+      std::cout << "Writing assigned reads assigned to " << node.first << std::endl;
+      std::cerr << "Writing assigned reads assigned to " << node.first << std::endl;
+      std::string fastqPath1 = "";
+      std::string fastqPath2 = "";
+      if (reads2Path.size() > 0) {
+        std::string sanitizedNodeFirst = node.first;
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '/', '_');
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '|', '_');
+        fastqPath1 = (readsDir / (sanitizedNodeFirst + "_R1.fastq")).string();
+        fastqPath2 = (readsDir / (sanitizedNodeFirst + "_R2.fastq")).string();
+        std::ofstream fastqOut1(fastqPath1);
+        std::ofstream fastqOut2(fastqPath2);
+        for (size_t readIdx : assignedReads[node.first]) {
+          if (readIdx % 2 != 0) continue;
+          fastqOut1 << "@" << readNames[readIdx] << "\n" << readSequences[readIdx] << "\n+\n" << readQuals[readIdx] << "\n";
+          fastqOut2 << "@" << readNames[readIdx + 1] << "\n" << readSequences[readIdx + 1] << "\n+\n" << readQuals[readIdx + 1] << "\n";
+        }
+        fastqOut1.close();
+        fastqOut2.close();
+      } else {
+        std::string sanitizedNodeFirst = node.first;
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '/', '_');
+        std::replace(sanitizedNodeFirst.begin(), sanitizedNodeFirst.end(), '|', '_');
+        fastqPath1 = (readsDir / (sanitizedNodeFirst + ".fastq")).string();
+        std::ofstream fastqOut(fastqPath1);
+        for (const auto& readIndex : assignedReads[node.first]) {
+          fastqOut << "@" << readNames[readIndex] << "\n" << readSequences[readIndex] << "\n+\n" << readQuals[readIndex] << "\n";
+        }
+        fastqOut.close();
+      }
+      
+
+    }
+
+
+    exit(0);
     for (const auto& node : sortedOut) {
       std::cout << "Calling consensus for " << node.first << std::endl;
       // write reference fastas
@@ -3817,4 +3893,9 @@ void pmi::place_per_read(
       // write consensus fasta
     }    
   }
+
+  if (fclose(errorLog) != 0) {
+      throw std::runtime_error("Failed to close error.log");
+  }
+  freopen("/dev/tty", "w", stderr); // For Linux/Mac
 }

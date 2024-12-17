@@ -61,6 +61,7 @@ namespace mgsr {
 
     void subPosition(std::map<int32_t, positionInfo>::iterator& it, const int32_t& end, const size_t& fhash, const size_t& rhash, const bool& rev, std::unordered_set<size_t>& affectedSeedmers) {
       const auto& [oldEnd, oldFHash, oldRHash, oldRev] = it->second;
+      const auto& beg = it->first;
       if (oldFHash != oldRHash) {
         size_t minHash = std::min(oldFHash, oldRHash);
         auto hashToPositionIt = hashToPositionsMap.find(minHash);
@@ -82,6 +83,7 @@ namespace mgsr {
 
     void delPosition(std::map<int32_t, positionInfo>::iterator& it, std::unordered_set<size_t>& affectedSeedmers) {
       const auto& [end, fhash, rhash, rev] = it->second;
+      const auto& beg = it->first;
       if (fhash != rhash) {
         size_t minHash = std::min(fhash, rhash);
         auto hashToPositionIt = hashToPositionsMap.find(minHash);
@@ -875,12 +877,13 @@ namespace mgsr {
   void squaremHelper_test_1(
     Tree *T, const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
     const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, const std::vector<bool>& lowScoreReads,
-    const int32_t& numReads, const size_t& numLowScoreReads, const std::vector<bool>& excludeReads,
+    const int32_t& numReads, const size_t& numLowScoreReads, std::vector<bool>& excludeReads,
     const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs,
-    std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod, const int& preEMFilterNOrder,
+    std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum,
     const int& emFilterRound, const int& checkFrequency, const int& removeIteration, const double& insigProp,
-    const int& roundsRemove, const double& removeThreshold, std::string excludeNode
+    const int& roundsRemove, const double& removeThreshold, const bool& leafNodesOnly, const std::unordered_map<std::string, double>& kminmer_binary_coverage,
+    std::string excludeNode, const bool& save_kminmer_binary_coverage, const std::string& prefix
   ) {
     if (excludeNode.empty()) {
       std::stringstream msg;
@@ -896,8 +899,12 @@ namespace mgsr {
     std::cerr << "pre-EM filter nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() << "\n" << std::endl;
     if (preEMFilterMethod == "null") {  
       haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
+    } else if (preEMFilterMethod == "mbc") {
+      haplotype_filter::filter_method_mbc(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
     } else if (preEMFilterMethod == "uhs") {
-      haplotype_filter::filter_method_1(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder);
+      haplotype_filter::filter_method_uhs(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder);
+    } else if (preEMFilterMethod == "uhs2") {
+      haplotype_filter::filter_method_uhs_2(nodes, probs, allScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, T, preEMFilterNOrder);
     } else if (preEMFilterMethod == "hsc1") {
       haplotype_filter::filter_method_2(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, 1);
     } else if (preEMFilterMethod == "hsc2") {
@@ -907,8 +914,8 @@ namespace mgsr {
       std::cerr << "pre-EM filter method not recognized" << std::endl;
       exit(1);
     }
-    std::string filtedNodesFile = "filted_nodes.txt";
-    std::ofstream filtedNodesStream(filtedNodesFile);
+    std::string filteredNodesFile = prefix + "_filtered_nodes.txt";
+    std::ofstream filtedNodesStream(filteredNodesFile);
     for (const auto& node : nodes) {
       if (leastRecentIdenticalAncestors.find(node) != leastRecentIdenticalAncestors.end()) { 
         // sanity check
@@ -917,6 +924,8 @@ namespace mgsr {
       }
       filtedNodesStream << node << std::endl;
     }
+    filtedNodesStream.close();
+
     std::cout << "post-EM filter nodes size: " << nodes.size() << std::endl;
     std::cerr << "post-EM filter nodes size: " << nodes.size() << "\n" << std::endl;
     std::cout << "post-EM filter reduced nodes size: " << allScores.size() - leastRecentIdenticalAncestors.size() - nodes.size() << std::endl;
@@ -1001,9 +1010,9 @@ namespace mgsr {
       std::cerr << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
       std::cout << sigNodes.size() << " nodes left" << std::endl;
       std::cerr << sigNodes.size() << " nodes left" << std::endl;
-      nodes = std::move(sigNodes);
-      probs = std::move(sigProbs);
-      props = std::move(sigProps);
+      nodes = sigNodes;
+      probs = sigProbs;
+      props = sigProps;
       normalize(props);
       insigCounts.assign(nodes.size(), 0);
       if (nodes.size() <= std::max(static_cast<int>(totalNodes) / 20, 100) || filterRoundCount >= emFilterRound) {
@@ -1048,9 +1057,9 @@ namespace mgsr {
       std::vector<int> insigCounts(sigNodes.size());
       squarem_test_1(sigNodes, sigProbs, identicalSets, readDuplicates, numHighScoreReads, sigProps, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
       assert(converged);
-      nodes = std::move(sigNodes);
-      probs = std::move(sigProbs);
-      props = std::move(sigProps);
+      nodes = sigNodes;
+      probs = sigProbs;
+      props = sigProps;
     }
 
     if (!excludeNode.empty()) {
@@ -1085,21 +1094,31 @@ namespace mgsr {
 
   void assignReadsToNodes(
     const std::unordered_map<std::string, tbb::concurrent_vector<std::pair<int32_t, double>>>& allScores,
-    const std::vector<std::string>& nodes, const Eigen::MatrixXd& probs, const Eigen::VectorXd& props,
-    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::unordered_map<std::string, std::vector<size_t>>& assignedReads
-  ) {
-    size_t rowindex = 0;
+    const std::vector<std::string>& nodes,
+    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
+    std::unordered_map<std::string, std::vector<size_t>>& assignedReads) {
+
     for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
-      const Eigen::VectorXd& curProbs = probs.row(rowindex);
-      double curmax = curProbs.maxCoeff();
-      for (size_t j = 0; j < curProbs.size(); ++j) {
-        if (curProbs(j) == curmax) {
-          for (size_t k = 0; k < readSeedmersDuplicatesIndex[i].size(); ++k) {
-            assignedReads[nodes[j]].push_back(readSeedmersDuplicatesIndex[i][k]);
-          }
+      int32_t maxScore = std::numeric_limits<int32_t>::min();
+      std::vector<size_t> bestNodes;
+
+      for (size_t j = 0; j < nodes.size(); ++j) {
+        const auto& nodeScores = allScores.at(nodes[j]);
+        int32_t curScore = nodeScores[i].first;
+        if (curScore > maxScore) {
+          maxScore = curScore;
+          bestNodes.clear();
+          bestNodes.push_back(j);
+        } else if (curScore == maxScore) {
+          bestNodes.push_back(j);
         }
       }
-      ++rowindex;
+
+      for (size_t nodeIdx : bestNodes) {
+        for (size_t readIdx : readSeedmersDuplicatesIndex[i]) {
+          assignedReads[nodes[nodeIdx]].push_back(readIdx);
+        }
+      }
     }
   }
 }
