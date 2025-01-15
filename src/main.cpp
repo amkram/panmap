@@ -290,7 +290,7 @@ int main(int argc, const char** argv) {
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
     bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
     bool genotype_from_sam = args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool() ? args["--genotype-from-sam"].asBool() : false;
-    bool parallel_tester = args["--parallel-tester"] && args["--parallel-tester"].isBool() ? args["--parallel-tester"].asBool() : false;
+    //bool parallel_tester = args["--parallel-tester"] && args["--parallel-tester"].isBool() ? args["--parallel-tester"].asBool() : false;
 
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
@@ -394,14 +394,15 @@ int main(int argc, const char** argv) {
 
     log(prefix, "Placing...");
     auto start = std::chrono::high_resolution_clock::now();
-    if (parallel_tester) {
-      pmi::parallel_tester(T, index_input, reads1, reads2, prefix);
-    }
-    else if (genotype_from_sam) {
+    if (genotype_from_sam) {
+      // Print debug statement
+      std::cout << "genotypefromsam" << std::endl;
+      
       std::string samFileName = args["--sam-file"] ? args["--sam-file"].asString() : "";
       std::string refFileName = args["--ref-file"] ? args["--ref-file"].asString() : "";
       callVariantsFromSAM(samFileName, refFileName, mutMat, prefix);
     } else if (placement_per_read) {
+      std::cout << "placementsperread" << std::endl;
       int maximumGap                = args["--maximum-gap"] ? std::stoi(args["--maximum-gap"].asString()) : 10;
       int minimumCount              = args["--minimum-count"] ? std::stoi(args["--minimum-count"].asString()) : 0;
       int minimumScore              = args["--minimum-score"] ? std::stoi(args["--minimum-score"].asString()) : 0;
@@ -447,6 +448,7 @@ int main(int argc, const char** argv) {
         preEMFilterNOrder, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
         removeThreshold, leafNodesOnly, callSubconsensus, prefix);
     } else {
+      std::cout << "PLACE - DEBUG" << std::endl;
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
         return 1;
