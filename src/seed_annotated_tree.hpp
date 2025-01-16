@@ -225,6 +225,13 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
 
 
     if (coord.nucGapPos == -1) {
+      std::cout << "Debug: coord.blockId=" << coord.blockId
+          << ", coord.nucPos=" << coord.nucPos
+          << ", sequence.size()=" << sequence.size()
+          << ", sequence[coord.blockId].first.size()="
+          << (coord.blockId < sequence.size() ? sequence[coord.blockId].first.size() : -1)
+          << std::endl;
+
       if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
         coord.nucPos--;
         if(coord.nucPos < 0){
