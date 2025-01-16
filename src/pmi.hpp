@@ -27,6 +27,8 @@ namespace pmi { // functions and types for seed indexing
       const std::string& refNode, const bool& save_jaccard
     );
 
+    void parallel_tester(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, const std::string &prefix);
+
     void place_per_read(
       Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
       const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,

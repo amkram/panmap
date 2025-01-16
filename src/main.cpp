@@ -133,6 +133,7 @@ Developer options:
   --ref-file <path>                     Path to reference FASTA file to generate VCF from.
   --save-jaccard                        Save jaccard index between reads and haplotypes to <prefix>.jaccard.txt
   --save-kminmer-binary-coverage        Save kminmer binary coverage to <prefix>.kminmer_binary_coverage.txt
+  --parallel-tester                     Run parallel tester.
 )";
 
 
@@ -400,10 +401,14 @@ int main(int argc, const char** argv) {
     log(prefix, "Placing...");
     auto start = std::chrono::high_resolution_clock::now();
     if (genotype_from_sam) {
+      // Print debug statement
+      std::cout << "genotypefromsam" << std::endl;
+      
       std::string samFileName = args["--sam-file"] ? args["--sam-file"].asString() : "";
       std::string refFileName = args["--ref-file"] ? args["--ref-file"].asString() : "";
       callVariantsFromSAM(samFileName, refFileName, mutMat, prefix);
     } else if (placement_per_read) {
+      std::cout << "placementsperread" << std::endl;
       int maximumGap                = args["--maximum-gap"] ? std::stoi(args["--maximum-gap"].asString()) : 10;
       int minimumCount              = args["--minimum-count"] ? std::stoi(args["--minimum-count"].asString()) : 0;
       int minimumScore              = args["--minimum-score"] ? std::stoi(args["--minimum-score"].asString()) : 0;
@@ -453,6 +458,7 @@ int main(int argc, const char** argv) {
         preEMFilterNOrder, preEMFilterMBCNum, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
         removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage);
     } else {
+      std::cout << "PLACE - DEBUG" << std::endl;
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
         return 1;
