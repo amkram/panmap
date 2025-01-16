@@ -2416,22 +2416,29 @@ std::vector<Node*> backtrackToRoot(Node* start) {
 }
 
 template <typename SeedMutationsType, typename GapMutationsType>
-void performRecursiveDFS(Node* current, Node* stopNode, mutableTreeData& data, 
+void performRecursiveDFS(Node* current, Node* stopNode, const std::vector<Node*>& group, mutableTreeData& data, 
                          std::vector<std::pair<std::string, float>> &placementScores, 
                          std::vector<std::optional<std::string>>& onSeeds, 
                          std::vector<std::optional<seeding::onSeedsHash>>& onSeedsHash, 
                          SeedMutationsType& perNodeSeedMutations_Index, 
                          GapMutationsType& perNodeGapMutations_Index, 
                          int seedK, int seedS, int seedT, bool open, int seedL, Tree* T, 
-                         Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator, 
+                         globalCoords_t& globalCoords, CoordNavigator& navigator, 
                          std::vector<int64_t>& scalarCoordToBlockId, 
                          std::vector<std::unordered_set<int>>& BlocksToSeeds, 
                          std::vector<int>& BlockSizes, 
                          std::vector<std::pair<int64_t, int64_t>>& blockRanges, 
-                         int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap, 
+                         int64_t& dfsIndex, int64_t& searchCount, std::map<int64_t, int64_t>& gapMap, 
                          std::unordered_set<int64_t>& inverseBlockIds, int64_t jacNumer, 
                          int64_t jacDenom, std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, 
                          std::unordered_map<std::string, int64_t> &dfsIndexes) {
+
+
+    
+
+    if (current == stopNode) {
+        return;
+    }
 
 
     // Debug: Entry point
@@ -2523,6 +2530,22 @@ void performRecursiveDFS(Node* current, Node* stopNode, mutableTreeData& data,
             seedChanges.emplace_back(std::make_tuple(pos - k, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt, oldEndPos, std::nullopt));
           } else if (ternaryNumber == 2) {
             // Handle insertion/change
+
+            // Print sizes of pos - k, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges
+            // Print sizes and pointer addresses
+std::cout << "pos - k: " << (pos - k)
+          << ", T: " << reinterpret_cast<void*>(T)  // Print memory address of T
+          << ", seedK: " << seedK
+          << ", data.scalarToTupleCoord.size: " << static_cast<int>(data.scalarToTupleCoord.size())
+          << ", data.sequence.size: " << static_cast<int>(data.sequence.size())
+          << ", data.blockExists.size: " << static_cast<int>(data.blockExists.size())
+          << ", data.blockStrand.size: " << static_cast<int>(data.blockStrand.size())
+          << ", globalCoords.size: " << static_cast<int>(globalCoords.size())
+          << ", navigator.sequence.size: " << static_cast<int>(navigator.sequence.size())
+          << ", gapMap.size: " << static_cast<int>(gapMap.size())
+          << ", blockRanges.size: " << static_cast<int>(blockRanges.size())
+          << std::endl;
+
             auto [newSeed, newEndPos] = seed_annotated_tree::getSeedAt(pos - k, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges);
             auto [newSeedFHash, newSeedRHash] = hashSeq(newSeed);
             size_t newSeedHash;
@@ -2634,7 +2657,6 @@ void performRecursiveDFS(Node* current, Node* stopNode, mutableTreeData& data,
         // Reset variables for next node
         std::cout << "Resetting mutation-related variables for next node." << std::endl;
         seedChanges.clear();
-        seedChanges.clear();
         blockMutationInfo.clear();
         mutationInfo.clear();
         gapRunUpdates.clear();
@@ -2655,29 +2677,31 @@ void performRecursiveDFS(Node* current, Node* stopNode, mutableTreeData& data,
 
     // Recursive step
     std::cout << "Processing children of node: " 
-              << (node ? node->identifier : "null") 
+              << (current ? current->identifier : "null") 
               << std::endl;
 
 
-    dfsIndexes[node->identifier] = dfsIndex;
+    dfsIndexes[current->identifier] = dfsIndex;
     dfsIndex++;
-    for (Node* child : node->children) {
+
+    searchCount++;
+    for (Node* child : current->children) {
       std::cout << "Processing child node: " 
                   << (child ? child->identifier : "null") 
                   << " of parent node: " 
-                  << (node ? node->identifier : "null") 
+                  << (current ? current->identifier : "null") 
                   << std::endl;
         performRecursiveDFS(
-            child, stopNode, data, placementScores, onSeeds, onSeedsHash, 
+            child, stopNode, group, data, placementScores, onSeeds, onSeedsHash, 
             perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, 
-            T, child, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, 
-            blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes
+            T, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, 
+            blockRanges, dfsIndex, searchCount, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes
         );
     }
 
     // Backtracking
     std::cout << "Backtracking for node: " 
-              << (node ? node->identifier : "null") 
+              << (current ? current->identifier : "null") 
               << std::endl;
     for (const auto& p : seedChanges) {
         const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
@@ -2715,8 +2739,14 @@ void performRecursiveDFS(Node* current, Node* stopNode, mutableTreeData& data,
         }
     }
     // print Undoing mutations at
-    std::cout << "Undoing mutations at node " << node->identifier << std::endl;
-    undoMutations(data, T, node, blockMutationInfo, mutationInfo, globalCoords);
+    std::cout << "Undoing mutations at node " << current->identifier << std::endl;
+    undoMutations(data, T, current, blockMutationInfo, mutationInfo, globalCoords);
+
+    if (current == group.front()) {
+        searchCount++;
+        performRecursiveDFS(group[searchCount], stopNode, group, data, placementScores, onSeeds, onSeedsHash, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, searchCount, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes);
+    }
+
 }
 
 void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode)
@@ -2842,19 +2872,15 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
         if (!group.empty()) {
             Node* startNode = group.front();
             Node* stoppingNode = group.back();
+            
 
 
             dfsThreads.emplace_back([=, &outputMutex]() mutable {
                 std::ostringstream logStream;
                 std::vector<std::string> dfsResult;
                 
-                        // Setup for seed indexing
-            seed_annotated_tree::mutableTreeData currGroupData = data;
-            std::vector<int> currGroupBlockSizes = BlockSizes;
-            std::vector<std::pair<int64_t, int64_t>> currGroupBlockRanges = blockRanges;
-            std::unordered_set<int64_t> currGroupInverseBlockIds = inverseBlockIds;
-            std::map<int64_t, int64_t> currGroupGapMap = gapMap;
-            std::vector<std::unordered_set<int>> currGroupBlocksToSeeds = BlocksToSeeds;
+              // Setup for seed indexing
+  
 
             int64_t jacNumer = 0;
             int64_t jacDenom = 0;    
@@ -2875,7 +2901,47 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
               << startNode->identifier << " to " 
               << stoppingNode->identifier << std::endl;
 
-              performRecursiveDFS(startNode, stoppingNode, data, placementScores, onSeedsString, onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, startNode, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes);
+            // Create copies of all arguments
+            Node* startNode_copy = startNode;
+            Node* stoppingNode_copy = stoppingNode;
+            mutableTreeData data_copy = data;
+            std::vector<std::pair<std::string, float>> placementScores_copy = placementScores;
+            std::vector<std::optional<std::string>> onSeedsString_copy = onSeedsString;
+            std::vector<std::optional<seeding::onSeedsHash>> onSeedsHash_copy = onSeedsHash;
+            auto perNodeSeedMutations_Reader_copy = perNodeSeedMutations_Reader; // Assuming this is copyable
+            auto perNodeGapMutations_Reader_copy = perNodeGapMutations_Reader; // Assuming this is copyable
+            int k_copy = k;
+            int s_copy = s;
+            int t_copy = t;
+            bool open_copy = open;
+            int l_copy = l;
+            Tree* T_copy = T;
+            globalCoords_t globalCoords_copy = globalCoords;
+            CoordNavigator navigator_copy = navigator;
+            std::vector<int64_t> scalarCoordToBlockId_copy = scalarCoordToBlockId;
+            std::vector<std::unordered_set<int>> BlocksToSeeds_copy = BlocksToSeeds;
+            std::vector<int> BlockSizes_copy = BlockSizes;
+            std::vector<std::pair<int64_t, int64_t>> blockRanges_copy = blockRanges;
+            int64_t dfsIndex_copy = dfsIndex;
+            std::map<int64_t, int64_t> gapMap_copy = gapMap;
+            std::unordered_set<int64_t> inverseBlockIds_copy = inverseBlockIds;
+            int64_t jacNumer_copy = jacNumer;
+            int64_t jacDenom_copy = jacDenom;
+            std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts_copy = readSeedCounts;
+            std::unordered_map<std::string, int64_t> dfsIndexes_copy = dfsIndexes;
+            int64_t searchCount = 0;
+            // group copy
+            
+            std::vector<panmanUtils::Node *> group_copy = group;
+
+            // Call the function with copies
+
+            performRecursiveDFS(
+                startNode_copy, stoppingNode_copy, group, data_copy, placementScores_copy, onSeedsString_copy, onSeedsHash_copy, 
+                perNodeSeedMutations_Reader_copy, perNodeGapMutations_Reader_copy, k_copy, s_copy, t_copy, open_copy, l_copy, 
+                T_copy, globalCoords_copy, navigator_copy, scalarCoordToBlockId_copy, BlocksToSeeds_copy, BlockSizes_copy, 
+                blockRanges_copy, dfsIndex_copy, searchCount, gapMap_copy, inverseBlockIds_copy, jacNumer_copy, jacDenom_copy, readSeedCounts_copy, dfsIndexes_copy);
+
 
               std::cout << "Thread finished for group starting at: " 
           << startNode->identifier << " to " 
