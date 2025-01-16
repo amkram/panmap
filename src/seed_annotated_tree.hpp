@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-void time_stamp();
+double time_stamp();
 
 using namespace seeding;
 
@@ -89,14 +89,18 @@ struct tupleRange {
 };
 class CoordNavigator {
 public:
-  CoordNavigator(sequence_t &sequence) : sequence(sequence) {}
+  std::optional<sequence_t> sequence;
+  CoordNavigator(sequence_t &seq) {
+    sequence = std::make_optional<sequence_t>(seq);
+  }
+  CoordNavigator() : sequence(std::nullopt) {}
 
   bool isGap(const tupleCoord_t &coord) {
     char c;
     if (coord.nucGapPos == -1) {
-      c = sequence[coord.blockId].first[coord.nucPos].first;
+      c = sequence.value()[coord.blockId].first[coord.nucPos].first;
     } else {
-      c = sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
+      c = sequence.value()[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
     }
     return c == '-' || c == 'x';
   }
@@ -108,24 +112,24 @@ public:
     if (coord.nucGapPos == -1){
       coord.nucPos++;
 
-      if(coord.nucPos >= sequence[coord.blockId].first.size()){
+      if(coord.nucPos >= sequence.value()[coord.blockId].first.size()){
         
         coord.blockId++;
         
-        if(coord.blockId >= sequence.size()){
+        if(coord.blockId >= sequence.value().size()){
           
           return tupleCoord_t{-1,-1,-1};
         }
         coord.nucPos = 0;
       }
 
-      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+      if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
         coord.nucGapPos = 0;
       }
       return coord;
     }else{
       coord.nucGapPos++;
-      if(coord.nucGapPos >= sequence[coord.blockId].first[coord.nucPos].second.size()){
+      if(coord.nucGapPos >= sequence.value()[coord.blockId].first[coord.nucPos].second.size()){
         coord.nucGapPos = -1;
       }
       return coord;
@@ -135,18 +139,18 @@ public:
   tupleCoord_t decrement(tupleCoord_t &givencoord) {
     tupleCoord_t coord = givencoord;
     if (coord.nucGapPos == -1) {
-      if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
+      if(sequence.value()[coord.blockId].first[coord.nucPos].second.empty()){
         coord.nucPos--;
         if(coord.nucPos < 0){
           coord.blockId--;
           if(coord.blockId < 0){
             return tupleCoord_t{0,0,0};
           }
-          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+          coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
         }
         return coord;
       }else{
-        coord.nucGapPos = sequence[coord.blockId].first[coord.nucPos].second.size() - 1;
+        coord.nucGapPos = sequence.value()[coord.blockId].first[coord.nucPos].second.size() - 1;
         return coord;
       }
     }else{
@@ -159,23 +163,13 @@ public:
           if(coord.blockId < 0){
             return tupleCoord_t{0,0,0};
           }
-          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+          coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
         }
         return coord;
       }
       return coord;
     }
   }
-
-
-
-
-
-
-
-
-
-
 
 
 tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockStrand) {
@@ -188,18 +182,18 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
     if (coord.nucGapPos == -1){
       coord.nucPos++;
 
-      if(coord.nucPos >= sequence[coord.blockId].first.size()){
+      if(coord.nucPos >= sequence.value()[coord.blockId].first.size()){
         
 
         //Jump to next block
         coord.blockId++;
         
-        if(coord.blockId >= sequence.size()){
+        if(coord.blockId >= sequence.value().size()){
           
           return tupleCoord_t{-1,-1,-1};
         }
         if(!blockStrand[coord.blockId].first){
-          coord.nucPos = sequence[coord.blockId].first.size() - 1;
+          coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
           coord.nucGapPos = -1;
           return coord;
         }
@@ -207,13 +201,13 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
 
       }
 
-      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+      if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
         coord.nucGapPos = 0;
       }
       return coord;
     }else{
       coord.nucGapPos++;
-      if(coord.nucGapPos >= sequence[coord.blockId].first[coord.nucPos].second.size()){
+      if(coord.nucGapPos >= sequence.value()[coord.blockId].first[coord.nucPos].second.size()){
         coord.nucGapPos = -1;
       }
       return coord;
@@ -227,27 +221,27 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
     if (coord.nucGapPos == -1) {
       std::cout << "Debug: coord.blockId=" << coord.blockId
           << ", coord.nucPos=" << coord.nucPos
-          << ", sequence.size()=" << sequence.size()
+          << ", sequence.size()=" << sequence.value().size()
           << ", sequence[coord.blockId].first.size()="
-          << (coord.blockId < sequence.size() ? sequence[coord.blockId].first.size() : -1)
+          << (coord.blockId < sequence.value().size() ? sequence.value()[coord.blockId].first.size() : -1)
           << std::endl;
 
-      if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
+      if(sequence.value()[coord.blockId].first[coord.nucPos].second.empty()){
         coord.nucPos--;
         if(coord.nucPos < 0){
 
           coord.blockId++;
         
-          if(coord.blockId >= sequence.size()){
+          if(coord.blockId >= sequence.value().size()){
             return tupleCoord_t{-1,-1,-1};
           }
           if(!blockStrand[coord.blockId].first){
-            coord.nucPos = sequence[coord.blockId].first.size() - 1;
+            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
             coord.nucGapPos = -1;
             return coord;
           }
           coord.nucPos = 0;
-          if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
             coord.nucGapPos = 0;
           }
           return coord;
@@ -255,7 +249,7 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
         }
         return coord;
       }else{
-        coord.nucGapPos = sequence[coord.blockId].first[coord.nucPos].second.size() - 1;
+        coord.nucGapPos = sequence.value()[coord.blockId].first[coord.nucPos].second.size() - 1;
         return coord;
       }
     }else{
@@ -267,16 +261,16 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
 
           coord.blockId++;
         
-          if(coord.blockId >= sequence.size()){
+          if(coord.blockId >= sequence.value().size()){
             return tupleCoord_t{-1,-1,-1};
           }
           if(!blockStrand[coord.blockId].first){
-            coord.nucPos = sequence[coord.blockId].first.size() - 1;
+            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
             coord.nucGapPos = -1;
             return coord;
           }
           coord.nucPos = 0;
-          if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
             coord.nucGapPos = 0;
           }
           return coord;
@@ -293,16 +287,6 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
   }
 
 
-
-
-
-
-
-
-
-
-
-
   tupleCoord_t newdecrement(tupleCoord_t &givencoord, const blockStrand_t &blockStrand) {
     tupleCoord_t coord = givencoord;
 
@@ -310,7 +294,7 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
     if(blockStrand[coord.blockId].first){
 
     if (coord.nucGapPos == -1) {
-      if(sequence[coord.blockId].first[coord.nucPos].second.empty()){
+      if(sequence.value()[coord.blockId].first[coord.nucPos].second.empty()){
         coord.nucPos--;
         if(coord.nucPos < 0){
           coord.blockId--;
@@ -319,12 +303,12 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
           }
 
           if(blockStrand[coord.blockId].first){
-            coord.nucPos = sequence[coord.blockId].first.size() - 1;
+            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
             coord.nucGapPos = -1;
             return coord;
           }
           coord.nucPos = 0;
-          if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
             coord.nucGapPos = 0;
           }
           return coord;
@@ -332,7 +316,7 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
         }
         return coord;
       }else{
-        coord.nucGapPos = sequence[coord.blockId].first[coord.nucPos].second.size() - 1;
+        coord.nucGapPos = sequence.value()[coord.blockId].first[coord.nucPos].second.size() - 1;
         return coord;
       }
     }else{
@@ -348,12 +332,12 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
             return tupleCoord_t{0,0,0};
           }
           if(blockStrand[coord.blockId].first){
-            coord.nucPos = sequence[coord.blockId].first.size() - 1;
+            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
             coord.nucGapPos = -1;
             return coord;
           }
           coord.nucPos = 0;
-          if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
             coord.nucGapPos = 0;
           }
           return coord;
@@ -377,7 +361,7 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
     if (coord.nucGapPos == -1){
       coord.nucPos++;
 
-      if(coord.nucPos >= sequence[coord.blockId].first.size()){
+      if(coord.nucPos >= sequence.value()[coord.blockId].first.size()){
         
         //Jump to previous block
         coord.blockId--;
@@ -385,96 +369,30 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
           return tupleCoord_t{0,0,0};
         }
         if(blockStrand[coord.blockId].first){
-            coord.nucPos = sequence[coord.blockId].first.size() - 1;
+            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
             coord.nucGapPos = -1;
             return coord;
           }
           coord.nucPos = 0;
-          if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
             coord.nucGapPos = 0;
           }
           return coord;
       }
 
-      if(!sequence[coord.blockId].first[coord.nucPos].second.empty()) {
+      if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
         coord.nucGapPos = 0;
       }
       return coord;
     }else{
       coord.nucGapPos++;
-      if(coord.nucGapPos >= sequence[coord.blockId].first[coord.nucPos].second.size()){
+      if(coord.nucGapPos >= sequence.value()[coord.blockId].first[coord.nucPos].second.size()){
         coord.nucGapPos = -1;
       }
       return coord;
     }
-
-
-
-
     }
-
-
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-public:
-  sequence_t &sequence;
 };
 
 

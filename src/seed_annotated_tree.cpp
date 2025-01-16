@@ -15,12 +15,12 @@ std::chrono::time_point<std::chrono::high_resolution_clock> global_timer =
     std::chrono::high_resolution_clock::now();
 
 
-void time_stamp() {
+double time_stamp() {
   std::chrono::time_point<std::chrono::high_resolution_clock> newtime =
       std::chrono::high_resolution_clock::now();
   std::chrono::duration<float> duration = newtime - global_timer;
-  std::cerr << "timing " << duration.count() << "\n\n";
   global_timer = newtime;
+  return duration.count();
 }
 
 
@@ -128,15 +128,15 @@ std::pair<std::string, int64_t> seed_annotated_tree::getSeedAt(const int64_t &po
         }
       } else {
         if(blockStrand[currCoord.blockId].first){
-            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
+            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence.value()[currCoord.blockId].first.size() - 1, -1};
           }else{
             currCoord.nucPos = 0;
             currCoord.nucGapPos = 0;
-            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+            if(navigator.sequence.value()[currCoord.blockId].first[0].second.empty()) {
               currCoord.nucGapPos = -1;
             }
         }
-        if(currCoord.blockId == navigator.sequence.size() - 1){
+        if(currCoord.blockId == navigator.sequence.value().size() - 1){
           break;
         }
       }
@@ -280,18 +280,18 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> se
         //jump to start of next block
         if( blockStrand[currCoord.blockId].first){
             //not inverted, jump to top of this block
-            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence[currCoord.blockId].first.size() - 1, -1};
+            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence.value()[currCoord.blockId].first.size() - 1, -1};
           }else{
             //inverted, jump to bottom of this block
             //currCoord.blockId += 1;
             currCoord.nucPos = 0;
             currCoord.nucGapPos = 0;
-            if(navigator.sequence[currCoord.blockId].first[0].second.empty()) {
+            if(navigator.sequence.value()[currCoord.blockId].first[0].second.empty()) {
               currCoord.nucGapPos = -1;
             }
         }
         
-        if(currCoord.blockId == navigator.sequence.size() - 1 || currCoord.blockId == end.blockId){
+        if(currCoord.blockId == navigator.sequence.value().size() - 1 || currCoord.blockId == end.blockId){
           break;
         }
 
@@ -1693,7 +1693,7 @@ void seed_annotated_tree::fillMutationMatricesFromTree_test(
   
   std::vector<int> scalarCoordToBlockId(globalCoords.back().first.back().first + 1);
   auto currCoord = tupleCoord_t{0,0,0};
-  if(navigator.sequence[0].first[0].second.empty()) {
+  if(navigator.sequence.value()[0].first[0].second.empty()) {
     currCoord.nucGapPos = -1;
   }
 

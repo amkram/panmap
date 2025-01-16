@@ -96,6 +96,7 @@ Other options:
                                  [default: ]
   -Q <seed>                 Integer seed for random number generation. [default: 42]
   -V --version              Show version.
+  --time                    Show time taken at each step
   -h --help                 Show this screen.
   -D --dump                 Dump all seeds to file.
   -X --dump-real            Dump true seeds to file.
@@ -116,6 +117,7 @@ Placement-per-read options:
                                           'hsc' - Keep haplotypes with at least one highest score read, allowing ties.
                                           [default: null]
   --preem-filter-n-order <int>          Order of neighbors to consider when filtering haplotypes with ties in highest score reads. [default: 1]
+  --preem-filter-mbc-num <int>          Top <int> nodes to include in the MBC filter not including nodes with 100% coverage. [default: 1000]
   --em-filter-round <int>               Maximum number of rounds to filter low probability haplotypes during EM filtering. [default: 5]
   --check-frequency <int>               Number of iterations between each em-filter-round. [default: 20]
   --remove-iteration <int>              Remove haplotypes that has probability less than insig-prob for more than remove-iteration consecutive iterations. [default: 20]
@@ -129,6 +131,8 @@ Developer options:
   --genotype-from-sam                   Generate VCF from SAM file using mutation spectrum as prior.
   --sam-file <path>                     Path to SAM file to generate VCF from.
   --ref-file <path>                     Path to reference FASTA file to generate VCF from.
+  --save-jaccard                        Save jaccard index between reads and haplotypes to <prefix>.jaccard.txt
+  --save-kminmer-binary-coverage        Save kminmer binary coverage to <prefix>.kminmer_binary_coverage.txt
   --parallel-tester                     Run parallel tester.
 )";
 
@@ -290,7 +294,9 @@ int main(int argc, const char** argv) {
     bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
     bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
     bool genotype_from_sam = args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool() ? args["--genotype-from-sam"].asBool() : false;
-    //bool parallel_tester = args["--parallel-tester"] && args["--parallel-tester"].isBool() ? args["--parallel-tester"].asBool() : false;
+    bool save_jaccard = args["--save-jaccard"] && args["--save-jaccard"].isBool() ? args["--save-jaccard"].asBool() : false;
+    bool show_time = args["--time"] && args["--time"].isBool() ? args["--time"].asBool() : false;
+
 
     int k = std::stoi(args["-k"].asString());
     int s = std::stoi(args["-s"].asString());
@@ -413,6 +419,7 @@ int main(int argc, const char** argv) {
       double excludeDuplicatesThreshold = args["--exclude-duplicates-threshold"] ? std::stod(args["--exclude-duplicates-threshold"].asString()) : 0.5;
       std::string preEMFilterMethod = args["--preem-filter-method"] ? args["--preem-filter-method"].asString() : "null";
       int preEMFilterNOrder         = args["--preem-filter-n-order"] ? std::stoi(args["--preem-filter-n-order"].asString()) : 1;
+      int preEMFilterMBCNum         = args["--preem-filter-mbc-num"] ? std::stoi(args["--preem-filter-mbc-num"].asString()) : 1000;
       int emFilterRound             = args["--em-filter-round"] ? std::stoi(args["--em-filter-round"].asString()) : 5;
       int checkFrequency            = args["--check-frequency"] ? std::stoi(args["--check-frequency"].asString()) : 20;
       int removeIteration           = args["--remove-iteration"] ? std::stoi(args["--remove-iteration"].asString()) : 20;
@@ -421,7 +428,8 @@ int main(int argc, const char** argv) {
       double removeThreshold        = args["--remove-threshold"] ? std::stod(args["--remove-threshold"].asString()) : 0.005;
       bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
       bool callSubconsensus         = args["--call-subconsensus"] && args["--call-subconsensus"].isBool() ? args["--call-subconsensus"].asBool() : false;
-      
+      bool save_kminmer_binary_coverage = args["--save-kminmer-binary-coverage"] && args["--save-kminmer-binary-coverage"].isBool() ? args["--save-kminmer-binary-coverage"].asBool() : false;
+
       log(prefix, "Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
         "\nminimum-count: " + std::to_string(minimumCount) +
         "\nminimum-score: " + std::to_string(minimumScore) +
@@ -438,24 +446,26 @@ int main(int argc, const char** argv) {
         "\nrounds-remove: " + std::to_string(roundsRemove) +
         "\nremove-threshold: " + std::to_string(removeThreshold) +
         "\nleaf-nodes-only: " + (leafNodesOnly ? "true" : "false") + "\n" +
-        "\ncall-subconsensus: " + (callSubconsensus ? "true" : "false") + "\n");
+        "\ncall-subconsensus: " + (callSubconsensus ? "true" : "false") + "\n" +
+        "\npreem-filter-mbc-num: " + std::to_string(preEMFilterMBCNum) + "\n" +
+        "\nsave-kminmer-binary-coverage: " + (save_kminmer_binary_coverage ? "true" : "false") + "\n");
 
       bool rescueDuplicates = rescueDuplicatesThreshold > 0;
       pmi::place_per_read(
         T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
         errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
         rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod,
-        preEMFilterNOrder, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
-        removeThreshold, leafNodesOnly, callSubconsensus, prefix);
+        preEMFilterNOrder, preEMFilterMBCNum, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
+        removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage);
     } else {
       std::cout << "PLACE - DEBUG" << std::endl;
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
         return 1;
       }
-      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode);
+      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time);
     }
-
+    
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     log(prefix, "Placement time: " + std::to_string(duration.count()) + " milliseconds");
