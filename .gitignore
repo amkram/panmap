@@ -1,44 +1,47 @@
-CMakeLists.txt.user
-CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
-Makefile
-cmake_install.cmake
-install_manifest.txt
-compile_commands.json
-CTestTestfile.cmake
-_deps
+# Build directory
+build/
+build/**
 
-# Prerequisites
-*.d
+# Compiled binaries
+**/*.so*
+**/*.a
+**/*.o
+**/*.pico
+**/*.lo
+**/*.la
+**/bin/*
+**/*.status
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Cap'n Proto generated files
+src/3rdparty/capnproto/c++/.libs/
+src/3rdparty/capnproto/c++/capnp*
+src/3rdparty/capnproto/c++/config.*
+src/3rdparty/capnproto/c++/libtool
+src/3rdparty/capnproto/c++/pkgconfig/
+src/3rdparty/capnproto/c++/autom4te.cache/
 
-# Precompiled Headers
-*.gch
-*.pch
+# Samtools/HTSlib artifacts
+src/3rdparty/samtools/autom4te.cache/
+src/3rdparty/samtools/config.*
+src/3rdparty/samtools/**/*.pico
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# Minimap2 binary
+src/3rdparty/minimap2/minimap2
 
-# Fortran module files
-*.mod
-*.smod
+# Config files
+*.pc
+*.pc.tmp
+**/config.h
+**/config.mk
+**/config.status
+**/config.log
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# Cache files
+**/autom4te.cache/
 
-# Executables
-*.exe
-*.out
-*.app
+# Test binaries
+**/tbb_test_*
+
+# Library files
+lib/
+lib/*
