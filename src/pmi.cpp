@@ -2146,7 +2146,7 @@ void seedsFromFastq(const int32_t& k, const int32_t& s, const int32_t& t, const 
       for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : rollingSyncmers(readSequences[i], k, s, open, t, false)) {
         if (!isSyncmer) continue;
         //curReadSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse, startPos + k - 1});
-        curReadSeeds.emplace_back(seed{kmerHash, startPos + k - 1, -1, isReverse, 0});
+        curReadSeeds.emplace_back(seed{kmerHash, (int32_t)startPos + k - 1, -1, isReverse, 0});
         if (readSeedCounts.find(kmerHash) == readSeedCounts.end()) readSeedCounts[kmerHash] = std::make_pair(0, 0);
         if (isReverse) ++readSeedCounts[kmerHash].second;
         else           ++readSeedCounts[kmerHash].first;
@@ -2428,6 +2428,8 @@ struct PlacementObjects {
 
     navigator = CoordNavigator(data.sequence);
 
+    blockRanges.resize(data.blockExists.size());
+
     scalarCoordToBlockId.resize(globalCoords.back().first.back().first + 1);
 
     auto currCoord = tupleCoord_t{0,0,0};
@@ -2506,7 +2508,7 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
 
   int64_t dfsIndex = objects.dfsIndexes[current->identifier]; // TODO make sure dfsindexes is populated by this point
 
-  std::cout << "Processing node: " << current->identifier << " (child of " << parent->identifier << ")" << std::endl;
+  std::cout << "Processing node: " << current->identifier << std::endl;
   std::cout << "dfsIndex: " << dfsIndex << std::endl;
 
   /* Nucleotide mutations - fills nodeMutationData */
@@ -2824,7 +2826,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
             Node* startNode = group.front();
             Node* stoppingNode = group.back();
 
-            dfsThreads.emplace_back([=, &outputMutex]() mutable {
+            dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
                 /* This lambda is run in each thread */  
                 std::ostringstream logStream;
                 std::vector<std::string> dfsResult; 
@@ -2876,6 +2878,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
                     return left.second > right.second;
                   });
 
+                  std::cout << "best node id: " << placementScores[0].first << std::endl;
                   bestNodeId = placementScores[0].first;
                   bestNode = T->allNodes[bestNodeId];
                   curr = bestNode;
@@ -2896,7 +2899,6 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
         }
     } // end groups loop
 
-    std::cout << "bestNodes size: " << bestNodes.size() << std::endl;
 
     // Wait for all DFS threads to complete
     for (auto& thread : dfsThreads) {
@@ -2907,6 +2909,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     // delete T;
 
     std::cout << "Finished processing groups." << std::endl;
+
+    std::cout << "bestNodes size: " << bestNodes.size() << std::endl;
 
     // Take highest scoring node
     std::sort(bestNodes.begin(), bestNodes.end(), [](auto &left, auto &right) {
@@ -4096,7 +4100,7 @@ void seedmersFromFastq(
             size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
             auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
             if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
-              curRead.uniqueSeedmers.emplace(minHash, std::vector<int32_t>{i});
+              curRead.uniqueSeedmers.emplace(minHash, std::vector<int32_t>{(int32_t)i});
               curRead.seedmersList.emplace_back(mgsr::readSeedmer{
                 minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
               ++iorder;
@@ -4493,10 +4497,11 @@ void pmi::place_per_read(
   Eigen::setNbThreads(numcpus);
 
 
+// FIND CORRECT ARG FOR "exclude node" - the last arg of squaremHelper_test_1
   mgsr::squaremHelper_test_1(
     T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
-    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder, preEMFilterMBCNum,
-    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "", save_kminmer_binary_coverage, prefix);
+    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder,
+    emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, "");
   
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> elapsed = end - start;
@@ -4535,7 +4540,7 @@ void pmi::place_per_read(
     std::cerr << "Calling consensus" << std::endl;
 
     std::unordered_map<std::string, std::vector<size_t>> assignedReads;
-    mgsr::assignReadsToNodes(allScores, nodes, readSeedmersDuplicatesIndex, assignedReads);
+    mgsr::assignReadsToNodes(allScores, nodes, probs, props, readSeedmersDuplicatesIndex, assignedReads);
 
     boost::filesystem::path readsDir(prefix + "_reads");
     if (!boost::filesystem::exists(readsDir)) {
