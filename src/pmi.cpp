@@ -2390,11 +2390,11 @@ std::vector<std::vector<Node*>> splitDFSIntoGroups(const std::vector<Node*>& dfs
     std::vector<std::vector<Node*>> groups;
     if (numGroups <= 0 || dfsOrder.size() <= 1) return groups;
 
-    size_t totalNodes = dfsOrder.size() - 1; // Exclude root
+    size_t totalNodes = dfsOrder.size(); // Exclude root
     size_t groupSize = (totalNodes + numGroups) / numGroups; // Ceiling division
 
     for (int i = 0; i < numGroups; ++i) {
-        size_t start = i * groupSize + 1;  // Start after the root
+        size_t start = i * groupSize;  // Start after the root
         size_t end = std::min(start + groupSize, dfsOrder.size());
         if (start < end) {
             groups.emplace_back(dfsOrder.begin() + start, dfsOrder.begin() + end);
@@ -2430,6 +2430,8 @@ struct PlacementObjects {
 
     blockRanges.resize(data.blockExists.size());
 
+    BlockSizes.resize(data.sequence.size(),0);
+
     scalarCoordToBlockId.resize(globalCoords.back().first.back().first + 1);
 
     auto currCoord = tupleCoord_t{0,0,0};
@@ -2437,19 +2439,23 @@ struct PlacementObjects {
         currCoord.nucGapPos = -1;
     }
     for (int64_t i = 0; i < scalarCoordToBlockId.size(); i++) {
-        if (currCoord.blockId < 0 || currCoord.blockId >= static_cast<int64_t>(BlockSizes.size())) {
-            std::cerr << "Error: Invalid blockId in currCoord: " << currCoord.blockId << std::endl;
-            break;
-        }
+        // if (currCoord.blockId < 0 || currCoord.blockId >= static_cast<int64_t>(BlockSizes.size())) {
+        //     std::cerr << "Error: Invalid blockId in currCoord: " << currCoord.blockId << std::endl;
+        //     break;
+        // }
+
+        // Print out currCoord for debugging
+        // std::cerr << "currCoord: " << currCoord.blockId << ", " << currCoord.nucPos << ", " << currCoord.nucGapPos << std::endl;
+
         scalarCoordToBlockId[i] = currCoord.blockId;
         BlockSizes[currCoord.blockId]++;
         currCoord = navigator.newincrement(currCoord, data.blockStrand);
     }
     for (int64_t i = 0; i < blockRanges.size(); ++i) {
-        if (globalCoords[i].first.empty()) {
-            std::cerr << "Error: globalCoords[" << i << "].first is empty!" << std::endl;
-            continue;
-        }
+        // if (globalCoords[i].first.empty()) {
+        //     std::cerr << "Error: globalCoords[" << i << "].first is empty!" << std::endl;
+        //     continue;
+        // }
         int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
         int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
         blockRanges[i] = std::make_pair(start, end);
@@ -2508,8 +2514,11 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
 
   int64_t dfsIndex = objects.dfsIndexes[current->identifier]; // TODO make sure dfsindexes is populated by this point
 
-  std::cout << "Processing node: " << current->identifier << std::endl;
-  std::cout << "dfsIndex: " << dfsIndex << std::endl;
+  // std::cout << "dfsIndex: " << dfsIndex << "\n";
+  // std::cout << "Size of dfsIndexes: " << objects.dfsIndexes.size() << "\n";
+
+  // std::cout << "Processing node: " << current->identifier << std::endl;
+  // std::cout << "dfsIndex: " << dfsIndex << std::endl;
 
   /* Nucleotide mutations - fills nodeMutationData */
   applyMutations(objects.data, nodeMutationData.blockMutationInfo, nodeMutationData.recompRanges,  nodeMutationData.mutationInfo, T, current, objects.globalCoords, objects.navigator, objects.blockRanges, nodeMutationData.gapRunUpdates, nodeMutationData.gapRunBacktracks, oldBlockExists, oldBlockStrand, true, objects.inverseBlockIds, nodeMutationData.inverseBlockIdsBacktrack);
@@ -2544,6 +2553,9 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
     auto currBasePositions = seedIndex[dfsIndex].getBasePositions();
     auto currPerPosMasks = seedIndex[dfsIndex].getPerPosMasks();
     std::vector<std::vector<int8_t>> masks;
+
+    // std::cout << "currBasePositions size:" << currBasePositions.size() << "\n";
+
     for (int i = 0; i < currBasePositions.size(); ++i) {
         int64_t pos = currBasePositions[i];
         uint64_t tritMask = currPerPosMasks[i];
@@ -2578,6 +2590,8 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
         }
       }
 
+    // std::cout << "seedChanges size:" << nodeMutationData.seedChanges.size() << "\n";
+
     for (auto it = nodeMutationData.gapRunBlocksBacktracks.rbegin(); it != nodeMutationData.gapRunBlocksBacktracks.rend(); ++it) {
       const auto& [del, range] = *it;
       if (del) {
@@ -2589,8 +2603,14 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
 
   nodeMutationData.gapRunBlocksBacktracks.clear();
   
+
+  // std::string groupName = g.front()->identifier;
+  // print current node
+  // std::cout << "Group: " << groupName << "current node: " << current->identifier << "\n";
+
   /* Apply seed mutations */
   for (const auto &p : nodeMutationData.seedChanges)
+
   {
     const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
 
@@ -2613,6 +2633,13 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
 
       auto oldSeedVal = oldSeed.value_or(0);
       auto newSeedVal = newSeed.value_or(0);
+
+      // std::cout << "oldSeedVal:" << oldSeedVal << "\n";
+      // std::cout << "newSeedVal:" << newSeedVal << "\n";
+
+      // std::cout << "oldVal:" << oldVal << "\n";
+      // std::cout << "newVal:" << newVal << "\n";
+
       if (oldVal && newVal) { // seed at same pos changed
         if (oldSeedVal && readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
           //case 1: seed is in reads
@@ -2653,9 +2680,11 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
  }
 
 void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, PlacementObjects &objects) {
-    std::cout << "undoing seed mutations at node " << current->identifier << std::endl;
+    // std::cout << "undoing seed mutations at node " << current->identifier << std::endl;
     for (const auto& p : nodeMutationData.seedChanges) {
         const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
+        // std::cout << "oldSeed:" << oldSeed.has_value() << ", newSeed:" << newSeed.has_value() << "\n";
+
         if (oldVal && newVal) {
             objects.onSeedsHash[pos].value().hash = oldSeed.value();
             objects.onSeedsHash[pos].value().endPos = oldEndPos.value();
@@ -2673,7 +2702,7 @@ void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, P
         }
     }
 
-    std::cout << "undoing gapRun mutations at node " << current->identifier << std::endl;
+    // std::cout << "undoing gapRun mutations at node " << current->identifier << std::endl;
 
     for (auto it = nodeMutationData.gapRunBacktracks.rbegin(); it != nodeMutationData.gapRunBacktracks.rend(); ++it) {
         const auto& [del, range] = *it;
@@ -2691,12 +2720,12 @@ void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, P
             objects.inverseBlockIds.insert(blockId);
         }
     }
-    std::cout << "undoing nuc mutations at node " << current->identifier << std::endl;
+    // std::cout << "undoing nuc mutations at node " << current->identifier << std::endl;
     undoMutations(objects.data, T, current, nodeMutationData.blockMutationInfo, nodeMutationData.mutationInfo, objects.globalCoords);
 
  }
 
-void performRecursiveDFS(bool firstCall, Node* current, Node* stopNode,
+void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node* stopNode,
                          const std::vector<Node*>& group,
                          PlacementObjects& objects,
                          std::vector<std::pair<std::string, float>> &placementScores,
@@ -2704,8 +2733,25 @@ void performRecursiveDFS(bool firstCall, Node* current, Node* stopNode,
                          ::capnp::List<GapMutations>::Reader perNodeGapMutations_Index,
                          int seedK, int seedS, int seedT, bool open, int seedL, Tree* T,
                          std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
-                         int64_t jacNumer, int64_t jacDenom, int64_t &searchCount) {
+                         int64_t jacNumer, int64_t jacDenom, int64_t &searchCount, blockExists_t &rootBlockExists, blockStrand_t &rootBlockStrand) {
 
+  // std::cout << "firstcall: " << firstCall << std::endl;
+    std::string groupName = group.front()->identifier + " to " + group.back()->identifier;
+
+    std::cout << "Group: " << groupName << "   ------- Processing node: " << current->identifier << std::endl;
+
+    if (current == stopNode) {
+        std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
+
+        bool testing = true;
+
+        bool nontesting = true;
+    }
+
+    if (stopReached) {
+      std::cout << "Exiting because stopNode reached" << groupName << "\n";
+        return;
+    }
 
     NodeMutationData nodeMutationData; // store mutation info for backtracking
 
@@ -2718,8 +2764,14 @@ void performRecursiveDFS(bool firstCall, Node* current, Node* stopNode,
     if (firstCall) {
       // starting a new DFS, backtrack to root and down to current node
       std::vector<Node*> pathToRoot = backtrackToRoot(current);
-            
-    
+      
+      objects = PlacementObjects(T);
+
+      parentBlockExists = rootBlockExists;
+      parentBlockStrand = rootBlockStrand;
+
+      std::cout << "starting dfs at node: " << current->identifier << "\n";
+
       for (Node* currNode : pathToRoot) {
         // TODO this applies mutations and scores nodes,
         // but probably don't need the scoring part if we're descending from root->startNode
@@ -2733,6 +2785,12 @@ void performRecursiveDFS(bool firstCall, Node* current, Node* stopNode,
             parentBlockExists,
             parentBlockStrand,
             jacNumer, jacDenom);
+
+        // Loop over node mutation data
+        for (const auto& p : nodeMutationData.seedChanges) {
+            const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
+            // std::cout << "pos: " << pos << ", oldVal: " << oldVal << ", newVal: " << newVal << ", oldSeed: " << oldSeed.value_or(0) << ", newSeed: " << newSeed.value_or(0) << ", oldIsReverse: " << oldIsReverse.value_or(false) << ", newIsReverse: " << newIsReverse.value_or(false) << ", oldEndPos: " << oldEndPos.value_or(0) << ", newEndPos: " << newEndPos.value_or(0) << std::endl;
+        }
 
         parent = currNode;
         parentBlockExists = objects.data.blockExists;
@@ -2752,18 +2810,38 @@ void performRecursiveDFS(bool firstCall, Node* current, Node* stopNode,
             jacNumer, jacDenom);
     }
 
+    if (current == stopNode) {
+        stopReached = true;
+        std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
+        return;
+    }
+
     /* Recursive step */
     searchCount++;
     for (Node* child : current->children) {
-      performRecursiveDFS(false, child, stopNode, group, objects, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount);
+      performRecursiveDFS(false, stopReached, child, stopNode, group, objects, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
+    
+      if (stopReached) {
+        std::cout << "Exiting because stopNode reached from recursive loop" << groupName << "\n";
+        return;
+      }
+    
     }
 
-    /* Backtracking */
-    backtrackNode(T, current, nodeMutationData, objects);
+    for (const auto& p : nodeMutationData.seedChanges) {
+            const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
+            // std::cout << "pos: " << pos << ", oldVal: " << oldVal << ", newVal: " << newVal << ", oldSeed: " << oldSeed.value_or(0) << ", newSeed: " << newSeed.value_or(0) << ", oldIsReverse: " << oldIsReverse.value_or(false) << ", newIsReverse: " << newIsReverse.value_or(false) << ", oldEndPos: " << oldEndPos.value_or(0) << ", newEndPos: " << newEndPos.value_or(0) << std::endl;
+        }
 
-    if (current == group.front() && searchCount < group.size() - 1) { // 
-        searchCount++;
-        performRecursiveDFS(true, group[searchCount], stopNode, group, objects, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount);
+    // backtrackNode(T, current, nodeMutationData, objects);
+
+    if (current == group.front() && searchCount < group.size()) { // 
+        std::cout << "Group: " << groupName << "   ------- restarting DFS at node: " << group[searchCount]->identifier << "\n";
+        performRecursiveDFS(true, stopReached, group[searchCount], stopNode, group, objects, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
+    }
+
+    else {
+      backtrackNode(T, current, nodeMutationData, objects);
     }
 }
 
@@ -2772,6 +2850,9 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 {
     /* Sets up structures used in DFS */
     PlacementObjects prePlacementObjects(T);
+
+    blockExists_t rootBlockExists = prePlacementObjects.data.blockExists;
+    blockStrand_t rootBlockStrand = prePlacementObjects.data.blockStrand;
 
     int32_t k = index.getK();
     int32_t s = index.getS();
@@ -2797,7 +2878,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     // printDFSOrder(dfsOrder);
 
     // Step 4: Set the number of groups manually
-    int numThreads = 16; // Manually specify the number of groups
+    int numThreads = 5; // Manually specify the number of groups
 
     // Step 5: Split DFS order into groups based on number of threads
     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);
@@ -2811,10 +2892,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
     std::cout << "ABOUT TO LOOP" << std::endl;
 
-   
-
-    ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader;
-    ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader;
+    ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
+    ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader = index.getPerNodeSeedMutations();
 
     // Perform DFS for each group in a separate thread
     for (const auto& group : groups) {
@@ -2826,7 +2905,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
             Node* startNode = group.front();
             Node* stoppingNode = group.back();
 
-            dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
+
+            //dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
                 /* This lambda is run in each thread */  
                 std::ostringstream logStream;
                 std::vector<std::string> dfsResult; 
@@ -2854,17 +2934,17 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
                       << stoppingNode->identifier << std::endl;
 
                   int64_t searchCount = 0;
-
+                  bool stopReached = false;
                   /* Main placement DFS */
                   performRecursiveDFS(
-                      true, startNode, stoppingNode, group,
+                      true, stopReached, startNode, stoppingNode, group,
                       groupPlacementObjects,
                       placementScores,
                       perNodeSeedMutations_Reader, perNodeGapMutations_Reader,
                       k, s, t, open, l, T,
                       readSeedCounts,
                       jacNumer, jacDenom,
-                      searchCount
+                      searchCount, rootBlockExists, rootBlockStrand
                   );
 
 
@@ -2895,15 +2975,15 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
                     
                 std::lock_guard<std::mutex> lock(outputMutex);
                 std::cout << logStream.str();
-            }); // end of dfsThreads.emplace_back
+            //}); // end of dfsThreads.emplace_back
         }
     } // end groups loop
 
 
     // Wait for all DFS threads to complete
-    for (auto& thread : dfsThreads) {
-        thread.join();
-    }
+    // for (auto& thread : dfsThreads) {
+    //     thread.join();
+    // }
 
     // Clean up memory
     // delete T;
@@ -2926,6 +3006,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     }
     std::reverse(rpath.begin(), rpath.end());
     
+    finalBestNode = rpath.back();
+
     PlacementObjects bestNodeObjects(T);
     auto& [bestNode_data, bestNode_globalCoords, bestNode_navigator, bestNode_BlockSizes, bestNode_blockRanges, bestNode_inverseBlockIds, bestNode_gapMap, bestNode_BlocksToSeeds, bestNode_scalarCoordToBlockId, bestNode_onSeedsString, bestNode_onSeedsHash, bestNode_dfsIndex, bestNode_dfsIndexes, bestNode_T_ignore] = bestNodeObjects;
 
