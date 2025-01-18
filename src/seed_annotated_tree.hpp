@@ -219,12 +219,12 @@ tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockS
 
 
     if (coord.nucGapPos == -1) {
-      std::cout << "Debug: coord.blockId=" << coord.blockId
-          << ", coord.nucPos=" << coord.nucPos
-          << ", sequence.size()=" << sequence.value().size()
-          << ", sequence[coord.blockId].first.size()="
-          << (coord.blockId < sequence.value().size() ? sequence.value()[coord.blockId].first.size() : -1)
-          << std::endl;
+      // std::cout << "Debug: coord.blockId=" << coord.blockId
+      //     << ", coord.nucPos=" << coord.nucPos
+      //     << ", sequence.size()=" << sequence.value().size()
+      //     << ", sequence[coord.blockId].first.size()="
+      //     << (coord.blockId < sequence.value().size() ? sequence.value()[coord.blockId].first.size() : -1)
+      //     << std::endl;
 
       if(sequence.value()[coord.blockId].first[coord.nucPos].second.empty()){
         coord.nucPos--;
