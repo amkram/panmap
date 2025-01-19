@@ -1734,9 +1734,9 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
     const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
 
     if (oldVal && newVal) { // seed at same pos changed
-      onSeedsHash[pos].value().hash = newSeed.value();
-      onSeedsHash[pos].value().endPos = newEndPos.value();
-      onSeedsHash[pos].value().isReverse = newIsReverse.value();
+      onSeedsHash[pos]->hash = newSeed.value();
+      onSeedsHash[pos]->endPos = newEndPos.value();
+      onSeedsHash[pos]->isReverse = newIsReverse.value();
     } else if (oldVal && !newVal) { // seed on to off
       if (onSeedsHash[pos].has_value() && pos < onSeedsHash.size()) {
         onSeedsHash[pos].reset();
@@ -1856,9 +1856,9 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
   for (const auto &p : seedChanges) {
     const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
     if (oldVal && newVal) { // UNDO seed at same pos changed
-      onSeedsHash[pos].value().hash = oldSeed.value();
-      onSeedsHash[pos].value().endPos = oldEndPos.value();
-      onSeedsHash[pos].value().isReverse = oldIsReverse.value();
+      onSeedsHash[pos]->hash = oldSeed.value();
+      onSeedsHash[pos]->endPos = oldEndPos.value();
+      onSeedsHash[pos]->isReverse = oldIsReverse.value();
     } else if (oldVal && !newVal) { // seed on to off
       onSeedsHash[pos] = {oldSeed.value(), oldEndPos.value(), oldIsReverse.value()};
       int blockId = scalarCoordToBlockId[pos];
