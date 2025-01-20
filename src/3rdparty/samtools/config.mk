@@ -28,28 +28,28 @@
 # in the Makefile to reflect your configuration choices.  If you don't run
 # configure, the main Makefile contains suitable conservative defaults.
 
-prefix       = /usr/local
+prefix       = /tom_panmap/build
 exec_prefix  = ${prefix}
 bindir       = ${exec_prefix}/bin
 datarootdir  = ${prefix}/share
 mandir       = ${datarootdir}/man
 
-AWK      = gawk
+AWK      = mawk
 CC       = gcc
 CPPFLAGS = 
 CFLAGS   =  -Wall -g -O2
 LDFLAGS  = 
 LIBS     = 
 
-HTSDIR = htslib-1.20
-include $(HTSDIR)/htslib.mk
-include $(HTSDIR)/htslib_static.mk
-HTSLIB = $(HTSDIR)/libhts.a
-HTSLIB_LIB = $(HTSLIB) $(HTSLIB_static_LIBS)
-HTSLIB_LDFLAGS = $(HTSLIB_static_LDFLAGS)
-BGZIP = $(HTSDIR)/bgzip
-HTSLIB_CPPFLAGS = -Ihtslib-1.20
-#HTSLIB_LDFLAGS = -Lhtslib-1.20
-#HTSLIB_LIB = -lhts
+#HTSDIR = 
+#include $(HTSDIR)/htslib.mk
+#include $(HTSDIR)/htslib_static.mk
+#HTSLIB = $(HTSDIR)/libhts.a
+#HTSLIB_LIB = $(HTSLIB) $(HTSLIB_static_LIBS)
+#HTSLIB_LDFLAGS = $(HTSLIB_static_LDFLAGS)
+#BGZIP = $(HTSDIR)/bgzip
+HTSLIB_CPPFLAGS = -I/tom_panmap/build/include
+HTSLIB_LDFLAGS = -L/tom_panmap/build/lib
+HTSLIB_LIB = -lhts
 
 CURSES_LIB = -lncursesw
