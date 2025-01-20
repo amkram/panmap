@@ -2770,7 +2770,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
     std::string groupName = group.front()->identifier + " to " + group.back()->identifier;
 
     std::cout << "[INFO] Group: " << groupName 
-              << " | Processing Node: " << current->identifier << std::endl;
+              << " | Processing Node: " << current->identifier << " | Placement Score Size:" << placementScores.size() << std::endl;
 
     if (current == stopNode) {
         std::cout << "[INFO] Group: " << groupName 
@@ -2898,7 +2898,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     // printDFSOrder(dfsOrder);
 
     // Step 4: Set the number of groups manually
-    int numThreads = 2; // Manually specify the number of groups
+    int numThreads = 4; // Manually specify the number of groups
 
     // Step 5: Split DFS order into groups based on number of threads
     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);

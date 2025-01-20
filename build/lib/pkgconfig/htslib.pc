@@ -1,5 +1,5 @@
-includedir=/panmap/build/include
-libdir=/panmap/build/lib
+includedir=/tom_panmap/build/include
+libdir=/tom_panmap/build/lib
 
 # Flags and libraries needed when linking against a static libhts.a
 # (used by manual and semi-manual pkg-config(1)-style enquiries).

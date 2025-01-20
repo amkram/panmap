@@ -1,5 +1,5 @@
-prefix=/usr/local
-exec_prefix=${prefix}
+prefix=/tom_panmap/build
+exec_prefix=/tom_panmap/build
 libdir=${exec_prefix}/lib
 includedir=${prefix}/include
 

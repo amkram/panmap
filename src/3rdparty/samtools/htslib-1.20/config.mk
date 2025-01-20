@@ -28,7 +28,7 @@
 # in the Makefile to reflect your configuration choices.  If you don't run
 # configure, the main Makefile contains suitable conservative defaults.
 
-prefix       = /usr/local
+prefix       = /tom_panmap/build
 exec_prefix  = ${prefix}
 bindir       = ${exec_prefix}/bin
 includedir   = ${prefix}/include
@@ -44,7 +44,7 @@ CPPFLAGS =
 CFLAGS   =  -Wall -g -O2 -fvisibility=hidden
 LDFLAGS  =  -fvisibility=hidden
 VERSION_SCRIPT_LDFLAGS = -Wl,-version-script,$(srcprefix)htslib.map
-LIBS     = -lz -lm 
+LIBS     = -ldeflate -lz -lm 
 
 PLATFORM   = default
 PLUGIN_EXT = .so
