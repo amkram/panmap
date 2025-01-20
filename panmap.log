@@ -356,3 +356,168 @@ Reading...
 Placing...
 Placement time: 7124 milliseconds
 panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 7314 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 7173 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 8171 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 7230 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 7820 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 17065 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 7463 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 7015 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 6171 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 7050 milliseconds
+panmap run completed.
+--- Settings ---
+Pangenome: dev/panmans/rsv_4000.panman (7999 nodes)
+Reads: dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R1.fastq + dev/parallel_testing/data/rsv4000_1hap-a_100000_rep1_R2.fastq
+Output prefix: panmap
+Outputs: bam,vcf,assembly
+Reindex: 0
+k-mer length: 19
+s-mer length: 8
+Index loaded from: dev/panmans/rsv_4000.panman.pmi
+Will stop after stage: 
+Loading default mutation matrices from: dev/panmans/rsv_4000.panman.mm
+Reading...
+Placing...
+Placement time: 8157 milliseconds
+panmap run completed.
