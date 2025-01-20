@@ -3,7 +3,7 @@
 ##bcftoolsVersion=1.21+htslib-1.20
 ##bcftoolsCommand=mpileup -Ou -f panmap.reference.fa -o panmap.mpileup panmap.bam
 ##reference=file://panmap.reference.fa
-##contig=<ID=ref,length=15106>
+##contig=<ID=ref,length=15111>
 ##ALT=<ID=*,Description="Represents allele(s) other than observed.">
 ##INFO=<ID=INDEL,Number=0,Type=Flag,Description="Indicates that the variant is an INDEL.">
 ##INFO=<ID=IDV,Number=1,Type=Integer,Description="Maximum number of raw reads supporting an indel">
@@ -30,5 +30,5 @@
 ##INFO=<ID=HWE,Number=1,Type=Float,Description="Chi^2 based HWE test P-value based on G3">
 ##INFO=<ID=DP4,Number=4,Type=Integer,Description="Number of high-quality ref-forward , ref-reverse, alt-forward and alt-reverse bases">
 ##bcftools_callVersion=1.21+htslib-1.20
-##bcftools_callCommand=call --ploidy 1 -c -A -O v panmap.mpileup; Date=Sun Jan 19 23:12:58 2025
+##bcftools_callCommand=call --ploidy 1 -c -A -O v panmap.mpileup; Date=Mon Jan 20 03:26:38 2025
 #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	panmap.bam

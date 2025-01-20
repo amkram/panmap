@@ -2757,7 +2757,7 @@ void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, P
 }
 
 
-void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node* stopNode,
+void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Node* current, Node* stopNode,
                          const std::vector<Node*>& group,
                          PlacementObjects& objects,
                          std::vector<std::pair<std::string, float>> &placementScores,
@@ -2842,7 +2842,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
     // bool isLeaf = current->children.empty();
 
     for (Node* child : current->children) {
-        performRecursiveDFS(false, stopReached, child, stopNode, group, objects, placementScores, 
+        performRecursiveDFS(false, stopReached, startNode, child, stopNode, group, objects, placementScores, 
                             perNodeSeedMutations_Index, perNodeGapMutations_Index, 
                             seedK, seedS, seedT, open, seedL, T, readSeedCounts, 
                             jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
@@ -2854,10 +2854,10 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
         }
     }
 
-    if (current == group.front() && searchCount < group.size()) {
+    if (current == startNode && searchCount < group.size()) {
         std::cout << "[INFO] Restarting DFS at Node: " << group[searchCount]->identifier 
                   << " in Group: " << groupName << std::endl;
-        performRecursiveDFS(true, stopReached, group[searchCount], stopNode, group, objects, 
+        performRecursiveDFS(true, stopReached, group[searchCount], group[searchCount], stopNode, group, objects, 
                             placementScores, perNodeSeedMutations_Index, 
                             perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, 
                             readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
@@ -2898,7 +2898,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     // printDFSOrder(dfsOrder);
 
     // Step 4: Set the number of groups manually
-    int numThreads = 16; // Manually specify the number of groups
+    int numThreads = 2; // Manually specify the number of groups
 
     // Step 5: Split DFS order into groups based on number of threads
     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);
@@ -2929,7 +2929,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
             Node* stoppingNode = group.back();
 
 
-            //dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
+            dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
                 /* This lambda is run in each thread */  
                 std::ostringstream logStream;
                 std::vector<std::string> dfsResult; 
@@ -2960,7 +2960,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
                   bool stopReached = false;
                   /* Main placement DFS */
                   performRecursiveDFS(
-                      true, stopReached, startNode, stoppingNode, group,
+                      true, stopReached, startNode, startNode, stoppingNode, group,
                       groupPlacementObjects,
                       placementScores,
                       perNodeSeedMutations_Reader, perNodeGapMutations_Reader,
@@ -2998,15 +2998,15 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
                     
                 std::lock_guard<std::mutex> lock(outputMutex);
                 std::cout << logStream.str();
-            //}); // end of dfsThreads.emplace_back
+            }); // end of dfsThreads.emplace_back
         }
     } // end groups loop
 
 
     // Wait for all DFS threads to complete
-    // for (auto& thread : dfsThreads) {
-    //     thread.join();
-    // }
+    for (auto& thread : dfsThreads) {
+        thread.join();
+    }
 
     // Clean up memory
     // delete T;
