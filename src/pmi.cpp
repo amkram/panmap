@@ -2503,8 +2503,18 @@ struct NodeMutationData {
 // Store mutation info for backtracking in nodeMutationData
 // Updates jacNumer and jacDenom
 // Updates placementScores
+
+// Custom comparator that compares pairs based on the first element (string)
+struct CompareByFirst {
+    bool operator()(const std::pair<std::string, float>& a, const std::pair<std::string, float>& b) const {
+        return a.first < b.first; // Compare based only on the string part
+    }
+};
+
+
+
 void processNode(Node *parent, Node *current, PlacementObjects &objects,
-    std::vector<std::pair<std::string, float>> &placementScores,
+    std::set<std::pair<std::string, float>, CompareByFirst> &placementScores,
     NodeMutationData &nodeMutationData,
     ::capnp::List<SeedMutations>::Reader &seedIndex, 
     ::capnp::List<GapMutations>::Reader &gapIndex, 
@@ -2680,7 +2690,7 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
 
   // Finalize jaccard for this node
   float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
-  placementScores.emplace_back(std::make_pair(current->identifier, jac));
+  placementScores.insert(std::make_pair(current->identifier, jac));
  }
 
 void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, PlacementObjects &objects) {
@@ -2760,7 +2770,7 @@ void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, P
 void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Node* current, Node* stopNode,
                          const std::vector<Node*>& group,
                          PlacementObjects& objects,
-                         std::vector<std::pair<std::string, float>> &placementScores,
+                         std::set<std::pair<std::string, float>, CompareByFirst> &placementScores,
                          ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Index,
                          ::capnp::List<GapMutations>::Reader perNodeGapMutations_Index,
                          int seedK, int seedS, int seedT, bool open, int seedL, Tree* T,
@@ -2811,8 +2821,12 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
 
         std::cout << "[INFO] Starting DFS at Node: " << current->identifier << std::endl;
 
+        auto placementScoresDummy = placementScores;
+        
         for (Node* currNode : pathToRoot) {
-            processNode(parent, currNode, objects, placementScores, nodeMutationData, 
+
+            if (currNode == pathToRoot.back()) {
+              processNode(parent, currNode, objects, placementScores, nodeMutationData, 
                         perNodeSeedMutations_Index, perNodeGapMutations_Index, 
                         seedK, seedS, seedT, open, seedL, T, 
                         readSeedCounts, parentBlockExists, parentBlockStrand,
@@ -2821,6 +2835,18 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
             parent = currNode;
             parentBlockExists = objects.data.blockExists;
             parentBlockStrand = objects.data.blockStrand;
+            }
+            else {
+            processNode(parent, currNode, objects, placementScoresDummy, nodeMutationData, 
+                        perNodeSeedMutations_Index, perNodeGapMutations_Index, 
+                        seedK, seedS, seedT, open, seedL, T, 
+                        readSeedCounts, parentBlockExists, parentBlockStrand,
+                        jacNumer, jacDenom);
+
+            parent = currNode;
+            parentBlockExists = objects.data.blockExists;
+            parentBlockStrand = objects.data.blockStrand;
+            }
         }
     } else {
         processNode(parent, current, objects, placementScores, nodeMutationData, 
@@ -2854,14 +2880,26 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
         }
     }
 
-    if (current == startNode && searchCount < group.size()) {
+    if (current == startNode && searchCount < group.size() - 1) {
         std::cout << "[INFO] Restarting DFS at Node: " << group[searchCount]->identifier 
                   << " in Group: " << groupName << std::endl;
+
+        jacNumer = 0;
+        jacDenom = 0;
+
+        for (const auto& count : readSeedCounts) {
+                    jacDenom += count.second.first + count.second.second;
+                  }
+
         performRecursiveDFS(true, stopReached, group[searchCount], group[searchCount], stopNode, group, objects, 
                             placementScores, perNodeSeedMutations_Index, 
                             perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, 
                             readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
-    } else {
+    } 
+    else if (searchCount == group.size() - 1) {
+        return;
+    }
+    else {
         backtrackNode(T, current, nodeMutationData, objects);
     }
 }
@@ -2929,11 +2967,11 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
             Node* stoppingNode = group.back();
 
 
-            dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
+            // dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
                 /* This lambda is run in each thread */  
                 std::ostringstream logStream;
                 std::vector<std::string> dfsResult; 
-                std::vector<std::pair<std::string, float>> placementScores;
+                std::set<std::pair<std::string, float>, CompareByFirst> placementScores;
                 std::string bestNodeId;
                 Node *bestNode;
                 Node *curr;
@@ -2977,36 +3015,38 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
                   std::cout << "placementScores size: " << placementScores.size() << std::endl;
 
-                  std::sort(placementScores.begin(), placementScores.end(), [](auto &left, auto &right) {
+                  std::vector<std::pair<std::string, float>> placementScoresVector(placementScores.begin(), placementScores.end());
+
+                  std::sort(placementScoresVector.begin(), placementScoresVector.end(), [](auto &left, auto &right) {
                     return left.second > right.second;
                   });
 
-                  std::cout << "best node id: " << placementScores[0].first << std::endl;
-                  bestNodeId = placementScores[0].first;
+                  std::cout << "best node id: " << placementScoresVector[0].first << std::endl;
+                  bestNodeId = placementScoresVector[0].first;
                   bestNode = T->allNodes[bestNodeId];
                   curr = bestNode;
 
                   // print best node and placementscore 
                   std::cout << "best node for group " << startNode->identifier << " to " << stoppingNode->identifier << ": " << bestNodeId << std::endl;
-                  std::cout << "best node score: " << placementScores[0].second << std::endl;
-                  bestNodes.push_back(std::make_pair(bestNode, placementScores[0].second));
+                  std::cout << "best node score: " << placementScoresVector[0].second << std::endl;
+                  bestNodes.push_back(std::make_pair(bestNode, placementScoresVector[0].second));
 
                   // DEBUG PRINT
-                  std::cout << "best node for group " << startNode->identifier << " to " << stoppingNode->identifier << ": " << bestNodeId << std::endl;
+                  std::cout << "best node for group " <<  startNode->identifier << " to " << stoppingNode->identifier << ": " << bestNodeId << std::endl;
 
                 }
                     
                 std::lock_guard<std::mutex> lock(outputMutex);
                 std::cout << logStream.str();
-            }); // end of dfsThreads.emplace_back
+            // }); // end of dfsThreads.emplace_back
         }
     } // end groups loop
 
 
     // Wait for all DFS threads to complete
-    for (auto& thread : dfsThreads) {
-        thread.join();
-    }
+    // for (auto& thread : dfsThreads) {
+    //     thread.join();
+    // }
 
     // Clean up memory
     // delete T;
