@@ -30,5 +30,5 @@
 ##INFO=<ID=HWE,Number=1,Type=Float,Description="Chi^2 based HWE test P-value based on G3">
 ##INFO=<ID=DP4,Number=4,Type=Integer,Description="Number of high-quality ref-forward , ref-reverse, alt-forward and alt-reverse bases">
 ##bcftools_callVersion=1.21+htslib-1.20
-##bcftools_callCommand=call --ploidy 1 -c -A -O v panmap.mpileup; Date=Mon Jan 20 03:26:38 2025
+##bcftools_callCommand=call --ploidy 1 -c -A -O v panmap.mpileup; Date=Mon Jan 20 12:11:19 2025
 #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	panmap.bam
