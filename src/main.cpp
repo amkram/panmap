@@ -134,6 +134,7 @@ Developer options:
   --save-jaccard                        Save jaccard index between reads and haplotypes to <prefix>.jaccard.txt
   --save-kminmer-binary-coverage        Save kminmer binary coverage to <prefix>.kminmer_binary_coverage.txt
   --parallel-tester                     Run parallel tester.
+  --eval <path>                         Evaluate accuracy of placement. <path> is a tsv file.
 )";
 
 
@@ -184,7 +185,7 @@ panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
         
         inputFile.close();
     } catch (const std::exception &e) {
-        std::cerr << "Attempting to load as PanMAT...\n";
+        std::cout << "Attempting to load as PanMAT...\n";
         try {
             std::ifstream inputFile(pmatFile);
             boost::iostreams::filtering_streambuf< boost::iostreams::input> inPMATBuffer;
@@ -214,6 +215,8 @@ void log(const std::string& prefix, const std::string& message) {
 
 int main(int argc, const char** argv) {
 
+    auto main_start = std::chrono::high_resolution_clock::now();
+    
     std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
     tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::stoi(args["--cpus"].asString()));
     std::string guide = args["<guide>"].asString();
@@ -223,7 +226,7 @@ int main(int argc, const char** argv) {
     std::string outputs = args["-o"] && args["-o"].isString() ? args["-o"].asString() : "bam,vcf,assembly";
     std::string aligner = args["--aligner"] ? args["--aligner"].asString() == "bwa-aln" ? "bwa-aln" : "minimap2" : "minimap2";
     std::string refNode = args["--ref"] ? args["--ref"].asString() : "";
-
+    std::string eval = args["--eval"] ? args["--eval"].asString() : "";
 
     std::vector<std::string> outputs_seperated;
 
@@ -308,7 +311,7 @@ int main(int argc, const char** argv) {
 
     panmanUtils::Tree *T = loadPanmanOrPanmat(guide);
     if (T == nullptr) {
-      std::cerr << "Failed to load guide panMAN/panMAT.\n";
+      std::cout << "Failed to load guide panMAN/panMAT.\n";
       return 1;
     }
 
@@ -392,11 +395,27 @@ int main(int argc, const char** argv) {
       sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
     }
 
-
-    // Placement
     log(prefix, "Reading...");
     inMessage = readCapnp(default_index_path);
     Index::Reader index_input = inMessage->getRoot<Index>();
+
+    if (!eval.empty()) {
+      log(prefix, "[Developer mode] --- Evaluate placement accuracy ---");
+      // get /path/to/<eval>.tsv into a string, but just the <eval> basename
+      std::string eval_basename = fs::path(eval).filename().string();
+      if (eval_basename.find("sars_pre") != std::string::npos) {
+        std::cout << "Species: SARS-CoV-2" << std::endl;
+        pmi::evaluate(T, eval, index_input, mutMat, aligner, "sars", main_start, default_index_path, default_mutmat_path);
+      } else if (eval_basename.find("rsv_pre") != std::string::npos) {
+        std::cout << "Species: RSV" << std::endl;
+        pmi::evaluate(T, eval, index_input, mutMat, aligner, "rsv", main_start, default_index_path, default_mutmat_path);
+      } else if (eval_basename.find("tb_pre") != std::string::npos) {
+        std::cout << "Species: M. tuberculosis" << std::endl;
+        pmi::evaluate(T, eval, index_input, mutMat, aligner, "tb", main_start, default_index_path, default_mutmat_path);
+      }
+      std::exit(0);
+    }
+
 
     log(prefix, "Placing...");
     auto start = std::chrono::high_resolution_clock::now();
@@ -458,12 +477,12 @@ int main(int argc, const char** argv) {
         preEMFilterNOrder, preEMFilterMBCNum, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
         removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage);
     } else {
-      std::cout << "PLACE - DEBUG" << std::endl;
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
         return 1;
       }
-      pmi::place(T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time);
+      PlacementResult result;
+      pmi::place(result, T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time);
     }
     
     auto end = std::chrono::high_resolution_clock::now();
