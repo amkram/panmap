@@ -12,15 +12,39 @@ using namespace panmanUtils;
 using namespace seeding;
 using namespace seed_annotated_tree;
 
-
-
-
 enum posWidth {pos16, pos32, pos64};
+
+enum Metric {
+  jaccard,
+  weighted_jaccard,
+  weighted_count
+};
+
+struct PlacementResult {
+  std::string simulation_id;
+  std::string true_node_id;
+  std::string best_node_id;
+  double best_node_score;
+  std::vector<double> all_scores;
+  int32_t k;
+  int32_t s;
+  Metric metric;
+  int32_t read_count;
+  int32_t mutation_count;
+  double elapsed_time_s;
+};
 
 namespace pmi { // functions and types for seed indexing
 
     void build(Tree *T, Index::Builder &index);
-    void place(
+    void align(std::string aligner, std::string refFileName, std::string bestMatchSequence, 
+                std::vector<std::vector<seed>> readSeeds, std::vector<std::string> readSequences,
+                std::vector<std::string> readQuals, std::vector<std::string> readNames,
+                std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions,                
+                std::string samFileName, std::string bamFileName, int32_t k, bool pairedEndReads,
+                std::string reads1Path, std::string reads2Path); 
+    void genotype(std::string prefix, std::string refFileName, std::string bestMatchSequence, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, seed_annotated_tree::mutationMatrices &mutMat);
+    void place(PlacementResult &result,
       Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
       seed_annotated_tree::mutationMatrices &mutMat, std::string prefix, std::string refFileName, std::string samFileName,
       std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner,
@@ -37,6 +61,8 @@ namespace pmi { // functions and types for seed indexing
       const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum, const int& emFilterRound, const int& checkFrequency,
       const int& removeIteration, const double& insigProb, const int& roundsRemove, const double& removeThreshold,
       const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix, const bool& save_kminmer_binary_coverage);
+
+    void evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_annotated_tree::mutationMatrices &mutMat, std::string aligner, std::string species, std::chrono::high_resolution_clock::time_point start_time, std::string default_index_path, std::string default_mutmat_path);
 
 } // namespace pmi
 
