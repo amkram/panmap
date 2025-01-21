@@ -312,7 +312,7 @@ endif()
 
 
 if (OPTION_DEBUG)
-    target_compile_options(panmap PUBLIC -g -O3 -ggdb)
+    target_compile_options(panmap PUBLIC -g -O0 -ggdb)
 else()
     target_compile_options(panmap PUBLIC -g -O3)
 endif()

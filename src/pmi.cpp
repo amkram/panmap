@@ -2690,6 +2690,7 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
 
   // Finalize jaccard for this node
   float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
+  std::cout << "placementScore for " << current->identifier << " is " << jac << "\n";
   placementScores.insert(std::make_pair(current->identifier, jac));
  }
 
@@ -2780,12 +2781,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
     std::string groupName = group.front()->identifier + " to " + group.back()->identifier;
 
     std::cout << "[INFO] Group: " << groupName 
-              << " | Processing Node: " << current->identifier << " | Placement Score Size:" << placementScores.size() << std::endl;
-
-    if (current == stopNode) {
-        std::cout << "[INFO] Group: " << groupName 
-                  << " | Stop Node Reached: " << stopNode->identifier << std::endl;
-    }
+              << " | Processing Node: " << current->identifier << " | Placement Score Size:" << placementScores.size() << " | Placement score: " << std::endl;
 
     if (stopReached) {
         std::cout << "[INFO] Exiting DFS - Stop Node Already Reached in Group: " << groupName << std::endl;
@@ -2802,6 +2798,10 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
 
     if (current->identifier == "node_20"){
         std::cout << "node_20" << std::endl;
+    }
+
+    if (current->identifier == "KJ672475.1"){
+        std::cout << "KJ672475.1" << std::endl;
     }
 
     bool isRightLeaf = isRightLeafNode(current);
@@ -2824,6 +2824,8 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
         auto placementScoresDummy = placementScores;
         
         for (Node* currNode : pathToRoot) {
+
+            nodeMutationData = NodeMutationData();
 
             if (currNode == pathToRoot.back()) {
               processNode(parent, currNode, objects, placementScores, nodeMutationData, 
@@ -2880,7 +2882,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
         }
     }
 
-    if (current == startNode && searchCount < group.size() - 1) {
+    if (current == startNode && searchCount < group.size()) {
         std::cout << "[INFO] Restarting DFS at Node: " << group[searchCount]->identifier 
                   << " in Group: " << groupName << std::endl;
 
@@ -2896,7 +2898,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
                             perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, 
                             readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
     } 
-    else if (searchCount == group.size() - 1) {
+    else if (searchCount == group.size()) {
         return;
     }
     else {
@@ -2967,7 +2969,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
             Node* stoppingNode = group.back();
 
 
-            // dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
+            dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
                 /* This lambda is run in each thread */  
                 std::ostringstream logStream;
                 std::vector<std::string> dfsResult; 
@@ -3038,15 +3040,15 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
                     
                 std::lock_guard<std::mutex> lock(outputMutex);
                 std::cout << logStream.str();
-            // }); // end of dfsThreads.emplace_back
+            }); // end of dfsThreads.emplace_back
         }
     } // end groups loop
 
 
     // Wait for all DFS threads to complete
-    // for (auto& thread : dfsThreads) {
-    //     thread.join();
-    // }
+    for (auto& thread : dfsThreads) {
+        thread.join();
+    }
 
     // Clean up memory
     // delete T;
