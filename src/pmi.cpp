@@ -35,9 +35,15 @@
 #include <eigen3/Eigen/Dense>
 // #include <omp.h>
 #include <numeric>
+#include <fcntl.h>
 extern "C" {
 #include <bwa/bwa.h>
 }
+
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 using namespace boost::icl;
 using namespace mgsr;
@@ -1760,34 +1766,50 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
       auto newSeedVal = newSeed.value_or(0);
       if (oldVal && newVal) { // seed at same pos changed
         if (oldSeedVal && readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer -= 1;
+          // Case 1a/1b: Old seed in reads
+          jacNumer -= 1;  // min(1, old_read_freq) = 1
+          jacDenom -= readSeedCounts[oldSeedVal].first + readSeedCounts[oldSeedVal].second;  // max(1, old_read_freq) = old_read_freq
+          if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
+            // Case 1a: New seed also in reads
+            jacNumer += 1;  // min(1, new_read_freq) = 1
+            jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
+          } else {
+            // Case 1b: New seed not in reads
+            // No numerator change since min(1,0) = 0
+            jacDenom += 1;  // max(1,0) = 1
+          }
         } else {
-          //case 2: seed not in reads
-          jacDenom -= 1;
-        }
-        if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer += 1;
-        } else {
-          //case 2: seed not in reads
-          jacDenom += 1;
+          // Case 1c/1d: Old seed not in reads
+          // No numerator change needed since min(1,0) = 0
+          jacDenom -= 1;  // Remove max(1,0) = 1
+          if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
+            // Case 1c: New seed in reads
+            jacNumer += 1;  // min(1, new_read_freq) = 1
+            jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
+          } else {
+            // Case 1d: Neither seed in reads
+            jacDenom += 1;  // max(1,0) = 1
+          }
         }
       } else if (oldSeedVal && oldVal && !newVal) { // seed on to off
         if (readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer -= 1;
+          // Case 2a: Old seed in reads
+          jacNumer -= 1;  // min(1, old_read_freq) = 1
+          jacDenom -= readSeedCounts[oldSeedVal].first + readSeedCounts[oldSeedVal].second;  // max(1, old_read_freq) = old_read_freq
         } else {
-          //case 2: seed not in reads
-          jacDenom -= 1;
+          // Case 2b: Old seed not in reads
+          // No numerator change since min(1,0) = 0
+          jacDenom -= 1;  // max(1,0) = 1
         }
       } else if (newSeedVal && !oldVal && newVal) { // seed off to on
         if (readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer += 1;
+          // Case 3a: New seed in reads
+          jacNumer += 1;  // min(1, new_read_freq) = 1
+          jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
         } else {
-          //case 2: seed not in reads
-          jacDenom += 1;
+          // Case 3b: New seed not in reads
+          // No numerator change since min(1,0) = 0
+          jacDenom += 1;  // max(1,0) = 1
         }
       }
       float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
@@ -2504,6 +2526,7 @@ struct NodeMutationData {
 // Updates jacNumer and jacDenom
 // Updates placementScores
 void processNode(Node *parent, Node *current, PlacementObjects &objects,
+    PlacementResult &result,
     std::vector<std::pair<std::string, float>> &placementScores,
     NodeMutationData &nodeMutationData,
     ::capnp::List<SeedMutations>::Reader &seedIndex, 
@@ -2642,40 +2665,57 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
 
       if (oldVal && newVal) { // seed at same pos changed
         if (oldSeedVal && readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer -= 1;
+          // Case 1a/1b: Old seed in reads
+          jacNumer -= 1;  // min(1, old_read_freq) = 1
+          jacDenom -= readSeedCounts[oldSeedVal].first + readSeedCounts[oldSeedVal].second;  // max(1, old_read_freq) = old_read_freq
+          if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
+            // Case 1a: New seed also in reads
+            jacNumer += 1;  // min(1, new_read_freq) = 1
+            jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
+          } else {
+            // Case 1b: New seed not in reads
+            // No numerator change since min(1,0) = 0
+            jacDenom += 1;  // max(1,0) = 1
+          }
         } else {
-          //case 2: seed not in reads
-          jacDenom -= 1;
-        }
-        if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer += 1;
-        } else {
-          //case 2: seed not in reads
-          jacDenom += 1;
+          // Case 1c/1d: Old seed not in reads
+          // No numerator change  since min(1,0) = 0
+          jacDenom -= 1;  // Remove max(1,0) = 1
+          if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
+            // Case 1c: New seed in reads
+            jacNumer += 1;  // min(1, new_read_freq) = 1
+            jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
+          } else {
+            // Case 1d: Neither seed in reads
+            jacDenom += 1;  // max(1,0) = 1
+          }
         }
       } else if (oldSeedVal && oldVal && !newVal) { // seed on to off
         if (readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer -= 1;
+          // Case 2a: Old seed in reads
+          jacNumer -= 1;  // min(1, old_read_freq) = 1
+          jacDenom -= readSeedCounts[oldSeedVal].first + readSeedCounts[oldSeedVal].second;  // max(1, old_read_freq) = old_read_freq
         } else {
-          //case 2: seed not in reads
-          jacDenom -= 1;
+          // Case 2b: Old seed not in reads
+          // No numerator change since min(1,0) = 0
+          jacDenom -= 1;  // max(1,0) = 1
         }
       } else if (newSeedVal && !oldVal && newVal) { // seed off to on
         if (readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
-          //case 1: seed is in reads
-          jacNumer += 1;
+          // Case 3a: New seed in reads
+          jacNumer += 1;  // min(1, new_read_freq) = 1
+          jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
         } else {
-          //case 2: seed not in reads
-          jacDenom += 1;
+          // Case 3b: New seed not in reads
+          // No numerator change since min(1,0) = 0
+          jacDenom += 1;  // max(1,0) = 1
         }
       }
   } // end seed mutations loop
 
   // Finalize jaccard for this node
-  float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
+      float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
+  result.all_scores.push_back(jac);
   placementScores.emplace_back(std::make_pair(current->identifier, jac));
  }
 
@@ -2728,6 +2768,7 @@ void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, P
 void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node* stopNode,
                          const std::vector<Node*>& group,
                          PlacementObjects& objects,
+                         PlacementResult &result,
                          std::vector<std::pair<std::string, float>> &placementScores,
                          ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Index,
                          ::capnp::List<GapMutations>::Reader perNodeGapMutations_Index,
@@ -2738,10 +2779,10 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
   // std::cout << "firstcall: " << firstCall << std::endl;
     std::string groupName = group.front()->identifier + " to " + group.back()->identifier;
 
-    std::cout << "Group: " << groupName << "   ------- Processing node: " << current->identifier << std::endl;
+    // std::cout << "Group: " << groupName << "   ------- Processing node: " << current->identifier << std::endl;
 
     if (current == stopNode) {
-        std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
+        // std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
 
         bool testing = true;
 
@@ -2749,7 +2790,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
     }
 
     if (stopReached) {
-      std::cout << "Exiting because stopNode reached" << groupName << "\n";
+      // std::cout << "Exiting because stopNode reached" << groupName << "\n";
         return;
     }
 
@@ -2776,6 +2817,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
         // TODO this applies mutations and scores nodes,
         // but probably don't need the scoring part if we're descending from root->startNode
         processNode(parent, currNode, objects,
+            result,
             placementScores,
             nodeMutationData, 
             perNodeSeedMutations_Index,
@@ -2799,6 +2841,7 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
     } else {
         // in a recursive call, apply mutations from parent -> current
         processNode(parent, current, objects,
+            result,
             placementScores,
             nodeMutationData, 
             perNodeSeedMutations_Index,
@@ -2812,17 +2855,17 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
 
     if (current == stopNode) {
         stopReached = true;
-        std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
+        // std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
         return;
     }
 
     /* Recursive step */
     searchCount++;
     for (Node* child : current->children) {
-      performRecursiveDFS(false, stopReached, child, stopNode, group, objects, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
+      performRecursiveDFS(false, stopReached, child, stopNode, group, objects, result, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
     
       if (stopReached) {
-        std::cout << "Exiting because stopNode reached from recursive loop" << groupName << "\n";
+        // std::cout << "Exiting because stopNode reached from recursive loop" << groupName << "\n";
         return;
       }
     
@@ -2836,8 +2879,8 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
     // backtrackNode(T, current, nodeMutationData, objects);
 
     if (current == group.front() && searchCount < group.size()) { // 
-        std::cout << "Group: " << groupName << "   ------- restarting DFS at node: " << group[searchCount]->identifier << "\n";
-        performRecursiveDFS(true, stopReached, group[searchCount], stopNode, group, objects, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
+        // std::cout << "Group: " << groupName << "   ------- restarting DFS at node: " << group[searchCount]->identifier << "\n";
+        performRecursiveDFS(true, stopReached, group[searchCount], stopNode, group, objects, result, placementScores, perNodeSeedMutations_Index, perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
     }
 
     else {
@@ -2845,218 +2888,35 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* current, Node*
     }
 }
 
+void pmi::genotype(std::string prefix, std::string refFileName, std::string bestMatchSequence, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, seed_annotated_tree::mutationMatrices &mutMat) {
 
-void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode, const bool& save_jaccard, const bool& show_time)
-{
-    /* Sets up structures used in DFS */
-    PlacementObjects prePlacementObjects(T);
+      createMplpBcf(
+        prefix,
+        refFileName,
+        bestMatchSequence,
+        bamFileName,
+        mpileupFileName
+      );
 
-    blockExists_t rootBlockExists = prePlacementObjects.data.blockExists;
-    blockStrand_t rootBlockStrand = prePlacementObjects.data.blockStrand;
+      createVcfWithMutationMatrices(
+        prefix,
+        mpileupFileName,
+        mutMat,
+        vcfFileName,
+        0.0011
+      );
+}
 
-    int32_t k = index.getK();
-    int32_t s = index.getS();
-    int32_t t = index.getT();
-    bool open = index.getOpen();
-    int32_t l = index.getL();
-    
-    /* Process read seeds */
-    std::vector<std::string> readSequences;
-    std::vector<std::string> readQuals;
-    std::vector<std::string> readNames;
-    std::vector<std::vector<seed>> readSeeds;
-    std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
+void pmi::align(std::string aligner, std::string refFileName, std::string bestMatchSequence, 
+     std::vector<std::vector<seed>> readSeeds,                 
+     std::vector<std::string> readSequences,             
+     std::vector<std::string> readQuals,                 
+     std::vector<std::string> readNames,                 
+     std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions,        
+     std::string samFileName, std::string bamFileName,
+     int32_t k, bool pairedEndReads, std::string reads1Path, std::string reads2Path) {
 
-    seedsFromFastq(k, s, t, open, l, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
-
-    bool pairedEndReads = reads2Path.size();
-
-    //  Step 1: Compute the DFS order
-    std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
-
-    // Step 2: Print the DFS order
-    // printDFSOrder(dfsOrder);
-
-    // Step 4: Set the number of groups manually
-    int numThreads = 5; // Manually specify the number of groups
-
-    // Step 5: Split DFS order into groups based on number of threads
-    std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);
-
-    // Step 6: Perform grouped DFS
-    std::cout << "\nDFS Traversals for Each Group:\n";
-    std::vector<std::thread> dfsThreads;
-    std::mutex outputMutex;
-
-    tbb::concurrent_vector<std::pair<Node *, float>> bestNodes;
-
-    std::cout << "ABOUT TO LOOP" << std::endl;
-
-    ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
-    ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader = index.getPerNodeSeedMutations();
-
-    // Perform DFS for each group in a separate thread
-    for (const auto& group : groups) {
-
-        // Create new objects for DFS in each group
-        PlacementObjects groupPlacementObjects(T);
-
-        if (!group.empty()) {
-            Node* startNode = group.front();
-            Node* stoppingNode = group.back();
-
-
-            //dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
-                /* This lambda is run in each thread */  
-                std::ostringstream logStream;
-                std::vector<std::string> dfsResult; 
-                std::vector<std::pair<std::string, float>> placementScores;
-                std::string bestNodeId;
-                Node *bestNode;
-                Node *curr;
-
-                int64_t jacDenom = 0;
-                int64_t jacNumer = 0;
-
-                if (!refNode.empty()) {
-                  // non-standard case when --ref is provided (skips placement)
-                  bestNodeId = refNode;
-                  bestNode = T->allNodes[refNode];
-                  curr = bestNode;
-                } else {
-                  // standard placement case
-                  for (const auto& count : readSeedCounts) {
-                    jacDenom += count.second.first + count.second.second;
-                  }
-
-                  std::cout << "Thread started for group starting at: " 
-                     << startNode->identifier << " to " 
-                      << stoppingNode->identifier << std::endl;
-
-                  int64_t searchCount = 0;
-                  bool stopReached = false;
-                  /* Main placement DFS */
-                  performRecursiveDFS(
-                      true, stopReached, startNode, stoppingNode, group,
-                      groupPlacementObjects,
-                      placementScores,
-                      perNodeSeedMutations_Reader, perNodeGapMutations_Reader,
-                      k, s, t, open, l, T,
-                      readSeedCounts,
-                      jacNumer, jacDenom,
-                      searchCount, rootBlockExists, rootBlockStrand
-                  );
-
-
-                  std::cout << "Thread finished for group starting at: " 
-                    << startNode->identifier << " to " 
-                    << stoppingNode->identifier << std::endl;
-
-                  std::cout << "placementScores size: " << placementScores.size() << std::endl;
-
-                  std::sort(placementScores.begin(), placementScores.end(), [](auto &left, auto &right) {
-                    return left.second > right.second;
-                  });
-
-                  std::cout << "best node id: " << placementScores[0].first << std::endl;
-                  bestNodeId = placementScores[0].first;
-                  bestNode = T->allNodes[bestNodeId];
-                  curr = bestNode;
-
-                  // print best node and placementscore 
-                  std::cout << "best node for group " << startNode->identifier << " to " << stoppingNode->identifier << ": " << bestNodeId << std::endl;
-                  std::cout << "best node score: " << placementScores[0].second << std::endl;
-                  bestNodes.push_back(std::make_pair(bestNode, placementScores[0].second));
-
-                  // DEBUG PRINT
-                  std::cout << "best node for group " << startNode->identifier << " to " << stoppingNode->identifier << ": " << bestNodeId << std::endl;
-
-                }
-                    
-                std::lock_guard<std::mutex> lock(outputMutex);
-                std::cout << logStream.str();
-            //}); // end of dfsThreads.emplace_back
-        }
-    } // end groups loop
-
-
-    // Wait for all DFS threads to complete
-    // for (auto& thread : dfsThreads) {
-    //     thread.join();
-    // }
-
-    // Clean up memory
-    // delete T;
-
-    std::cout << "Finished processing groups." << std::endl;
-
-    std::cout << "bestNodes size: " << bestNodes.size() << std::endl;
-
-    // Take highest scoring node
-    std::sort(bestNodes.begin(), bestNodes.end(), [](auto &left, auto &right) {
-      return left.second > right.second;
-    });
-
-    Node *finalBestNode = bestNodes[0].first;
-
-    std::vector<Node *> rpath;
-    while (finalBestNode != nullptr) {
-      rpath.push_back(finalBestNode);
-      finalBestNode = finalBestNode->parent;
-    }
-    std::reverse(rpath.begin(), rpath.end());
-    
-    finalBestNode = rpath.back();
-
-    PlacementObjects bestNodeObjects(T);
-    auto& [bestNode_data, bestNode_globalCoords, bestNode_navigator, bestNode_BlockSizes, bestNode_blockRanges, bestNode_inverseBlockIds, bestNode_gapMap, bestNode_BlocksToSeeds, bestNode_scalarCoordToBlockId, bestNode_onSeedsString, bestNode_onSeedsHash, bestNode_dfsIndex, bestNode_dfsIndexes, bestNode_T_ignore] = bestNodeObjects;
-
-    getBestNodeSeeds(rpath, bestNode_data, bestNode_onSeedsString, bestNode_onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, bestNode_globalCoords, bestNode_navigator, bestNode_scalarCoordToBlockId, bestNode_BlocksToSeeds, bestNode_BlockSizes, bestNode_blockRanges, bestNode_gapMap, bestNode_inverseBlockIds, bestNode_dfsIndexes);
-    
-    if (refNode.empty()) {
-      std::cout << "best nods: " << bestNodes[0].first->identifier << std::endl;
-      std::cout << "best node score: " << bestNodes[0].second << std::endl;
-    } else {
-      std::cout << "specified reference node: " << refNode << std::endl;
-    }
-    // Here bestNode_onSeedsHash contains the best node's seeds
-
-    std::string bestMatchSequence = "";
-    std::string gappedSeq = T->getStringFromReference(finalBestNode->identifier, true);
-    std::vector<int32_t> degap;
-    for (int32_t i = 0; i < gappedSeq.size(); i ++) {
-        char &c = gappedSeq[i];
-        degap.push_back(bestMatchSequence.size());
-        if (c != '-') {
-            bestMatchSequence += c;
-        }
-    }
-
-
-    std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
-    for(int i = 0; i < bestNode_onSeedsHash.size(); i++){
-      if(bestNode_onSeedsHash[i].has_value()){
-        size_t seed = bestNode_onSeedsHash[i].value().hash;
-        bool reversed = bestNode_onSeedsHash[i].value().isReverse;
-        int pos = degap[i];
-
-        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
-            std::vector<uint32_t> a;
-            std::vector<uint32_t> b;
-            seedToRefPositions[seed] = std::make_pair(a,b);
-        }
-
-        if(reversed){
-          seedToRefPositions[seed].second.push_back(pos);
-        }else{
-          seedToRefPositions[seed].first.push_back(pos);
-        }
-        
-      }
-    }
-
-    //std::string refFileName = "REFERENCE";
-    //Print out Reference
+   //Print out Reference
     if (refFileName.size() == 0) {
       refFileName = "panmap.reference.fa";
     }
@@ -3076,9 +2936,9 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
 
     if (aligner == "minimap2") {
       double time = time_stamp();
-      if(show_time){
-        std::cerr << "Placement time: " << time << "\n";
-      }
+      // if(show_time){
+      //   std::cerr << "Placement time: " << time << "\n";
+      // }
       //Create SAM
       std::vector<char *> samAlignments;
       std::string samHeader;
@@ -3098,10 +2958,7 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           samHeader                  
       );
 
-      time = time_stamp();
-      if(show_time){
-        std::cerr << "Alignment time: " << time << "\n";
-      }
+      
 
       //Convert to BAM
       sam_hdr_t *header;
@@ -3115,53 +2972,8 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
           header,
           bamRecords
       );
-
-      createMplpBcf(
-        prefix,
-        refFileName,
-        bestMatchSequence,
-        bamFileName,
-        mpileupFileName
-      );
-
-      createVcfWithMutationMatrices(
-        prefix,
-        mpileupFileName,
-        mutMat,
-        vcfFileName,
-        0.0011
-      );
-
-      time = time_stamp();
-      if(show_time){
-        std::cerr << "Genotyping time: " << time << "\n";
-      }
-
-      // //std::string mpileupFileName = "MPILEUP";
-      // //Convert to Mplp
-      // char *mplpString;
-
-      // createMplp(
-      //     bestMatchSequence,
-      //     header,
-      //     bamRecords,
-      //     samAlignments.size(),
-      //     mpileupFileName,
-
-      //     mplpString
-      // );
-
-      // //std::string vcfFileName = "VCF";
-      // //Convert to VCF
-      // createVcf(
-      //     mplpString,
-      //     mutMat,
-      //     vcfFileName,
-      //     false
-      // );
     } else {
-      // align with bwa aln
-      std::cout << "Preparing arguments for bwa..." << std::endl;
+      std::cout << "Aligning with bwa..." << std::endl;
 
       std::vector<std::string> idx_args = {"bwa", "index", refFileName};
       std::vector<std::string> aln_args1;
@@ -3203,6 +3015,544 @@ void pmi::place(Tree *T, Index::Reader &index, const std::string &reads1Path, co
     }
 }
 
+void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode, const bool& save_jaccard, const bool& show_time)
+{
+
+    /* Sets up structures used in DFS */
+    PlacementObjects prePlacementObjects(T);
+
+    blockExists_t rootBlockExists = prePlacementObjects.data.blockExists;
+    blockStrand_t rootBlockStrand = prePlacementObjects.data.blockStrand;
+
+    int32_t k = index.getK();
+    int32_t s = index.getS();
+    int32_t t = index.getT();
+    bool open = index.getOpen();
+    int32_t l = index.getL();
+    
+    result.k = k;
+    result.s = s;
+    
+    /* Process read seeds */
+    std::vector<std::string> readSequences;
+    std::vector<std::string> readQuals;
+    std::vector<std::string> readNames;
+    std::vector<std::vector<seed>> readSeeds;
+    std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
+
+    seedsFromFastq(k, s, t, open, l, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
+
+    bool pairedEndReads = reads2Path.size();
+
+    //  Step 1: Compute the DFS order
+    std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
+
+    // Step 2: Print the DFS order
+    // printDFSOrder(dfsOrder);
+
+    // Step 4: Set the number of groups manually
+    int numThreads = 1; // Manually specify the number of groups
+
+    // Step 5: Split DFS order into groups based on number of threads
+    std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);
+
+    std::vector<std::thread> dfsThreads;
+    std::mutex outputMutex;
+
+    tbb::concurrent_vector<std::pair<Node *, float>> bestNodes;
+
+
+    ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
+    ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader = index.getPerNodeSeedMutations();
+
+    // Perform DFS for each group in a separate thread
+    for (const auto& group : groups) {
+
+        // Create new objects for DFS in each group
+        PlacementObjects groupPlacementObjects(T);
+
+        if (!group.empty()) {
+            Node* startNode = group.front();
+            Node* stoppingNode = group.back();
+
+
+            //dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
+                /* This lambda is run in each thread */  
+                std::ostringstream logStream;
+                std::vector<std::string> dfsResult; 
+                std::vector<std::pair<std::string, float>> placementScores;
+                std::string bestNodeId;
+                Node *bestNode;
+                Node *curr;
+
+                int64_t jacDenom = 0;
+                int64_t jacNumer = 0;
+
+                if (!refNode.empty()) {
+                  // non-standard case when --ref is provided (skips placement)
+                  bestNodeId = refNode;
+                  bestNode = T->allNodes[refNode];
+                  curr = bestNode;
+                } else {
+                  // standard placement case
+
+                  int64_t searchCount = 0;
+                  bool stopReached = false;
+                  /* Main placement DFS */
+                  performRecursiveDFS(
+                      true, stopReached, startNode, stoppingNode, group,
+                      groupPlacementObjects,
+                      result,
+                      placementScores,
+                      perNodeSeedMutations_Reader, perNodeGapMutations_Reader,
+                      k, s, t, open, l, T,
+                      readSeedCounts,
+                      jacNumer, jacDenom,
+                      searchCount, rootBlockExists, rootBlockStrand
+                  );
+
+                  std::sort(placementScores.begin(), placementScores.end(), [](auto &left, auto &right) {
+                    return left.second > right.second;
+                  });
+
+                  bestNodeId = placementScores[0].first;
+                  bestNode = T->allNodes[bestNodeId];
+                  curr = bestNode;
+
+                  bestNodes.push_back(std::make_pair(bestNode, placementScores[0].second));
+
+                }
+                    
+                std::lock_guard<std::mutex> lock(outputMutex);
+                std::cout << logStream.str();
+            //}); // end of dfsThreads.emplace_back
+        }
+    } // end groups loop
+
+
+    // Wait for all DFS threads to complete
+    // for (auto& thread : dfsThreads) {
+    //     thread.join();
+    // }
+
+    // Clean up memory
+    // delete T;
+
+
+    // Take highest scoring node
+    std::sort(bestNodes.begin(), bestNodes.end(), [](auto &left, auto &right) {
+      return left.second > right.second;
+    });
+
+    Node *finalBestNode = bestNodes[0].first;
+
+    std::vector<Node *> rpath;
+    while (finalBestNode != nullptr) {
+      rpath.push_back(finalBestNode);
+      finalBestNode = finalBestNode->parent;
+    }
+    std::reverse(rpath.begin(), rpath.end());
+    
+    finalBestNode = rpath.back();
+
+    PlacementObjects bestNodeObjects(T);
+    auto& [bestNode_data, bestNode_globalCoords, bestNode_navigator, bestNode_BlockSizes, bestNode_blockRanges, bestNode_inverseBlockIds, bestNode_gapMap, bestNode_BlocksToSeeds, bestNode_scalarCoordToBlockId, bestNode_onSeedsString, bestNode_onSeedsHash, bestNode_dfsIndex, bestNode_dfsIndexes, bestNode_T_ignore] = bestNodeObjects;
+
+    getBestNodeSeeds(rpath, bestNode_data, bestNode_onSeedsString, bestNode_onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, bestNode_globalCoords, bestNode_navigator, bestNode_scalarCoordToBlockId, bestNode_BlocksToSeeds, bestNode_BlockSizes, bestNode_blockRanges, bestNode_gapMap, bestNode_inverseBlockIds, bestNode_dfsIndexes);
+    
+    if (refNode.empty()) {
+      result.best_node_id = finalBestNode->identifier;
+      result.best_node_score = bestNodes[0].second;
+    } else {
+      std::cout << "specified reference node: " << refNode << std::endl;
+    }
+    // Here bestNode_onSeedsHash contains the best node's seeds
+
+    std::string bestMatchSequence = "";
+    std::string gappedSeq = T->getStringFromReference(finalBestNode->identifier, true);
+    std::vector<int32_t> degap;
+    for (int32_t i = 0; i < gappedSeq.size(); i ++) {
+        char &c = gappedSeq[i];
+        degap.push_back(bestMatchSequence.size());
+        if (c != '-') {
+            bestMatchSequence += c;
+        }
+    }
+
+
+    std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
+    for(int i = 0; i < bestNode_onSeedsHash.size(); i++){
+      if(bestNode_onSeedsHash[i].has_value()){
+        size_t seed = bestNode_onSeedsHash[i].value().hash;
+        bool reversed = bestNode_onSeedsHash[i].value().isReverse;
+        int pos = degap[i];
+
+        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
+            std::vector<uint32_t> a;
+            std::vector<uint32_t> b;
+            seedToRefPositions[seed] = std::make_pair(a,b);
+        }
+
+        if(reversed){
+          seedToRefPositions[seed].second.push_back(pos);
+        }else{
+          seedToRefPositions[seed].first.push_back(pos);
+        }
+        
+      }
+    }
+
+    refFileName = prefix + ".consensus.fa";
+    samFileName = prefix + ".sam";
+    bamFileName = prefix + ".bam";
+    mpileupFileName = prefix + ".mpileup";
+    vcfFileName = prefix + ".vcf";
+
+    // temp
+    return;
+
+    pmi::align(aligner, refFileName, bestMatchSequence, readSeeds, readSequences, readQuals, readNames, seedToRefPositions, samFileName, bamFileName, k, pairedEndReads, reads1Path, reads2Path);
+
+    pmi::genotype(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, vcfFileName, mutMat);
+}
+
+
+// Parse cs tag to count variants
+int count_variants_from_cs(const std::string& cs_str) {
+    int var_count = 0;
+    size_t pos = 0;
+    
+    while (pos < cs_str.length()) {
+        char op = cs_str[pos];
+        pos++; // move past operator
+        
+        switch(op) {
+            case '=':  // match sequence
+                // skip over the matching sequence
+                while (pos < cs_str.length() && isalpha(cs_str[pos])) pos++;
+                break;
+                
+            case '*':  // substitution
+                if (pos + 1 < cs_str.length()) {
+                    var_count++;
+                    pos += 2;  // skip the two bases
+                }
+                break;
+                
+            case '+':  // insertion
+            case '-':  // deletion
+                var_count++;
+                // skip over the inserted/deleted sequence
+                while (pos < cs_str.length() && isalpha(cs_str[pos])) pos++;
+                break;
+                
+            case '~':  // intron
+                // skip over intron annotation
+                while (pos < cs_str.length() && cs_str[pos] != '=' && 
+                      cs_str[pos] != '*' && cs_str[pos] != '+' && 
+                      cs_str[pos] != '-' && cs_str[pos] != '~') pos++;
+                break;
+        }
+    }
+    return var_count;
+}
+
+std::tuple<int, int, int, bool, bool, bool, bool, std::string> getBranchDistance(panmanUtils::Tree* T, Node* node1, Node* node2) {
+    // Check if nodes exist
+    if (node1->identifier == node2->identifier) {
+        return std::make_tuple(0, 0, 0, true, true, true, true, "");
+    }
+    std::cout << "Checking if nodes exist: " << node1->identifier << " and " << node2->identifier << std::endl;
+    if (T->allNodes.find(node1->identifier) == T->allNodes.end()) {
+        std::cout << "Node not found: " << node1->identifier << std::endl;
+        return std::make_tuple(-1, -1, -1, false, false, false, false, ""); // Return -1 if either node doesn't exist
+    }
+    if (T->allNodes.find(node2->identifier) == T->allNodes.end()) {
+        std::cout << "Node not found: " << node2->identifier << std::endl;
+        return std::make_tuple(-1, -1, -1, false, false, false, false, ""); // Return -1 if either node doesn't exist
+    }
+
+    // Get paths from root to both nodes
+    std::vector<Node*> path1, path2;
+    Node* current = node1;
+    
+    // Build path from node1 to root
+    while (current->identifier != T->root->identifier) {
+        // Only add node if it has mutations
+        if (!current->blockMutation.empty() || !current->nucMutation.empty()) {
+            path1.push_back(current);
+        }
+        current = T->allNodes[current->parent->identifier];
+    }
+    
+    // Build path from node2 to root
+    current = node2;
+    while (current->identifier != T->root->identifier) {
+        // Only add node if it has mutations
+        if (!current->blockMutation.empty() || !current->nucMutation.empty()) {
+            path2.push_back(current);
+        }
+        current = T->allNodes[current->parent->identifier];
+    }
+    
+    // Find lowest common ancestor
+    int i = path1.size() - 1;
+    int j = path2.size() - 1;
+    while (i >= 0 && j >= 0 && path1[i]->identifier == path2[j]->identifier) {
+        i--;
+        j--;
+    }
+    
+    // Calculate total branches = branches from node1 to LCA + branches from node2 to LCA
+    int branchDistance = (i + 1) + (j + 1);
+
+    // Calculate mutation distance by counting size of blockMutation
+    int mutationDistance = 0;
+    for (int k = 0; k <= i; ++k) {
+        mutationDistance += path1[k]->blockMutation.size();
+        mutationDistance += path1[k]->nucMutation.size();
+    }
+    for (int k = 0; k <= j; ++k) {
+        mutationDistance += path2[k]->blockMutation.size();
+        mutationDistance += path2[k]->nucMutation.size();
+    }
+
+    int minimap_distance = 0;
+    std::string placement_fasta = T->getStringFromReference(node1->identifier, false, true);
+    std::string true_fasta = T->getStringFromReference(node2->identifier, false, true);
+
+    // Create tmp directory if it doesn't exist
+    std::string tmp_dir = "/private/groups/corbettlab/alex/tomG/tmp";
+    struct stat st = {0};
+    if (stat(tmp_dir.c_str(), &st) == -1) {
+        if (mkdir(tmp_dir.c_str(), 0755) == -1) {
+            throw std::runtime_error("Failed to create tmp directory: " + tmp_dir);
+        }
+    }
+
+    // Create temporary files with fixed paths
+    std::string temp_placement = tmp_dir + "/placement_" + std::to_string(rand()) + ".fa";
+    std::string temp_true = tmp_dir + "/true_" + std::to_string(rand()) + ".fa";
+    std::string paf_file = tmp_dir + "/aln_" + std::to_string(rand()) + ".paf";
+    std::string sorted_paf = tmp_dir + "/sorted_" + std::to_string(rand()) + ".paf";
+    
+    // Write sequences to temporary files
+    std::ofstream placement_file(temp_placement);
+    std::ofstream true_file(temp_true);
+    std::string paths = temp_placement + "\t" + temp_true + "\t" + paf_file + "\t" + sorted_paf + "\t" + temp_placement + "_variants.txt";
+    
+    if (!placement_file.is_open() || !true_file.is_open()) {
+        throw std::runtime_error("Failed to open temporary files for writing");
+    }
+
+    // Trim N=100 bases from both ends
+    const size_t N = 100;  // Number of bases to trim from each end
+    auto trim_ends = [N](const std::string& seq) {
+        if (seq.length() <= 2 * N) {
+            return std::string();  // Return empty string if sequence is too short
+        }
+        return seq.substr(N, seq.length() - 2 * N);
+    };
+
+    placement_fasta = trim_ends(placement_fasta);
+    true_fasta = trim_ends(true_fasta);
+
+    // Skip alignment if either sequence is empty after trimming
+    if (placement_fasta.empty() || true_fasta.empty()) {
+        std::cout << "Empty sequence after trimming" << std::endl;
+        return std::make_tuple(branchDistance, mutationDistance, -1, false, false, false, false, "");
+    }
+
+    placement_file << ">placement\n" << placement_fasta << "\n";
+    true_file << ">true\n" << true_fasta << "\n";
+    
+    placement_file.close();
+    true_file.close();
+
+    std::string cmd = "cd /private/groups/corbettlab/alex/tomG && minimap2 -cx asm20 -N 0 --cs=long " + 
+                     temp_true + " " + temp_placement + " > " + paf_file + " 2> /dev/null";
+    int ret = system(cmd.c_str());
+    
+    bool minimap_succeeded = true;
+    if (ret != 0) {
+        minimap_succeeded = false;
+        return std::make_tuple(branchDistance, mutationDistance, -1, false, false, false, false, paths);
+    }
+
+    // Read PAF file and parse cs tag
+    std::ifstream paf_in(paf_file);
+    std::string line;
+    int total_variants = 0;
+    bool has_alignment = false;
+
+    while (std::getline(paf_in, line)) {
+        std::istringstream iss(line);
+        std::string token;
+        std::vector<std::string> fields;
+        
+        // Split line into fields
+        while (iss >> token) {
+            fields.push_back(token);
+        }
+        
+        // Look for cs tag (should be after the 12th field)
+        if (fields.size() >= 13) {
+            has_alignment = true;
+            for (size_t i = 12; i < fields.size(); i++) {
+                if (fields[i].substr(0, 5) == "cs:Z:") {
+                    total_variants += count_variants_from_cs(fields[i].substr(5));
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (!has_alignment) {
+        return std::make_tuple(branchDistance, mutationDistance, -1, minimap_succeeded, true, false, false, paths);
+    }
+
+    return std::make_tuple(branchDistance, mutationDistance, total_variants, minimap_succeeded, true, true, true, paths);
+}
+
+
+std::unique_ptr<::capnp::PackedFdMessageReader> readCapnp2(std::string &filename) {
+  int fd = open(filename.c_str(), O_RDONLY);
+  ::capnp::ReaderOptions options = {(uint64_t) -1, 64};
+  auto message = std::make_unique<::capnp::PackedFdMessageReader>(fd, options);
+  return message;
+}
+void pmi::evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_annotated_tree::mutationMatrices &mutMat, std::string aligner, std::string species, std::chrono::high_resolution_clock::time_point main_start, std::string default_index_path, std::string default_mutmat_path)
+{
+    // Load input_tsv
+    // Fields:
+    // simulation_id	mutation_count	read_count	default_time	default_mem	true_node_genome_length	default_ref{for rsv only}	true_node_id
+
+    std::ifstream file(input_tsv);
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open file: " + input_tsv);
+    }
+
+    std::vector<std::vector<std::string>> data;
+    std::string line;
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        std::string field;
+        std::vector<std::string> row;
+        while (std::getline(ss, field, '\t')) {
+            row.push_back(field);
+        }
+        if (row.size() < 7) {
+            std::cout << "Skipping line: " << line << std::endl;
+            continue;
+        }
+        data.push_back(row);
+    }
+    file.close();
+
+    std::vector<std::string> metrics = { "jaccard"};
+    
+    // For each simulation, run placement with each metric, grouping the values for each simulation into (read_count & mutation_count) groups
+    // include all data
+    std::unordered_map<std::string, std::vector<std::vector<std::variant<std::string, int>>>> group_map;  
+    for (const auto& row : data) {
+        std::string simulation_id = row[0];
+        int mutation_count = std::stoi(row[2]);
+        int read_count = std::stoi(row[1]);
+        std::string default_time = row[3];
+        std::string default_mem = row[4];
+        int true_node_genome_length = std::stoi(row[5]);
+        std::string default_ref = "";
+        std::string true_node_id = "";
+        if (species == "rsv") { 
+            default_ref = row[6];
+            true_node_id = row[7];
+        } else {
+            true_node_id = row[6];
+        }
+        std::vector<std::variant<std::string, int>> this_row = {simulation_id, read_count, mutation_count, default_time, default_mem, true_node_genome_length, default_ref, true_node_id};
+        std::string group_key = std::to_string(read_count) + "_" + std::to_string(mutation_count);
+        group_map[group_key].push_back(this_row);
+
+    }
+    bool init = true;
+    // For each group, run placement with each metric
+    for (const auto& [group_key, simulations] : group_map) {
+        for (const auto& metric : metrics) {
+            std::cout << "Group: " << group_key << ", Metric: " << metric << std::endl;
+            for (const auto& simulation_data : simulations) {
+                // std::cout << "Simulation: {\n";
+             
+                auto start = std::chrono::high_resolution_clock::now();
+                
+                // Load mutation matrices
+                std::ifstream mutmat_file(default_mutmat_path);
+                seed_annotated_tree::fillMutationMatricesFromFile(mutMat, mutmat_file);
+                // Load index
+                auto inMessage = readCapnp2(default_index_path);
+                Index::Reader dummy_index_input = inMessage->getRoot<Index>();
+
+                int read_count = std::get<int>(simulation_data[1]);
+                int mutation_count = std::get<int>(simulation_data[2]);
+                std::string simulation_id = std::get<std::string>(simulation_data[0]);
+                std::string default_time = std::get<std::string>(simulation_data[3]);
+                std::string default_mem = std::get<std::string>(simulation_data[4]);
+                int true_node_genome_length = std::get<int>(simulation_data[5]);
+                std::string default_ref = "";
+                std::string true_node_id = "";
+                if (species == "rsv") {
+                    default_ref = std::get<std::string>(simulation_data[6]);
+                    true_node_id = std::get<std::string>(simulation_data[7]);
+                } else {
+                    true_node_id = std::get<std::string>(simulation_data[7]);
+                }
+
+                // std::cout << "Simulation: " << simulation_id << ", True Node: " << true_node_id << std::endl;
+                PlacementResult result = {
+                    simulation_id,
+                    true_node_id,
+                    "", // unassigned placement node
+                    {}, // unassigned scores
+                    {}, // all scores
+                };
+                std::string species_label = (species == "rsv") ? "rsv_4000" : (species == "tb") ? "tb_400" : "sars_20000";
+                std::string reads1_path = "/private/groups/corbettlab/alex/panmap-testing-docker/LATEST_RESULTS/simulated_data/sim_generaltest_" + species_label + "_" + simulation_id + "_R1.fastq";
+                std::string reads2_path = "/private/groups/corbettlab/alex/panmap-testing-docker/LATEST_RESULTS/simulated_data/sim_generaltest_" + species_label + "_" + simulation_id + "_R2.fastq";
+
+                pmi::place(result, T, index, reads1_path, reads2_path, mutMat, "evaluation/result_" + simulation_id, "", "", "", "", "", aligner, "", false, false);
+
+                auto end = std::chrono::high_resolution_clock::now();
+
+                std::chrono::duration<double> elapsed = end - (init ? main_start : start);
+                result.elapsed_time_s = elapsed.count();
+                init = false;
+
+                // std::cout << "[result]: " << std::endl;
+                // std::cout << "   true_node: " << result.true_node_id << std::endl;
+                // std::cout << "   best_node: " << result.best_node_id << std::endl;
+                // std::cout << "   best_node_score: " << result.best_node_score << std::endl;
+                // std::cout << "   all_scores size: " << result.all_scores.size() << std::endl;
+                // std::cout << "   elapsed_time_s: " << result.elapsed_time_s << std::endl;
+
+                // get phylogenetic distance to best node
+                Node* best_node = T->allNodes[result.best_node_id];
+                Node* true_node = T->allNodes[result.true_node_id];
+                std::tuple<int, int, int, bool, bool, bool, bool, std::string> distances = getBranchDistance(T, best_node, true_node);
+                int branch_distance = std::get<0>(distances);
+                int mutation_distance = std::get<1>(distances);
+                int minimap_distance = std::get<2>(distances);
+                bool minimap_succeeded = std::get<3>(distances);
+                bool sort_succeeded = std::get<4>(distances);
+                bool paftools_succeeded = std::get<5>(distances);
+                bool paftools_covered = std::get<6>(distances);
+                std::string paths = std::get<7>(distances);
+                // std::cout << "   branches_from_true_node: " << phylo_dist << std::endl;
+
+                std::string tsv_line = simulation_id + "\t" + true_node->identifier + "\t" + best_node->identifier + "\t" + std::to_string(branch_distance) + "\t" + std::to_string(mutation_distance) + "\t" + std::to_string(minimap_distance) + "\t" + std::to_string(result.best_node_score) + "\t" + std::to_string(result.elapsed_time_s) + "\t" + metric + "\t" + group_key + "\t" + std::to_string(minimap_succeeded) + "\t" + std::to_string(sort_succeeded) + "\t" + std::to_string(paftools_succeeded) + "\t" + std::to_string(paftools_covered) + "\t" + paths;
+                std::cerr << tsv_line << std::endl;
+            }
+        }
+    }
+}
 // // Function to compute the DFS order of nodes starting from the root
 // std::vector<Node*> computeDFSOrder(Node* root) {
 //     std::vector<Node*> dfsOrder;
