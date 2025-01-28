@@ -433,8 +433,8 @@ void createVcfWithMutationMatrices(
   int stdoutFd = dup(fileno(stdout));
   dup2(fileno(tempFile), fileno(stdout));
   optind = 1;
-  const char *mpileup_args[] = {"call", "--ploidy", "1", "-c", "-A", "-O", "v", mpileupFileName.c_str()};
-  main_vcfcall(8, const_cast<char**>(mpileup_args));
+  const char *mpileup_args[] = {"call", "--ploidy", "1", "-c", "-A", "-M", "-O", "v", mpileupFileName.c_str()};
+  main_vcfcall(9, const_cast<char**>(mpileup_args));
 
   fflush(stdout);
   dup2(stdoutFd, fileno(stdout));
