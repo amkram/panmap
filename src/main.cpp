@@ -135,6 +135,10 @@ Developer options:
   --save-kminmer-binary-coverage        Save kminmer binary coverage to <prefix>.kminmer_binary_coverage.txt
   --parallel-tester                     Run parallel tester.
   --eval <path>                         Evaluate accuracy of placement. <path> is a tsv file.
+
+Placement options:
+  --candidate-threshold <proportion>    Initial seed matching retains the top <proportion> of all nodes as candidates, whose scores are refined by seed extension. [default: 0.01]
+  --max-candidates <count>              Maximum number of candidate nodes to consider [default: 16]
 )";
 
 
@@ -403,15 +407,21 @@ int main(int argc, const char** argv) {
       log(prefix, "[Developer mode] --- Evaluate placement accuracy ---");
       // get /path/to/<eval>.tsv into a string, but just the <eval> basename
       std::string eval_basename = fs::path(eval).filename().string();
+      double score_proportion = args["--candidate-threshold"] ? std::stod(args["--candidate-threshold"].asString()) : 0.01;
+      int max_candidates = args["--max-candidates"] ? std::stoi(args["--max-candidates"].asString()) : 16;
+
       if (eval_basename.find("sars_pre") != std::string::npos) {
         std::cout << "Species: SARS-CoV-2" << std::endl;
-        pmi::evaluate(T, eval, index_input, mutMat, aligner, "sars", main_start, default_index_path, default_mutmat_path);
+        pmi::evaluate(T, eval, index_input, mutMat, aligner, "sars", main_start, default_index_path, default_mutmat_path,
+                     score_proportion, max_candidates);
       } else if (eval_basename.find("rsv_pre") != std::string::npos) {
         std::cout << "Species: RSV" << std::endl;
-        pmi::evaluate(T, eval, index_input, mutMat, aligner, "rsv", main_start, default_index_path, default_mutmat_path);
+        pmi::evaluate(T, eval, index_input, mutMat, aligner, "rsv", main_start, default_index_path, default_mutmat_path,
+                     score_proportion, max_candidates);
       } else if (eval_basename.find("tb_pre") != std::string::npos) {
         std::cout << "Species: M. tuberculosis" << std::endl;
-        pmi::evaluate(T, eval, index_input, mutMat, aligner, "tb", main_start, default_index_path, default_mutmat_path);
+        pmi::evaluate(T, eval, index_input, mutMat, aligner, "tb", main_start, default_index_path, default_mutmat_path,
+                     score_proportion, max_candidates);
       }
       std::exit(0);
     }
@@ -482,7 +492,12 @@ int main(int argc, const char** argv) {
         return 1;
       }
       PlacementResult result;
-      pmi::place(result, T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time);
+      double score_proportion = args["--candidate-threshold"] ? std::stod(args["--candidate-threshold"].asString()) : 0.01;
+      int max_candidates = args["--max-candidates"] ? std::stoi(args["--max-candidates"].asString()) : 16;
+      std::ofstream logFile("blah.txt");
+      pmi::place(result, T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, 
+                bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time,
+                logFile, score_proportion, max_candidates);
     }
     
     auto end = std::chrono::high_resolution_clock::now();

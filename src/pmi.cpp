@@ -55,6 +55,169 @@ enum Step {
   SPECTRUM
 };
 
+bool DUMP = true;
+
+std::unordered_map<size_t, double> wR_cache; // read seed counts already computed
+double fTotal_cached = 0.0; // total read seed counts already computed
+
+double getTotalReadSeeds(const std::unordered_map<size_t, std::pair<size_t, size_t>> &freqs_reads) {
+  size_t fTotal = 0;
+  for (const auto &[k, v] : freqs_reads) {
+    fTotal += v.first + v.second;
+  }
+  std::cout << "CACHING total read seed count: " << fTotal << std::endl;
+  return fTotal;
+}
+
+
+// Scoring weights
+const double W1 = 0.3;  // MAPQ weight
+const double W2 = 0.3;  // Coverage weight
+const double W3 = 0.2;  // Identity weight
+const double W4 = 0.2;  // Alignment rate weight
+const double W5 = 0.1;  // Penalty weight
+
+AlignmentMetrics computeAlignmentMetrics(
+    const std::vector<char*>& samAlignments,
+    const std::string& samHeader,
+    const std::string& nodeSequence,
+    const std::vector<std::string>& readSequences) {
+    
+    AlignmentMetrics metrics;
+    
+    // Initialize counters
+    double totalMapQ = 0;
+    int64_t totalMismatches = 0;
+    int64_t totalAlignedBases = 0;
+    int alignedReads = 0;
+    std::vector<bool> coverageMap(nodeSequence.length(), false);
+    
+    // Process each alignment
+    for (const char* sam_line : samAlignments) {
+        if (!sam_line) continue;  // Skip null alignments
+        
+        // Parse SAM line
+        std::istringstream iss(sam_line);
+        std::string qname, flag_str, rname, pos_str, mapq_str, cigar, rnext, pnext, tlen, seq, qual, nm_tag;
+        
+        // Read required fields
+        iss >> qname >> flag_str >> rname >> pos_str >> mapq_str >> cigar;
+        
+        // Read through optional fields to find NM tag
+        std::string tag;
+        while (iss >> tag) {
+            if (tag.substr(0, 5) == "NM:i:") {
+                nm_tag = tag;
+                break;
+            }
+        }
+        
+        int flag = std::stoi(flag_str);
+        int pos = std::stoi(pos_str);
+        int mapq = std::stoi(mapq_str);
+        
+        // Skip unmapped reads
+        if (flag & 0x4) continue;
+        
+        alignedReads++;
+        totalMapQ += mapq;
+        
+        // Get number of mismatches from NM tag
+        int mismatches = 0;
+        if (!nm_tag.empty()) {
+            mismatches = std::stoi(nm_tag.substr(5));
+        }
+        totalMismatches += mismatches;
+        
+        // Process CIGAR string to count aligned bases and update coverage
+        int ref_pos = pos - 1;  // Convert to 0-based
+        int aligned_bases = 0;
+        std::string num;
+        
+        for (char c : cigar) {
+            if (std::isdigit(c)) {
+                num += c;
+            } else {
+                int count = std::stoi(num);
+                num.clear();
+                
+                switch (c) {
+                    case 'M':  // Match or mismatch
+                        aligned_bases += count;
+                        // Mark coverage
+                        for (int i = 0; i < count && ref_pos + i < coverageMap.size(); i++) {
+                            coverageMap[ref_pos + i] = true;
+                        }
+                        ref_pos += count;
+                        break;
+                    case 'I':  // Insertion
+                        aligned_bases += count;
+                        break;
+                    case 'D':  // Deletion
+                        ref_pos += count;
+                        break;
+                    case 'N':  // Skip
+                        ref_pos += count;
+                        break;
+                    case 'S':  // Soft clipping
+                    case 'H':  // Hard clipping
+                        break;
+                }
+            }
+        }
+        
+        totalAlignedBases += aligned_bases;
+    }
+    
+    // Calculate metrics
+    metrics.avgMapQ = alignedReads > 0 ? totalMapQ / alignedReads : 0;
+    metrics.coverage = std::count(coverageMap.begin(), coverageMap.end(), true) / static_cast<double>(coverageMap.size());
+    metrics.identity = totalAlignedBases > 0 ? (totalAlignedBases - totalMismatches) / static_cast<double>(totalAlignedBases) : 0;
+    metrics.alignmentRate = readSequences.size() > 0 ? alignedReads / static_cast<double>(readSequences.size()) : 0;
+    metrics.penalty = 1.0 - metrics.alignmentRate; // Penalty for unaligned reads
+    
+    return metrics;
+}
+
+
+// Parse CIGAR string to count variants
+int count_variants_from_cigar(const std::string& cg_str) {
+    int var_count = 0;
+    size_t pos = 0;
+    int length = 0;
+    
+    // Parse digits and operation pairs
+    while (pos < cg_str.length()) {
+        // Parse number
+        length = 0;
+        while (pos < cg_str.length() && isdigit(cg_str[pos])) {
+            length = length * 10 + (cg_str[pos] - '0');
+            pos++;
+        }
+        
+        // Parse operation
+        char op = cg_str[pos];
+        switch(op) {
+            case 'M': // Match or mismatch - need to check NM tag for mismatches
+            case '=': // Match
+                break;
+            case 'X': // Mismatch
+                var_count += length;
+                break;
+            case 'I': // Insertion
+            case 'D': // Deletion
+                var_count += 1; // Count each indel as one variant
+                break;
+            case 'S': // Soft clipping
+            case 'H': // Hard clipping
+            case 'P': // Padding
+            case 'N': // Skipped region
+                break;
+        }
+        pos++;
+    }
+    return var_count;
+}
 
 void flipCoords(int32_t blockId, globalCoords_t &globalCoords) {
 
@@ -1319,7 +1482,7 @@ void bruteForceCoordIndex(const std::string& gappedSeq, std::map<int32_t, int32_
 bool debug = false;
 // Recursive function to build the seed index
 template <typename SeedMutationsType, typename GapMutationsType>
-void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std::string, float>> &placementScores, std::vector<std::optional<std::string>>& onSeeds, std::vector<std::optional<seeding::onSeedsHash>>& onSeedsHash, SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, int seedK, int seedS, int seedT, bool open, int seedL, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator, std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes, std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap, std::unordered_set<int64_t>& inverseBlockIds, int64_t jacNumer, int64_t jacDenom,  std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, std::unordered_map<std::string, int64_t> &dfsIndexes) {
+void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<Node *, float>> &placementScores, std::vector<std::optional<std::string>>& onSeeds, std::vector<std::optional<seeding::onSeedsHash>>& onSeedsHash, SeedMutationsType& perNodeSeedMutations_Index, GapMutationsType& perNodeGapMutations_Index, int seedK, int seedS, int seedT, bool open, int seedL, Tree* T, Node* node, globalCoords_t& globalCoords, CoordNavigator& navigator, std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes, std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap, std::unordered_set<int64_t>& inverseBlockIds, int64_t jacNumer, int64_t jacDenom,  std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, std::unordered_map<std::string, int64_t> &dfsIndexes) {
   // Variables needed for both build and place
   std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>> seedChanges;
   blockMutationInfo_t blockMutationInfo;
@@ -1812,12 +1975,12 @@ void buildOrPlace(Step method, mutableTreeData& data, std::vector<std::pair<std:
           jacDenom += 1;  // max(1,0) = 1
         }
       }
-      float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
+      double jac = jacDenom == 0 ? 0 : jacNumer / (double)jacDenom;
     }
   }
   if (method == Step::PLACE) {
     float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
-    placementScores.emplace_back(std::make_pair(node->identifier, jac));
+    placementScores.emplace_back(std::make_pair(node, jac));
   }
 
   if (debug) {
@@ -2101,7 +2264,7 @@ void pmi::build(Tree *T, Index::Builder &index)
   int64_t jacNumer = 0;
   int64_t jacDenom = 0;
   std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
-  std::vector<std::pair<std::string, float>> placementScoresDummy;
+  std::vector<std::pair<Node *, float>> placementScoresDummy;
   std::unordered_map<std::string, int64_t> dfsIndexes;
   buildOrPlace(
     Step::BUILD, data, placementScoresDummy, onSeedsString, onSeedsHash, perNodeSeedMutations_Builder, perNodeGapMutations_Builder, k, s, t, open, l, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes
@@ -2427,7 +2590,6 @@ std::vector<std::vector<Node*>> splitDFSIntoGroups(const std::vector<Node*>& dfs
 }
 
 
-
 struct PlacementObjects {
   seed_annotated_tree::mutableTreeData data;
   seed_annotated_tree::globalCoords_t globalCoords;
@@ -2519,6 +2681,124 @@ struct NodeMutationData {
     std::vector<tupleRange> recompRanges;
 };
 
+std::pair<double, double> getJaccardDelta(
+    bool oldVal, 
+    bool newVal, 
+    size_t oldSeedVal, 
+    size_t newSeedVal,
+    std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
+    std::unordered_map<size_t, size_t> &currentGenomeSeedCounts,
+    std::unordered_map<size_t, long long> &allGenomeSeedCounts,
+    const double totalReadBases,
+    const double totalGenomeBases,
+    const size_t numGenomes) {
+    
+    auto getFreqs = [&](size_t seedVal) {
+        double freqInReads = 0.0;
+        auto readIt = readSeedCounts.find(seedVal);
+        if (readIt != readSeedCounts.end()) {
+            freqInReads = readIt->second.first + readIt->second.second;
+        }
+        
+        // Get genome frequency
+        double freqInCurrGenome = 0.0;
+        auto currGenomeIt = currentGenomeSeedCounts.find(seedVal);
+        if (currGenomeIt != currentGenomeSeedCounts.end()) {
+            freqInCurrGenome = currGenomeIt->second;
+        }
+        
+        // double expectedCoverage = (100.0 * 150.0) / 30000.0;
+        // double readSaturationPoint = 3.0 * expectedCoverage;  // Saturate at 3x coverage
+        // double genomeDecayPoint = 2.0;  // Start decay at 2x frequency
+        
+        // Transform frequencies to weights
+        double readWeight = freqInReads;
+        double genomeWeight = 1.0;
+        
+        // std::cout << "--- seed: " << seedVal  << std::endl;
+        // std::cout << "  genome_freq: " << freqInCurrGenome << std::endl;
+        // std::cout << "  read_freq: " << freqInReads << std::endl;
+        // std::cout << "  expected_coverage: " << expectedCoverage << std::endl;
+        // std::cout << "  read_saturation_point: " << readSaturationPoint << std::endl;
+        // std::cout << "  genome_decay_point: " << genomeDecayPoint << std::endl;
+        // std::cout << "  adjusted_read_weight: " << readWeight << std::endl;
+        // std::cout << "  adjusted_genome_weight: " << genomeWeight << std::endl;
+        return std::make_pair(readWeight, genomeWeight);
+    };
+    
+    double numeratorDelta = 0.0;   // Change in sum of mins
+    double denominatorDelta = 0.0;  // Change in sum of maxes
+
+    if (!oldVal && newVal) {  // Adding a new seed
+        auto [readWeight, genomeWeight] = getFreqs(newSeedVal);
+        numeratorDelta = std::min(readWeight, genomeWeight);
+        denominatorDelta = std::max(readWeight, genomeWeight);
+    }
+    else if (oldVal && !newVal) {  // Removing a seed
+        auto [readWeight, genomeWeight] = getFreqs(oldSeedVal);
+        numeratorDelta = -std::min(readWeight, genomeWeight);
+        denominatorDelta = -std::max(readWeight, genomeWeight);
+    }
+    else if (oldVal && newVal) {  // Changing a seed
+        auto [oldReadWeight, oldGenomeWeight] = getFreqs(oldSeedVal);
+        auto [newReadWeight, newGenomeWeight] = getFreqs(newSeedVal);
+        
+        numeratorDelta = std::min(newReadWeight, newGenomeWeight) - 
+                        std::min(oldReadWeight, oldGenomeWeight);
+        denominatorDelta = std::max(newReadWeight, newGenomeWeight) - 
+                          std::max(oldReadWeight, oldGenomeWeight);
+    }
+    
+    return {numeratorDelta, denominatorDelta};
+}
+
+
+std::pair<double, double> getCosineDelta(bool oldVal, bool newVal, size_t oldSeedVal, size_t newSeedVal, std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts, std::unordered_map<size_t, size_t> &currentGenomeSeedCounts, double &sumOfSquaresGenome) {
+    
+    auto getFreqs = [&](size_t seedVal) {
+        double freqInReads = 0.0;
+        auto readIt = readSeedCounts.find(seedVal);
+        if (readIt != readSeedCounts.end()) {
+            freqInReads = readIt->second.first + readIt->second.second;
+        }
+        
+        // Get genome frequency
+        double freqInCurrGenome = 0.0;
+        auto currGenomeIt = currentGenomeSeedCounts.find(seedVal);
+        if (currGenomeIt != currentGenomeSeedCounts.end()) {
+            freqInCurrGenome = currGenomeIt->second;
+        }
+        
+        return std::make_pair(freqInReads, freqInCurrGenome);
+    };
+    
+    double numeratorDelta = 0.0;   
+    double sumOfSquaresDelta = 0.0;  
+
+    if (!oldVal && newVal) {  // Adding a new seed
+        auto [readWeight, genomeWeight] = getFreqs(newSeedVal);
+        numeratorDelta = readWeight * genomeWeight;
+        sumOfSquaresDelta = std::pow(genomeWeight, 2);
+    }
+    else if (oldVal && !newVal) {  // Removing a seed
+        auto [readWeight, genomeWeight] = getFreqs(oldSeedVal);
+        numeratorDelta = -readWeight * genomeWeight;
+        sumOfSquaresDelta = -std::pow(genomeWeight, 2);
+    }
+    else if (oldVal && newVal) {  // Changing a seed
+        auto [oldReadWeight, oldGenomeWeight] = getFreqs(oldSeedVal);
+        auto [newReadWeight, newGenomeWeight] = getFreqs(newSeedVal);
+        
+        numeratorDelta = newReadWeight * newGenomeWeight - oldReadWeight * oldGenomeWeight;
+        sumOfSquaresDelta = std::pow(newGenomeWeight, 2) - std::pow(oldGenomeWeight, 2);
+    }
+    
+    return {numeratorDelta, sumOfSquaresDelta};
+}
+
+std::ofstream dumpFasta("dump.fasta");
+std::ofstream dumpSeeds("dump_seeds.txt");
+std::ofstream dumpJaccard("dump_jaccard.txt");
 // Apply nucleotide mutations to objects.data.sequence
 // Apply gap mutations to objects.gapMap
 // Apply read seed mutations to objects.onSeedsHash
@@ -2526,27 +2806,25 @@ struct NodeMutationData {
 // Updates jacNumer and jacDenom
 // Updates placementScores
 
-// Custom comparator that compares pairs based on the first element (string)
-struct CompareByFirst {
-    bool operator()(const std::pair<std::string, float>& a, const std::pair<std::string, float>& b) const {
-        return a.first < b.first; // Compare based only on the string part
-    }
-};
-
-
-
-void processNode(Node *parent, Node *current, PlacementObjects &objects,
+void processNode(bool prePlacement, Node *parent, Node *current, PlacementObjects &objects,
     PlacementResult &result,
-    std::set<std::pair<std::string, float>, CompareByFirst> &placementScores,
+    std::set<std::pair<Node *, double>, CompareByFirst> &placementScoresJaccard,
+    std::set<std::pair<Node *, double>, CompareByFirst> &placementScoresCosine,
     NodeMutationData &nodeMutationData,
-    ::capnp::List<SeedMutations>::Reader &seedIndex, 
+    ::capnp::List<SeedMutations>::Reader &seedIndex,
     ::capnp::List<GapMutations>::Reader &gapIndex, 
     int seedK, int seedS, int seedT, bool open, int seedL, Tree* T,
     std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
-    blockExists_t &oldBlockExists, blockStrand_t &oldBlockStrand, int64_t &jacNumer, int64_t &jacDenom) {
+    std::unordered_map<size_t, size_t> &currentGenomeSeedCounts,
+    const size_t &totalReadSeedCount,
+    const size_t &maxGenomeSeedCount,
+    const size_t &numGenomes,
+    blockExists_t &oldBlockExists, blockStrand_t &oldBlockStrand, 
+    double &jaccardTerm1, double &jaccardTerm2, SeedTracker &seedTracker, std::vector<std::tuple<size_t, size_t, bool>> &trackerChanges, double &cosineNumerator, double &sumOfSquaresGenome, double &sqrtSumOfSquaresReads, std::ofstream& logFile, const std::string& true_node_id="", const std::string& species="", const int& read_count=0, const int& mutation_count=0) {
 
-  int64_t dfsIndex = objects.dfsIndexes[current->identifier]; // TODO make sure dfsindexes is populated by this point
+    int64_t dfsIndex = objects.dfsIndexes[current->identifier];
 
+  
   // std::cout << "dfsIndex: " << dfsIndex << "\n";
   // std::cout << "Size of dfsIndexes: " << objects.dfsIndexes.size() << "\n";
 
@@ -2554,7 +2832,7 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
   // std::cout << "dfsIndex: " << dfsIndex << std::endl;
 
   /* Nucleotide mutations - fills nodeMutationData */
-  applyMutations(objects.data, nodeMutationData.blockMutationInfo, nodeMutationData.recompRanges,  nodeMutationData.mutationInfo, T, current, objects.globalCoords, objects.navigator, objects.blockRanges, nodeMutationData.gapRunUpdates, nodeMutationData.gapRunBacktracks, oldBlockExists, oldBlockStrand, true, objects.inverseBlockIds, nodeMutationData.inverseBlockIdsBacktrack);
+  applyMutations(objects.data, nodeMutationData.blockMutationInfo, nodeMutationData.recompRanges, nodeMutationData.mutationInfo, T, current, objects.globalCoords, objects.navigator, objects.blockRanges, nodeMutationData.gapRunUpdates, nodeMutationData.gapRunBacktracks, oldBlockExists, oldBlockStrand, true, objects.inverseBlockIds, nodeMutationData.inverseBlockIdsBacktrack);
 
   ::capnp::List<MapDelta>::Reader gapMutationsList;
   gapMutationsList = gapIndex[dfsIndex].getDeltas();
@@ -2642,117 +2920,151 @@ void processNode(Node *parent, Node *current, PlacementObjects &objects,
   // std::cout << "Group: " << groupName << "current node: " << current->identifier << "\n";
 
   /* Apply seed mutations */
-  for (const auto &p : nodeMutationData.seedChanges)
-
-  {
+  for (const auto &p : nodeMutationData.seedChanges) {
     const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
 
+    size_t oldSeedVal = oldSeed.value_or(0);
+    size_t newSeedVal = newSeed.value_or(0);
+
     if (oldVal && newVal) { // seed at same pos changed
-      // objects.onSeedsHash[pos].value().hash = newSeed.value();
-      // objects.onSeedsHash[pos].value().endPos = newEndPos.value();
-      // objects.onSeedsHash[pos].value().isReverse = newIsReverse.value();
 
       objects.onSeedsHash[pos]->hash = newSeed.value();
       objects.onSeedsHash[pos]->endPos = newEndPos.value();
       objects.onSeedsHash[pos]->isReverse = newIsReverse.value();
+
+      currentGenomeSeedCounts[oldSeedVal] = std::max(0, (int)currentGenomeSeedCounts[oldSeedVal] - 1);
+      currentGenomeSeedCounts[newSeedVal] += 1;
+      if (prePlacement) {
+        trackerChanges.emplace_back(std::make_tuple(oldSeedVal, pos, false));
+        trackerChanges.emplace_back(std::make_tuple(newSeedVal, pos, true));
+      }
+
     } else if (oldVal && !newVal) { // seed on to off
       if (objects.onSeedsHash[pos].has_value() && pos < objects.onSeedsHash.size()) {
         objects.onSeedsHash[pos].reset();
       }
       int blockId = objects.scalarCoordToBlockId[pos];
       objects.BlocksToSeeds[blockId].erase(pos);
-    } else if (!oldVal && newVal) { // seed off to on
+
+      currentGenomeSeedCounts[oldSeedVal] = std::max(0, (int)currentGenomeSeedCounts[oldSeedVal] - 1);
+      if (prePlacement) {
+        trackerChanges.emplace_back(std::make_tuple(oldSeedVal, pos, false));
+      }
+
+    } else if (!oldVal && newVal) { // seed off to on 
       objects.onSeedsHash[pos] = {newSeed.value(), newEndPos.value(), newIsReverse.value()};
       int blockId = objects.scalarCoordToBlockId[pos];
       objects.BlocksToSeeds[blockId].insert(pos);
-    } 
-  
 
-      auto oldSeedVal = oldSeed.value_or(0);
-      auto newSeedVal = newSeed.value_or(0);
-
-      // std::cout << "oldSeedVal:" << oldSeedVal << "\n";
-      // std::cout << "newSeedVal:" << newSeedVal << "\n";
-
-      // std::cout << "oldVal:" << oldVal << "\n";
-      // std::cout << "newVal:" << newVal << "\n";
-
-      if (oldVal && newVal) { // seed at same pos changed
-        if (oldSeedVal && readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
-          // Case 1a/1b: Old seed in reads
-          jacNumer -= 1;  // min(1, old_read_freq) = 1
-          jacDenom -= readSeedCounts[oldSeedVal].first + readSeedCounts[oldSeedVal].second;  // max(1, old_read_freq) = old_read_freq
-          if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
-            // Case 1a: New seed also in reads
-            jacNumer += 1;  // min(1, new_read_freq) = 1
-            jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
-          } else {
-            // Case 1b: New seed not in reads
-            // No numerator change since min(1,0) = 0
-            jacDenom += 1;  // max(1,0) = 1
-          }
-        } else {
-          // Case 1c/1d: Old seed not in reads
-          // No numerator change  since min(1,0) = 0
-          jacDenom -= 1;  // Remove max(1,0) = 1
-          if (newSeedVal && readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
-            // Case 1c: New seed in reads
-            jacNumer += 1;  // min(1, new_read_freq) = 1
-            jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
-          } else {
-            // Case 1d: Neither seed in reads
-            jacDenom += 1;  // max(1,0) = 1
-          }
-        }
-      } else if (oldSeedVal && oldVal && !newVal) { // seed on to off
-        if (readSeedCounts.find(oldSeedVal) != readSeedCounts.end()) {
-          // Case 2a: Old seed in reads
-          jacNumer -= 1;  // min(1, old_read_freq) = 1
-          jacDenom -= readSeedCounts[oldSeedVal].first + readSeedCounts[oldSeedVal].second;  // max(1, old_read_freq) = old_read_freq
-        } else {
-          // Case 2b: Old seed not in reads
-          // No numerator change since min(1,0) = 0
-          jacDenom -= 1;  // max(1,0) = 1
-        }
-      } else if (newSeedVal && !oldVal && newVal) { // seed off to on
-        if (readSeedCounts.find(newSeedVal) != readSeedCounts.end()) {
-          // Case 3a: New seed in reads
-          jacNumer += 1;  // min(1, new_read_freq) = 1
-          jacDenom += readSeedCounts[newSeedVal].first + readSeedCounts[newSeedVal].second;  // max(1, new_read_freq) = new_read_freq
-        } else {
-          // Case 3b: New seed not in reads
-          // No numerator change since min(1,0) = 0
-          jacDenom += 1;  // max(1,0) = 1
-        }
+      currentGenomeSeedCounts[newSeedVal] += 1;
+      if (prePlacement) {
+        trackerChanges.emplace_back(std::make_tuple(newSeedVal, pos, true));
       }
+    } 
   } // end seed mutations loop
 
-  // Finalize jaccard for this node
-      float jac = jacDenom == 0 ? 0 : jacNumer / (float)jacDenom;
-  result.all_scores.push_back(jac);
-  placementScores.insert(std::make_pair(current->identifier, jac));
+  // Print seeds at current node
+  // std::cout << ">" << current->identifier << "\n";
+  size_t syncmer_count = 0;
+  std::stringstream seeds_str;
+
+  for (size_t i = 0; i < objects.onSeedsHash.size(); i++) {
+    if (objects.onSeedsHash[i].has_value()) {
+      syncmer_count++;
+      // seeds_str << i << ":" << objects.onSeedsHash[i].value().hash << ",";
+    }
+  }
+
+  // std::cout << "Found " << syncmer_count << " syncmers\n";
+  // std::cout << seeds_str.str() << "\n";
+
+
+    if (DUMP) {
+      std::string fasta = T->getStringFromReference(current->identifier, true, true);
+      dumpFasta << ">" << current->identifier << "\n" << fasta << "\n";
+      for (size_t i = 0; i < objects.onSeedsHash.size(); i++) {
+        if (objects.onSeedsHash[i].has_value()) {
+          dumpSeeds << objects.onSeedsHash[i].value().hash << " " << i << "\t";
+        }
+      }
+      dumpSeeds << "\n";
+      
+    }
+
+  if (!prePlacement) {
+    // std::cout << current->identifier << " [jaccard ops]: ";
+    for (const auto &p : nodeMutationData.seedChanges) {
+    
+        const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
+
+        auto oldSeedVal = oldSeed.value_or(0);
+        auto newSeedVal = newSeed.value_or(0);
+
+        const auto [cosineNumeratorDelta, sumOfSquaresDelta] = getCosineDelta(oldVal, newVal, oldSeedVal, newSeedVal, readSeedCounts, currentGenomeSeedCounts, sumOfSquaresGenome);
+
+        const auto [term1Delta, term2Delta] = getJaccardDelta(oldVal, newVal, oldSeedVal, newSeedVal, readSeedCounts, currentGenomeSeedCounts, seedTracker.hashCounts, totalReadSeedCount, numGenomes, maxGenomeSeedCount);
+
+        cosineNumerator += cosineNumeratorDelta;
+        sumOfSquaresGenome += sumOfSquaresDelta;
+        
+        // const auto [term1Delta, term2Delta] = getJaccardDelta(oldVal, newVal, oldSeedVal, newSeedVal, readSeedCounts, currentGenomeSeedCounts, seedTracker.hashCounts, totalReadSeedCount, numGenomes, maxGenomeSeedCount);
+        // std::cout << "[term1 + term1Δ] and [term2 + term2Δ] = " << "[" << jaccardTerm1 << " + " << term1Delta << "]" << " and " << "[" << jaccardTerm2 << " + " << term2Delta << "]";
+        jaccardTerm1 += term1Delta;
+        jaccardTerm2 += term2Delta;
+      }
+    // std::cout << std::endl;
+    
+      double cosine = cosineNumerator / ( sqrt(sumOfSquaresGenome) * sqrtSumOfSquaresReads);
+      double jaccard = (jaccardTerm2 > 0) ? (jaccardTerm1  / jaccardTerm2) : 1.0;
+      if (DUMP) {
+        dumpJaccard << current->identifier << " " << jaccard << "\n";
+      }
+      // Finalize jaccard for this node
+    // double jaccard = (jaccardTerm2 > 0) ? (jaccardTerm1  / jaccardTerm2) : 1.0;
+    // std::cout << " => " << jaccardTerm1 << "/ (" << jaccardTerm2 << " + " << totalReadSeedCount << " - " << jaccardTerm1 << ") = " << jaccard << std::endl;
+    // std::cout << std::endl;
+    // node, cosine, jaccard, 
+      logFile << species << "\t" << read_count << "\t" << mutation_count << "\t" << current->identifier << "\t" << true_node_id << "\t" << cosine << "\t" << cosineNumerator << "\t" << sumOfSquaresGenome << "\t" << sqrtSumOfSquaresReads << "\t" << jaccard << "\t" << jaccardTerm1 << "\t" << jaccardTerm2 << "\n";
+      result.all_cosine_scores.push_back(cosine);
+      result.all_jaccard_scores.push_back(jaccard);
+      placementScoresJaccard.insert(std::make_pair(current, jaccard));
+      placementScoresCosine.insert(std::make_pair(current, cosine));
+
+      if (true_node_id == current->identifier) {
+        std::cout << "  TRUE SCORE: " << true_node_id << " -> " << cosine << std::endl;
+      }
+    
+    
+  } else {
+    seedTracker.enterNode(current->level, trackerChanges);
+  }
  }
 
-void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, PlacementObjects &objects) {
+void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, PlacementObjects &objects, std::unordered_map<size_t, size_t> &currentGenomeSeedCounts) {
     // std::cout << "undoing seed mutations at node " << current->identifier << std::endl;
     for (const auto& p : nodeMutationData.seedChanges) {
         const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
         // std::cout << "oldSeed:" << oldSeed.has_value() << ", newSeed:" << newSeed.has_value() << "\n";
-
+        size_t oldSeedVal = oldSeed.value_or(0);
+        size_t newSeedVal = newSeed.value_or(0);
         if (oldVal && newVal) {
             objects.onSeedsHash[pos]->hash = oldSeed.value();
             objects.onSeedsHash[pos]->endPos = oldEndPos.value();
             objects.onSeedsHash[pos]->isReverse = oldIsReverse.value();
+            currentGenomeSeedCounts[oldSeedVal] += 1;
+            currentGenomeSeedCounts[newSeedVal] = std::max(0, (int)currentGenomeSeedCounts[newSeedVal] - 1);
         } else if (oldVal && !newVal) {
-            objects.onSeedsHash[pos] = {oldSeed.value(), oldEndPos.value(), oldIsReverse.value()};
+            objects.onSeedsHash[pos] = {oldSeedVal, oldEndPos.value(), oldIsReverse.value()};
             int blockId = objects.scalarCoordToBlockId[pos];
             objects.BlocksToSeeds[blockId].insert(pos);
+            currentGenomeSeedCounts[oldSeedVal] += 1;
         } else if (!oldVal && newVal) {
             if (objects.onSeedsHash[pos].has_value() && pos < objects.onSeedsHash.size()) {
                 objects.onSeedsHash[pos].reset();
             }
             int blockId = objects.scalarCoordToBlockId[pos];
             objects.BlocksToSeeds[blockId].erase(pos);
+            currentGenomeSeedCounts[newSeedVal] = std::max(0, (int)currentGenomeSeedCounts[newSeedVal] - 1);
         }
     }
 
@@ -2779,81 +3091,40 @@ void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, P
 
  }
 
- bool isRightLeafNode(Node* current) {
-    if (current == nullptr) {
-        std::cerr << "[ERROR] Node is null." << std::endl;
-        return false;
-    }
 
-    // Check if the node has no children (is a leaf node)
-    bool isLeaf = current->children.empty();
-
-    // Check if the node is a right child
-    bool isRightChild = false;
-    if (current->parent != nullptr) {
-        auto& siblings = current->parent->children;
-        auto it = std::find(siblings.begin(), siblings.end(), current);
-
-        if (it != siblings.end()) {
-            size_t index = std::distance(siblings.begin(), it);
-            if (index == 1) { // Assuming binary tree with index 1 as the right child
-                isRightChild = true;
-            }
-        }
-    }
-
-    // Return true if both conditions are met
-    return isLeaf && isRightChild;
-}
-
-
-void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Node* current, Node* stopNode,
+void performRecursiveDFS(bool prePlacement, bool firstCall, bool &stopReached, Node* startNode, Node* current, Node* stopNode,
                          const std::vector<Node*>& group,
                          PlacementObjects& objects,
                          PlacementResult &result,
-                         std::set<std::pair<std::string, float>, CompareByFirst> &placementScores,
+                         std::set<std::pair<Node *, double>, CompareByFirst> &placementScoresJaccard,
+                         std::set<std::pair<Node *, double>, CompareByFirst> &placementScoresCosine,
                          ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Index,
                          ::capnp::List<GapMutations>::Reader perNodeGapMutations_Index,
                          int seedK, int seedS, int seedT, bool open, int seedL, Tree* T,
                          std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
-                         int64_t jacNumer, int64_t jacDenom, int64_t &searchCount, blockExists_t &rootBlockExists, blockStrand_t &rootBlockStrand) {
+                         std::unordered_map<size_t, size_t> &currentGenomeSeedCounts,
+                         const size_t &totalReadSeedCount,
+                         const size_t &maxGenomeSeedCount,
+                         const size_t &numGenomes,
+                         double jaccardTerm1, double jaccardTerm2, int64_t &searchCount, blockExists_t &rootBlockExists, blockStrand_t &rootBlockStrand, SeedTracker &seedTracker, double cosineNumerator, double sumOfSquaresGenome, double sqrtSumOfSquaresReads, std::ofstream& logFile, const std::string& true_node_id="", const std::string& species="", const int& read_count=0, const int& mutation_count=0) {
 
     std::string groupName = group.front()->identifier + " to " + group.back()->identifier;
 
-    // std::cout << "Group: " << groupName << "   ------- Processing node: " << current->identifier << std::endl;
-
-    if (current == stopNode) {
-        // std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
-
-        bool testing = true;
-
-        bool nontesting = true;
-    }
-
+    
     if (stopReached) {
       // std::cout << "Exiting because stopNode reached" << groupName << "\n";
         return;
     }
 
-    if (current->identifier == "MN365534.1"){
-        std::cout << "MN365534.1" << std::endl;
-    }
-
-    if (current->identifier == "MN365474.1"){
-        std::cout << "MN365474.1" << std::endl;
-    }
-
-    if (current->identifier == "node_20"){
-        std::cout << "node_20" << std::endl;
-    }
-
-    bool isRightLeaf = isRightLeafNode(current);
 
     NodeMutationData nodeMutationData; // Store mutation info for backtracking
     Node* parent = nullptr;
   
     blockExists_t parentBlockExists = objects.data.blockExists;
     blockStrand_t parentBlockStrand = objects.data.blockStrand;
+
+    // modified in place by processNode, used in backtrackNode to undo changes
+    std::vector<std::tuple<size_t, size_t, bool>> trackerChanges; 
 
     if (firstCall) {
         std::vector<Node*> pathToRoot = backtrackToRoot(current);
@@ -2862,29 +3133,35 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
         parentBlockExists = rootBlockExists;
         parentBlockStrand = rootBlockStrand;
 
+        trackerChanges.clear();
+
         std::cout << "[INFO] Starting DFS at Node: " << current->identifier << std::endl;
 
-        auto placementScoresDummy = placementScores;
+        auto placementScoresJaccardDummy = placementScoresJaccard;
+        auto placementScoresCosineDummy = placementScoresCosine;
         
         for (Node* currNode : pathToRoot) {
-
+          nodeMutationData = NodeMutationData();
+          trackerChanges.clear();
             if (currNode == pathToRoot.back()) {
-              processNode(parent, currNode, objects, placementScores, nodeMutationData, 
+              processNode(prePlacement, parent, currNode, objects, result, placementScoresJaccard, placementScoresCosine, nodeMutationData, 
                         perNodeSeedMutations_Index, perNodeGapMutations_Index, 
                         seedK, seedS, seedT, open, seedL, T, 
-                        readSeedCounts, parentBlockExists, parentBlockStrand,
-                        jacNumer, jacDenom);
+                        readSeedCounts, currentGenomeSeedCounts, totalReadSeedCount, maxGenomeSeedCount, numGenomes,
+                        parentBlockExists, parentBlockStrand,
+                        jaccardTerm1, jaccardTerm2, seedTracker, trackerChanges, cosineNumerator, sumOfSquaresGenome, sqrtSumOfSquaresReads, logFile, true_node_id, species, read_count, mutation_count);
 
             parent = currNode;
             parentBlockExists = objects.data.blockExists;
             parentBlockStrand = objects.data.blockStrand;
             }
             else {
-            processNode(parent, currNode, objects, placementScoresDummy, nodeMutationData, 
+            processNode(prePlacement, parent, currNode, objects, result, placementScoresJaccardDummy, placementScoresCosineDummy, nodeMutationData, 
                         perNodeSeedMutations_Index, perNodeGapMutations_Index, 
                         seedK, seedS, seedT, open, seedL, T, 
-                        readSeedCounts, parentBlockExists, parentBlockStrand,
-                        jacNumer, jacDenom);
+                        readSeedCounts, currentGenomeSeedCounts, totalReadSeedCount, maxGenomeSeedCount, numGenomes,
+                        parentBlockExists, parentBlockStrand,
+                        jaccardTerm1, jaccardTerm2, seedTracker, trackerChanges, cosineNumerator, sumOfSquaresGenome, sqrtSumOfSquaresReads, logFile, true_node_id, species, read_count, mutation_count);
 
             parent = currNode;
             parentBlockExists = objects.data.blockExists;
@@ -2892,13 +3169,14 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
             }
         }
     } else {
-        processNode(parent, current, objects, placementScores, nodeMutationData, 
+        processNode(prePlacement, parent, current, objects, result, placementScoresJaccard, placementScoresCosine, nodeMutationData, 
                     perNodeSeedMutations_Index, perNodeGapMutations_Index, 
                     seedK, seedS, seedT, open, seedL, T, 
-                    readSeedCounts, parentBlockExists, parentBlockStrand,
-                    jacNumer, jacDenom);
+                    readSeedCounts, currentGenomeSeedCounts, totalReadSeedCount, maxGenomeSeedCount, numGenomes,
+                    parentBlockExists, parentBlockStrand,
+                    jaccardTerm1, jaccardTerm2, seedTracker, trackerChanges, cosineNumerator, sumOfSquaresGenome, sqrtSumOfSquaresReads, logFile, true_node_id, species, read_count, mutation_count);
     }
-
+  
     if (current == stopNode) {
         stopReached = true;
         // std::cout << "Group: " << groupName << "   ------- stop node reached: " << stopNode->identifier << "\n";
@@ -2910,39 +3188,55 @@ void performRecursiveDFS(bool firstCall, bool &stopReached, Node* startNode, Nod
     // bool isLeaf = current->children.empty();
 
     for (Node* child : current->children) {
-        performRecursiveDFS(false, stopReached, startNode, child, stopNode, group, objects, placementScores, 
+        performRecursiveDFS(prePlacement, false, stopReached, startNode, child, stopNode, group, objects, result, placementScoresJaccard, placementScoresCosine, 
                             perNodeSeedMutations_Index, perNodeGapMutations_Index, 
-                            seedK, seedS, seedT, open, seedL, T, readSeedCounts, 
-                            jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
+                            seedK, seedS, seedT, open, seedL, T, readSeedCounts,
+                            currentGenomeSeedCounts, totalReadSeedCount, maxGenomeSeedCount, numGenomes,
+                            jaccardTerm1, jaccardTerm2, searchCount, rootBlockExists, rootBlockStrand, seedTracker, cosineNumerator, sumOfSquaresGenome, sqrtSumOfSquaresReads, logFile, true_node_id, species, read_count, mutation_count);
 
         if (stopReached) {
-            std::cout << "[INFO] Exiting DFS - Stop Node Reached from Recursive Loop in Group: " 
-                      << groupName << std::endl;
+            // std::cout << "[INFO] Exiting DFS - Stop Node Reached from Recursive Loop in Group: " 
+                      // << groupName << std::endl;
             return;
         }
     }
 
-    if (current == startNode && searchCount < group.size() - 1) {
-        std::cout << "[INFO] Restarting DFS at Node: " << group[searchCount]->identifier 
-                  << " in Group: " << groupName << std::endl;
+    if (current == startNode && searchCount < group.size()) {
+        std::cout << "[INFO] Restarting DFS at Node: " << group[searchCount]->identifier << std::endl;
 
-        jacNumer = 0;
-        jacDenom = 0;
-
-        for (const auto& count : readSeedCounts) {
-                    jacDenom += count.second.first + count.second.second;
-                  }
-
-        performRecursiveDFS(true, stopReached, group[searchCount], group[searchCount], stopNode, group, objects, 
-                            placementScores, perNodeSeedMutations_Index, 
+        jaccardTerm1 = 0;
+        jaccardTerm2 = [&]() {
+            double sum = 0.0;
+            for (const auto& [seed, counts] : readSeedCounts) {
+                sum += counts.first + counts.second;
+            }
+            return sum;
+        }();
+        currentGenomeSeedCounts.clear();
+        cosineNumerator = 0;
+        sumOfSquaresGenome = 0;
+        sqrtSumOfSquaresReads = [&]() {
+            double sum = 0.0;
+            for (const auto& [seed, counts] : readSeedCounts) {
+                sum += std::pow(counts.first + counts.second, 2);
+            }
+            return std::sqrt(sum);
+        }();
+        
+        performRecursiveDFS(prePlacement, true, stopReached, group[searchCount], group[searchCount], stopNode, group, objects, result, placementScoresJaccard, placementScoresCosine, 
+                            perNodeSeedMutations_Index, 
                             perNodeGapMutations_Index, seedK, seedS, seedT, open, seedL, T, 
-                            readSeedCounts, jacNumer, jacDenom, searchCount, rootBlockExists, rootBlockStrand);
+                            readSeedCounts, currentGenomeSeedCounts, totalReadSeedCount, maxGenomeSeedCount, numGenomes,
+                            jaccardTerm1, jaccardTerm2, searchCount, rootBlockExists, rootBlockStrand, seedTracker, cosineNumerator, sumOfSquaresGenome, sqrtSumOfSquaresReads, logFile, true_node_id, species, read_count, mutation_count);
     } 
-    else if (searchCount == group.size() - 1) {
+    else if (searchCount == group.size()) {
         return;
     }
     else {
-        backtrackNode(T, current, nodeMutationData, objects);
+        backtrackNode(T, current, nodeMutationData, objects, currentGenomeSeedCounts);
+        if (prePlacement) {
+          seedTracker.exitNode(current->level, trackerChanges);
+        }
     }
 }
 
@@ -2965,71 +3259,122 @@ void pmi::genotype(std::string prefix, std::string refFileName, std::string best
       );
 }
 
-void pmi::align(std::string aligner, std::string refFileName, std::string bestMatchSequence, 
-     std::vector<std::vector<seed>> readSeeds,                 
-     std::vector<std::string> readSequences,             
-     std::vector<std::string> readQuals,                 
-     std::vector<std::string> readNames,                 
-     std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions,        
-     std::string samFileName, std::string bamFileName,
-     int32_t k, bool pairedEndReads, std::string reads1Path, std::string reads2Path) {
 
-   //Print out Reference
-    if (refFileName.size() == 0) {
-      refFileName = "panmap.reference.fa";
-    }
-    if(refFileName.size() > 0){
+float pmi::align(AlignmentMetrics &metrics, Node *node, Tree *T, int32_t k, int32_t s, int32_t t, bool open, int32_t l, 
+                ::capnp::List<SeedMutations>::Reader &perNodeSeedMutations_Reader, 
+                ::capnp::List<GapMutations>::Reader &perNodeGapMutations_Reader, 
+                const std::string &reads1Path,
+                const std::string &reads2Path,
+                std::vector<std::vector<seed>> &readSeeds,
+                std::vector<std::string> &readSequences,
+                std::vector<std::string> &readQuals,
+                std::vector<std::string> &readNames,
+                std::string &samFileName, std::string &bamFileName, bool pairedEndReads, std::string &refFileName, std::string aligner) {
+
+    std::string bestMatchSequence = T->getStringFromReference(node->identifier, false, true);
+    
+    if(refFileName.size() > 0){ 
+
         std::ofstream outFile{refFileName};
 
         if (outFile.is_open()) {
             
-            outFile << ">ref\n";
-            outFile << bestMatchSequence << "\n";
+        // outFile << ">" << node->identifier << "|Panmap.PLACED_SEQUENCE\n";
+        outFile << ">ref" << "\n";
+        outFile << bestMatchSequence << "\n";
 
-            std::cerr << "Wrote reference fasta to " << refFileName << std::endl;
-        } else {
+        std::cerr << "Wrote reference fasta to " << refFileName << std::endl;
+        }  else {
             std::cerr << "Error: failed to write to file " << refFileName << std::endl;
         }
     }
 
+    double alignmentScore = 0;
+
     if (aligner == "minimap2") {
       double time = time_stamp();
-      // if(show_time){
-      //   std::cerr << "Placement time: " << time << "\n";
-      // }
-      //Create SAM
-      std::vector<char *> samAlignments;
-      std::string samHeader;
 
-      createSam(
-          readSeeds,                 
-          readSequences,             
-          readQuals,                 
-          readNames,                 
-          bestMatchSequence,         
-          seedToRefPositions,        
-          samFileName,               
-          k,                         
-          pairedEndReads,            
-          
-          samAlignments,             
-          samHeader                  
-      );
+      Node *curr = node;
+      std::vector<Node *> rpath;
+      while (curr != nullptr) {
+        rpath.push_back(curr);
+        curr = curr->parent;
+      }
+      std::reverse(rpath.begin(), rpath.end());
 
+      PlacementObjects bestNodeObjects(T);
+      auto& [bestNode_data, bestNode_globalCoords, bestNode_navigator, bestNode_BlockSizes, bestNode_blockRanges, bestNode_inverseBlockIds, bestNode_gapMap, bestNode_BlocksToSeeds, bestNode_scalarCoordToBlockId, bestNode_onSeedsString, bestNode_onSeedsHash, bestNode_dfsIndex, bestNode_dfsIndexes, bestNode_T_ignore] = bestNodeObjects;
+
+      getBestNodeSeeds(rpath, bestNode_data, bestNode_onSeedsString, bestNode_onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, bestNode_globalCoords, bestNode_navigator, bestNode_scalarCoordToBlockId, bestNode_BlocksToSeeds, bestNode_BlockSizes, bestNode_blockRanges, bestNode_gapMap, bestNode_inverseBlockIds, bestNode_dfsIndexes);
       
+      std::string nodeSequence = "";
+      std::string gappedSeq = T->getStringFromReference(node->identifier, true, true);
+      std::vector<int32_t> degap;
+      for (int32_t i = 0; i < gappedSeq.size(); i ++) {
+          char &c = gappedSeq[i];
+          degap.push_back(nodeSequence.size());
+          if (c != '-') {
+              nodeSequence += c;
+          }
+      }
 
-      //Convert to BAM
-      sam_hdr_t *header;
-      bam1_t **bamRecords;
 
-      createBam(
-          samAlignments,
-          samHeader,
-          bamFileName,
+      std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
+      for(int i = 0; i < bestNode_onSeedsHash.size(); i++){
+        if(bestNode_onSeedsHash[i].has_value()){
+          size_t seed = bestNode_onSeedsHash[i].value().hash;
+          bool reversed = bestNode_onSeedsHash[i].value().isReverse;
+          int pos = degap[i];
 
-          header,
-          bamRecords
-      );
+          if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
+              std::vector<uint32_t> a;
+              std::vector<uint32_t> b;
+              seedToRefPositions[seed] = std::make_pair(a,b);
+          }
+
+          if(reversed){
+            seedToRefPositions[seed].second.push_back(pos);
+          }else{
+            seedToRefPositions[seed].first.push_back(pos);
+          }
+          
+        }
+      }
+
+        // Align reads to node sequence
+        std::vector<char*> samAlignments;
+        std::string samHeader;
+        createSam(readSeeds, readSequences, readQuals, readNames, nodeSequence, 
+                seedToRefPositions, samFileName, k, pairedEndReads, samAlignments, samHeader);
+        
+        // Compute alignment metrics
+        metrics = computeAlignmentMetrics(samAlignments, samHeader, nodeSequence, readSequences);
+        
+        // Compute final score using default weights
+        metrics.computeScore();
+        alignmentScore = metrics.finalScore;
+              
+        // Clean up
+        for (char* sam : samAlignments) {
+          free(sam);
+        }
+
+        if (samFileName.size() == 0){
+          return alignmentScore;
+        } 
+
+        //Convert to BAM
+        sam_hdr_t *header;
+        bam1_t **bamRecords;
+
+        createBam(
+            samAlignments,
+            samHeader,
+            bamFileName,
+
+            header,
+            bamRecords
+        );
     } else {
       std::cout << "Aligning with bwa..." << std::endl;
 
@@ -3060,6 +3405,10 @@ void pmi::align(std::string aligner, std::string refFileName, std::string bestMa
         samAlignments[i] = samAlignmentPairs[i].second;
       }
 
+      if (samFileName.size() == 0){
+        return alignmentScore; // TODO implement for bwa
+      }
+      
 
       std::ofstream samOut{samFileName};
       for (const auto& header : samHeaders) {
@@ -3071,11 +3420,14 @@ void pmi::align(std::string aligner, std::string refFileName, std::string bestMa
       samOut.close();
       std::cout << "Wrote sam data to " << samFileName << std::endl;
     }
+
+    return alignmentScore;
 }
 
-void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode, const bool& save_jaccard, const bool& show_time)
-{
 
+
+void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix, std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode, const bool& save_jaccard, const bool& show_time, std::ofstream& logFile, const float& score_proportion, const int& max_tied_nodes, const std::string& true_node_id, const std::string& species, const int& read_count, const int& mutation_count)
+{
     /* Sets up structures used in DFS */
     PlacementObjects prePlacementObjects(T);
 
@@ -3097,9 +3449,24 @@ void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const st
     std::vector<std::string> readNames;
     std::vector<std::vector<seed>> readSeeds;
     std::unordered_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
+    size_t totalReadSeedCount = 0;
+    size_t numGenomes = T->allNodes.size();
 
     seedsFromFastq(k, s, t, open, l, readSeedCounts, readSequences, readQuals, readNames, readSeeds, reads1Path, reads2Path);
 
+    std::cout << "After seedsFromFastq:" << std::endl;
+    size_t total = 0;
+    for (const auto& [seed, counts] : readSeedCounts) {
+        total += counts.first + counts.second;
+        if (counts.first + counts.second > 0) {
+            std::cout << "  seed:" << seed << " forward:" << counts.first << " reverse:" << counts.second << std::endl;
+            if (total > 10) {
+                std::cout << "  ..." << std::endl;
+                break;
+            }
+        }
+    }
+    
     bool pairedEndReads = reads2Path.size();
 
     //  Step 1: Compute the DFS order
@@ -3117,11 +3484,69 @@ void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const st
     std::vector<std::thread> dfsThreads;
     std::mutex outputMutex;
 
-    tbb::concurrent_vector<std::pair<Node *, float>> bestNodes;
-
+    tbb::concurrent_vector<std::pair<Node *, double>> bestNodesJaccard;
+    tbb::concurrent_vector<std::pair<Node *, double>> bestNodesCosine;
 
     ::capnp::List<GapMutations>::Reader perNodeGapMutations_Reader = index.getPerNodeGapMutations();
     ::capnp::List<SeedMutations>::Reader perNodeSeedMutations_Reader = index.getPerNodeSeedMutations();
+
+
+    Node *preStartNode = groups.front().front();
+    Node *preStopNode = groups.back().back();
+
+    std::set<std::pair<Node *, double>, CompareByFirst> placementScoresJaccardDummy;
+    std::set<std::pair<Node *, double>, CompareByFirst> placementScoresCosineDummy;
+    double preJaccardTerm1 = 0;
+    double preJaccardTerm2 = 0;
+    std::unordered_map<size_t, size_t> preCurrentGenomeSeedCounts;
+
+    int64_t preSearchCount = 0;
+    bool preStopReached = false;
+    size_t maxGenomeSeedCount = 0; 
+    SeedTracker seedTracker;
+    /* Pre placement DFS */
+    // performRecursiveDFS(true,
+    //     true, preStopReached, preStartNode, preStartNode, preStopNode, groups[0],
+    //     prePlacementObjects,
+    //     result,
+    //     placementScoresDummy,
+    //     perNodeSeedMutations_Reader, perNodeGapMutations_Reader,
+    //     k, s, t, open, l, T,
+    //     readSeedCounts,
+    //     preCurrentGenomeSeedCounts, totalReadSeedCount, maxGenomeSeedCount, numGenomes,
+    //     preJaccardTerm1, preJaccardTerm2,
+    //     preSearchCount, rootBlockExists, rootBlockStrand, seedTracker, true_node_id
+    // );
+
+    // seedTracker.finalize();
+
+    // totalReadSeedCount = std::accumulate(readSeedCounts.begin(), readSeedCounts.end(), 0, [](size_t sum, const auto& pair) {
+    //     return sum + pair.second.first + pair.second.second;
+    // });
+
+   
+
+    std::cout << "After prePlacement DFS:" << std::endl; 
+    // total = 0;
+    // std::vector<std::pair<size_t, std::pair<size_t, size_t>>> sortedReadSeedCounts(readSeedCounts.begin(), readSeedCounts.end());
+    // std::sort(sortedReadSeedCounts.begin(), sortedReadSeedCounts.end(), [](const auto& a, const auto& b) {
+    //     return (a.second.first + a.second.second) > (b.second.first + b.second.second);
+    // });
+
+    // for (const auto& [seed, counts] : sortedReadSeedCounts) {
+    //     total += 1;
+    //     if (counts.first + counts.second > 0) {
+    //         std::cout << "  seed:" << seed << " forward:" << counts.first << " reverse:" << counts.second << std::endl;
+    //         if (seedTracker.hashCounts.find(seed) != seedTracker.hashCounts.end()) {
+    //           std::cout << "  => GENOME HIT: " << seed << " " << seedTracker.hashCounts[seed] << std::endl;
+    //         }
+    //         if (total > 100) {
+    //             std::cout << "  ..." << std::endl;
+    //             break;
+    //         } 
+    //     }
+    // }
+    
 
     // Perform DFS for each group in a separate thread
     for (const auto& group : groups) {
@@ -3136,67 +3561,97 @@ void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const st
             Node* startNode = group.front();
             Node* stoppingNode = group.back();
 
-
             // dfsThreads.emplace_back([=, &bestNodes, &outputMutex]() mutable {
                 /* This lambda is run in each thread */  
                 std::ostringstream logStream;
                 std::vector<std::string> dfsResult; 
-                std::set<std::pair<std::string, float>, CompareByFirst> placementScores;
-                std::string bestNodeId;
-                Node *bestNode;
+                std::set<std::pair<Node *, double>, CompareByFirst> placementScoresJaccard;
+                std::set<std::pair<Node *, double>, CompareByFirst> placementScoresCosine;
+                std::string bestNodeIdJaccard;
+                std::string bestNodeIdCosine;
+                Node *bestNodeJaccard;
+                Node *bestNodeCosine;
                 Node *curr;
 
-                int64_t jacDenom = 0;
-                int64_t jacNumer = 0;
+                double jaccardTerm1 = 0;
+                double jaccardTerm2 = [&]() {
+                    double sum = 0.0;
+                    for (const auto& [seed, counts] : readSeedCounts) {
+                        sum += counts.first + counts.second;
+                    }
+                    return sum;
+                }();
+                
+
+                double cosineNumerator = 0;
+                double sumOfSquaresGenome = 0;
+                double sqrtSumOfSquaresReads = [&]() {
+                    double sum = 0.0;
+                    for (const auto& [seed, counts] : readSeedCounts) {
+                        sum += std::pow(counts.first + counts.second, 2);
+                    }
+                    return std::sqrt(sum);
+                }();
+
+                std::unordered_map<size_t, size_t> currentGenomeSeedCounts;
 
                 if (!refNode.empty()) {
                   // non-standard case when --ref is provided (skips placement)
-                  bestNodeId = refNode;
-                  bestNode = T->allNodes[refNode];
-                  curr = bestNode;
+                  bestNodeIdJaccard = refNode;
+                  bestNodeIdCosine = refNode;
+                  bestNodeJaccard = T->allNodes[refNode];
+                  bestNodeCosine = T->allNodes[refNode];
+                  curr = bestNodeJaccard;
                 } else {
                   // standard placement case
 
                   int64_t searchCount = 0;
                   bool stopReached = false;
                   /* Main placement DFS */
-                  performRecursiveDFS(
+                  performRecursiveDFS(false,
                       true, stopReached, startNode, startNode, stoppingNode, group,
                       groupPlacementObjects,
                       result,
-                      placementScores,
+                      placementScoresJaccard,
+                      placementScoresCosine,
                       perNodeSeedMutations_Reader, perNodeGapMutations_Reader,
                       k, s, t, open, l, T,
                       readSeedCounts,
-                      jacNumer, jacDenom,
-                      searchCount, rootBlockExists, rootBlockStrand
+                      currentGenomeSeedCounts, totalReadSeedCount, maxGenomeSeedCount, numGenomes,
+                      jaccardTerm1, jaccardTerm2,
+                      searchCount, rootBlockExists, rootBlockStrand, seedTracker, cosineNumerator, sumOfSquaresGenome, sqrtSumOfSquaresReads, logFile, true_node_id, species, read_count, mutation_count
                   );
-
 
                   std::cout << "Thread finished for group starting at: " 
                     << startNode->identifier << " to " 
                     << stoppingNode->identifier << std::endl;
 
-                  std::cout << "placementScores size: " << placementScores.size() << std::endl;
+                  std::cout << "placementScoresJaccard size: " << placementScoresJaccard.size() << std::endl;
+                  std::cout << "placementScoresCosine size: " << placementScoresCosine.size() << std::endl;
 
-                  std::vector<std::pair<std::string, float>> placementScoresVector(placementScores.begin(), placementScores.end());
+                  // Sort scores in descending order
+                  std::vector<std::pair<Node *, double>> placementScoresVectorJaccard(placementScoresJaccard.begin(), placementScoresJaccard.end());
+                  std::sort(placementScoresVectorJaccard.begin(), placementScoresVectorJaccard.end(),
+                          [](const auto& a, const auto& b) { return a.second > b.second; });
 
-                  std::sort(placementScoresVector.begin(), placementScoresVector.end(), [](auto &left, auto &right) {
-                    return left.second > right.second;
-                  });
+                  std::vector<std::pair<Node *, double>> placementScoresVectorCosine(placementScoresCosine.begin(), placementScoresCosine.end());
+                  std::sort(placementScoresVectorCosine.begin(), placementScoresVectorCosine.end(),
+                          [](const auto& a, const auto& b) { return a.second > b.second; });
 
-                  std::cout << "best node id: " << placementScoresVector[0].first << std::endl;
-                  bestNodeId = placementScoresVector[0].first;
-                  bestNode = T->allNodes[bestNodeId];
-                  curr = bestNode;
+                  double highestScoreJaccard = placementScoresVectorJaccard[0].second;
+                  double highestScoreCosine = placementScoresVectorCosine[0].second;
 
-                  // print best node and placementscore 
-                  std::cout << "best node for group " << startNode->identifier << " to " << stoppingNode->identifier << ": " << bestNodeId << std::endl;
-                  std::cout << "best node score: " << placementScoresVector[0].second << std::endl;
-                  bestNodes.push_back(std::make_pair(bestNode, placementScoresVector[0].second));
+                  bestNodeJaccard = placementScoresVectorJaccard[0].first;
+                  bestNodeCosine = placementScoresVectorCosine[0].first;
 
-                  // DEBUG PRINT
-                  std::cout << "best node for group " <<  startNode->identifier << " to " << stoppingNode->identifier << ": " << bestNodeId << std::endl;
+                  // print best node and score
+                  std::cout << "Best jac node for group " << startNode->identifier << " to " << stoppingNode->identifier 
+                           << ": " << bestNodeJaccard->identifier << " (score: " << highestScoreJaccard << ")" << std::endl;
+                  std::cout << "Best cos node for group " << startNode->identifier << " to " << stoppingNode->identifier 
+                           << ": " << bestNodeCosine->identifier << " (score: " << highestScoreCosine << ")" << std::endl;
+
+                  bestNodesJaccard.push_back({bestNodeJaccard, highestScoreJaccard});
+                  bestNodesCosine.push_back({bestNodeCosine, highestScoreCosine});
 
                 }
                     
@@ -3217,67 +3672,33 @@ void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const st
 
 
     // Take highest scoring node
-    std::sort(bestNodes.begin(), bestNodes.end(), [](auto &left, auto &right) {
+    std::sort(bestNodesJaccard.begin(), bestNodesJaccard.end(), [](auto &left, auto &right) {
       return left.second > right.second;
     });
 
-    Node *finalBestNode = bestNodes[0].first;
-
-    std::vector<Node *> rpath;
-    while (finalBestNode != nullptr) {
-      rpath.push_back(finalBestNode);
-      finalBestNode = finalBestNode->parent;
+    Node *finalBestNodeJaccard = bestNodesJaccard[0].first;
+    result.best_node_id_jaccard = bestNodesJaccard[0].first->identifier;
+    result.best_node_score_jaccard = bestNodesJaccard[0].second;
+    result.best_node_id_cosine = bestNodesCosine[0].first->identifier;
+    result.best_node_score_cosine = bestNodesCosine[0].second;
+    std::vector<Node *> rpath_jaccard;
+    while (finalBestNodeJaccard != nullptr) {
+      rpath_jaccard.push_back(finalBestNodeJaccard);
+      finalBestNodeJaccard = finalBestNodeJaccard->parent;
     }
-    std::reverse(rpath.begin(), rpath.end());
+    std::reverse(rpath_jaccard.begin(), rpath_jaccard.end());
     
-    finalBestNode = rpath.back();
-
-    PlacementObjects bestNodeObjects(T);
-    auto& [bestNode_data, bestNode_globalCoords, bestNode_navigator, bestNode_BlockSizes, bestNode_blockRanges, bestNode_inverseBlockIds, bestNode_gapMap, bestNode_BlocksToSeeds, bestNode_scalarCoordToBlockId, bestNode_onSeedsString, bestNode_onSeedsHash, bestNode_dfsIndex, bestNode_dfsIndexes, bestNode_T_ignore] = bestNodeObjects;
-
-    getBestNodeSeeds(rpath, bestNode_data, bestNode_onSeedsString, bestNode_onSeedsHash, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, k, s, t, open, l, T, bestNode_globalCoords, bestNode_navigator, bestNode_scalarCoordToBlockId, bestNode_BlocksToSeeds, bestNode_BlockSizes, bestNode_blockRanges, bestNode_gapMap, bestNode_inverseBlockIds, bestNode_dfsIndexes);
-    
-    if (refNode.empty()) {
-      result.best_node_id = finalBestNode->identifier;
-      result.best_node_score = bestNodes[0].second;
-    } else {
+    finalBestNodeJaccard = rpath_jaccard.back();
+    AlignmentMetrics bestNodeMetricsJaccard;
+    std::string bestMatchSequenceJaccard;
+    if (!refNode.empty()) {
       std::cout << "specified reference node: " << refNode << std::endl;
-    }
-    // Here bestNode_onSeedsHash contains the best node's seeds
-
-    std::string bestMatchSequence = "";
-    std::string gappedSeq = T->getStringFromReference(finalBestNode->identifier, true);
-    std::vector<int32_t> degap;
-    for (int32_t i = 0; i < gappedSeq.size(); i ++) {
-        char &c = gappedSeq[i];
-        degap.push_back(bestMatchSequence.size());
-        if (c != '-') {
-            bestMatchSequence += c;
-        }
+      bestMatchSequenceJaccard = T->getStringFromReference(refNode, false, true);
+    } else {
+      bestMatchSequenceJaccard = T->getStringFromReference(finalBestNodeJaccard->identifier, false, true);
     }
 
-
-    std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>  seedToRefPositions;
-    for(int i = 0; i < bestNode_onSeedsHash.size(); i++){
-      if(bestNode_onSeedsHash[i].has_value()){
-        size_t seed = bestNode_onSeedsHash[i].value().hash;
-        bool reversed = bestNode_onSeedsHash[i].value().isReverse;
-        int pos = degap[i];
-
-        if (seedToRefPositions.find(seed) == seedToRefPositions.end()) {
-            std::vector<uint32_t> a;
-            std::vector<uint32_t> b;
-            seedToRefPositions[seed] = std::make_pair(a,b);
-        }
-
-        if(reversed){
-          seedToRefPositions[seed].second.push_back(pos);
-        }else{
-          seedToRefPositions[seed].first.push_back(pos);
-        }
-        
-      }
-    }
+    // std::cout << "bestMatchSequenceJaccard: " << bestMatchSequenceJaccard << std::endl;
 
     refFileName = prefix + ".consensus.fa";
     samFileName = prefix + ".sam";
@@ -3285,56 +3706,123 @@ void pmi::place(PlacementResult &result, Tree *T, Index::Reader &index, const st
     mpileupFileName = prefix + ".mpileup";
     vcfFileName = prefix + ".vcf";
 
-    // temp
-    return;
+    // pmi::align(bestNodeMetrics, finalBestNode, T, k, s, t, open, l, perNodeSeedMutations_Reader, perNodeGapMutations_Reader, reads1Path, reads2Path, readSeeds, readSequences, readQuals, readNames, samFileName, bamFileName, pairedEndReads, refFileName, aligner);
 
-    pmi::align(aligner, refFileName, bestMatchSequence, readSeeds, readSequences, readQuals, readNames, seedToRefPositions, samFileName, bamFileName, k, pairedEndReads, reads1Path, reads2Path);
-
-    pmi::genotype(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, vcfFileName, mutMat);
+    // pmi::genotype(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, vcfFileName, mutMat);
 }
 
 
 // Parse cs tag to count variants
-int count_variants_from_cs(const std::string& cs_str) {
+int count_variants_from_cs(const std::string& cs_str, const int64_t mask_left, const int64_t mask_right) {
     int var_count = 0;
     size_t pos = 0;
+    int64_t seq_pos = 0;  // Track position in sequence
+    int64_t total_seq_len = 0;  // Track total sequence length
     
+    // First pass to calculate total sequence length
+    size_t tmp_pos = 0;
+    while (tmp_pos < cs_str.length()) {
+        char op = cs_str[tmp_pos++];
+        switch(op) {
+            case '=':  // Identical sequence
+                while (tmp_pos < cs_str.length() && isalpha(cs_str[tmp_pos])) {
+                    total_seq_len++;
+                    tmp_pos++;
+                }
+                break;
+            case '*':  // Substitution
+                total_seq_len++;
+                tmp_pos += 2;  // Skip the two bases
+                break;
+            case '-':  // Deletion
+                while (tmp_pos < cs_str.length() && isalpha(cs_str[tmp_pos])) {
+                    total_seq_len++;
+                    tmp_pos++;
+                }
+                break;
+            case '+':  // Insertion
+                while (tmp_pos < cs_str.length() && isalpha(cs_str[tmp_pos])) tmp_pos++;
+                break;
+            case '~':  // Intron
+                while (tmp_pos < cs_str.length() && (isalnum(cs_str[tmp_pos]) || isalpha(cs_str[tmp_pos]))) {
+                    if (isalpha(cs_str[tmp_pos])) total_seq_len++;
+                    tmp_pos++;
+                }
+                break;
+        }
+    }
+    
+    // Second pass to count variants with proper masking
     while (pos < cs_str.length()) {
         char op = cs_str[pos];
-        pos++; // move past operator
+        pos++; // Move past operation character
         
         switch(op) {
-            case '=':  // match sequence
-                // skip over the matching sequence
-                while (pos < cs_str.length() && isalpha(cs_str[pos])) pos++;
-                break;
-                
-            case '*':  // substitution
-                if (pos + 1 < cs_str.length()) {
-                    var_count++;
-                    pos += 2;  // skip the two bases
+            case '=':  // Identical sequence
+                while (pos < cs_str.length() && isalpha(cs_str[pos])) {
+                    seq_pos++;
+                    pos++;
                 }
                 break;
                 
-            case '+':  // insertion
-            case '-':  // deletion
-                var_count++;
-                // skip over the inserted/deleted sequence
-                while (pos < cs_str.length() && isalpha(cs_str[pos])) pos++;
+            case '*':  // Substitution
+                // Only count if not in masked regions
+                if (seq_pos >= mask_left && (mask_right == 0 || seq_pos < total_seq_len - mask_right)) {
+                    var_count++;
+                }
+                seq_pos++;  // Advance sequence position
+                pos += 2;   // Skip the two bases
                 break;
                 
-            case '~':  // intron
-                // skip over intron annotation
-                while (pos < cs_str.length() && cs_str[pos] != '=' && 
-                      cs_str[pos] != '*' && cs_str[pos] != '+' && 
-                      cs_str[pos] != '-' && cs_str[pos] != '~') pos++;
+            case '+':  // Insertion
+                {
+                    // Count bases in insertion
+                    int64_t start_pos = seq_pos;
+                    while (pos < cs_str.length() && isalpha(cs_str[pos])) {
+                        pos++;
+                    }
+                    // Only count if not in masked regions
+                    if (start_pos >= mask_left && (mask_right == 0 || start_pos < total_seq_len - mask_right)) {
+                        var_count++;
+                    }
+                }
+                break;
+                
+            case '-':  // Deletion
+                {
+                    // Count bases in deletion
+                    int64_t start_pos = seq_pos;
+                    while (pos < cs_str.length() && isalpha(cs_str[pos])) {
+                        seq_pos++;
+                        pos++;
+                    }
+                    // Only count if not in masked regions
+                    if (start_pos >= mask_left && (mask_right == 0 || start_pos < total_seq_len - mask_right)) {
+                        var_count++;
+                    }
+                }
+                break;
+                
+            case '~':  // Intron - format: ~gt12ag
+                {
+                    int64_t start_pos = seq_pos;
+                    // Skip splice signal and length
+                    while (pos < cs_str.length() && (isalnum(cs_str[pos]) || isalpha(cs_str[pos]))) {
+                        if (isalpha(cs_str[pos])) seq_pos++;
+                        pos++;
+                    }
+                    // Only count if not in masked regions
+                    if (start_pos >= mask_left && (mask_right == 0 || start_pos < total_seq_len - mask_right)) {
+                        var_count++;
+                    }
+                }
                 break;
         }
     }
     return var_count;
 }
 
-std::tuple<int, int, int, bool, bool, bool, bool, std::string> getBranchDistance(panmanUtils::Tree* T, Node* node1, Node* node2) {
+std::tuple<int, int, int, bool, bool, bool, bool, std::string> getBranchDistance(panmanUtils::Tree* T, Node* node1, Node* node2, std::string species) {
     // Check if nodes exist
     if (node1->identifier == node2->identifier) {
         return std::make_tuple(0, 0, 0, true, true, true, true, "");
@@ -3408,15 +3896,26 @@ std::tuple<int, int, int, bool, bool, bool, bool, std::string> getBranchDistance
     }
 
     // Create temporary files with fixed paths
-    std::string temp_placement = tmp_dir + "/placement_" + std::to_string(rand()) + ".fa";
-    std::string temp_true = tmp_dir + "/true_" + std::to_string(rand()) + ".fa";
-    std::string paf_file = tmp_dir + "/aln_" + std::to_string(rand()) + ".paf";
-    std::string sorted_paf = tmp_dir + "/sorted_" + std::to_string(rand()) + ".paf";
+    std::string clean_node_1_id = node1->identifier;
+    std::replace_if(clean_node_1_id.begin(), clean_node_1_id.end(), [](char c) {
+        return !std::isalnum(c) && c != '_';
+    }, '_');
+    std::string clean_node_2_id = node2->identifier;
+    std::replace_if(clean_node_2_id.begin(), clean_node_2_id.end(), [](char c) {
+        return !std::isalnum(c) && c != '_';
+    }, '_');
+    std::string temp_placement = tmp_dir + "/" + species + "_placement_" + clean_node_1_id + ".vs." + clean_node_2_id + ".fa";
+    std::string temp_true = tmp_dir + "/" + species + "_true_" + clean_node_1_id + ".vs." + clean_node_2_id + ".fa";
+    std::string sam_file = tmp_dir + "/" + species + "_minimap_" + clean_node_1_id + ".vs." + clean_node_2_id + ".sam";
+    std::string paf_file = tmp_dir + "/" + species + "_aln_" + clean_node_1_id + ".vs." + clean_node_2_id + ".paf";
+    std::string sorted_paf = tmp_dir + "/" + species + "_sorted_" + clean_node_1_id + ".vs." + clean_node_2_id + ".paf";
     
     // Write sequences to temporary files
     std::ofstream placement_file(temp_placement);
     std::ofstream true_file(temp_true);
-    std::string paths = temp_placement + "\t" + temp_true + "\t" + paf_file + "\t" + sorted_paf + "\t" + temp_placement + "_variants.txt";
+    // std::string sam_file = tmp_dir + "/" + species + "_minimap_" + clean_node_1_id + ".vs." + clean_node_2_id + ".sam";
+
+    std::string paths = temp_placement + "\t" + temp_true + "\t" + sam_file + "\t" + paf_file + "\t" + sorted_paf + "\t" + temp_placement + "_variants.txt";
     
     if (!placement_file.is_open() || !true_file.is_open()) {
         throw std::runtime_error("Failed to open temporary files for writing");
@@ -3445,48 +3944,71 @@ std::tuple<int, int, int, bool, bool, bool, bool, std::string> getBranchDistance
     
     placement_file.close();
     true_file.close();
-
-    std::string cmd = "cd /private/groups/corbettlab/alex/tomG && minimap2 -cx asm20 -N 0 --cs=long " + 
-                     temp_true + " " + temp_placement + " > " + paf_file + " 2> /dev/null";
+    std::string cmd = "cd /private/groups/corbettlab/alex/tomG && minimap2 -ax asm20 -N 0 " + 
+                     temp_true + " " + temp_placement + " > " + sam_file + " 2> /dev/null";
     int ret = system(cmd.c_str());
-    
-    bool minimap_succeeded = true;
-    if (ret != 0) {
-        minimap_succeeded = false;
-        return std::make_tuple(branchDistance, mutationDistance, -1, false, false, false, false, paths);
-    }
+    std::string cmd2 = "samtools sort " + sam_file + " > " + sam_file + ".bam" + " && samtools index " + sam_file + ".bam 2> /dev/null";
+    int ret2 = system(cmd2.c_str());
+    std::string cmd3 = "samtools faidx " + temp_true + " 2> /dev/null";
+    int ret3 = system(cmd3.c_str());
+    std::string cmd4 = "minimap2 -cx asm20 --secondary=no --cs " + temp_true + " " + temp_placement + " > " + paf_file + " 2> /dev/null";
+    int ret4 = system(cmd4.c_str());
+    bool minimap_succeeded = ret4 == 0;
+    // Sort PAF file by reference start position
+    std::string cmd5 = "sort -k6,6 -k8,8n " + paf_file + " > " + sorted_paf + " 2> /dev/null";
+    int ret5 = system(cmd5.c_str());
 
-    // Read PAF file and parse cs tag
-    std::ifstream paf_in(paf_file);
-    std::string line;
+    // Run paftools.js to call variants and get coverage
+    std::string variants_file = temp_placement + "_variants.txt";
+    // Use -l 0 to consider all alignment lengths since we're working with shorter sequences
+    std::string cmd6 = "/private/groups/corbettlab/alex/tomG/k8 /private/groups/corbettlab/alex/tomG/minimap2/misc/paftools.js call -l500 -L500 " + sorted_paf + " > " + variants_file + " 2> /dev/null";
+    int ret6 = system(cmd6.c_str());
+
+    // Read variants file to count total variants
+    std::ifstream variants_in(variants_file);
     int total_variants = 0;
     bool has_alignment = false;
+    int64_t total_covered_length = 0;
+    int64_t total_ref_length = 0;
 
-    while (std::getline(paf_in, line)) {
-        std::istringstream iss(line);
-        std::string token;
-        std::vector<std::string> fields;
-        
-        // Split line into fields
-        while (iss >> token) {
-            fields.push_back(token);
-        }
-        
-        // Look for cs tag (should be after the 12th field)
-        if (fields.size() >= 13) {
-            has_alignment = true;
-            for (size_t i = 12; i < fields.size(); i++) {
-                if (fields[i].substr(0, 5) == "cs:Z:") {
-                    total_variants += count_variants_from_cs(fields[i].substr(5));
-                    break;
+    if (variants_in.is_open()) {
+        std::string line;
+        while (std::getline(variants_in, line)) {
+            if (line[0] == 'V') {  // Variant line
+                // Parse variant line: V chr start end depth mapq ref alt ...
+                std::istringstream iss(line);
+                std::string type, chr;
+                int64_t start, end, depth;
+                int mapq;
+                std::string ref, alt;
+                
+                iss >> type >> chr >> start >> end >> depth >> mapq;
+                if (depth == 1) {  // Only count variants with depth 1
+                    total_variants++;
                 }
+            } else if (line[0] == 'R') {  // Region line
+                has_alignment = true;
+                // Parse region line: R chr start end
+                std::istringstream iss(line);
+                std::string type, chr;
+                int64_t start, end;
+                
+                iss >> type >> chr >> start >> end;
+                total_covered_length += (end - start);
+                total_ref_length = std::max(total_ref_length, end);
             }
         }
+        variants_in.close();
     }
-    
+
     if (!has_alignment) {
         return std::make_tuple(branchDistance, mutationDistance, -1, minimap_succeeded, true, false, false, paths);
     }
+
+    // Add coverage information to the paths string
+    paths += "\tCovered:" + std::to_string(total_covered_length) + 
+             "\tTotal:" + std::to_string(total_ref_length) + 
+             "\tVariants:" + std::to_string(total_variants);
 
     return std::make_tuple(branchDistance, mutationDistance, total_variants, minimap_succeeded, true, true, true, paths);
 }
@@ -3498,7 +4020,7 @@ std::unique_ptr<::capnp::PackedFdMessageReader> readCapnp2(std::string &filename
   auto message = std::make_unique<::capnp::PackedFdMessageReader>(fd, options);
   return message;
 }
-void pmi::evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_annotated_tree::mutationMatrices &mutMat, std::string aligner, std::string species, std::chrono::high_resolution_clock::time_point main_start, std::string default_index_path, std::string default_mutmat_path)
+void pmi::evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_annotated_tree::mutationMatrices &mutMat, std::string aligner, std::string species, std::chrono::high_resolution_clock::time_point main_start, std::string default_index_path, std::string default_mutmat_path, const float& score_proportion, const int& max_tied_nodes)
 {
     // Load input_tsv
     // Fields:
@@ -3525,7 +4047,6 @@ void pmi::evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_an
         data.push_back(row);
     }
     file.close();
-
     std::vector<std::string> metrics = { "jaccard"};
     
     // For each simulation, run placement with each metric, grouping the values for each simulation into (read_count & mutation_count) groups
@@ -3557,7 +4078,7 @@ void pmi::evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_an
         for (const auto& metric : metrics) {
             std::cout << "Group: " << group_key << ", Metric: " << metric << std::endl;
             for (const auto& simulation_data : simulations) {
-                // std::cout << "Simulation: {\n";
+                std::cout << "Simulation: " << std::get<std::string>(simulation_data[0]) << " ---- true node: " << std::get<std::string>(simulation_data[7]) << std::endl;
              
                 auto start = std::chrono::high_resolution_clock::now();
                 
@@ -3587,15 +4108,22 @@ void pmi::evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_an
                 PlacementResult result = {
                     simulation_id,
                     true_node_id,
-                    "", // unassigned placement node
-                    {}, // unassigned scores
-                    {}, // all scores
+                    "", // unassigned placement node (jaccard)
+                    "", // unassigned placement node (cosine)
+                    {}, // unassigned scores (jaccard)
+                    {}, // all scores (jaccard)
+                    {}, // unassigned scores (cosine)
+                    {}, // all scores (cosine)
                 };
                 std::string species_label = (species == "rsv") ? "rsv_4000" : (species == "tb") ? "tb_400" : "sars_20000";
                 std::string reads1_path = "/private/groups/corbettlab/alex/panmap-testing-docker/LATEST_RESULTS/simulated_data/sim_generaltest_" + species_label + "_" + simulation_id + "_R1.fastq";
                 std::string reads2_path = "/private/groups/corbettlab/alex/panmap-testing-docker/LATEST_RESULTS/simulated_data/sim_generaltest_" + species_label + "_" + simulation_id + "_R2.fastq";
 
-                pmi::place(result, T, index, reads1_path, reads2_path, mutMat, "evaluation/result_" + simulation_id, "", "", "", "", "", aligner, "", false, false);
+                std::ofstream logFile("results/" + species + "_" + simulation_id + ".txt", std::ios::app); // Open log file in append mode
+                logFile << "species\tread_count\tmutation_count\tcurrent_node\ttrue_node\tcosine\tcosine_numerator\tcosine_sumsqg\tcosine_sumsqreads\tjaccard\tjaccard_term1\tjaccard_term2\n";
+                pmi::place(result, T, index, reads1_path, reads2_path, mutMat, 
+                          "evaluation/result_" + simulation_id, "", "", "", "", "", aligner, "", false, false,
+                          logFile, score_proportion, max_tied_nodes, true_node_id, species, read_count, mutation_count);
 
                 auto end = std::chrono::high_resolution_clock::now();
 
@@ -3610,237 +4138,57 @@ void pmi::evaluate(Tree *T, std::string input_tsv, Index::Reader &index, seed_an
                 // std::cout << "   all_scores size: " << result.all_scores.size() << std::endl;
                 // std::cout << "   elapsed_time_s: " << result.elapsed_time_s << std::endl;
 
+               
                 // get phylogenetic distance to best node
-                Node* best_node = T->allNodes[result.best_node_id];
+                std::cout << "   best_node_id_jaccard: " << result.best_node_id_jaccard << std::endl;
+                std::cout << "   best_node_id_cosine: " << result.best_node_id_cosine << std::endl;
+                std::cout << "   true_node_id: " << result.true_node_id << std::endl;
+                Node* best_node_jaccard = T->allNodes[result.best_node_id_jaccard];
+                Node* best_node_cosine = T->allNodes[result.best_node_id_cosine];
                 Node* true_node = T->allNodes[result.true_node_id];
-                std::tuple<int, int, int, bool, bool, bool, bool, std::string> distances = getBranchDistance(T, best_node, true_node);
-                int branch_distance = std::get<0>(distances);
-                int mutation_distance = std::get<1>(distances);
-                int minimap_distance = std::get<2>(distances);
-                bool minimap_succeeded = std::get<3>(distances);
-                bool sort_succeeded = std::get<4>(distances);
-                bool paftools_succeeded = std::get<5>(distances);
-                bool paftools_covered = std::get<6>(distances);
-                std::string paths = std::get<7>(distances);
+                std::tuple<int, int, int, bool, bool, bool, bool, std::string> distances_jaccard = getBranchDistance(T, best_node_jaccard, true_node, species);
+                std::tuple<int, int, int, bool, bool, bool, bool, std::string> distances_cosine = getBranchDistance(T, best_node_cosine, true_node, species);
+                int branch_distance_jaccard = std::get<0>(distances_jaccard);
+                int branch_distance_cosine = std::get<0>(distances_cosine);
+                int mutation_distance_jaccard = std::get<1>(distances_jaccard);
+                int mutation_distance_cosine = std::get<1>(distances_cosine);
+                int minimap_distance_jaccard = std::get<2>(distances_jaccard);
+                int minimap_distance_cosine = std::get<2>(distances_cosine);
+                bool minimap_succeeded_jaccard = std::get<3>(distances_jaccard);
+                bool minimap_succeeded_cosine = std::get<3>(distances_cosine);
+                bool sort_succeeded_jaccard = std::get<4>(distances_jaccard);
+                bool sort_succeeded_cosine = std::get<4>(distances_cosine);
+                bool paftools_succeeded_jaccard = std::get<5>(distances_jaccard);
+                bool paftools_succeeded_cosine = std::get<5>(distances_cosine);
+                bool paftools_covered_jaccard = std::get<6>(distances_jaccard);
+                bool paftools_covered_cosine = std::get<6>(distances_cosine);
+                std::string paths = std::get<7>(distances_cosine);
                 // std::cout << "   branches_from_true_node: " << phylo_dist << std::endl;
 
-                std::string tsv_line = simulation_id + "\t" + true_node->identifier + "\t" + best_node->identifier + "\t" + std::to_string(branch_distance) + "\t" + std::to_string(mutation_distance) + "\t" + std::to_string(minimap_distance) + "\t" + std::to_string(result.best_node_score) + "\t" + std::to_string(result.elapsed_time_s) + "\t" + metric + "\t" + group_key + "\t" + std::to_string(minimap_succeeded) + "\t" + std::to_string(sort_succeeded) + "\t" + std::to_string(paftools_succeeded) + "\t" + std::to_string(paftools_covered) + "\t" + paths;
+                // Prepare top nodes string for TSV
+                // std::string top_nodes_str;
+                // for (const auto& node : result.top_nodes) {
+                //     if (!top_nodes_str.empty()) top_nodes_str += ";";
+                //     top_nodes_str += node.first + ":" + std::to_string(node.second);
+                // }
+
+                std::string tsv_line = simulation_id + "\t" + true_node->identifier + "\t" + best_node_jaccard->identifier + "\t" + best_node_cosine->identifier + "\t" + 
+                    std::to_string(branch_distance_jaccard) + "\t" + std::to_string(mutation_distance_jaccard) + "\t" + 
+                    std::to_string(minimap_distance_jaccard) + "\t" + std::to_string(result.best_node_score_jaccard) + "\t" + 
+                    std::to_string(branch_distance_cosine) + "\t" + std::to_string(mutation_distance_cosine) + "\t" + 
+                    std::to_string(minimap_distance_cosine) + "\t" + std::to_string(result.best_node_score_cosine) + "\t" + 
+                    std::to_string(result.elapsed_time_s) + "\t" + group_key + "\t" + 
+                    std::to_string(minimap_succeeded_jaccard) + "\t" + std::to_string(sort_succeeded_jaccard) + "\t" + 
+                    std::to_string(paftools_succeeded_jaccard) + "\t" + std::to_string(paftools_covered_jaccard) + "\t" + 
+                    std::to_string(minimap_succeeded_cosine) + "\t" + std::to_string(sort_succeeded_cosine) + "\t" + 
+                    std::to_string(paftools_succeeded_cosine) + "\t" + std::to_string(paftools_covered_cosine) + "\t" + 
+                    paths;
                 std::cerr << tsv_line << std::endl;
             }
         }
     }
 }
-// // Function to compute the DFS order of nodes starting from the root
-// std::vector<Node*> computeDFSOrder(Node* root) {
-//     std::vector<Node*> dfsOrder;
-//     if (!root) return dfsOrder;
 
-//     std::stack<Node*> stack;
-//     stack.push(root);
-
-//     while (!stack.empty()) {
-//         Node* current = stack.top();
-//         stack.pop();
-//         dfsOrder.push_back(current);
-
-//         // Push children in reverse order to process leftmost child first
-//         for (auto it = current->children.rbegin(); it != current->children.rend(); ++it) {
-//             stack.push(*it);
-//         }
-//     }
-
-//     return dfsOrder;
-// }
-
-// // Function to split the DFS order into groups
-// std::vector<std::vector<Node*>> splitDFSIntoGroups(const std::vector<Node*>& dfsOrder, int numGroups) {
-//     std::vector<std::vector<Node*>> groups;
-//     if (numGroups <= 0 || dfsOrder.size() <= 1) return groups;
-
-//     size_t totalNodes = dfsOrder.size() - 1; // Exclude root
-//     size_t groupSize = (totalNodes + numGroups) / numGroups; // Ceiling division
-
-//     for (int i = 0; i < numGroups; ++i) {
-//         size_t start = i * groupSize;  // Start after the root
-//         size_t end = std::min(start + groupSize, dfsOrder.size());
-//         groups.emplace_back(dfsOrder.begin() + start, dfsOrder.begin() + end);
-//     }
-
-//     return groups;
-// }
-
-// // Function to backtrack from a node to the root
-// std::vector<Node*> backtrackToRoot(Node* start) {
-//     std::vector<Node*> path;
-//     while (start) {
-//         path.push_back(start);
-//         start = start->parent;
-//     }
-//     std::reverse(path.begin(), path.end()); // Reverse to get root-to-node order
-//     return path;
-// }
-
-// // Function to apply seed changes while traversing
-// void traverseWithSeedChanges(Node* node, const std::vector<std::string>& sequencingReads) {
-//     if (!node) return;
-
-//     // Example logic: Apply changes at this node
-//     std::cout << "Node: " << node->identifier << " - Applying seed changes" << std::endl;
-
-//     // Recursively traverse children
-//     for (Node* child : node->children) {
-//         traverseWithSeedChanges(child, sequencingReads);
-//     }
-// }
-
-// // Function to process nodes with seed changes
-// void processDFSOrderWithSeedChanges(Node* root, const std::vector<std::string>& sequencingReads) {
-//     if (!root) return;
-
-//     std::stack<Node*> stack;
-//     stack.push(root);
-
-//     while (!stack.empty()) {
-//         Node* current = stack.top();
-//         stack.pop();
-
-//         // Process the current node
-//         std::cout << "Processing node: " << current->identifier << std::endl;
-
-//         // Apply seed changes
-//         traverseWithSeedChanges(current, sequencingReads);
-
-//         // Push children in reverse order for DFS
-//         for (auto it = current->children.rbegin(); it != current->children.rend(); ++it) {
-//             stack.push(*it);
-//         }
-//     }
-// }
-
-// // Main parallel_tester function
-// void pmi::parallel_tester(Tree* T, Index::Reader& index, const std::string& reads1Path, const std::string& reads2Path, const std::string& prefix) {
-//     std::cout << "Parallel tester" << std::endl;
-
-//     // Step 1: Compute the DFS order
-//     std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
-
-//     // Step 2: Set the number of groups manually
-//     int numGroups = 16; // Manually specify the number of groups
-
-//     // Step 3: Split DFS order into groups
-//     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numGroups);
-
-//     // Step 4: Process only the starting node of each group
-//     for (int i = 0; i < groups.size(); ++i) {
-//         if (groups[i].empty()) continue; // Skip empty groups
-
-//         // Get the starting node of the group
-//         Node* startNode = groups[i].front();
-
-//         // Backtrack to the root from the starting node
-//         std::vector<Node*> path = backtrackToRoot(startNode);
-
-//         // Print the group and the path
-//         std::cout << "Group " << i + 1 << " (Start Node: " << startNode->identifier << "):\n";
-//         std::cout << "  Path to root: ";
-//         for (Node* node : path) {
-//             std::cout << node->identifier << " ";
-//         }
-//         std::cout << "\n";
-
-//       // Initialize thread logic here if needed
-//       // Example: Perform parallel tasks for each group starting from `startNode`
-//   }
-
-//     std::cout << "Finished processing groups." << std::endl;
-// }
-
-
-// Function to apply seed changes while traversing
-void traverseWithSeedChanges(Node* node, const std::vector<std::string>& sequencingReads) {
-    if (!node) return;
-
-    // Example logic: Apply changes at this node
-    std::cout << "Node: " << node->identifier << " - Applying seed changes" << std::endl;
-
-    // Recursively traverse children
-    for (Node* child : node->children) {
-        traverseWithSeedChanges(child, sequencingReads);
-    }
-}
-
-// //ORIGINAL DFS
-// // // Perform recursive DFS
-// // void performRecursiveDFS(Node* current, Node* stopNode, std::vector<std::string>& dfsResult, std::ostringstream& logStream) {
-// //     if (!current) {
-// //         // logStream << "[Thread " << std::this_thread::get_id() << "] NULL node encountered, returning.\n";
-// //         return;
-// //     }
-
-// //     // Visit the current node
-// //     // logStream << "[Thread " << std::this_thread::get_id() << "] Visiting node: " << current->identifier << "\n";
-// //     dfsResult.push_back(current->identifier);
-
-// //     // Stop if the stopping node is reached
-// //     if (current == stopNode) {
-// //         // logStream << "[Thread " << std::this_thread::get_id() << "] Stopping node " << stopNode->identifier << " reached.\n";
-// //         return;
-// //     }
-
-// //     // Traverse children
-// //     for (Node* child : current->children) {
-// //         // logStream << "[Thread " << std::this_thread::get_id() << "] Moving to child node: " << child->identifier << " of " << current->identifier << "\n";
-// //         performRecursiveDFS(child, stopNode, dfsResult, logStream);
-// //         if (!dfsResult.empty() && dfsResult.back() == stopNode->identifier) {
-// //             // logStream << "[Thread " << std::this_thread::get_id() << "] Stop node " << stopNode->identifier << " reached. Returning from child traversal.\n";
-// //             return;
-// //         }
-// //     }
-
-// //     // Backtrack and find a right sibling to continue DFS
-// //     Node* parent = current->parent;
-// //     while (parent) {
-// //         // logStream << "[Thread " << std::this_thread::get_id() << "] Backtracking to parent node: " << parent->identifier << " from " << current->identifier << "\n";
-// //         auto it = std::find(parent->children.begin(), parent->children.end(), current);
-// //         if (it != parent->children.end()) {
-// //             for (auto siblingIt = it + 1; siblingIt != parent->children.end(); ++siblingIt) {
-// //                 // logStream << "[Thread " << std::this_thread::get_id() << "] Found right sibling: " << (*siblingIt)->identifier << " of " << parent->identifier << "\n";
-// //                 performRecursiveDFS(*siblingIt, stopNode, dfsResult, logStream);
-// //                 if (!dfsResult.empty() && dfsResult.back() == stopNode->identifier) {
-// //                     // logStream << "[Thread " << std::this_thread::get_id() << "] Stop node " << stopNode->identifier << " reached. Returning from sibling traversal.\n";
-// //                     return;
-// //                 }
-// //             }
-// //         }
-// //         // Move up to the parent node
-// //         current = parent;
-// //         parent = current->parent;
-// //     }
-
-// //     // logStream << "[Thread " << std::this_thread::get_id() << "] No more unexplored right siblings or parents. DFS complete.\n";
-// // }
-
-// // Perform grouped DFS
-// void performGroupedDFS(Node* startNode, Node* stopNode, std::vector<std::string>& dfsResult, std::ostringstream& logStream) {
-//     logStream << "===== [Thread " << std::this_thread::get_id() << "] Starting grouped DFS =====\n";
-//     logStream << "[Thread " << std::this_thread::get_id() << "] Start node: " << startNode->identifier
-//               << ", Stop node: " << (stopNode ? stopNode->identifier : "nullptr") << "\n";
-
-//     std::vector<Node*> pathToRoot = backtrackToRoot(startNode);
-//     logStream << "[Thread " << std::this_thread::get_id() << "] Path to root for start node " << startNode->identifier << ": ";
-//     for (Node* node : pathToRoot) {
-//         logStream << node->identifier << " ";
-//     }
-//     logStream << "\n";
-
-//     performRecursiveDFS(startNode, stopNode, dfsResult, logStream);
-
-//     logStream << "[Thread " << std::this_thread::get_id() << "] DFS Result for group starting at " << startNode->identifier << ": ";
-//     for (const auto& id : dfsResult) {
-//         logStream << id << " ";
-//     }
-//     logStream << "\n============================================\n";
-// }
 
 // Print the DFS order
 void printDFSOrder(const std::vector<Node*>& dfsOrder) {
@@ -3851,167 +4199,6 @@ void printDFSOrder(const std::vector<Node*>& dfsOrder) {
     std::cout << "\n";
 }
 
-// Function to process nodes with seed changes
-void processDFSOrderWithSeedChanges(Node* root, const std::vector<std::string>& sequencingReads) {
-    if (!root) return;
-
-    std::stack<Node*> stack;
-    stack.push(root);
-
-    while (!stack.empty()) {
-        Node* current = stack.top();
-        stack.pop();
-
-        // Process the current node
-        std::cout << "Processing node: " << current->identifier << std::endl;
-
-        // Apply seed changes
-        traverseWithSeedChanges(current, sequencingReads);
-
-        // Push children in reverse order for DFS
-        for (auto it = current->children.rbegin(); it != current->children.rend(); ++it) {
-            stack.push(*it);
-        }
-    }
-}
-
-
-// void pmi::parallel_tester(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, seed_annotated_tree::mutationMatrices &mutMat, std::string prefix,std::string refFileName, std::string samFileName, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner, const std::string& refNode) {
-    
-    
-    
-//     std::cout << "Parallel tester" << std::endl;
-
-//     // Step 1: Compute the DFS order
-//     std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
-
-//     // Step 2: Print the DFS order
-//     // printDFSOrder(dfsOrder);
-
-//     // Step 4: Set the number of groups manually
-//     int numThreads = 16; // Manually specify the number of groups
-
-//     // Step 5: Split DFS order into groups based on number of threads
-//     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);
-
-//     // Step 6: Perform grouped DFS
-//     std::cout << "\nDFS Traversals for Each Group:\n";
-//     std::vector<std::thread> dfsThreads;
-//     std::mutex outputMutex;
-
-//     for (const auto& group : groups) {
-//         if (!group.empty()) {
-//             Node* startNode = group.front();
-//             Node* stoppingNode = group.back();
-//             dfsThreads.emplace_back([=, &outputMutex]() {
-//                 std::ostringstream logStream;
-//                 std::vector<std::string> dfsResult;
-//                 performGroupedDFS(startNode, stoppingNode, dfsResult, logStream);
-
-//                 std::lock_guard<std::mutex> lock(outputMutex);
-//                 std::cout << logStream.str();
-//             });
-//         }
-//     }
-
-//     // Wait for all DFS threads to complete
-//     for (auto& thread : dfsThreads) {
-//         thread.join();
-//     }
-
-//     // Clean up memory
-//     delete T;
-
-//     std::cout << "Finished processing groups." << std::endl;
-// }
-
-
-// // Main parallel_tester function
-// void pmi::parallel_tester(Tree* T, Index::Reader& index, const std::string& reads1Path, const std::string& reads2Path, const std::string& prefix) {
-//     std::cout << "Parallel tester" << std::endl;
-
-//     // Step 1: Compute the DFS order
-//     std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
-
-//     // Step 2: Set the number of groups manually
-//     int numGroups = 16; // Manually specify the number of groups
-
-//     // Step 3: Split DFS order into groups
-//     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numGroups);
-
-//     // Step 4: Process only the starting node of each group
-//     for (int i = 0; i < groups.size(); ++i) {
-//         if (groups[i].empty()) continue; // Skip empty groups
-
-//         // Get the starting node of the group
-//         Node* startNode = groups[i].front();
-
-//         // Backtrack to the root from the starting node
-//         std::vector<Node*> path = backtrackToRoot(startNode);
-
-//         // Print the group and the path
-//         std::cout << "Group " << i + 1 << " (Start Node: " << startNode->identifier << "):\n";
-//         std::cout << "  Path to root: ";
-//         for (Node* node : path) {
-//             std::cout << node->identifier << " ";
-//         }
-//         std::cout << "\n";
-
-//       // Initialize thread logic here if needed
-//       // Example: Perform parallel tasks for each group starting from `startNode`
-//   }
-
-//     std::cout << "Finished processing groups." << std::endl;
-// }
-
-// Main parallel_tester function
-
-
-// void pmi::parallel_tester(Tree* T, Index::Reader& index, const std::string& reads1Path, const std::string& reads2Path, const std::string& prefix) {
-//     std::cout << "Parallel tester" << std::endl;
-
-//     // Step 1: Compute the DFS order
-//     std::vector<Node*> dfsOrder = computeDFSOrder(T->root);
-
-//     // Step 2: Print the DFS order
-//     // printDFSOrder(dfsOrder);
-
-//     // Step 4: Set the number of groups manually
-//     int numThreads = 16; // Manually specify the number of groups
-
-//     // Step 5: Split DFS order into groups based on number of threads
-//     std::vector<std::vector<Node*>> groups = splitDFSIntoGroups(dfsOrder, numThreads);
-
-//     // Step 6: Perform grouped DFS
-//     std::cout << "\nDFS Traversals for Each Group:\n";
-//     std::vector<std::thread> dfsThreads;
-//     std::mutex outputMutex;
-
-//     for (const auto& group : groups) {
-//         if (!group.empty()) {
-//             Node* startNode = group.front();
-//             Node* stoppingNode = group.back();
-//             dfsThreads.emplace_back([=, &outputMutex]() {
-//                 std::ostringstream logStream;
-//                 std::vector<std::string> dfsResult;
-//                 performGroupedDFS(startNode, stoppingNode, dfsResult, logStream);
-
-//                 std::lock_guard<std::mutex> lock(outputMutex);
-//                 std::cout << logStream.str();
-//             });
-//         }
-//     }
-
-//     // Wait for all DFS threads to complete
-//     for (auto& thread : dfsThreads) {
-//         thread.join();
-//     }
-
-//     // Clean up memory
-//     delete T;
-
-//     std::cout << "Finished processing groups." << std::endl;
-// }
 
 
 template <typename SeedMutationsType, typename GapMutationsType>
