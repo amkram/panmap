@@ -38,14 +38,14 @@ inline void fillDfsIndexes(panmanUtils::Tree *T, panmanUtils::Node *node, int64_
 struct tupleCoord_t {
     int blockId, nucPos, nucGapPos;
 
-    // Constructor
-    tupleCoord_t(const int64_t &blockId, const int64_t &nucPos,
-                 const int64_t &nucGapPos)
-        : blockId(blockId), nucPos(nucPos), nucGapPos(nucGapPos) {}
-
     // Default constructor
     tupleCoord_t() : blockId(-1), nucPos(-1), nucGapPos(-1) {}
+    
+    // Copy constructor
     tupleCoord_t(const tupleCoord_t &other) : blockId(other.blockId), nucPos(other.nucPos), nucGapPos(other.nucGapPos) {}
+    
+    // Add constructor for direct initialization
+    tupleCoord_t(int64_t b, int64_t n, int64_t g) : blockId(b), nucPos(n), nucGapPos(g) {}
 
     bool operator<(const tupleCoord_t &rhs) const {
         if (blockId == -1 && nucPos == -1 && nucGapPos == -1) return false;
@@ -453,121 +453,139 @@ typedef std::vector<
 class HotSeedIndex {
 public:
     typedef size_t hashedKmer_t;
-    enum PositionState {
-        IMMUTABLE,
-        HOT,
-        NORMAL
-    };
-    std::vector<PositionState> positionStates; 
-    std::unordered_map<int64_t, std::unordered_map<int32_t, std::tuple<hashedKmer_t, int64_t, bool>>> hotSeeds; // pos -> (dfsIndex -> (kmer, endPos, isReverse))
-    std::unordered_map<int64_t, std::tuple<hashedKmer_t, int64_t, bool>> immutableSeeds; // pos -> (kmer, endPos, isReverse)
-    std::vector<int64_t> hotCounts; // Track how many times a position has been mutated
-    // Constructor
-    HotSeedIndex(int k, int hotThreshold, int64_t genomeLength) : k(k), hotThreshold(hotThreshold) {
-        positionStates.resize(genomeLength, IMMUTABLE);
-        hotCounts.resize(genomeLength, 0);
-        immutableSeeds.reserve(genomeLength);
-    }
-
-    HotSeedIndex(int k) : k(k) {}
     
-    // Record a mutation at a position
-    void recordMutation(int64_t pos) {
-        positionStates[pos] = NORMAL;
-        hotCounts[pos]++;
-        if (hotCounts[pos] >= hotThreshold) {
-            positionStates[pos] = HOT;
+    // Struct to hold seed lookup info
+    struct SeedInfo {
+        hashedKmer_t kmer;
+        int64_t endPos;
+        bool isReverse;
+        
+        bool operator==(const SeedInfo& other) const {
+            return kmer == other.kmer && 
+                   endPos == other.endPos && 
+                   isReverse == other.isReverse;
+        }
+    };
+    
+    struct SeedInfoHash {
+        size_t operator()(const SeedInfo& info) const {
+            size_t h = std::hash<hashedKmer_t>{}(info.kmer);
+            h ^= std::hash<int64_t>{}(info.endPos) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= std::hash<bool>{}(info.isReverse) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+
+    // Hash function for position-dfsIndex pair
+    struct PosIndexHash {
+        size_t operator()(const std::pair<int64_t, int64_t>& p) const {
+            size_t h = std::hash<int64_t>{}(p.first);
+            h ^= std::hash<int64_t>{}(p.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+
+    // Maps seed info to its access count
+    std::unordered_map<SeedInfo, int64_t, SeedInfoHash> seedAccessCounts;
+    
+    // Fast lookup from (pos, dfsIndex) to seed info
+    std::unordered_map<std::pair<int64_t, int64_t>, SeedInfo, PosIndexHash> posToSeed;
+    
+    size_t maxCachedSeeds;
+
+    HotSeedIndex(int k, size_t maxSeeds = 10000) : k(k), maxCachedSeeds(maxSeeds) {}
+
+    // Record a seed access during build phase
+    void recordSeedAccess(int64_t pos, int64_t dfsIndex, hashedKmer_t kmer, int64_t endPos, bool isReverse) {
+        SeedInfo info{kmer, endPos, isReverse};
+        auto& count = seedAccessCounts[info];
+        count++;
+
+        // Add/update position mapping
+        posToSeed[{pos, dfsIndex}] = info;
+
+        // If we've exceeded maxCachedSeeds, remove least frequently accessed
+        if (seedAccessCounts.size() > maxCachedSeeds) {
+            // Find least accessed seed
+            auto minIt = std::min_element(seedAccessCounts.begin(), seedAccessCounts.end(),
+                [](const auto& a, const auto& b) {
+                    return a.second < b.second;
+                });
+
+            // Remove all position mappings for this seed
+            for (auto it = posToSeed.begin(); it != posToSeed.end();) {
+                if (it->second == minIt->first) {
+                    it = posToSeed.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            // Remove the seed itself
+            seedAccessCounts.erase(minIt);
         }
     }
 
-    void indexSeedIfHotOrImmutable(int64_t pos, int32_t dfsIndex, hashedKmer_t kmer, int64_t endPos, bool isReverse) {
-        if (positionStates[pos] == IMMUTABLE) {
-            immutableSeeds[pos] = {kmer, endPos, isReverse};
-        } else if (positionStates[pos] == HOT) {
-            hotSeeds[pos][dfsIndex] = {kmer, endPos, isReverse};
-        }
-    }
-
-    // Get seed for a position and DFS index
-    bool getSeed(int64_t pos, int32_t dfsIndex, hashedKmer_t& seed, int64_t& endPos, bool& isReverse) const {
-        if (pos >= hotCounts.size()) return false;
-        if (immutableSeeds.find(pos) != immutableSeeds.end()) {
-            // Position is immutable, return stored seed
-            std::tie(seed, endPos, isReverse) = immutableSeeds.at(pos);
+    // Try to get a cached seed during placement phase
+    bool getSeed(int64_t pos, int64_t dfsIndex, hashedKmer_t& kmer, int64_t& endPos, bool& isReverse) {
+        auto it = posToSeed.find({pos, dfsIndex});
+        if (it != posToSeed.end()) {
+            const auto& info = it->second;
+            kmer = info.kmer;
+            endPos = info.endPos;
+            isReverse = info.isReverse;
             return true;
         }
-        
-        // Position is hot, look up in hot seeds map
-        auto posIt = hotSeeds.find(pos);
-        if (posIt == hotSeeds.end()) return false;
-        
-        auto dfsIt = posIt->second.find(dfsIndex);
-        if (dfsIt == posIt->second.end()) return false;
-        
-        std::tie(seed, endPos, isReverse) = dfsIt->second;
-        return true;
+        return false;
     }
-    
+
     // Serialize to Cap'n Proto
     void serialize(::HotSeedIndexSerial::Builder builder) const {
-        // Pack immutable seeds
-        auto immutableBuilder = builder.initImmutableSeeds(immutableSeeds.size());
+        auto entriesBuilder = builder.initEntries(seedAccessCounts.size());
         size_t i = 0;
-        for (const auto& [pos, seedData] : immutableSeeds) {
-            auto entry = immutableBuilder[i];
-            auto [seed, endPos, isReverse] = seedData;
-            entry.setSeed(seed);
-            entry.setEndPosition(endPos);
-            entry.setIsReverse(isReverse);
+        
+        // Group positions by seed info
+        std::unordered_map<SeedInfo, std::vector<std::pair<int64_t, int64_t>>, SeedInfoHash> seedToPositions;
+        for (const auto& [pos_idx, seed] : posToSeed) {
+            seedToPositions[seed].push_back(pos_idx);
+        }
+
+        for (const auto& [info, count] : seedAccessCounts) {
+            auto entry = entriesBuilder[i];
+            entry.setKmer(info.kmer);
+            entry.setEndPos(info.endPos);
+            entry.setIsReverse(info.isReverse);
+            entry.setAccessCount(count);
+            
+            const auto& positions = seedToPositions[info];
+            auto positionsBuilder = entry.initPositions(positions.size());
+            for (size_t j = 0; j < positions.size(); j++) {
+                positionsBuilder[j].setPos(positions[j].first);
+                positionsBuilder[j].setDfsIndex(positions[j].second);
+            }
             i++;
         }
-        
-        // Pack hot seeds
-        std::vector<std::tuple<int32_t, int64_t, hashedKmer_t, int64_t, bool>> hotEntries;
-        for (const auto& [pos, dfsMap] : hotSeeds) {
-            for (const auto& [dfsIndex, seedData] : dfsMap) {
-                auto [seed, endPos, isReverse] = seedData;
-                hotEntries.push_back({dfsIndex, pos, seed, endPos, isReverse});
-            }
-        }
-        
-        auto hotBuilder = builder.initHotSeeds(hotEntries.size());
-        for (size_t i = 0; i < hotEntries.size(); i++) {
-            auto entry = hotBuilder[i];
-            auto [dfsIndex, pos, seed, endPos, isReverse] = hotEntries[i];
-            entry.setDfsIndex(dfsIndex);
-            entry.setPosition(pos);
-            entry.setKmer(seed);
-            entry.setEndPosition(endPos);
-            entry.setIsReverse(isReverse);
-        }
     }
-    
+
     // Deserialize from Cap'n Proto
     void deserialize(::HotSeedIndexSerial::Reader reader) {
-        // Read immutable seeds
-        auto immutableReader = reader.getImmutableSeeds();
-        immutableSeeds.reserve(immutableReader.size());
-        for (size_t i = 0; i < immutableReader.size(); i++) {
-            auto entry = immutableReader[i];
-            immutableSeeds[i] = {entry.getSeed(), entry.getEndPosition(), entry.getIsReverse()};
-        }
+        seedAccessCounts.clear();
+        posToSeed.clear();
         
-        // Read hot seeds
-        auto hotReader = reader.getHotSeeds();
-        hotSeeds.reserve(hotReader.size());
-        for (auto entry : hotReader) {
-            hotSeeds[entry.getPosition()][entry.getDfsIndex()] = {
-                entry.getKmer(),
-                entry.getEndPosition(),
-                entry.getIsReverse()
-            };
+        auto entries = reader.getEntries();
+        for (auto entry : entries) {
+            SeedInfo info{entry.getKmer(), entry.getEndPos(), entry.getIsReverse()};
+            seedAccessCounts[info] = entry.getAccessCount();
+            
+            auto positions = entry.getPositions();
+            for (auto pos : positions) {
+                posToSeed[{pos.getPos(), pos.getDfsIndex()}] = info;
+            }
         }
     }
 
 private:
-    int k;  // k-mer length
-    int hotThreshold; // times a position must be mutated to be considered hot
+    int k;
 };
 
 struct mutableTreeData {
