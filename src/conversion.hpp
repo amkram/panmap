@@ -5,6 +5,9 @@ extern "C" {
     #include <htslib/sam.h>
 }
 
+void getAnchors(std::vector<std::tuple<int64_t, int32_t, int>> &anchors, const std::vector<std::vector<seeding::seed>> &readSeeds,
+                const std::vector<std::string> &readSequences, const std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions, int k);
+
 void createSam(
     std::vector<std::vector<seeding::seed>> &readSeeds,
     std::vector<std::string> &readSequences,

@@ -200,7 +200,7 @@ namespace mgsr {
   template <typename SeedMutationsType>
   void processSeedMutations(
     const SeedMutationsType& perNodeSeedMutations_Index, 
-    const int64_t& dfsIndex, 
+    int64_t& dfsIndex, 
     std::map<uint32_t, seeding::onSeedsHash>& onSeedsHashMap, 
     std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& seedChanges, 
     Tree* T, 
@@ -213,6 +213,7 @@ namespace mgsr {
   ) {
     auto currBasePositions = perNodeSeedMutations_Index[dfsIndex].getBasePositions();
     auto currPerPosMasks = perNodeSeedMutations_Index[dfsIndex].getPerPosMasks();
+    thread_local static std::string seedBuffer;
 
     for (int i = 0; i < currBasePositions.size(); ++i) {
       int64_t pos = currBasePositions[i];
@@ -228,23 +229,36 @@ namespace mgsr {
             seedChanges.emplace_back(std::make_tuple(seedPos, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt, oldEndPos, std::nullopt));
           }
         } else if (ternaryNumber == 2) { // Handle insertion/change (off -> on or on -> on)
-          auto [newSeed, newSeedEndPos] = seed_annotated_tree::getSeedAt(seedPos, T, seedK, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges);
-          auto [newSeedFHash, newSeedRHash] = hashSeq(newSeed);
+          size_t result_hash;
+          int64_t result_end_pos = -1;
+          bool result_is_reverse;
           size_t newSeedHash;
           bool newIsReverse;
-          if (newSeedFHash < newSeedRHash) {
-            newSeedHash  = newSeedFHash;
-            newIsReverse = false;
+          HotSeedIndex hotSeedIndexDummy(0); // todo use hotSeedIndex
+          if(!seed_annotated_tree::getSeedAt(false, hotSeedIndexDummy, seedBuffer, result_hash, result_end_pos, result_is_reverse, seedPos, T, seedK, dfsIndex, data.scalarToTupleCoord, data.sequence, data.blockExists, data.blockStrand, globalCoords, navigator, gapMap, blockRanges)) {
+            continue;
+          }
+          // getSeedAt fills result_hash and result_end_pos if cache hit
+          // else fills seedBuffer and result_end_pos, need to hashSeq(seedBuffer)
+          if (result_end_pos != -1) {
+            newSeedHash = result_hash;
+            newIsReverse = result_is_reverse;
           } else {
-            newSeedHash  = newSeedRHash;
-            newIsReverse = true;
+            auto [newSeedFHash, newSeedRHash] = hashSeq(seedBuffer);
+            if (newSeedFHash < newSeedRHash) {
+              newSeedHash  = newSeedFHash;
+              newIsReverse = false;
+            } else {
+              newSeedHash  = newSeedRHash;
+              newIsReverse = true;
+            }
           }
 
           if (seedIt != onSeedsHashMap.end()) { // on -> on
             const auto& [oldSeed, oldEndPos, oldIsReverse] = seedIt->second;
-            seedChanges.emplace_back(std::make_tuple(seedPos, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse, oldEndPos, newSeedEndPos));
+            seedChanges.emplace_back(std::make_tuple(seedPos, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse, oldEndPos, result_end_pos));
           } else { // off -> on
-            seedChanges.emplace_back(std::make_tuple(seedPos, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse, std::nullopt, newSeedEndPos));
+            seedChanges.emplace_back(std::make_tuple(seedPos, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse, std::nullopt, result_end_pos));
           }
         }
       }
@@ -255,7 +269,7 @@ namespace mgsr {
   void processNodeMutations(
     const GapMutationsType& perNodeGapMutations_Index,
     const SeedMutationsType& perNodeSeedMutations_Index,
-    const int64_t& dfsIndex,
+    int64_t& dfsIndex,
     std::map<int64_t, int64_t>& gapMap,
     std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBacktracks,
     std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBlocksBacktracks,

@@ -7,6 +7,12 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include "timing.hpp"
+#include <capnp/common.h>
+#include <capnp/message.h>
+#include <capnp/serialize.h>
+#include <capnp/serialize-packed.h>
+#include "index.capnp.h"
 
 double time_stamp();
 
@@ -19,6 +25,15 @@ inline auto seed_cmp = [](const std::pair<int32_t, std::string> &a,
   }
   return a.first < b.first;
 };
+
+inline void fillDfsIndexes(panmanUtils::Tree *T, panmanUtils::Node *node, int64_t &dfsIndex, std::unordered_map<std::string, int64_t> &dfsIndexes) {  
+  TIME_FUNCTION;
+  dfsIndexes[node->identifier] = dfsIndex;
+  dfsIndex++;
+  for (panmanUtils::Node *child : node->children) {
+    fillDfsIndexes(T, child, dfsIndex, dfsIndexes);
+  }
+}
 
 struct tupleCoord_t {
     int blockId, nucPos, nucGapPos;
@@ -88,311 +103,330 @@ struct tupleRange {
     }
 };
 class CoordNavigator {
+private:
+    sequence_t* sequence_ptr;  // Use pointer instead of reference
+
 public:
-  std::optional<sequence_t> sequence;
-  CoordNavigator(sequence_t &seq) {
-    sequence = std::make_optional<sequence_t>(seq);
-  }
-  CoordNavigator() : sequence(std::nullopt) {}
-
-  bool isGap(const tupleCoord_t &coord) {
-    char c;
-    if (coord.nucGapPos == -1) {
-      c = sequence.value()[coord.blockId].first[coord.nucPos].first;
-    } else {
-      c = sequence.value()[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
-    }
-    return c == '-' || c == 'x';
-  }
-
-  
-  tupleCoord_t increment(tupleCoord_t &givencoord) {
-    tupleCoord_t coord = givencoord;
+    // Default constructor now allowed - sets null pointer
+    CoordNavigator() : sequence_ptr(nullptr) {}
     
-    if (coord.nucGapPos == -1){
-      coord.nucPos++;
-
-      if(coord.nucPos >= sequence.value()[coord.blockId].first.size()){
-        
-        coord.blockId++;
-        
-        if(coord.blockId >= sequence.value().size()){
-          
-          return tupleCoord_t{-1,-1,-1};
-        }
-        coord.nucPos = 0;
-      }
-
-      if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-        coord.nucGapPos = 0;
-      }
-      return coord;
-    }else{
-      coord.nucGapPos++;
-      if(coord.nucGapPos >= sequence.value()[coord.blockId].first[coord.nucPos].second.size()){
-        coord.nucGapPos = -1;
-      }
-      return coord;
-    }
-  }
-
-  tupleCoord_t decrement(tupleCoord_t &givencoord) {
-    tupleCoord_t coord = givencoord;
-    if (coord.nucGapPos == -1) {
-      if(sequence.value()[coord.blockId].first[coord.nucPos].second.empty()){
-        coord.nucPos--;
-        if(coord.nucPos < 0){
-          coord.blockId--;
-          if(coord.blockId < 0){
-            return tupleCoord_t{0,0,0};
-          }
-          coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-        }
-        return coord;
-      }else{
-        coord.nucGapPos = sequence.value()[coord.blockId].first[coord.nucPos].second.size() - 1;
-        return coord;
-      }
-    }else{
-      coord.nucGapPos--;
-      if(coord.nucGapPos < 0){
-        coord.nucGapPos = -1;
-        coord.nucPos--;
-        if(coord.nucPos < 0){
-          coord.blockId--;
-          if(coord.blockId < 0){
-            return tupleCoord_t{0,0,0};
-          }
-          coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-        }
-        return coord;
-      }
-      return coord;
-    }
-  }
-
-
-tupleCoord_t newincrement(tupleCoord_t &givencoord,  const blockStrand_t &blockStrand) {
-    tupleCoord_t coord = givencoord;
+    // Main constructor
+    explicit CoordNavigator(sequence_t& seq) : sequence_ptr(&seq) {}
     
-    if(blockStrand[coord.blockId].first){
-
+    // Copy/move constructors
+    CoordNavigator(const CoordNavigator& other) = default;
+    CoordNavigator(CoordNavigator&& other) noexcept = default;
     
+    // Assignment operators
+    CoordNavigator& operator=(const CoordNavigator& other) = default;
+    CoordNavigator& operator=(CoordNavigator&& other) noexcept = default;
 
-    if (coord.nucGapPos == -1){
-      coord.nucPos++;
-
-      if(coord.nucPos >= sequence.value()[coord.blockId].first.size()){
-        
-
-        //Jump to next block
-        coord.blockId++;
-        
-        if(coord.blockId >= sequence.value().size()){
-          
-          return tupleCoord_t{-1,-1,-1};
-        }
-        if(!blockStrand[coord.blockId].first){
-          coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-          coord.nucGapPos = -1;
-          return coord;
-        }
-        coord.nucPos = 0;
-
-      }
-
-      if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-        coord.nucGapPos = 0;
-      }
-      return coord;
-    }else{
-      coord.nucGapPos++;
-      if(coord.nucGapPos >= sequence.value()[coord.blockId].first[coord.nucPos].second.size()){
-        coord.nucGapPos = -1;
-      }
-      return coord;
+    // Method to initialize/change the sequence
+    void setSequence(sequence_t& seq) {
+        sequence_ptr = &seq;
     }
 
+    // Access methods now use pointer
+    sequence_t& sequence() {
+        if (!sequence_ptr) throw std::runtime_error("Accessing uninitialized navigator");
+        return *sequence_ptr;
+    }
 
+    // All existing methods stay exactly the same, just replace sequence with sequence()
+    bool isGap(const tupleCoord_t &coord) {
+        char c;
+        if (coord.nucGapPos == -1) {
+            c = sequence()[coord.blockId].first[coord.nucPos].first;
+        } else {
+            c = sequence()[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
+        }
+        return c == '-' || c == 'x';
+    }
 
-    }else{
-
-
-    if (coord.nucGapPos == -1) {
-      // std::cout << "Debug: coord.blockId=" << coord.blockId
-      //     << ", coord.nucPos=" << coord.nucPos
-      //     << ", sequence.size()=" << sequence.value().size()
-      //     << ", sequence[coord.blockId].first.size()="
-      //     << (coord.blockId < sequence.value().size() ? sequence.value()[coord.blockId].first.size() : -1)
-      //     << std::endl;
-
-      if(sequence.value()[coord.blockId].first[coord.nucPos].second.empty()){
-        coord.nucPos--;
-        if(coord.nucPos < 0){
-
-          coord.blockId++;
+    tupleCoord_t increment(tupleCoord_t &givencoord) {
+        tupleCoord_t &coord = givencoord;
         
-          if(coord.blockId >= sequence.value().size()){
+        if (coord.nucGapPos == -1){
+            coord.nucPos++;
+
+            if(coord.nucPos >= sequence()[coord.blockId].first.size()){
+                coord.blockId++;
+                
+                if(coord.blockId >= sequence().size()){
+                    return tupleCoord_t{-1,-1,-1};
+                }
+                coord.nucPos = 0;
+            }
+
+            if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                coord.nucGapPos = 0;
+            }
+            return coord;
+        } else {
+            coord.nucGapPos++;
+            if(coord.nucGapPos >= sequence()[coord.blockId].first[coord.nucPos].second.size()){
+                coord.nucGapPos = -1;
+            }
+            return coord;
+        }
+    }
+
+    tupleCoord_t decrement(tupleCoord_t &givencoord) {
+        tupleCoord_t &coord = givencoord;
+        if (coord.nucGapPos == -1) {
+            if(sequence()[coord.blockId].first[coord.nucPos].second.empty()){
+                coord.nucPos--;
+                if(coord.nucPos < 0){
+                    coord.blockId--;
+                    if(coord.blockId < 0){
+                        return tupleCoord_t{0,0,0};
+                    }
+                    coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                }
+                return coord;
+            } else {
+                coord.nucGapPos = sequence()[coord.blockId].first[coord.nucPos].second.size() - 1;
+                return coord;
+            }
+        } else {
+            coord.nucGapPos--;
+            if(coord.nucGapPos < 0){
+                coord.nucGapPos = -1;
+                coord.nucPos--;
+                if(coord.nucPos < 0){
+                    coord.blockId--;
+                    if(coord.blockId < 0){
+                        return tupleCoord_t{0,0,0};
+                    }
+                    coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                }
+                return coord;
+            }
+            return coord;
+        }
+    }
+
+    tupleCoord_t newincrement(tupleCoord_t &givencoord, const blockStrand_t &blockStrand) {
+        TIME_FUNCTION;
+        if (!sequence_ptr) {
+            std::cerr << "ERROR: sequence_ptr is null" << std::endl;
+            throw std::runtime_error("Navigator sequence not initialized");
+        }
+
+        tupleCoord_t coord = givencoord;
+        
+        // std::cerr << "DEBUG: newincrement called with coord: blockId=" << coord.blockId 
+        //           << ", nucPos=" << coord.nucPos 
+        //           << ", nucGapPos=" << coord.nucGapPos 
+        //           << ", sequence size=" << sequence().size() << std::endl;
+
+        // Check blockId bounds
+        if (coord.blockId < 0 || coord.blockId >= sequence().size()) {
+            std::cerr << "ERROR: blockId " << coord.blockId << " out of bounds for sequence size " << sequence().size() << std::endl;
             return tupleCoord_t{-1,-1,-1};
-          }
-          if(!blockStrand[coord.blockId].first){
-            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-            coord.nucGapPos = -1;
-            return coord;
-          }
-          coord.nucPos = 0;
-          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-            coord.nucGapPos = 0;
-          }
-          return coord;
-
         }
-        return coord;
-      }else{
-        coord.nucGapPos = sequence.value()[coord.blockId].first[coord.nucPos].second.size() - 1;
-        return coord;
-      }
-    }else{
-      coord.nucGapPos--;
-      if(coord.nucGapPos < 0){
-        coord.nucGapPos = -1;
-        coord.nucPos--;
-        if(coord.nucPos < 0){
 
-          coord.blockId++;
-        
-          if(coord.blockId >= sequence.value().size()){
-            return tupleCoord_t{-1,-1,-1};
-          }
-          if(!blockStrand[coord.blockId].first){
-            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-            coord.nucGapPos = -1;
+        if(blockStrand[coord.blockId].first) {
+            if (coord.nucGapPos == -1) {
+                coord.nucPos++;
+
+                // std::cerr << "DEBUG: After increment - nucPos=" << coord.nucPos 
+                //           << ", first.size()=" << sequence()[coord.blockId].first.size() << std::endl;
+
+                // Check nucPos bounds
+                if(coord.nucPos >= sequence()[coord.blockId].first.size()) {
+                    // std::cerr << "DEBUG: nucPos exceeded block size, moving to next block" << std::endl;
+                    coord.blockId++;
+                    
+                    if(coord.blockId >= sequence().size()) {
+                        std::cerr << "DEBUG: Reached end of sequence" << std::endl;
+                        return tupleCoord_t{-1,-1,-1};
+                    }
+                    if(!blockStrand[coord.blockId].first) {
+                        coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                        coord.nucGapPos = -1;
+                        return coord;
+                    }
+                    coord.nucPos = 0;
+                }
+
+                if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                    coord.nucGapPos = 0;
+                }
+                return coord;
+            }else{
+                coord.nucGapPos++;
+                if(coord.nucGapPos >= sequence()[coord.blockId].first[coord.nucPos].second.size()){
+                    coord.nucGapPos = -1;
+                }
+                return coord;
+            }
+
+        }else{
+
+            if (coord.nucGapPos == -1) {
+                if(sequence()[coord.blockId].first[coord.nucPos].second.empty()){
+                    coord.nucPos--;
+                    if(coord.nucPos < 0){
+
+                        coord.blockId++;
+                    
+                        if(coord.blockId >= sequence().size()){
+                            return tupleCoord_t{-1,-1,-1};
+                        }
+                        if(!blockStrand[coord.blockId].first){
+                            coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                            coord.nucGapPos = -1;
+                            return coord;
+                        }
+                        coord.nucPos = 0;
+                        if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                            coord.nucGapPos = 0;
+                        }
+                        return coord;
+
+                    }
+                    return coord;
+                }else{
+                    coord.nucGapPos = sequence()[coord.blockId].first[coord.nucPos].second.size() - 1;
+                    return coord;
+                }
+            }else{
+                coord.nucGapPos--;
+                if(coord.nucGapPos < 0){
+                    coord.nucGapPos = -1;
+                    coord.nucPos--;
+                    if(coord.nucPos < 0){
+
+                        coord.blockId++;
+                    
+                        if(coord.blockId >= sequence().size()){
+                            return tupleCoord_t{-1,-1,-1};
+                        }
+                        if(!blockStrand[coord.blockId].first){
+                            coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                            coord.nucGapPos = -1;
+                            return coord;
+                        }
+                        coord.nucPos = 0;
+                        if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                            coord.nucGapPos = 0;
+                        }
+                        return coord;
+
+                }
+                return coord;
+            }
             return coord;
-          }
-          coord.nucPos = 0;
-          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-            coord.nucGapPos = 0;
-          }
-          return coord;
-
-
         }
-        return coord;
       }
-      return coord;
     }
 
 
-    }
-  }
+    tupleCoord_t newdecrement(tupleCoord_t &givencoord, const blockStrand_t &blockStrand) {
+        TIME_FUNCTION;
+        tupleCoord_t coord = givencoord;
 
-
-  tupleCoord_t newdecrement(tupleCoord_t &givencoord, const blockStrand_t &blockStrand) {
-    tupleCoord_t coord = givencoord;
-
-
-    if(blockStrand[coord.blockId].first){
-
-    if (coord.nucGapPos == -1) {
-      if(sequence.value()[coord.blockId].first[coord.nucPos].second.empty()){
-        coord.nucPos--;
-        if(coord.nucPos < 0){
-          coord.blockId--;
-          if(coord.blockId < 0){
-            return tupleCoord_t{0,0,0};
-          }
-
-          if(blockStrand[coord.blockId].first){
-            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-            coord.nucGapPos = -1;
-            return coord;
-          }
-          coord.nucPos = 0;
-          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-            coord.nucGapPos = 0;
-          }
-          return coord;
-
-        }
-        return coord;
-      }else{
-        coord.nucGapPos = sequence.value()[coord.blockId].first[coord.nucPos].second.size() - 1;
-        return coord;
-      }
-    }else{
-      coord.nucGapPos--;
-      if(coord.nucGapPos < 0){
-        coord.nucGapPos = -1;
-        coord.nucPos--;
-        if(coord.nucPos < 0){
-
-          //Jump to previous block
-          coord.blockId--;
-          if(coord.blockId < 0){
-            return tupleCoord_t{0,0,0};
-          }
-          if(blockStrand[coord.blockId].first){
-            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-            coord.nucGapPos = -1;
-            return coord;
-          }
-          coord.nucPos = 0;
-          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-            coord.nucGapPos = 0;
-          }
-          return coord;
-
-
-        }
-        return coord;
-      }
-      return coord;
-    }
-
-
-
-    }else{
-
-      
-    
-
-    tupleCoord_t coord = givencoord;
-    
-    if (coord.nucGapPos == -1){
-      coord.nucPos++;
-
-      if(coord.nucPos >= sequence.value()[coord.blockId].first.size()){
-        
-        //Jump to previous block
-        coord.blockId--;
-        if(coord.blockId < 0){
-          return tupleCoord_t{0,0,0};
-        }
         if(blockStrand[coord.blockId].first){
-            coord.nucPos = sequence.value()[coord.blockId].first.size() - 1;
-            coord.nucGapPos = -1;
-            return coord;
-          }
-          coord.nucPos = 0;
-          if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-            coord.nucGapPos = 0;
-          }
-          return coord;
-      }
 
-      if(!sequence.value()[coord.blockId].first[coord.nucPos].second.empty()) {
-        coord.nucGapPos = 0;
-      }
-      return coord;
-    }else{
-      coord.nucGapPos++;
-      if(coord.nucGapPos >= sequence.value()[coord.blockId].first[coord.nucPos].second.size()){
-        coord.nucGapPos = -1;
-      }
-      return coord;
+        if (coord.nucGapPos == -1) {
+            if(sequence()[coord.blockId].first[coord.nucPos].second.empty()){
+                coord.nucPos--;
+                if(coord.nucPos < 0){
+                    coord.blockId--;
+                    if(coord.blockId < 0){
+                        return tupleCoord_t{0,0,0};
+                    }
+
+                    if(blockStrand[coord.blockId].first){
+                        coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                        coord.nucGapPos = -1;
+                        return coord;
+                    }
+                    coord.nucPos = 0;
+                    if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                        coord.nucGapPos = 0;
+                    }
+                    return coord;
+
+                }
+                return coord;
+            }else{
+                coord.nucGapPos = sequence()[coord.blockId].first[coord.nucPos].second.size() - 1;
+                return coord;
+            }
+        }else{
+            coord.nucGapPos--;
+            if(coord.nucGapPos < 0){
+                coord.nucGapPos = -1;
+                coord.nucPos--;
+                if(coord.nucPos < 0){
+
+                    //Jump to previous block
+                    coord.blockId--;
+                    if(coord.blockId < 0){
+                        return tupleCoord_t{0,0,0};
+                    }
+                    if(blockStrand[coord.blockId].first){
+                        coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                        coord.nucGapPos = -1;
+                        return coord;
+                    }
+                    coord.nucPos = 0;
+                    if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                        coord.nucGapPos = 0;
+                    }
+                    return coord;
+
+                }
+                return coord;
+            }
+            return coord;
+        }
+
+        }else{
+
+            
+        
+
+        tupleCoord_t coord = givencoord;
+        
+        if (coord.nucGapPos == -1){
+            coord.nucPos++;
+
+            if(coord.nucPos >= sequence()[coord.blockId].first.size()){
+                
+                //Jump to previous block
+                coord.blockId--;
+                if(coord.blockId < 0){
+                    return tupleCoord_t{0,0,0};
+                }
+                if(blockStrand[coord.blockId].first){
+                    coord.nucPos = sequence()[coord.blockId].first.size() - 1;
+                    coord.nucGapPos = -1;
+                    return coord;
+                }
+                coord.nucPos = 0;
+                if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                    coord.nucGapPos = 0;
+                }
+                return coord;
+            }
+
+            if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
+                coord.nucGapPos = 0;
+            }
+            return coord;
+        }else{
+            coord.nucGapPos++;
+            if(coord.nucGapPos >= sequence()[coord.blockId].first[coord.nucPos].second.size()){
+                coord.nucGapPos = -1;
+            }
+            return coord;
+        }
+
     }
     }
-  }
 };
 
 
@@ -408,10 +442,133 @@ typedef std::vector<
     std::pair<std::vector<std::pair<int64_t, std::vector<int64_t>>>,
               std::vector<std::vector<std::pair<int64_t, std::vector<int64_t>>>>>>
     globalCoords_t;
+int64_t tupleToScalarCoord(const tupleCoord_t &coord,
+                           const globalCoords_t &globalCoords);
+
 typedef std::vector<std::tuple<int32_t, int32_t, bool, bool, bool, bool>> blockMutationInfo_t;
 typedef std::vector<
     std::tuple<int32_t, int32_t, int32_t, int32_t, char, char>>
     mutationInfo_t;
+
+class HotSeedIndex {
+public:
+    typedef size_t hashedKmer_t;
+    enum PositionState {
+        IMMUTABLE,
+        HOT,
+        NORMAL
+    };
+    std::vector<PositionState> positionStates; 
+    std::unordered_map<int64_t, std::unordered_map<int32_t, std::tuple<hashedKmer_t, int64_t, bool>>> hotSeeds; // pos -> (dfsIndex -> (kmer, endPos, isReverse))
+    std::unordered_map<int64_t, std::tuple<hashedKmer_t, int64_t, bool>> immutableSeeds; // pos -> (kmer, endPos, isReverse)
+    std::vector<int64_t> hotCounts; // Track how many times a position has been mutated
+    // Constructor
+    HotSeedIndex(int k, int hotThreshold, int64_t genomeLength) : k(k), hotThreshold(hotThreshold) {
+        positionStates.resize(genomeLength, IMMUTABLE);
+        hotCounts.resize(genomeLength, 0);
+        immutableSeeds.reserve(genomeLength);
+    }
+
+    HotSeedIndex(int k) : k(k) {}
+    
+    // Record a mutation at a position
+    void recordMutation(int64_t pos) {
+        positionStates[pos] = NORMAL;
+        hotCounts[pos]++;
+        if (hotCounts[pos] >= hotThreshold) {
+            positionStates[pos] = HOT;
+        }
+    }
+
+    void indexSeedIfHotOrImmutable(int64_t pos, int32_t dfsIndex, hashedKmer_t kmer, int64_t endPos, bool isReverse) {
+        if (positionStates[pos] == IMMUTABLE) {
+            immutableSeeds[pos] = {kmer, endPos, isReverse};
+        } else if (positionStates[pos] == HOT) {
+            hotSeeds[pos][dfsIndex] = {kmer, endPos, isReverse};
+        }
+    }
+
+    // Get seed for a position and DFS index
+    bool getSeed(int64_t pos, int32_t dfsIndex, hashedKmer_t& seed, int64_t& endPos, bool& isReverse) const {
+        if (pos >= hotCounts.size()) return false;
+        if (immutableSeeds.find(pos) != immutableSeeds.end()) {
+            // Position is immutable, return stored seed
+            std::tie(seed, endPos, isReverse) = immutableSeeds.at(pos);
+            return true;
+        }
+        
+        // Position is hot, look up in hot seeds map
+        auto posIt = hotSeeds.find(pos);
+        if (posIt == hotSeeds.end()) return false;
+        
+        auto dfsIt = posIt->second.find(dfsIndex);
+        if (dfsIt == posIt->second.end()) return false;
+        
+        std::tie(seed, endPos, isReverse) = dfsIt->second;
+        return true;
+    }
+    
+    // Serialize to Cap'n Proto
+    void serialize(::HotSeedIndexSerial::Builder builder) const {
+        // Pack immutable seeds
+        auto immutableBuilder = builder.initImmutableSeeds(immutableSeeds.size());
+        size_t i = 0;
+        for (const auto& [pos, seedData] : immutableSeeds) {
+            auto entry = immutableBuilder[i];
+            auto [seed, endPos, isReverse] = seedData;
+            entry.setSeed(seed);
+            entry.setEndPosition(endPos);
+            entry.setIsReverse(isReverse);
+            i++;
+        }
+        
+        // Pack hot seeds
+        std::vector<std::tuple<int32_t, int64_t, hashedKmer_t, int64_t, bool>> hotEntries;
+        for (const auto& [pos, dfsMap] : hotSeeds) {
+            for (const auto& [dfsIndex, seedData] : dfsMap) {
+                auto [seed, endPos, isReverse] = seedData;
+                hotEntries.push_back({dfsIndex, pos, seed, endPos, isReverse});
+            }
+        }
+        
+        auto hotBuilder = builder.initHotSeeds(hotEntries.size());
+        for (size_t i = 0; i < hotEntries.size(); i++) {
+            auto entry = hotBuilder[i];
+            auto [dfsIndex, pos, seed, endPos, isReverse] = hotEntries[i];
+            entry.setDfsIndex(dfsIndex);
+            entry.setPosition(pos);
+            entry.setKmer(seed);
+            entry.setEndPosition(endPos);
+            entry.setIsReverse(isReverse);
+        }
+    }
+    
+    // Deserialize from Cap'n Proto
+    void deserialize(::HotSeedIndexSerial::Reader reader) {
+        // Read immutable seeds
+        auto immutableReader = reader.getImmutableSeeds();
+        immutableSeeds.reserve(immutableReader.size());
+        for (size_t i = 0; i < immutableReader.size(); i++) {
+            auto entry = immutableReader[i];
+            immutableSeeds[i] = {entry.getSeed(), entry.getEndPosition(), entry.getIsReverse()};
+        }
+        
+        // Read hot seeds
+        auto hotReader = reader.getHotSeeds();
+        hotSeeds.reserve(hotReader.size());
+        for (auto entry : hotReader) {
+            hotSeeds[entry.getPosition()][entry.getDfsIndex()] = {
+                entry.getKmer(),
+                entry.getEndPosition(),
+                entry.getIsReverse()
+            };
+        }
+    }
+
+private:
+    int k;  // k-mer length
+    int hotThreshold; // times a position must be mutated to be considered hot
+};
 
 struct mutableTreeData {
   // These fields are intended to be mutated at each node during a DFS
@@ -425,6 +582,10 @@ struct mutableTreeData {
   blockExists_t blockExists; // tracks if blocks are "on" at a node
   blockStrand_t blockStrand; // tracks strand of blocks
   std::unordered_map<int64_t, tupleCoord_t> scalarToTupleCoord;
+
+  mutableTreeData() {
+    maxGlobalCoordinate = 0;
+  }
 };
 
 struct mutationMatrices {
@@ -448,6 +609,7 @@ struct mutationMatrices {
     }
   }
 };
+
 /* Interface */
 void removeIndices(std::vector<seed> &v, std::stack<int32_t> &rm);
 std::string getConsensus(Tree *T); // ungapped!
@@ -468,8 +630,10 @@ void setupGlobalCoordinates(
     const sequence_t &sequence,
     std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord);
 
-std::pair<std::string, int64_t> getSeedAt(const int64_t &pos, Tree *T, const int32_t& k,
-    std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
+
+
+bool getSeedAt(bool useHotSeedIndex, HotSeedIndex& hotSeedIndex, std::string &seedBuffer, size_t &result_hash, int64_t &result_end_pos, bool &result_is_reverse, const int64_t &pos, Tree *T, const int32_t& k,
+    int64_t &dfsIndex, std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
     const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const globalCoords_t &globalCoords, CoordNavigator &navigator,
     std::map<int64_t, int64_t> &gapRuns, const std::vector<std::pair<int64_t, int64_t>>& blockRanges);
@@ -498,6 +662,8 @@ std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> ge
 
 
 std::string getStringAtNode(Node *node, Tree *T, bool aligned);
+
+
 
 } // namespace seed_annotated_tree
 #endif
