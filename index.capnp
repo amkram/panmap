@@ -31,9 +31,21 @@ struct SeedWithEndPosition {
   endPosition @1 :UInt64;
   isReverse @2 :Bool;
 }
+struct SeedPosition {
+  pos @0 :Int64;
+  dfsIndex @1 :Int64;
+}
+
+struct HotSeedEntry {
+  kmer @0 :UInt64;
+  endPos @1 :Int64;
+  isReverse @2 :Bool;
+  accessCount @3 :Int64;
+  positions @4 :List(SeedPosition);
+}
+
 struct HotSeedIndexSerial {
-  immutableSeeds @0 :List(SeedWithEndPosition); # Seeds that never change
-  hotSeeds @1 :List(DFSPositionKmer); # Frequently mutating positions
+  entries @0 :List(HotSeedEntry);
 }
 
 struct Index {
