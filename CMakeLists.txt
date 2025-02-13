@@ -4,6 +4,11 @@ project(panmap VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# Add profiling flags if enabled
+if(OPTION_PROFILE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg")
+endif()
 
 include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
@@ -314,7 +319,7 @@ endif()
 if (OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
 else()
-    target_compile_options(panmap PUBLIC -g -O3)
+    target_compile_options(panmap PUBLIC -g -pg -O3)
 endif()
 
 # Unit testing data

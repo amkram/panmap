@@ -28,7 +28,33 @@ void addSeeds(std::vector<seeding::seed>& fwdmatchingSeeds,std::vector<seeding::
         
     }
 }
+void getAnchors(std::vector<std::tuple<int64_t, int32_t, int>> &anchors, 
+                const std::vector<std::vector<seeding::seed>> &readSeeds,  // Made const
+                const std::vector<std::string> &readSequences,             // Made const
+                const std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions,  // Made const
+                int k) {
 
+    for (size_t i = 0; i < readSequences.size(); ++i) {
+        const auto& curReadSeeds = readSeeds[i];  // Use const reference
+        
+        for (const auto& seed : curReadSeeds) {  // Use range-based for
+            if (seedToRefPositions.find(seed.hash) == seedToRefPositions.end()) continue;
+            auto it = seedToRefPositions.find(seed.hash);
+            if (it == seedToRefPositions.end()) continue;
+            const auto& [forwardSeedToRefPositions, reverseSeedToRefPositions] = it->second;
+
+            // Add forward anchors
+            for (const auto& refPos : forwardSeedToRefPositions) {
+                anchors.push_back(std::make_tuple(refPos+k-1, seed.pos+k-1, k));
+            }
+            
+            // Add reverse anchors
+            for (const auto& refPos : reverseSeedToRefPositions) {
+                anchors.push_back(std::make_tuple(refPos+k-1, seed.pos+k-1, k));
+            }
+        }
+    }
+}
 //Elements of samAlignments must be freed
 void createSam(
     std::vector<std::vector<seeding::seed>> &readSeeds,
@@ -45,75 +71,10 @@ void createSam(
     std::string &samHeader
 )   {
 
-  /*
-  for(int i = 0; i < readSeeds.size(); i++){
-    std::cerr << "Read " <<i<< " " << readSequences[i] << "\n";
-    for(int j = 0; j < readSeeds[i].size(); j++){
-        std::cerr << readSeeds[i][j].hash << " " << readSeeds[i][j].reversed << " " << readSeeds[i][j].pos << "\n";
-    }
-  }*/
+    std::vector<std::tuple<int64_t, int32_t, int>> anchors;
 
+    getAnchors(anchors, const_cast<const std::vector<std::vector<seeding::seed>> &>(readSeeds), const_cast<const std::vector<std::string> &>(readSequences), const_cast<const std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &>(seedToRefPositions), k);
   
-  for (size_t i = 0; i < readSequences.size(); ++i) {
-    std::vector<seeding::seed>& curReadSeeds = readSeeds[i];
-    std::vector<seeding::seed> fwdMatchingSeeds;
-    std::vector<seeding::seed> bwdMatchingSeeds;
-    
-
-    for (size_t j = 0; j < curReadSeeds.size(); ++j) {
-      if (seedToRefPositions.find(curReadSeeds[j].hash) == seedToRefPositions.end()) continue;
-      const auto& [forwardSeedToRefPositions, reverseSeedToRefPositions] = seedToRefPositions[curReadSeeds[j].hash];
-
-      
-      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, forwardSeedToRefPositions, curReadSeeds[j], true, k , readSequences[i].size());
-      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, reverseSeedToRefPositions, curReadSeeds[j], false, k, readSequences[i].size());
-    }
-
-    std::reverse(bwdMatchingSeeds.begin(), bwdMatchingSeeds.end());
-    fwdMatchingSeeds.insert(fwdMatchingSeeds.end(), bwdMatchingSeeds.begin(), bwdMatchingSeeds.end());
-
-    readSeeds[i] = fwdMatchingSeeds;
-    
-  }
-
-    
-  
-
-    
-    /*
-    for(int r = 0; r < readSequences.size() ; r++){
-
-        std::vector<seed> matchingSeeds;
-        for(int i = 0; i < readSeeds[r].size(); i++){
-
-            for (int32_t rpos : seedToRefPositions[readSeeds[r][i].hash]) {
-                //if(readSeeds[r][i].reversed == ){ //TODO remove this
-                seed thisSeed;
-                thisSeed.reversed = readSeeds[r][i].reversed;
-                thisSeed.hash = readSeeds[r][i].hash;
-                thisSeed.pos = readSeeds[r][i].pos;
-                thisSeed.rpos = rpos;
-                matchingSeeds.push_back(thisSeed);
-                //}
-            }
-
-        }
-
-        readSeeds[r] = matchingSeeds;
-    }*/
-
-   /*
-    for(int r = 0; r < readSequences.size() ; r++){
-        std::cout << "READ " << r << ": " << readSequences[r] << "\n";
-        for(int i = 0; i < readSeeds[r].size(); i++){
-            std::cout << "seed: " << readSeeds[r][i].hash << " " << readSeeds[r][i].reversed 
-                << " " <<  readSequences[r].substr(readSeeds[r][i].pos, k) << " " << bestMatchSequence.substr(readSeeds[r][i].rpos, k) << "\n";
-            if(readSequences[r].substr(readSeeds[r][i].pos, k) !=  bestMatchSequence.substr(readSeeds[r][i].rpos, k)){
-                std::cout << "\n\n\nSCREAM \n\n\n\n";
-            }
-        }
-    }*/
-
     
     //Preparing C structures for minimap
     const char *reference = bestMatchSequence.c_str();

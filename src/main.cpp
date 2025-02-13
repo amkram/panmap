@@ -100,6 +100,7 @@ Other options:
   -h --help                 Show this screen.
   -D --dump                 Dump all seeds to file.
   -X --dump-real            Dump true seeds to file.
+  --hot-threshold <int>     Mutation frequency threshold for hot positions to index. [default: 1000]
 
 Placement-per-read options:
   --place-per-read                       Place reads per read (panmama)
@@ -212,8 +213,6 @@ panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
 }
 
 void log(const std::string& prefix, const std::string& message) {
-    std::ofstream logFile((prefix + ".log").c_str(), std::ios_base::app);
-    logFile << message << std::endl;
     std::cout << message << std::endl;
 }
 
@@ -356,6 +355,8 @@ int main(int argc, const char** argv) {
         std::string stop_after = args["--stop-after"].asString();
         log(prefix, "Will stop after stage: " + stop_after);
     }
+    int64_t hot_threshold = args["--hot-threshold"] ? std::stoi(args["--hot-threshold"].asString()) : 1000;
+    log(prefix, "Hot threshold: " + std::to_string(hot_threshold));
 
     if (build) {
       // build
@@ -372,7 +373,7 @@ int main(int argc, const char** argv) {
       index.setL(3);
 
       auto start = std::chrono::high_resolution_clock::now();
-      pmi::build(T, index);
+      pmi::build(T, index, hot_threshold);
       auto end = std::chrono::high_resolution_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
       log(prefix, "Build time: " + std::to_string(duration.count()) + " milliseconds");
@@ -494,10 +495,24 @@ int main(int argc, const char** argv) {
       PlacementResult result;
       double score_proportion = args["--candidate-threshold"] ? std::stod(args["--candidate-threshold"].asString()) : 0.01;
       int max_candidates = args["--max-candidates"] ? std::stoi(args["--max-candidates"].asString()) : 16;
-      std::ofstream logFile("blah.txt");
-      pmi::place(result, T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, 
+      int64_t maxHitsInAnyGenome = 0;
+      LinkedNode *maxHitsNode = nullptr;
+      std::vector<std::optional<seeding::onSeedsHash>> maxHitsNodeSeeds;
+      double bestJaccardScore = 0.0;
+      LinkedNode* bestJaccardNode = nullptr;
+      std::vector<std::optional<seeding::onSeedsHash>> bestJaccardNodeSeeds;
+      double bestCosineScore = 0.0;
+      LinkedNode* bestCosineNode = nullptr;
+      std::vector<std::optional<seeding::onSeedsHash>> bestCosineNodeSeeds;
+      double bestJaccardScoreGF1 = 0.0;
+      LinkedNode* bestJaccardNodeGF1 = nullptr;
+      std::vector<std::optional<seeding::onSeedsHash>> bestJaccardNodeSeedsGF1;
+      double bestCosineScoreGF1 = 0.0;
+      LinkedNode* bestCosineNodeGF1 = nullptr;
+      std::vector<std::optional<seeding::onSeedsHash>> bestCosineNodeSeedsGF1;
+      pmi::place(maxHitsInAnyGenome, maxHitsNode, bestJaccardScore, bestJaccardNode, bestCosineScore, bestCosineNode, bestJaccardScoreGF1, bestJaccardNodeGF1, bestCosineScoreGF1, bestCosineNodeGF1, result, T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, 
                 bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time,
-                logFile, score_proportion, max_candidates);
+                score_proportion, max_candidates, "", "", 0, 0, hot_threshold);
     }
     
     auto end = std::chrono::high_resolution_clock::now();
@@ -524,17 +539,9 @@ int main(int argc, const char** argv) {
 
     log(prefix, "panmap run completed.");
 
-    // // Keep the application running
-    // std::cout << "Press Ctrl+C to exit." << std::endl;
-    // std::signal(SIGINT, [](int signum) {
-    //     std::cout << "\nExiting panmap..." << std::endl;
-    //     std::exit(signum);
-    // });
-
-    // // Infinite loop to keep the application running
-    // while (true) {
-    //     std::this_thread::sleep_for(std::chrono::seconds(1));
-    // }
+    if (show_time) {
+        Timer::report();
+    }
 
     return 0;
 }
