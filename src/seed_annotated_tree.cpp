@@ -54,73 +54,83 @@ bool seed_annotated_tree::getSeedAt(bool useHotSeeds, HotSeedIndex& hotSeedIndex
     const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
     const globalCoords_t &globalCoords, CoordNavigator &navigator,
     std::map<int64_t, int64_t> &gapRuns, const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
-    
+    TIME_FUNCTION;
 
-    if (useHotSeeds && hotSeedIndex.getSeed(pos, dfsIndex, resultHash, resultEndPos, resultIsReverse)) {
-        std::cout << "DEBUG: Found seed in hot index" << std::endl;
-        return true;
+    int32_t resultStringIdx = 0;
+
+    {
+        TIME_BLOCK("hotSeedLookup");
+        if (useHotSeeds && hotSeedIndex.getSeed(pos, dfsIndex, resultHash, resultEndPos, resultIsReverse)) {
+            return true;
+        }
     }
+
+    
     tupleCoord_t currCoord = scalarToTupleCoord[pos];
     if (!blockStrand[currCoord.blockId].first) {
-      currCoord = scalarToTupleCoord[blockRanges[currCoord.blockId].first + blockRanges[currCoord.blockId].second - pos];
+        currCoord = scalarToTupleCoord[blockRanges[currCoord.blockId].first + blockRanges[currCoord.blockId].second - pos];
     }
-    std::string seq;
+
+
     int32_t prevBlockId = currCoord.blockId;
-    while (currCoord < tupleCoord_t{-1,-1,-1}){
-      if (blockExists[currCoord.blockId].first) {
-        char c = '-';
-        if (currCoord.nucGapPos == -1){
-          c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
-        }else{
-          c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
-        }
-        if(c == 'x') c = '-';
-        if(! blockStrand[currCoord.blockId].first){
-          switch(c){
-            case 'A':
-              c = 'T';
-              break;
-            case 'T':
-              c = 'A';
-              break;
-            case 'G':
-              c = 'C';
-              break;
-            case 'C':
-              c = 'G';
-              break;
-            
-            case 'Y':
-              c = 'R';
-              break;
-            case 'R':
-              c = 'Y';
-              break;
-            case 'K':
-              c = 'M';
-              break;
-            case 'M':
-              c = 'K';
-              break;
-            case 'D':
-              c = 'H';
-              break;
-            case 'H':
-              c = 'D';
-              break;
-            case 'V':
-              c = 'B';
-              break;
-            case 'B':
-              c = 'V';
-              break;
-          }
-        }
+    
+    {
+        TIME_BLOCK("seedReconstruction");
+        while (currCoord < tupleCoord_t{-1,-1,-1}){
+            if (blockExists[currCoord.blockId].first) {
+                char c = '-';
+                if (currCoord.nucGapPos == -1){
+                    c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
+                }else{
+                    c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
+                }
+                if(c == 'x') c = '-';
+                if(! blockStrand[currCoord.blockId].first){
+                    switch(c){
+                        case 'A':
+                            c = 'T';
+                            break;
+                        case 'T':
+                            c = 'A';
+                            break;
+                        case 'G':
+                            c = 'C';
+                            break;
+                        case 'C':
+                            c = 'G';
+                            break;
+                        
+                        case 'Y':
+                            c = 'R';
+                            break;
+                        case 'R':
+                            c = 'Y';
+                            break;
+                        case 'K':
+                            c = 'M';
+                            break;
+                        case 'M':
+                            c = 'K';
+                            break;
+                        case 'D':
+                            c = 'H';
+                            break;
+                        case 'H':
+                            c = 'D';
+                            break;
+                        case 'V':
+                            c = 'B';
+                            break;
+                        case 'B':
+                            c = 'V';
+                            break;
+                    }
+                }
 
         if(c != '-'){
-          seq.push_back(c);
-          if (seq.size() == k) {
-            resultString = seq;
+          resultString[resultStringIdx] = c;
+          resultStringIdx++;
+          if (resultStringIdx == k) {
             resultEndPos = tupleToScalarCoord(currCoord, globalCoords);
             return true;
           }
@@ -173,11 +183,11 @@ bool seed_annotated_tree::getSeedAt(bool useHotSeeds, HotSeedIndex& hotSeedIndex
       }
       prevBlockId = currCoord.blockId;
     }
+  }
 
-    if (seq.size() != k) {
+    if (resultStringIdx != k) {
       throw std::runtime_error("unexpected kmer length during syncmer reconstruction");
     }
-    resultString = seq;
     resultEndPos = tupleToScalarCoord(currCoord, globalCoords);
     return true;
 }

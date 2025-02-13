@@ -1014,27 +1014,6 @@ struct NodeMutationData {
 };
 
 
-void trackHotPositions(HotSeedIndex &hotSeedIndex, Node *current, PlacementObjects &trackObjects, Tree* T, blockExists_t &oldBlockExists, blockStrand_t &oldBlockStrand) {
-    
-    TIME_FUNCTION;
-    int64_t dfsIndex = trackObjects.dfsIndexes[current->identifier];
-    
-    NodeMutationData nodeMutationData;
-
-    applyMutations(trackObjects.data, nodeMutationData.blockMutationInfo, nodeMutationData.recompRanges, nodeMutationData.mutationInfo, T, current, trackObjects.globalCoords, trackObjects.navigator, trackObjects.blockRanges, nodeMutationData.gapRunUpdates, nodeMutationData.gapRunBacktracks, oldBlockExists, oldBlockStrand, true, trackObjects.inverseBlockIds, nodeMutationData.inverseBlockIdsBacktrack);
-
-    for (const auto [primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal] : nodeMutationData.mutationInfo) {
-        const int64_t scalarCoord = tupleToScalarCoord(tupleCoord_t{primaryBlockId, nucPosition, nucGapPosition}, trackObjects.globalCoords);
-        hotSeedIndex.recordMutation(scalarCoord);
-    }
-
-    for (Node *child : current->children) {
-        trackHotPositions(hotSeedIndex, child, trackObjects, T, oldBlockExists, oldBlockStrand);
-    }
-
-    undoMutations(trackObjects.data, T, current, nodeMutationData.blockMutationInfo, nodeMutationData.mutationInfo, trackObjects.globalCoords);
-
-}
 
 void updateGapMapStep(std::map<int64_t, int64_t>& gapMap, const std::pair<bool, std::pair<int64_t, int64_t>>& update, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapMapUpdates, bool recordGapMapUpdates) {
   TIME_FUNCTION;
@@ -1951,7 +1930,7 @@ void buildOrPlace(HotSeedIndex& hotSeedIndex, Step method, mutableTreeData& data
       onSeedsHash[pos]->hash = newSeed.value();
       onSeedsHash[pos]->endPos = newEndPos.value();
       onSeedsHash[pos]->isReverse = newIsReverse.value();
-      hotSeedIndex.indexSeedIfHotOrImmutable(pos, dfsIndex, newSeed.value(), newEndPos.value(), newIsReverse.value());
+      hotSeedIndex.recordSeedAccess(pos, dfsIndex, newSeed.value(), newEndPos.value(), newIsReverse.value());
     } else if (oldVal && !newVal) { // seed on to off
       if (onSeedsHash[pos].has_value() && pos < onSeedsHash.size()) {
         onSeedsHash[pos].reset();
@@ -1962,7 +1941,7 @@ void buildOrPlace(HotSeedIndex& hotSeedIndex, Step method, mutableTreeData& data
       onSeedsHash[pos] = {newSeed.value(), newEndPos.value(), newIsReverse.value()};
       int blockId = scalarCoordToBlockId[pos];
       BlocksToSeeds[blockId].insert(pos);
-      hotSeedIndex.indexSeedIfHotOrImmutable(pos, dfsIndex, newSeed.value(), newEndPos.value(), newIsReverse.value());
+      hotSeedIndex.recordSeedAccess(pos, dfsIndex, newSeed.value(), newEndPos.value(), newIsReverse.value());
     } 
   }
 
@@ -2202,10 +2181,9 @@ void pmi::build(Tree *T, Index::Builder &index, int64_t hot_threshold)
   std::unordered_map<std::string, int64_t> dfsIndexes;
 
   ::HotSeedIndexSerial::Builder hotSeedIndex_Builder = index.initHotSeedIndex();
-  seed_annotated_tree::HotSeedIndex hotSeedIndex(k, hot_threshold, globalCoords.back().first.back().first + 1);
+  seed_annotated_tree::HotSeedIndex hotSeedIndex(k, hot_threshold);
   PlacementObjects trackObjects(T);
 
-  trackHotPositions(hotSeedIndex, T->root, trackObjects, T, trackObjects.data.blockExists, trackObjects.data.blockStrand);
 
   buildOrPlace(
     hotSeedIndex, Step::BUILD, data, placementScoresDummy, onSeedsString, onSeedsHash, perNodeSeedMutations_Builder, perNodeGapMutations_Builder, k, s, t, open, l, T, T->root, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, jacNumer, jacDenom, readSeedCounts, dfsIndexes
@@ -2773,13 +2751,9 @@ void processNode(HotSeedIndex &hotSeedIndex, int64_t &hitsInThisGenome, int64_t 
     }
   }
   objects.navigator.setSequence(objects.data.sequence);
-  {
-    TIME_BLOCK("makeCoordIndex");
-    makeCoordIndex(nodeMutationData.degapCoordIndex, nodeMutationData.regapCoordIndex, objects.gapMap, objects.blockRanges);
-  }
+  
 
-  {
-    TIME_BLOCK("seedMutations");
+ 
     auto currBasePositions = seedIndex[dfsIndex].getBasePositions();
     auto currPerPosMasks = seedIndex[dfsIndex].getPerPosMasks();
     std::vector<std::vector<int8_t>> masks;
@@ -2794,12 +2768,15 @@ void processNode(HotSeedIndex &hotSeedIndex, int64_t &hitsInThisGenome, int64_t 
             for (int k = 0; k < 32; ++k) {
                 uint8_t ternaryNumber = (tritMask >> (k * 2)) & 0x3;
                 if (ternaryNumber == 1) { // on -> off
-                // Handle deletion
+                 {
+                    TIME_BLOCK("seedMutations:ON->OFF");
+                    // Handle deletion
                   if (!objects.onSeedsHash[pos - k].has_value()) {
                     continue;
                   }
                   auto [oldSeed, oldEndPos, oldIsReverse] = objects.onSeedsHash[pos - k].value();
                   nodeMutationData.seedChanges.emplace_back(std::make_tuple(pos - k, true, false, oldSeed, std::nullopt, oldIsReverse, std::nullopt, oldEndPos, std::nullopt));
+                 }
                } else if (ternaryNumber == 2) {
                   // Handle insertion/change
                   size_t newSeedHash;
@@ -2809,42 +2786,49 @@ void processNode(HotSeedIndex &hotSeedIndex, int64_t &hitsInThisGenome, int64_t 
                   size_t result_hash = 0;
                   int64_t result_endPos = -1;
                   bool result_isReverse = false;
-
-                    if (!seed_annotated_tree::getSeedAt(false, hotSeedIndex, seedBuffer, result_hash, result_endPos, result_isReverse,
+                  {
+                    TIME_BLOCK("seedMutations:getSeedAt");
+                    if (!seed_annotated_tree::getSeedAt(true, hotSeedIndex, seedBuffer, result_hash, result_endPos, result_isReverse,
                           pos - k, T, seedK, dfsIndex, objects.data.scalarToTupleCoord, objects.data.sequence, objects.data.blockExists,
                           objects.data.blockStrand, objects.globalCoords, objects.navigator, objects.gapMap, objects.blockRanges)) {
                           
                         continue;
                     }
+                  }
                     if (result_hash != 0) { // hotseedindex hit
                       newSeedHash = result_hash;
                       newIsReverse = result_isReverse;
                       newEndPos = result_endPos;
                     } else { // normal
-                      auto [newSeedFHash, newSeedRHash] = hashSeq(seedBuffer);
-                      if (newSeedFHash < newSeedRHash) {
-                        newSeedHash = newSeedFHash;
-                        newIsReverse = false;
-                      } else {
-                        newSeedHash = newSeedRHash;
-                        newIsReverse = true;
+                      {
+                        TIME_BLOCK("seedMutations:hashSeq");
+                        auto [newSeedFHash, newSeedRHash] = hashSeq(seedBuffer);
+                        if (newSeedFHash < newSeedRHash) {
+                          newSeedHash = newSeedFHash;
+                          newIsReverse = false;
+                        } else {
+                          newSeedHash = newSeedRHash;
+                          newIsReverse = true;
+                        }
+                        newEndPos = result_endPos;
                       }
-                      newEndPos = result_endPos;
                     }
-
-                    if (objects.onSeedsHash[pos - k].has_value()) { // on -> on
+                    {
+                      TIME_BLOCK("seedMutations:tern2-Check");
+                      if (objects.onSeedsHash[pos - k].has_value()) { // on -> on
                         auto [oldSeed, oldEndPos, oldIsReverse] = objects.onSeedsHash[pos - k].value();
                         if (oldSeed == newSeedHash) {
                             continue;
                         }
                         nodeMutationData.seedChanges.emplace_back(std::make_tuple(pos - k, true, true, oldSeed, newSeedHash, oldIsReverse, newIsReverse, oldEndPos, newEndPos));
-                    } else { // off -> on
+                      } else { // off -> on
                         nodeMutationData.seedChanges.emplace_back(std::make_tuple(pos - k, false, true, std::nullopt, newSeedHash, std::nullopt, newIsReverse, std::nullopt, newEndPos));
+                      }
                     }
                 }
             }
         }
-    }
+    
 
     // std::cout << "seedChanges size:" << nodeMutationData.seedChanges.size() << "\n";
 
@@ -3046,6 +3030,7 @@ void processNode(HotSeedIndex &hotSeedIndex, int64_t &hitsInThisGenome, int64_t 
 }
 
 void backtrackNode(Tree* T, Node* current, NodeMutationData &nodeMutationData, PlacementObjects &objects, std::unordered_map<size_t, int64_t> &currentGenomeSeedCounts) {
+    TIME_FUNCTION;
     // std::cout << "undoing seed mutations at node " << current->identifier << std::endl;
     for (const auto& p : nodeMutationData.seedChanges) {
         const auto& [pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse, newIsReverse, oldEndPos, newEndPos] = p;
