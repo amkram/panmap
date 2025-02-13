@@ -339,6 +339,7 @@ namespace seeding
 
 
     inline std::pair<size_t, size_t> hashSeq(const std::string& s) {
+      // std::cout << "hashing " << s << std::endl;
       size_t fHash = 0;
       size_t rHash = 0;
       int k = s.size();

@@ -11,7 +11,8 @@
 #include <stack>
 #include <tuple>
 #include <functional> 
-
+#include <cmath>
+#include <tbb/concurrent_vector.h>
 
 using namespace panmanUtils;
 using namespace seeding;
@@ -154,6 +155,137 @@ struct AlignmentMetrics {
     }
 };
 
+
+struct ScoreGlobal {
+    std::atomic<double> bestScore;
+    std::atomic<Node *> bestNode;
+    std::mutex mutex;
+
+    ScoreGlobal() : bestScore(0.0), bestNode(nullptr) {}
+
+    // Copy constructor
+    ScoreGlobal(const ScoreGlobal& other) 
+        : bestScore(other.bestScore.load())
+        , bestNode(other.bestNode.load()) {}
+
+    // Move constructor
+    ScoreGlobal(ScoreGlobal&& other) noexcept
+        : bestScore(other.bestScore.load())
+        , bestNode(other.bestNode.load()) {}
+
+    // Copy assignment operator
+    ScoreGlobal& operator=(const ScoreGlobal& other) {
+        if (this != &other) {
+            bestScore.store(other.bestScore.load());
+            bestNode.store(other.bestNode.load());
+        }
+        return *this;
+    }
+
+    // Move assignment operator
+    ScoreGlobal& operator=(ScoreGlobal&& other) noexcept {
+        if (this != &other) {
+            bestScore.store(other.bestScore.load());
+            bestNode.store(other.bestNode.load());
+        }
+        return *this;
+    }
+
+    // Try to update the global maximum if we have a better score
+    void updateMax(double score, Node* node) {
+        std::lock_guard<std::mutex> lock(mutex);
+        double oldBestScore = bestScore.load();
+        if (score > oldBestScore) {
+            bestScore.store(score);
+            bestNode.store(node);
+        }
+    }
+
+    // Get the current best score
+    double getBestScore() const {
+        return bestScore.load();
+    }
+
+    // Get the current best node
+    Node* getBestNode() const {
+        return bestNode.load();
+    }
+};
+
+enum class FreqMods : std::uint32_t {
+    None = 0,
+    InvertGenomeCounts = 1u << 0,
+    LogReadCounts = 1u << 1,
+    LogGenomeCounts = 1u << 2,
+    SetGenomeFreqsToHalf = 1u << 3,
+    SetGenomeFreqsToOne = 1u << 4,
+    SetGenomeFreqsToTwo = 1u << 5,
+    SetReadFreqsToHalf = 1u << 6,
+    SetReadFreqsToOne = 1u << 7,
+    SetReadFreqsToTwo = 1u << 8,
+};
+inline std::string toString(FreqMods mod) {
+    switch(mod) {
+        case FreqMods::None: return "None";
+        case FreqMods::InvertGenomeCounts: return "InvertGenomeCounts";
+        case FreqMods::LogReadCounts: return "LogReadCounts";
+        case FreqMods::LogGenomeCounts: return "LogGenomeCounts";
+        case FreqMods::SetGenomeFreqsToHalf: return "SetGenomeFreqsToHalf";
+        case FreqMods::SetGenomeFreqsToOne: return "SetGenomeFreqsToOne";
+        case FreqMods::SetGenomeFreqsToTwo: return "SetGenomeFreqsToTwo";
+        case FreqMods::SetReadFreqsToHalf: return "SetReadFreqsToHalf";
+        case FreqMods::SetReadFreqsToOne: return "SetReadFreqsToOne";
+        case FreqMods::SetReadFreqsToTwo: return "SetReadFreqsToTwo";
+        default: return "Unknown";
+    }
+}
+  struct Jaccard {
+    FreqMods modifier;
+    double numerator;
+    double denominator;
+    double currentScore;
+
+    void addToNumerator(double delta) {
+      numerator += delta;
+    }
+    void addToDenominator(double delta) {
+      denominator += delta;
+    }
+    void finalize() {
+      currentScore = denominator != 0 ? numerator / denominator : 0.0;
+    }
+  };
+  struct Cosine {
+    FreqMods modifier;
+    double numerator;
+    double sumOfSquaresGenome;
+    double currentScore;
+    void addToNumerator(double delta) {
+      numerator += delta;
+    }
+    void addToSumOfSquaresGenome(double delta) {
+      sumOfSquaresGenome += delta;
+    }
+    void finalize() {
+      double sqrtSum = sqrt(sumOfSquaresGenome);
+      currentScore = sqrtSum != 0 ? numerator / sqrtSum : 0.0;
+    }
+  };
+
+
+
+struct LinkedNode {
+  Node *node;
+  double score;
+  std::vector<std::optional<seeding::onSeedsHash>> seeds;
+  LinkedNode *prev;
+  LinkedNode *next;
+  int chainLength=0;
+  LinkedNode(Node *node, double score, std::vector<std::optional<seeding::onSeedsHash>> seeds, LinkedNode *prev) 
+    : node(node), score(score), seeds(seeds), prev(prev), next(nullptr) {
+    chainLength = prev != nullptr ? prev->chainLength + 1 : 1;
+  }
+};
 struct PlacementResult {
   std::string simulation_id;
   std::string true_node_id;
@@ -175,12 +307,29 @@ struct PlacementResult {
   int32_t read_count;
   int32_t mutation_count;
   double elapsed_time_s;
+  tbb::concurrent_vector<ScoreGlobal> scoreGlobalsJaccard;
+  tbb::concurrent_vector<ScoreGlobal> scoreGlobalsCosine;
+  Node *afterMapQNode;
+  Node *maxHitsNode;
 };
+
 
 namespace pmi { // functions and types for seed indexing
 
-    void build(Tree *T, Index::Builder &index);
-    float align(AlignmentMetrics &metrics, Node *node, Tree *T, int32_t k, int32_t s, int32_t t, bool open, int32_t l, 
+    // Add function declarations
+    AlignmentMetrics computeAlignmentMetrics(
+        const std::vector<char*>& samAlignments,
+        const std::string& samHeader,
+        const std::string& nodeSequence,
+        const std::vector<std::string>& readSequences);
+
+    int count_variants_from_cigar(const std::string& cg_str);
+
+    
+
+    // Existing function declarations
+    void build(Tree *T, Index::Builder &index, int64_t hot_threshold);
+    float align(AlignmentMetrics &metrics, std::vector<std::optional<seeding::onSeedsHash>> &bestNodeSeeds, std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions, std::string &nodeSequence, Node *node, Tree *T, int32_t k, int32_t s, int32_t t, bool open, int32_t l, 
                 ::capnp::List<SeedMutations>::Reader &perNodeSeedMutations_Reader, 
                 ::capnp::List<GapMutations>::Reader &perNodeGapMutations_Reader, 
                 const std::string &reads1Path,
@@ -192,12 +341,17 @@ namespace pmi { // functions and types for seed indexing
                 std::string &samFileName, std::string &bamFileName, bool pairedEndReads, std::string &refFileName, std::string aligner="minimap2");
 
     void genotype(std::string prefix, std::string refFileName, std::string bestMatchSequence, std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, seed_annotated_tree::mutationMatrices &mutMat);
-    void place(PlacementResult &result,
-      Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
-      seed_annotated_tree::mutationMatrices &mutMat, std::string prefix, std::string refFileName, std::string samFileName,
-      std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner,
-      const std::string& refNode, const bool& save_jaccard, const bool& show_time, std::ofstream& logFile,
-      const float& score_proportion = 0.01, const int& max_tied_nodes = 16, const std::string& true_node_id="", const std::string& species="", const int& read_count=0, const int& mutation_count=0);
+    void place(int64_t &maxHitsInAnyGenome, LinkedNode* &maxHitsNode, 
+        double &bestJaccardScore, LinkedNode* &bestJaccardNode, 
+        double &bestCosineScore, LinkedNode* &bestCosineNode, 
+        double &bestJaccardScoreGF1, LinkedNode* &bestJaccardNodeGF1, 
+        double &bestCosineScoreGF1, LinkedNode* &bestCosineNodeGF1, 
+        PlacementResult &result,
+        Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path,
+        seed_annotated_tree::mutationMatrices &mutMat, std::string prefix, std::string refFileName, std::string samFileName,
+        std::string bamFileName, std::string mpileupFileName, std::string vcfFileName, std::string aligner,
+        const std::string& refNode, const bool& save_jaccard, const bool& show_time,
+        const float& score_proportion = 0.01, const int& max_tied_nodes = 16, const std::string& true_node_id="", const std::string& species="", const int& read_count=0, const int& mutation_count=0, const int64_t& hot_threshold=0);
 
     void parallel_tester(Tree *T, Index::Reader &index, const std::string &reads1Path, const std::string &reads2Path, const std::string &prefix);
 
@@ -233,13 +387,13 @@ using namespace pmi;
 // void undoMutations(mutableTreeData &data, ::capnp::List<Mutations>::Builder &mutations, Tree *T,
 //                     Node *node, const blockMutationInfo_t &blockMutData,
 //                    const mutationInfo_t &nucMutData);
-void flipCoords(int32_t blockId, globalCoords_t &globalCoords);
 void updateGapMapStep(std::map<int64_t, int64_t>& gapMap, const std::pair<bool, std::pair<int64_t, int64_t>>& update, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapMapUpdates, bool recordGapMapUpdates=true);
 void updateGapMap(std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& updates, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapMapUpdates);
 std::vector<std::pair<int64_t, int64_t>> invertRanges(const std::vector<std::pair<int64_t, int64_t>>& nucRanges, const std::pair<int64_t, int64_t>& invertRange);
 void invertGapMap(std::map<int64_t, int64_t>& gapMap, const std::pair<int64_t, int64_t>& invertRange, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapMapUpdates);
 void makeCoordIndex(std::map<int64_t, int64_t>& coordIndex, const std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<int64_t, int64_t>>& blockRanges);
 
+void flipCoords(int32_t blockId, globalCoords_t &globalCoords);
 // // Go upstream until neededNongap nucleotides are seen and return the new coord.
 // tupleCoord_t expandLeft(const CoordNavigator &navigator, tupleCoord_t coord,
 //                         int neededNongap, blockExists_t &blockExists);
@@ -251,6 +405,5 @@ void makeCoordIndex(std::map<int64_t, int64_t>& coordIndex, const std::map<int64
 // // Merges each range with overlapping ranges after expanding left and right
 // // by `neededNongap` non-gap nucleotides.
 // std::vector<tupleRange> expandAndMergeRanges(const CoordNavigator &navigator, std::vector<tupleRange> &ranges, int neededNongap, blockExists_t &blockExists);
-int64_t tupleToScalarCoord(const tupleCoord_t &coord, const globalCoords_t &globalCoords);
 
 #endif
