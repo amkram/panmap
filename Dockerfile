@@ -37,7 +37,6 @@ RUN apt-get install -y \
     libomp-dev \
     libdeflate-dev
 
-    
 COPY ./*.* .
 COPY ./src ./src
 COPY ./cmake ./cmake
@@ -48,7 +47,6 @@ COPY ./dev/simulation_testing ./dev/simulation_testing
 
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${CPUS}
 RUN mkdir build && cd build && cmake -DOPTION_BUILD_SIMULATE=ON .. && cmake --build . --parallel && cmake --install .
-
 
 RUN chmod +x /usr/local/bin/*
 
