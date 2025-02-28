@@ -20,8 +20,8 @@ option(OPTION_PROFILE "Enable profiling." ON)
 option(OPTION_ENABLE_FIXED_KMER "Enable optimized k-mer size implementations (8, 16, 32)." ON)
 
 FetchContent_Declare(ftxui
-  GIT_REPOSITORY https://github.com/ArthurSonzogni/ftxui
-  GIT_TAG cdf28903a7781f97ba94d30b79c3a4b0c97ccce7
+    GIT_REPOSITORY https://github.com/ArthurSonzogni/ftxui
+    GIT_TAG cdf28903a7781f97ba94d30b79c3a4b0c97ccce7
 )
 FetchContent_MakeAvailable(ftxui)
 
@@ -84,24 +84,24 @@ add_executable(panmap
     src/fixed_kmer.cpp
     src/performance.cpp
 )
-if (OPTION_BUILD_TESTS)
-add_executable(tests
-   src/test/main.test.cpp
-   src/test/pmi.test.cpp
-   src/conversion.cpp
-   src/indexing.cpp
-   src/alignment.cpp
-   src/coordinates.cpp
-   src/gap_map.cpp
-   src/placement.cpp
-   src/seed_annotated_tree.cpp
-   src/seeding.cpp
-   src/mm_align.c
-   src/pileup.c
-   src/fixed_kmer.hpp
-   src/fixed_kmer.cpp
-   src/performance.cpp
-   )
+if(OPTION_BUILD_TESTS)
+    add_executable(tests
+        src/test/main.test.cpp
+        src/test/pmi.test.cpp
+        src/conversion.cpp
+        src/indexing.cpp
+        src/alignment.cpp
+        src/coordinates.cpp
+        src/gap_map.cpp
+        src/placement.cpp
+        src/seed_annotated_tree.cpp
+        src/seeding.cpp
+        src/mm_align.c
+        src/pileup.c
+        src/fixed_kmer.hpp
+        src/fixed_kmer.cpp
+        src/performance.cpp
+    )
 endif()
 
 FetchContent_GetProperties(ftxui)
@@ -109,10 +109,6 @@ if(NOT ftxui_POPULATED)
     FetchContent_Populate(ftxui)
     add_subdirectory(${ftxui_SOURCE_DIR} ${ftxui_BINARY_DIR})
 endif()
-
-
-
-
 
 # Add include directories for spdlog
 target_include_directories(panmap PRIVATE ${spdlog_SOURCE_DIR}/include)
@@ -146,7 +142,7 @@ FetchContent_Declare(
 FetchContent_Declare(deflate
     GIT_REPOSITORY https://github.com/ebiggers/libdeflate
     GIT_SHALLOW TRUE
-    )
+)
 FetchContent_MakeAvailable(deflate)
 
 # Define source directory for samtools build to ensure consistency
@@ -231,9 +227,9 @@ add_custom_command(
 
     COMMAND echo "[samtools build] Step 10: Copying samtools library"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools/libst.a
-            ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
-            || echo "Error: Could not find samtools library"
+    ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools/libst.a
+    ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
+    || echo "Error: Could not find samtools library"
 
     COMMAND echo "[samtools build] Step 11: Completed samtools build"
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
@@ -373,62 +369,62 @@ target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 
-if (OPTION_BUILD_TESTS)
-target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+if(OPTION_BUILD_TESTS)
+    target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+    target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 endif()
 
 if(OPTION_BUILD_SIMULATE)
-add_executable(simulate
-    src/test/simulate.cpp
-    src/conversion.cpp
-    src/indexing.cpp
-    src/placement.cpp
-    src/alignment.cpp
-    src/coordinates.cpp
-    src/gap_map.cpp
-    src/genotyping.cpp
-    src/seed_annotated_tree.cpp
-    src/seeding.cpp
-    src/mm_align.c
-    src/pileup.c
-    src/fixed_kmer.hpp
-    src/fixed_kmer.cpp
-    src/performance.cpp
-)
+    add_executable(simulate
+        src/test/simulate.cpp
+        src/conversion.cpp
+        src/indexing.cpp
+        src/placement.cpp
+        src/alignment.cpp
+        src/coordinates.cpp
+        src/gap_map.cpp
+        src/genotyping.cpp
+        src/seed_annotated_tree.cpp
+        src/seeding.cpp
+        src/mm_align.c
+        src/pileup.c
+        src/fixed_kmer.hpp
+        src/fixed_kmer.cpp
+        src/performance.cpp
+    )
 
-target_link_libraries(simulate PRIVATE
-   bwa
-   bcftools
-   minimap2
-   samtools
-   htslib
-   spdlog::spdlog
-   ftxui::screen
-   ftxui::dom
-   ftxui::component
-   docopt
-   capnp
-   kj
-   Boost::iostreams
-   Boost::filesystem
-   Boost::system
-   ZLIB::ZLIB
-   panman
-   tbb
-   tbbmalloc
-   tbbmalloc_proxy
-   deflate
-   m
-)
-target_compile_options(simulate PUBLIC -g -O3)
-target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
-target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-build ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src/src ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src)
-target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
+    target_link_libraries(simulate PRIVATE
+        bwa
+        bcftools
+        minimap2
+        samtools
+        htslib
+        spdlog::spdlog
+        ftxui::screen
+        ftxui::dom
+        ftxui::component
+        docopt
+        capnp
+        kj
+        Boost::iostreams
+        Boost::filesystem
+        Boost::system
+        ZLIB::ZLIB
+        panman
+        tbb
+        tbbmalloc
+        tbbmalloc_proxy
+        deflate
+        m
+    )
+    target_compile_options(simulate PUBLIC -g -O3)
+    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-build ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src/src ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src)
+    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 endif()
 
@@ -452,9 +448,9 @@ target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 FetchContent_Declare(
-  docopt
-  GIT_REPOSITORY https://github.com/docopt/docopt.cpp
-  GIT_TAG master
+    docopt
+    GIT_REPOSITORY https://github.com/docopt/docopt.cpp
+    GIT_TAG master
 )
 
 FetchContent_MakeAvailable(docopt)
@@ -463,58 +459,58 @@ target_compile_options(bwa PRIVATE -fPIC)
 target_compile_options(bcftools PRIVATE -fPIC)
 
 target_link_libraries(panmap PRIVATE
-   bwa
-   bcftools
-   minimap2
-   samtools
-   htslib
-   docopt
-   capnp
-   spdlog::spdlog
-   ftxui::screen
-   ftxui::dom
-   ftxui::component
-   kj
-   Boost::iostreams
-   Boost::filesystem
-   Boost::system
-   ZLIB::ZLIB
-   panman
-   tbb
-   tbbmalloc
-   tbbmalloc_proxy
-   deflate
-   m)
+    bwa
+    bcftools
+    minimap2
+    samtools
+    htslib
+    docopt
+    capnp
+    spdlog::spdlog
+    ftxui::screen
+    ftxui::dom
+    ftxui::component
+    kj
+    Boost::iostreams
+    Boost::filesystem
+    Boost::system
+    ZLIB::ZLIB
+    panman
+    tbb
+    tbbmalloc
+    tbbmalloc_proxy
+    deflate
+    m)
 target_link_options(panmap PRIVATE -lm -lpthread)
 target_compile_options(panmap PRIVATE -Wall)
 target_compile_features(panmap PRIVATE cxx_std_20)
 
 
-if (OPTION_BUILD_TESTS)
-target_sources(tests PUBLIC ${CAPNP_SRCS})
-target_include_directories(tests PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(tests bwa bcftools minimap2 samtools htslib
-                     ${Boost_FILESYSTEM_LIBRARY}
-                     ${Boost_SYSTEM_LIBRARY}
-                     ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
-                     ${Boost_IOSTREAMS_LIBRARY}
-                     ZLIB::ZLIB
-                     docopt
-                     capnp
-                     kj
-                     panman
-                     tbb_static tbbmalloc_static tbbmalloc_proxy_static
-                     deflate
-                     m
-                )
+if(OPTION_BUILD_TESTS)
+    target_sources(tests PUBLIC ${CAPNP_SRCS})
+    target_include_directories(tests PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+    target_link_libraries(tests bwa bcftools minimap2 samtools htslib
+        ${Boost_FILESYSTEM_LIBRARY}
+        ${Boost_SYSTEM_LIBRARY}
+        ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
+        ${Boost_IOSTREAMS_LIBRARY}
+        ZLIB::ZLIB
+        docopt
+        capnp
+        kj
+        panman
+        tbb_static tbbmalloc_static tbbmalloc_proxy_static
+        deflate
+        m
+    )
 
-target_compile_options(tests PUBLIC -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-target_link_options(tests PUBLIC -lm -lpthread )
-target_compile_options(tests PUBLIC -g -O3 -ggdb)
+    target_compile_options(tests PUBLIC -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+    target_link_options(tests PUBLIC -lm -lpthread)
+    target_compile_options(tests PUBLIC -g -O3 -ggdb)
 endif()
 
 
-if (OPTION_DEBUG)
+if(OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
 else()
     # Use higher optimization levels and native CPU features for better k-mer performance
@@ -522,11 +518,11 @@ else()
 endif()
 
 # If tests are enabled, add optimization flags
-if (OPTION_BUILD_TESTS)
+if(OPTION_BUILD_TESTS)
     target_compile_options(tests PUBLIC -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
     target_link_options(tests PUBLIC -lm -lpthread)
 
-    if (OPTION_DEBUG)
+    if(OPTION_DEBUG)
         target_compile_options(tests PUBLIC -g -O0 -ggdb)
     else()
         # Use higher optimization levels and native CPU features for better k-mer performance
@@ -535,8 +531,8 @@ if (OPTION_BUILD_TESTS)
 endif()
 
 # If simulate is enabled, add optimization flags
-if (OPTION_BUILD_SIMULATE)
-    if (OPTION_DEBUG)
+if(OPTION_BUILD_SIMULATE)
+    if(OPTION_DEBUG)
         target_compile_options(simulate PUBLIC -g -O0 -ggdb)
     else()
         # Use higher optimization levels and native CPU features for better k-mer performance
@@ -647,7 +643,7 @@ if(OPTION_ENABLE_FIXED_KMER)
     add_compile_definitions(USE_TBBMALLOC=1)
 
     # Configure TBB memory pools for optimized k-mer processing
-    add_compile_definitions(TBB_MALLOC_USE_HUGE_PAGES=1)  # Use huge pages where available
-    add_compile_definitions(TBB_MALLOC_SET_THREAD_CACHE_SIZE=16384)  # Larger thread cache (16MB)
-    add_compile_definitions(TBB_MALLOC_POOL_SIZE=1073741824)  # 1GB memory pool for better performance
+    add_compile_definitions(TBB_MALLOC_USE_HUGE_PAGES=1) # Use huge pages where available
+    add_compile_definitions(TBB_MALLOC_SET_THREAD_CACHE_SIZE=16384) # Larger thread cache (16MB)
+    add_compile_definitions(TBB_MALLOC_POOL_SIZE=1073741824) # 1GB memory pool for better performance
 endif()
