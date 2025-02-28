@@ -1,22 +1,56 @@
 #ifndef __TREE_HPP
 #define __TREE_HPP
 
+#include "coordinates.hpp"
+#include "gap_map.hpp"
+#include "index.capnp.h"
 #include "panmanUtils.hpp"
+#include "performance.hpp"
 #include "seeding.hpp"
+#include "timing.hpp"
+#include <atomic>
+#include <capnp/common.h>
+#include <capnp/message.h>
+#include <capnp/serialize-packed.h>
+#include <capnp/serialize.h>
 #include <iostream>
+#include <mutex>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
-#include "timing.hpp"
-#include <capnp/common.h>
-#include <capnp/message.h>
-#include <capnp/serialize.h>
-#include <capnp/serialize-packed.h>
-#include "index.capnp.h"
 
 double time_stamp();
 
 using namespace seeding;
+
+// Forward declare types from coordinates namespace
+namespace coordinates {
+struct tupleCoord_t;
+struct CoordRange;
+using GapRange = std::pair<int64_t, int64_t>;
+using GapUpdate = std::pair<bool, GapRange>;
+using GapMap = std::map<int64_t, int64_t>;
+using sequence_t = std::vector<
+    std::pair<std::vector<std::pair<char, std::vector<char>>>,
+              std::vector<std::vector<std::pair<char, std::vector<char>>>>>>;
+} // namespace coordinates
+
+// Now use the coordinate types
+using coordinates::CoordRange;
+using coordinates::GapMap;
+using coordinates::GapRange;
+using coordinates::GapUpdate;
+using coordinates::sequence_t;
+using coordinates::tupleCoord_t;
+
+// Parameters for indexing and placement
+struct PanmapParams {
+  int32_t k; // k-mer length
+  int32_t s; // syncmer length
+  int32_t t; // threshold
+  bool open; // open/closed syncmers
+  int32_t l; // minimum length
+};
 
 inline auto seed_cmp = [](const std::pair<int32_t, std::string> &a,
                           const std::pair<int32_t, std::string> &b) {
@@ -26,591 +60,174 @@ inline auto seed_cmp = [](const std::pair<int32_t, std::string> &a,
   return a.first < b.first;
 };
 
-inline void fillDfsIndexes(panmanUtils::Tree *T, panmanUtils::Node *node, int64_t &dfsIndex, std::unordered_map<std::string, int64_t> &dfsIndexes) {  
-  TIME_FUNCTION;
-  dfsIndexes[node->identifier] = dfsIndex;
-  dfsIndex++;
-  for (panmanUtils::Node *child : node->children) {
-    fillDfsIndexes(T, child, dfsIndex, dfsIndexes);
-  }
-}
-
-struct tupleCoord_t {
-    int blockId, nucPos, nucGapPos;
-
-    // Default constructor
-    tupleCoord_t() : blockId(-1), nucPos(-1), nucGapPos(-1) {}
-    
-    // Copy constructor
-    tupleCoord_t(const tupleCoord_t &other) : blockId(other.blockId), nucPos(other.nucPos), nucGapPos(other.nucGapPos) {}
-    
-    // Add constructor for direct initialization
-    tupleCoord_t(int64_t b, int64_t n, int64_t g) : blockId(b), nucPos(n), nucGapPos(g) {}
-
-    bool operator<(const tupleCoord_t &rhs) const {
-        if (blockId == -1 && nucPos == -1 && nucGapPos == -1) return false;
-        if (rhs.blockId == -1 && rhs.nucPos == -1 && rhs.nucGapPos == -1) return true;
-        if (blockId != rhs.blockId) return blockId < rhs.blockId;
-        if (nucPos != rhs.nucPos) return (nucPos < rhs.nucPos);
-        //if (nucGapPos != -1 && rhs.nucGapPos != -1) return nucGapPos < rhs.nucGapPos;
-        if (nucGapPos == -1 && rhs.nucGapPos != -1) return false;
-        if (nucGapPos != -1 && rhs.nucGapPos == -1) return true;
-        return nucGapPos < rhs.nucGapPos;
-    }
-
-    bool operator<=(const tupleCoord_t &rhs) const {
-        return *this < rhs || *this == rhs;
-    }
-
-    bool operator==(const tupleCoord_t &rhs) const {
-        return blockId == rhs.blockId && nucPos == rhs.nucPos && nucGapPos == rhs.nucGapPos;
-    }
-
-    bool operator>=(const tupleCoord_t &rhs) const {
-        return !(*this < rhs);
-    }
-
-    bool operator>(const tupleCoord_t &rhs) const {
-        return !(*this < rhs || *this == rhs);
-    }
-
-};
-
-static inline bool compareNucMuts(const panmanUtils::NucMut &a, const panmanUtils::NucMut &b) {
-  return tupleCoord_t{a.primaryBlockId, a.nucPosition, a.nucGapPosition} < tupleCoord_t{b.primaryBlockId, b.nucPosition, b.nucGapPosition};
-}
-
-struct TupleHash { //TODO
-  std::size_t operator()(const tupleCoord_t& s) const noexcept {
-
-    std::size_t seed = 0;
-
-    seed ^= s.blockId + 0x9e3779b9 + (seed<<6) + (seed>>2);
-    seed ^= s.nucPos + 0x9e3779b9 + (seed<<6) + (seed>>2);
-    seed ^= s.nucGapPos + 0x9e3779b9 + (seed<<6) + (seed>>2);
-
-    return seed; // or use boost::hash_combine
-  }
-};
-
-
-struct tupleRange {
-    tupleCoord_t start;
-    tupleCoord_t stop;
-
-    bool operator<(const tupleRange &rhs) const {
-        return start < rhs.start;
-    }
-};
-class CoordNavigator {
-private:
-    sequence_t* sequence_ptr;  // Use pointer instead of reference
-
-public:
-    // Default constructor now allowed - sets null pointer
-    CoordNavigator() : sequence_ptr(nullptr) {}
-    
-    // Main constructor
-    explicit CoordNavigator(sequence_t& seq) : sequence_ptr(&seq) {}
-    
-    // Copy/move constructors
-    CoordNavigator(const CoordNavigator& other) = default;
-    CoordNavigator(CoordNavigator&& other) noexcept = default;
-    
-    // Assignment operators
-    CoordNavigator& operator=(const CoordNavigator& other) = default;
-    CoordNavigator& operator=(CoordNavigator&& other) noexcept = default;
-
-    // Method to initialize/change the sequence
-    void setSequence(sequence_t& seq) {
-        sequence_ptr = &seq;
-    }
-
-    // Access methods now use pointer
-    sequence_t& sequence() {
-        if (!sequence_ptr) throw std::runtime_error("Accessing uninitialized navigator");
-        return *sequence_ptr;
-    }
-
-    // All existing methods stay exactly the same, just replace sequence with sequence()
-    bool isGap(const tupleCoord_t &coord) {
-        char c;
-        if (coord.nucGapPos == -1) {
-            c = sequence()[coord.blockId].first[coord.nucPos].first;
-        } else {
-            c = sequence()[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
-        }
-        return c == '-' || c == 'x';
-    }
-
-    tupleCoord_t increment(tupleCoord_t &givencoord) {
-        tupleCoord_t &coord = givencoord;
-        
-        if (coord.nucGapPos == -1){
-            coord.nucPos++;
-
-            if(coord.nucPos >= sequence()[coord.blockId].first.size()){
-                coord.blockId++;
-                
-                if(coord.blockId >= sequence().size()){
-                    return tupleCoord_t{-1,-1,-1};
-                }
-                coord.nucPos = 0;
-            }
-
-            if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                coord.nucGapPos = 0;
-            }
-            return coord;
-        } else {
-            coord.nucGapPos++;
-            if(coord.nucGapPos >= sequence()[coord.blockId].first[coord.nucPos].second.size()){
-                coord.nucGapPos = -1;
-            }
-            return coord;
-        }
-    }
-
-    tupleCoord_t decrement(tupleCoord_t &givencoord) {
-        tupleCoord_t &coord = givencoord;
-        if (coord.nucGapPos == -1) {
-            if(sequence()[coord.blockId].first[coord.nucPos].second.empty()){
-                coord.nucPos--;
-                if(coord.nucPos < 0){
-                    coord.blockId--;
-                    if(coord.blockId < 0){
-                        return tupleCoord_t{0,0,0};
-                    }
-                    coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                }
-                return coord;
-            } else {
-                coord.nucGapPos = sequence()[coord.blockId].first[coord.nucPos].second.size() - 1;
-                return coord;
-            }
-        } else {
-            coord.nucGapPos--;
-            if(coord.nucGapPos < 0){
-                coord.nucGapPos = -1;
-                coord.nucPos--;
-                if(coord.nucPos < 0){
-                    coord.blockId--;
-                    if(coord.blockId < 0){
-                        return tupleCoord_t{0,0,0};
-                    }
-                    coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                }
-                return coord;
-            }
-            return coord;
-        }
-    }
-
-    tupleCoord_t newincrement(tupleCoord_t &givencoord, const blockStrand_t &blockStrand) {
-        TIME_FUNCTION;
-        if (!sequence_ptr) {
-            std::cerr << "ERROR: sequence_ptr is null" << std::endl;
-            throw std::runtime_error("Navigator sequence not initialized");
-        }
-
-        tupleCoord_t coord = givencoord;
-        
-        // std::cerr << "DEBUG: newincrement called with coord: blockId=" << coord.blockId 
-        //           << ", nucPos=" << coord.nucPos 
-        //           << ", nucGapPos=" << coord.nucGapPos 
-        //           << ", sequence size=" << sequence().size() << std::endl;
-
-        // Check blockId bounds
-        if (coord.blockId < 0 || coord.blockId >= sequence().size()) {
-            std::cerr << "ERROR: blockId " << coord.blockId << " out of bounds for sequence size " << sequence().size() << std::endl;
-            return tupleCoord_t{-1,-1,-1};
-        }
-
-        if(blockStrand[coord.blockId].first) {
-            if (coord.nucGapPos == -1) {
-                coord.nucPos++;
-
-                // std::cerr << "DEBUG: After increment - nucPos=" << coord.nucPos 
-                //           << ", first.size()=" << sequence()[coord.blockId].first.size() << std::endl;
-
-                // Check nucPos bounds
-                if(coord.nucPos >= sequence()[coord.blockId].first.size()) {
-                    // std::cerr << "DEBUG: nucPos exceeded block size, moving to next block" << std::endl;
-                    coord.blockId++;
-                    
-                    if(coord.blockId >= sequence().size()) {
-                        std::cerr << "DEBUG: Reached end of sequence" << std::endl;
-                        return tupleCoord_t{-1,-1,-1};
-                    }
-                    if(!blockStrand[coord.blockId].first) {
-                        coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                        coord.nucGapPos = -1;
-                        return coord;
-                    }
-                    coord.nucPos = 0;
-                }
-
-                if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                    coord.nucGapPos = 0;
-                }
-                return coord;
-            }else{
-                coord.nucGapPos++;
-                if(coord.nucGapPos >= sequence()[coord.blockId].first[coord.nucPos].second.size()){
-                    coord.nucGapPos = -1;
-                }
-                return coord;
-            }
-
-        }else{
-
-            if (coord.nucGapPos == -1) {
-                if(sequence()[coord.blockId].first[coord.nucPos].second.empty()){
-                    coord.nucPos--;
-                    if(coord.nucPos < 0){
-
-                        coord.blockId++;
-                    
-                        if(coord.blockId >= sequence().size()){
-                            return tupleCoord_t{-1,-1,-1};
-                        }
-                        if(!blockStrand[coord.blockId].first){
-                            coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                            coord.nucGapPos = -1;
-                            return coord;
-                        }
-                        coord.nucPos = 0;
-                        if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                            coord.nucGapPos = 0;
-                        }
-                        return coord;
-
-                    }
-                    return coord;
-                }else{
-                    coord.nucGapPos = sequence()[coord.blockId].first[coord.nucPos].second.size() - 1;
-                    return coord;
-                }
-            }else{
-                coord.nucGapPos--;
-                if(coord.nucGapPos < 0){
-                    coord.nucGapPos = -1;
-                    coord.nucPos--;
-                    if(coord.nucPos < 0){
-
-                        coord.blockId++;
-                    
-                        if(coord.blockId >= sequence().size()){
-                            return tupleCoord_t{-1,-1,-1};
-                        }
-                        if(!blockStrand[coord.blockId].first){
-                            coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                            coord.nucGapPos = -1;
-                            return coord;
-                        }
-                        coord.nucPos = 0;
-                        if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                            coord.nucGapPos = 0;
-                        }
-                        return coord;
-
-                }
-                return coord;
-            }
-            return coord;
-        }
-      }
-    }
-
-
-    tupleCoord_t newdecrement(tupleCoord_t &givencoord, const blockStrand_t &blockStrand) {
-        TIME_FUNCTION;
-        tupleCoord_t coord = givencoord;
-
-        if(blockStrand[coord.blockId].first){
-
-        if (coord.nucGapPos == -1) {
-            if(sequence()[coord.blockId].first[coord.nucPos].second.empty()){
-                coord.nucPos--;
-                if(coord.nucPos < 0){
-                    coord.blockId--;
-                    if(coord.blockId < 0){
-                        return tupleCoord_t{0,0,0};
-                    }
-
-                    if(blockStrand[coord.blockId].first){
-                        coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                        coord.nucGapPos = -1;
-                        return coord;
-                    }
-                    coord.nucPos = 0;
-                    if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                        coord.nucGapPos = 0;
-                    }
-                    return coord;
-
-                }
-                return coord;
-            }else{
-                coord.nucGapPos = sequence()[coord.blockId].first[coord.nucPos].second.size() - 1;
-                return coord;
-            }
-        }else{
-            coord.nucGapPos--;
-            if(coord.nucGapPos < 0){
-                coord.nucGapPos = -1;
-                coord.nucPos--;
-                if(coord.nucPos < 0){
-
-                    //Jump to previous block
-                    coord.blockId--;
-                    if(coord.blockId < 0){
-                        return tupleCoord_t{0,0,0};
-                    }
-                    if(blockStrand[coord.blockId].first){
-                        coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                        coord.nucGapPos = -1;
-                        return coord;
-                    }
-                    coord.nucPos = 0;
-                    if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                        coord.nucGapPos = 0;
-                    }
-                    return coord;
-
-                }
-                return coord;
-            }
-            return coord;
-        }
-
-        }else{
-
-            
-        
-
-        tupleCoord_t coord = givencoord;
-        
-        if (coord.nucGapPos == -1){
-            coord.nucPos++;
-
-            if(coord.nucPos >= sequence()[coord.blockId].first.size()){
-                
-                //Jump to previous block
-                coord.blockId--;
-                if(coord.blockId < 0){
-                    return tupleCoord_t{0,0,0};
-                }
-                if(blockStrand[coord.blockId].first){
-                    coord.nucPos = sequence()[coord.blockId].first.size() - 1;
-                    coord.nucGapPos = -1;
-                    return coord;
-                }
-                coord.nucPos = 0;
-                if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                    coord.nucGapPos = 0;
-                }
-                return coord;
-            }
-
-            if(!sequence()[coord.blockId].first[coord.nucPos].second.empty()) {
-                coord.nucGapPos = 0;
-            }
-            return coord;
-        }else{
-            coord.nucGapPos++;
-            if(coord.nucGapPos >= sequence()[coord.blockId].first[coord.nucPos].second.size()){
-                coord.nucGapPos = -1;
-            }
-            return coord;
-        }
-
-    }
-    }
-};
-
-
 typedef std::unordered_map<
     std::string, std::set<std::pair<int32_t, std::string>, decltype(seed_cmp)>>
     seedmerIndex_t;
 
-/* Helpers for interacting with panmats */
-namespace seed_annotated_tree {
 using namespace panmanUtils;
 
-typedef std::vector<
-    std::pair<std::vector<std::pair<int64_t, std::vector<int64_t>>>,
-              std::vector<std::vector<std::pair<int64_t, std::vector<int64_t>>>>>>
-    globalCoords_t;
-int64_t tupleToScalarCoord(const tupleCoord_t &coord,
-                           const globalCoords_t &globalCoords);
-
-typedef std::vector<std::tuple<int32_t, int32_t, bool, bool, bool, bool>> blockMutationInfo_t;
-typedef std::vector<
-    std::tuple<int32_t, int32_t, int32_t, int32_t, char, char>>
+typedef std::vector<std::tuple<int32_t, int32_t, bool, bool, bool, bool>>
+    blockMutationInfo_t;
+typedef std::vector<std::tuple<int32_t, int32_t, int32_t, int32_t, char, char>>
     mutationInfo_t;
 
-class HotSeedIndex {
-public:
-    typedef size_t hashedKmer_t;
-    
-    // Struct to hold seed lookup info
-    struct SeedInfo {
-        hashedKmer_t kmer;
-        int64_t endPos;
-        bool isReverse;
-        
-        bool operator==(const SeedInfo& other) const {
-            return kmer == other.kmer && 
-                   endPos == other.endPos && 
-                   isReverse == other.isReverse;
-        }
-    };
-    
-    struct SeedInfoHash {
-        size_t operator()(const SeedInfo& info) const {
-            size_t h = std::hash<hashedKmer_t>{}(info.kmer);
-            h ^= std::hash<int64_t>{}(info.endPos) + 0x9e3779b9 + (h << 6) + (h >> 2);
-            h ^= std::hash<bool>{}(info.isReverse) + 0x9e3779b9 + (h << 6) + (h >> 2);
-            return h;
-        }
-    };
+namespace seed_annotated_tree {
 
-    // Hash function for position-dfsIndex pair
-    struct PosIndexHash {
-        size_t operator()(const std::pair<int64_t, int64_t>& p) const {
-            size_t h = std::hash<int64_t>{}(p.first);
-            h ^= std::hash<int64_t>{}(p.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
-            return h;
-        }
-    };
+// Helper method that uses a hybrid approach - scalar logic within blocks,
+// traversal order at boundaries
+int getValidNucleotidesEfficiently(coordinates::CoordinateManager &manager,
+                                   int64_t startPos, char *buffer, int maxChars,
+                                   int64_t &resultEndPos,
+                                   const blockExists_t &blockExists,
+                                   const blockStrand_t &blockStrand,
+                                   const sequence_t &sequence);
 
-    // Maps seed info to its access count
-    std::unordered_map<SeedInfo, int64_t, SeedInfoHash> seedAccessCounts;
-    
-    // Fast lookup from (pos, dfsIndex) to seed info
-    std::unordered_map<std::pair<int64_t, int64_t>, SeedInfo, PosIndexHash> posToSeed;
-    
-    size_t maxCachedSeeds;
+inline void
+fillDfsIndexes(panmanUtils::Tree *T, panmanUtils::Node *node, int64_t &dfsIndex,
+               std::unordered_map<std::string, int64_t> &dfsIndexes) {
+  TIME_FUNCTION;
+  dfsIndexes[node->identifier] = dfsIndex;
+  dfsIndex++;
+  // enforce an ordering of children (alphabetical)
+  std::set<Node *, std::function<bool(const Node *, const Node *)>>
+      orderedChildren(node->children.begin(), node->children.end(),
+                      [](const Node *a, const Node *b) {
+                        return a->identifier < b->identifier;
+                      });
+  for (panmanUtils::Node *child : orderedChildren) {
+    fillDfsIndexes(T, child, dfsIndex, dfsIndexes);
+  }
+}
 
-    HotSeedIndex(int k, size_t maxSeeds = 10000) : k(k), maxCachedSeeds(maxSeeds) {}
-
-    // Record a seed access during build phase
-    void recordSeedAccess(int64_t pos, int64_t dfsIndex, hashedKmer_t kmer, int64_t endPos, bool isReverse) {
-        SeedInfo info{kmer, endPos, isReverse};
-        auto& count = seedAccessCounts[info];
-        count++;
-
-        // Add/update position mapping
-        posToSeed[{pos, dfsIndex}] = info;
-
-        // If we've exceeded maxCachedSeeds, remove least frequently accessed
-        if (seedAccessCounts.size() > maxCachedSeeds) {
-            // Find least accessed seed
-            auto minIt = std::min_element(seedAccessCounts.begin(), seedAccessCounts.end(),
-                [](const auto& a, const auto& b) {
-                    return a.second < b.second;
-                });
-
-            // Remove all position mappings for this seed
-            for (auto it = posToSeed.begin(); it != posToSeed.end();) {
-                if (it->second == minIt->first) {
-                    it = posToSeed.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-
-            // Remove the seed itself
-            seedAccessCounts.erase(minIt);
-        }
-    }
-
-    // Try to get a cached seed during placement phase
-    bool getSeed(int64_t pos, int64_t dfsIndex, hashedKmer_t& kmer, int64_t& endPos, bool& isReverse) {
-        auto it = posToSeed.find({pos, dfsIndex});
-        if (it != posToSeed.end()) {
-            const auto& info = it->second;
-            kmer = info.kmer;
-            endPos = info.endPos;
-            isReverse = info.isReverse;
-            return true;
-        }
-        return false;
-    }
-
-    // Serialize to Cap'n Proto
-    void serialize(::HotSeedIndexSerial::Builder builder) const {
-        auto entriesBuilder = builder.initEntries(seedAccessCounts.size());
-        size_t i = 0;
-        
-        // Group positions by seed info
-        std::unordered_map<SeedInfo, std::vector<std::pair<int64_t, int64_t>>, SeedInfoHash> seedToPositions;
-        for (const auto& [pos_idx, seed] : posToSeed) {
-            seedToPositions[seed].push_back(pos_idx);
-        }
-
-        for (const auto& [info, count] : seedAccessCounts) {
-            auto entry = entriesBuilder[i];
-            entry.setKmer(info.kmer);
-            entry.setEndPos(info.endPos);
-            entry.setIsReverse(info.isReverse);
-            entry.setAccessCount(count);
-            
-            const auto& positions = seedToPositions[info];
-            auto positionsBuilder = entry.initPositions(positions.size());
-            for (size_t j = 0; j < positions.size(); j++) {
-                positionsBuilder[j].setPos(positions[j].first);
-                positionsBuilder[j].setDfsIndex(positions[j].second);
-            }
-            i++;
-        }
-    }
-
-    // Deserialize from Cap'n Proto
-    void deserialize(::HotSeedIndexSerial::Reader reader) {
-        seedAccessCounts.clear();
-        posToSeed.clear();
-        
-        auto entries = reader.getEntries();
-        for (auto entry : entries) {
-            SeedInfo info{entry.getKmer(), entry.getEndPos(), entry.getIsReverse()};
-            seedAccessCounts[info] = entry.getAccessCount();
-            
-            auto positions = entry.getPositions();
-            for (auto pos : positions) {
-                posToSeed[{pos.getPos(), pos.getDfsIndex()}] = info;
-            }
-        }
-    }
-
-private:
-    int k;
+// Struct to hold seed information
+struct SeedInfo {
+  size_t hash;
+  int64_t endPos;
+  bool isReverse;
 };
 
-struct mutableTreeData {
-  // These fields are intended to be mutated at each node during a DFS
-  sequence_t sequence; // the main object encoding the MSA
-  int64_t maxGlobalCoordinate;
-  std::string ungappedConsensus; // not used
+// Type for seed change: {pos, oldVal, newVal, oldSeed, newSeed, oldIsReverse,
+// newIsReverse, oldEndPos, newEndPos}
+using SeedChange =
+    std::tuple<int64_t, bool, bool, std::optional<size_t>,
+               std::optional<size_t>, std::optional<bool>, std::optional<bool>,
+               std::optional<int64_t>, std::optional<int64_t>>;
 
-  std::vector<seed> seeds; // dynamic vector of seeds in each node's sequence
-  std::vector<seedmer> seedmers;
-  std::unordered_map<std::string, bool> variableSeeds;         // seeds in the consensus that mutate at least once
-  blockExists_t blockExists; // tracks if blocks are "on" at a node
-  blockStrand_t blockStrand; // tracks strand of blocks
-  std::unordered_map<int64_t, tupleCoord_t> scalarToTupleCoord;
-
-  mutableTreeData() {
-    maxGlobalCoordinate = 0;
+struct SeedChangeComparator { // for set of seed changes, ordered by scalar
+                              // position
+  bool operator()(const SeedChange &a, const SeedChange &b) const {
+    return std::get<0>(a) < std::get<0>(b);
   }
 };
+
+// Common state tracking for both indexing and placement
+struct CommonTraversalState {
+  std::vector<std::optional<seeding::onSeedsHash>> onSeedsHash;
+  std::vector<std::unordered_set<int64_t>> BlocksToSeeds;
+  std::unordered_map<std::string, int64_t> dfsIndexes;
+  std::unordered_set<int> inverseBlockIds;
+
+  CommonTraversalState(panmanUtils::Tree *T, size_t numBlocks,
+                       size_t numCoords) {
+    initialize(T, numBlocks, numCoords);
+  }
+
+  void initialize(panmanUtils::Tree *T, size_t numBlocks, size_t numCoords) {
+    onSeedsHash.clear();
+    onSeedsHash.resize(numCoords);
+    BlocksToSeeds.clear();
+    BlocksToSeeds.resize(numBlocks);
+    dfsIndexes.clear();
+    inverseBlockIds.clear();
+    int64_t dfsIndex = 0;
+    fillDfsIndexes(T, T->root, dfsIndex, dfsIndexes);
+  }
+};
+
+// Common local state used during node processing
+struct CommonNodeState {
+  // Mutation tracking
+  coordinates::blockExists_t oldBlockExists;
+  coordinates::blockStrand_t oldBlockStrand;
+
+  // Pre-allocated mutation buffers
+  blockMutationInfo_t blockMutationInfo;
+  mutationInfo_t nucleotideMutationInfo;
+  std::vector<coordinates::CoordRange> recompRanges;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunUpdates;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapMapUpdates;
+  std::vector<std::pair<bool, int>> inverseBlockIdsBacktrack;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>
+      gapRunBlocksBacktracks;
+
+  CommonNodeState(size_t numBlocks, size_t numCoords) {
+    // Initialize mutation tracking vectors
+    oldBlockExists.resize(numBlocks, {false, {}});
+    oldBlockStrand.resize(numBlocks, {true, {}});
+
+    // Reserve space for mutation buffers
+    blockMutationInfo.reserve(numBlocks);
+    nucleotideMutationInfo.reserve(numCoords);
+    recompRanges.reserve(numBlocks);
+    gapRunUpdates.reserve(numBlocks);
+    gapRunBacktracks.reserve(numBlocks);
+    gapMapUpdates.reserve(numBlocks);
+    inverseBlockIdsBacktrack.reserve(numBlocks);
+    gapRunBlocksBacktracks.reserve(numBlocks);
+  }
+};
+
+// Indexing-specific state
+struct TraversalGlobalState : public CommonTraversalState {
+  using CommonTraversalState::CommonTraversalState;
+};
+
+struct NodeLocalState : public CommonNodeState {
+  NodeLocalState(size_t numBlocks, size_t numCoords)
+      : CommonNodeState(numBlocks, numCoords) {}
+};
+
+// Placement-specific state
+struct PlacementGlobalState : public CommonTraversalState {
+  // Additional placement-specific fields
+  int64_t maxHitsInAnyGenome = 0;
+  double bestJaccardScore = 0.0;
+  double bestCosineScore = 0.0;
+
+  PlacementGlobalState(panmanUtils::Tree *T, size_t numBlocks, size_t numCoords)
+      : CommonTraversalState(T, numBlocks, numCoords) {}
+};
+
+struct PlacementNodeState : public CommonNodeState {
+  // Additional placement-specific fields
+  int64_t hitsInThisGenome = 0;
+  double cosineNumerator = 0.0;
+  double cosineSumOfSquares = 0.0;
+
+  PlacementNodeState(size_t numBlocks, size_t numCoords)
+      : CommonNodeState(numBlocks, numCoords) {}
+};
+
+void applyMutations(blockMutationInfo_t &blockMutationInfo,
+                    std::vector<coordinates::CoordRange> &recompRanges,
+                    mutationInfo_t &mutationInfo,
+                    std::vector<gap_map::GapUpdate> &gapRunUpdates,
+                    std::vector<gap_map::GapUpdate> &gapRunBacktracks,
+                    std::vector<gap_map::GapUpdate> &gapMapUpdates,
+                    panmanUtils::Tree *T, panmanUtils::Node *node,
+                    coordinates::CoordinateTraverser &traverser,
+                    bool isPlacement, std::unordered_set<int> &inverseBlockIds,
+                    std::vector<std::pair<bool, int>> &inverseBlockIdsBacktrack,
+                    int k);
 
 struct mutationMatrices {
   // Store mutation matrices
   std::vector<std::vector<double>> submat; // 4 x 4 substitution rate matrix
-  std::unordered_map<int64_t, double> insmat; // 1 x N insertion rate by length matrix
-  std::unordered_map<int64_t, double> delmat; // 1 x N deletion rate by length matrix
+  std::unordered_map<int64_t, double>
+      insmat; // 1 x N insertion rate by length matrix
+  std::unordered_map<int64_t, double>
+      delmat; // 1 x N deletion rate by length matrix
 
   bool filled = false;
 
@@ -629,32 +246,42 @@ struct mutationMatrices {
 };
 
 /* Interface */
-void removeIndices(std::vector<seed> &v, std::stack<int32_t> &rm);
-std::string getConsensus(Tree *T); // ungapped!
 
-std::unordered_map<std::string, std::string> getAllNodeStrings(Tree *T);
-std::string getStringFromCurrData(mutableTreeData &data, Tree *T,
-                                  const Node *node, const bool aligned);
+void setupIndexing(sequence_t &sequence, blockExists_t &blockExists,
+                   blockStrand_t &blockStrand, const Tree *T);
 
-int64_t getGlobalCoordinate(const int blockId, const int nucPosition,
-                            const int nucGapPosition,
-                            const globalCoords_t &globalCoords);
-void setup(mutableTreeData &data, globalCoords_t &globalCoords, const Tree *T);
+void setupPlacement(
+    std::vector<std::optional<seeding::onSeedsHash>> &onSeedsHash,
+    sequence_t &sequence, blockExists_t &blockExists,
+    blockStrand_t &blockStrand, const Tree *T);
 
-void setupGlobalCoordinates(
-    int64_t &ctr, globalCoords_t &globalCoords,
-    const BlockGapList &blockGaps, const std::vector<Block> &blocks,
-    const std::vector<GapList> &gaps,
-    const sequence_t &sequence,
-    std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord);
+bool getSeedAt(coordinates::CoordinateTraverser &traverser,
+               coordinates::CoordinateManager &manager, size_t &resultHash,
+               bool &resultIsReverse, int64_t &resultEndPos, const int64_t &pos,
+               Tree *T, const int32_t &k);
 
-
-
-bool getSeedAt(bool useHotSeedIndex, HotSeedIndex& hotSeedIndex, std::string &seedBuffer, size_t &result_hash, int64_t &result_end_pos, bool &result_is_reverse, const int64_t &pos, Tree *T, const int32_t& k,
-    int64_t &dfsIndex, std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
-    const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const globalCoords_t &globalCoords, CoordNavigator &navigator,
-    std::map<int64_t, int64_t> &gapRuns, const std::vector<std::pair<int64_t, int64_t>>& blockRanges);
+/**
+ * @brief Process multiple seed positions simultaneously to improve throughput
+ * @param traverser Coordinate traverser
+ * @param manager Coordinate manager
+ * @param positions Array of positions to process
+ * @param positionCount Number of positions in the array
+ * @param k K-mer length
+ * @param resultHashes Output hashes
+ * @param resultIsReverse Output orientation flags
+ * @param resultEndPos Output end positions
+ * @param validResults Output validity flags
+ */
+void getSeedsBatch(coordinates::CoordinateTraverser &traverser,
+                   coordinates::CoordinateManager &manager,
+                   const int64_t *positions, // Input positions
+                   size_t positionCount,     // Number of positions
+                   int32_t k,                // k-mer length
+                   size_t *resultHashes,     // Output hashes
+                   bool *resultIsReverse,    // Output orientation flags
+                   int64_t *resultEndPos,    // Output end positions
+                   bool *validResults        // Output validity flags
+);
 
 // Fill mutation matrices from tree or file
 std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string &s1,
@@ -663,25 +290,115 @@ std::pair<size_t, size_t> getMaskCoorsForMutmat(const std::string &s1,
                                                 double threshold);
 // void fillMutationMatricesFromTree(mutationMatrices &mutMat, Tree *T,
 //                                   size_t window, double threshold);
-void fillMutationMatricesFromTree_test(mutationMatrices &mutMat, Tree *T, const std::string& path);
+void fillMutationMatricesFromTree_test(mutationMatrices &mutMat, Tree *T,
+                                       const std::string &path);
 void fillMutationMatricesFromFile(mutationMatrices &mutMat, std::ifstream &inf);
 
 // Build mutation matrices by traversing through all parent-child pairs
 void writeMutationMatrices(const mutationMatrices &mutMat,
                            std::ofstream &mmfout);
 
-
-
-std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> getNucleotideSequenceFromBlockCoordinates(
-    tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
-    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator);
-
-
+void getNucleotideSequenceFromBlockCoordinates(
+    std::string &seq, std::vector<int64_t> &coords, std::vector<int64_t> &gaps,
+    std::vector<int32_t> &deadBlocks, coordinates::CoordinateManager &manager,
+    int64_t start_scalar, int64_t stop_scalar, const Tree *T, const Node *node);
 
 std::string getStringAtNode(Node *node, Tree *T, bool aligned);
 
+void undoMutations(Tree *T, const Node *node,
+                   const blockMutationInfo_t &blockMutationInfo,
+                   const mutationInfo_t &mutationInfo,
+                   coordinates::CoordinateTraverser &traverser,
+                   std::vector<gap_map::GapUpdate> &gapRunBacktracks);
 
+// Common seed processing functions
+inline void processSeedChange(
+    CommonTraversalState &state, int64_t pos, bool oldVal, bool newVal,
+    std::optional<size_t> oldSeed, std::optional<size_t> newSeed,
+    std::optional<bool> oldIsReverse, std::optional<bool> newIsReverse,
+    std::optional<int64_t> oldEndPos, std::optional<int64_t> newEndPos,
+    coordinates::CoordinateTraverser &traverser) {
 
+  if (oldVal && newVal && oldSeed != newSeed) {
+    // Update existing seed
+    state.onSeedsHash[pos] = {newSeed.value(), newEndPos.value(),
+                              newIsReverse.value()};
+  } else if (oldVal && !newVal) {
+    // Remove seed
+    state.onSeedsHash[pos].reset();
+    int blockId = traverser.getCoordManager().getBlockIdOfScalarCoord(pos);
+    state.BlocksToSeeds[blockId].erase(pos);
+  } else if (!oldVal && newVal) {
+    // Add new seed
+    state.onSeedsHash[pos] = {newSeed.value(), newEndPos.value(),
+                              newIsReverse.value()};
+    int blockId = traverser.getCoordManager().getBlockIdOfScalarCoord(pos);
+    state.BlocksToSeeds[blockId].insert(pos);
+  }
+}
+
+inline void undoSeedChange(
+    CommonTraversalState &state, int64_t pos, bool oldVal, bool newVal,
+    std::optional<size_t> oldSeed, std::optional<size_t> newSeed,
+    std::optional<bool> oldIsReverse, std::optional<bool> newIsReverse,
+    std::optional<int64_t> oldEndPos, std::optional<int64_t> newEndPos,
+    coordinates::CoordinateTraverser &traverser) {
+
+  if (oldVal && newVal) {
+    // Restore previous seed state
+    state.onSeedsHash[pos] = {oldSeed.value(), oldEndPos.value(),
+                              oldIsReverse.value()};
+  } else if (oldVal && !newVal) {
+    // Restore deleted seed
+    state.onSeedsHash[pos] = {oldSeed.value(), oldEndPos.value(),
+                              oldIsReverse.value()};
+    int blockId = traverser.getCoordManager().getBlockIdOfScalarCoord(pos);
+    state.BlocksToSeeds[blockId].insert(pos);
+  } else if (!oldVal && newVal) {
+    // Remove added seed
+    state.onSeedsHash[pos].reset();
+    int blockId = traverser.getCoordManager().getBlockIdOfScalarCoord(pos);
+    state.BlocksToSeeds[blockId].erase(pos);
+  }
+}
 } // namespace seed_annotated_tree
+
+using namespace seed_annotated_tree;
+/**
+ * @brief Template specializations for fixed k-mer sizes
+ * These optimized implementations handle specific k-mer sizes more efficiently
+ */
+namespace fixed_kmer {
+// Specialized function for small k-mers (k <= 16)
+template <int K>
+inline bool getSeedAtFixed(coordinates::CoordinateTraverser &traverser,
+                           coordinates::CoordinateManager &manager,
+                           size_t &resultHash, bool &resultIsReverse,
+                           int64_t &resultEndPos, const int64_t &pos, Tree *T);
+
+// Specialized batch processing for small k-mers
+template <int K>
+inline void getSeedsBatchFixed(coordinates::CoordinateTraverser &traverser,
+                               coordinates::CoordinateManager &manager,
+                               const int64_t *positions, size_t positionCount,
+                               size_t *resultHashes, bool *resultIsReverse,
+                               int64_t *resultEndPos, bool *validResults);
+
+// Helper for selecting the correct specialized implementation based on k-mer
+// size
+inline bool dispatchGetSeedAt(coordinates::CoordinateTraverser &traverser,
+                              coordinates::CoordinateManager &manager,
+                              size_t &resultHash, bool &resultIsReverse,
+                              int64_t &resultEndPos, const int64_t &pos,
+                              Tree *T, const int32_t &k);
+
+// Helper for selecting the correct specialized batch implementation
+inline void dispatchGetSeedsBatch(coordinates::CoordinateTraverser &traverser,
+                                  coordinates::CoordinateManager &manager,
+                                  const int64_t *positions,
+                                  size_t positionCount, int32_t k,
+                                  size_t *resultHashes, bool *resultIsReverse,
+                                  int64_t *resultEndPos, bool *validResults);
+
+} // namespace fixed_kmer
 #endif

@@ -1,19 +1,25 @@
 #include "seed_annotated_tree.hpp"
-#include "pmi.hpp"
+#include "gap_map.hpp"
+#include "logging.hpp"
+#include "performance.hpp"
 #include "seeding.hpp"
+#include "seq_utils.hpp"
+#include <boost/icl/interval_set.hpp>
 #include <cmath>
 #include <iostream>
 #include <numeric>
-#include <boost/icl/interval_set.hpp>
-//#include <sys/_types/_int64_t.h>
+#include <ranges>
+
+#include "fixed_kmer.hpp"
 
 using namespace boost::icl;
 using namespace panman;
 using namespace seed_annotated_tree;
+using namespace coordinates;
+using namespace logging;
 
 std::chrono::time_point<std::chrono::high_resolution_clock> global_timer =
     std::chrono::high_resolution_clock::now();
-
 
 double time_stamp() {
   std::chrono::time_point<std::chrono::high_resolution_clock> newtime =
@@ -23,581 +29,715 @@ double time_stamp() {
   return duration.count();
 }
 
+// Helper method that uses a hybrid approach - scalar logic within blocks,
+// traversal order at boundaries
+int seed_annotated_tree::getValidNucleotidesEfficiently(
+    coordinates::CoordinateManager &manager, int64_t startPos, char *buffer,
+    int maxChars, int64_t &resultEndPos, const blockExists_t &blockExists,
+    const blockStrand_t &blockStrand, const sequence_t &sequence) {
+  // Get starting coordinate
+  const tupleCoord_t *startCoord = manager.getTupleCoord(startPos);
+  if (!startCoord)
+    return 0;
 
-std::string seed_annotated_tree::getConsensus(Tree *T) {
-  TIME_FUNCTION;
-  std::string consensus = "";
-  for (size_t i = 0; i < T->blocks.size(); i++) {
-    for (size_t j = 0; j < T->blocks[i].consensusSeq.size(); j++) {
-      uint32_t c = T->blocks[i].consensusSeq[j];
+  // Validate block existence
+  if (!blockExists[startCoord->blockId].first) {
+    return 0;
+  }
+
+  // Use gap map to check if starting in a gap
+  if (manager.isGapPosition(startPos)) {
+    // Starting in a gap - use nextNonGapPosition to efficiently skip
+    const tupleCoord_t *nextNonGap = manager.getNextNonGapPosition(startPos);
+    if (!nextNonGap)
+      return 0; // No more non-gap positions
+    startCoord = nextNonGap;
+    startPos = nextNonGap->scalar;
+  }
+
+  int count = 0;
+  int64_t maxScalar = manager.size() - 1;
+
+  // Start with current coordinate
+  const tupleCoord_t *coord = startCoord;
+
+  // Main loop to collect nucleotides
+  while (coord && count < maxChars && coord->scalar <= maxScalar) {
+    // Cache current block info for multiple uses
+    int32_t currentBlockId = coord->blockId;
+    bool isBlockInverted = !blockStrand[currentBlockId].first;
+
+    // Skip if block doesn't exist
+    if (!blockExists[currentBlockId].first) {
+      // Find next block according to traversal order
+      int32_t nextBlockId =
+          isBlockInverted ? currentBlockId - 1 : currentBlockId + 1;
+      if (nextBlockId < 0 || nextBlockId >= blockExists.size())
+        break;
+
+      // Move to correct position in next block
+      const tupleCoord_t *nextBlockCoord =
+          isBlockInverted ? manager.getLastCoordinateInBlock(nextBlockId)
+                          : manager.getFirstCoordinateInBlock(nextBlockId);
+
+      if (!nextBlockCoord)
+        break;
+      coord = nextBlockCoord;
+      continue;
+    }
+
+    // Get the range of this block for fast within-block processing
+    std::pair<int64_t, int64_t> blockRange =
+        manager.getBlockRange(currentBlockId);
+
+    // Fast path: process all positions within this block using scalar logic
+    // This avoids pointer chasing when we're inside a block
+    int64_t currentPos = coord->scalar;
+    int64_t blockEnd = isBlockInverted ? blockRange.first : blockRange.second;
+
+    // Determine direction for scalar increments based on block orientation
+    int scalarStep = isBlockInverted ? -1 : 1;
+
+    // Process all positions in this block with scalar logic
+    while (count < maxChars && ((isBlockInverted && currentPos >= blockEnd) ||
+                                (!isBlockInverted && currentPos <= blockEnd))) {
+
+      // Check if current position is in a gap using the gap map
+      if (manager.isGapPosition(currentPos)) {
+        // Skip this gap run efficiently
+        int64_t gapLength = manager.getGapRunLength(currentPos);
+        if (gapLength > 0) {
+          // Skip the entire gap run, respecting block direction
+          if (isBlockInverted) {
+            // In an inverted block, we're going backwards (decreasing scalar)
+            // Since gap runs are defined by start position and length in
+            // forward direction, we need to find where this gap run starts when
+            // going backwards
+            auto upper_it = manager.getGapMap().upper_bound(currentPos);
+            if (upper_it != manager.getGapMap().begin()) {
+              auto run_start_it = std::prev(upper_it);
+              if (currentPos >= run_start_it->first &&
+                  currentPos < run_start_it->first + run_start_it->second) {
+                // We're in the middle of a gap run
+                // Skip to the start of this gap run (in backwards direction)
+                currentPos = run_start_it->first - 1;
+                continue;
+              }
+            }
+            // If we couldn't find a gap run, just skip one position
+            currentPos -= 1;
+          } else {
+            // In a forward block, just move forward by the gap length
+            currentPos += gapLength;
+          }
+          continue;
+        }
+      }
+
+      // Get coordinate at current position
+      const tupleCoord_t *currentCoord = manager.getTupleCoord(currentPos);
+      if (!currentCoord)
+        break;
+
+      // Sanity check - make sure we're still in the same block
+      if (currentCoord->blockId != currentBlockId)
+        break;
+
+      // Get character at this position
+      char c;
+      if (currentCoord->nucGapPos == -1) {
+        c = sequence[currentBlockId].first[currentCoord->nucPos].first;
+      } else {
+        c = sequence[currentBlockId]
+                .first[currentCoord->nucPos]
+                .second[currentCoord->nucGapPos];
+      }
+
+      // Apply complementation for inverted blocks
+      if (isBlockInverted) {
+        c = panmanUtils::getComplementCharacter(c);
+      }
+
+      // Only collect valid nucleotides
+      if (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'a' ||
+          c == 'c' || c == 'g' || c == 't') {
+        buffer[count++] = c;
+        resultEndPos = currentPos;
+      }
+
+      // Move to next position within block using scalar logic
+      currentPos += scalarStep;
+    }
+
+    // After processing the block, we need traversal logic to move to the next
+    // block Find the next/prev block based on traversal order
+    int32_t nextBlockId =
+        isBlockInverted ? currentBlockId - 1 : currentBlockId + 1;
+    if (nextBlockId < 0 || nextBlockId >= blockExists.size())
+      break;
+
+    // Skip non-existent blocks
+    while (nextBlockId >= 0 && nextBlockId < blockExists.size() &&
+           !blockExists[nextBlockId].first) {
+      nextBlockId = isBlockInverted ? nextBlockId - 1 : nextBlockId + 1;
+      if (nextBlockId < 0 || nextBlockId >= blockExists.size()) {
+        nextBlockId = -1;
+        break;
+      }
+    }
+
+    if (nextBlockId < 0 || nextBlockId >= blockExists.size())
+      break;
+
+    // Move to the appropriate position in the next block
+    bool isNextBlockInverted = !blockStrand[nextBlockId].first;
+    const tupleCoord_t *nextBlockCoord =
+        isNextBlockInverted ? manager.getLastCoordinateInBlock(nextBlockId)
+                            : manager.getFirstCoordinateInBlock(nextBlockId);
+
+    if (!nextBlockCoord)
+      break;
+    coord = nextBlockCoord;
+  }
+
+  return count;
+}
+
+bool seed_annotated_tree::getSeedAt(coordinates::CoordinateTraverser &traverser,
+                                    CoordinateManager &manager,
+                                    size_t &resultHash, bool &resultIsReverse,
+                                    int64_t &resultEndPos, const int64_t &pos,
+                                    Tree *T, const int32_t &k) {
+  // When optimization is enabled, try to dispatch to specialized
+  // implementations
+  return fixed_kmer::dispatchGetSeedAt(
+      traverser, manager, resultHash, resultIsReverse, resultEndPos, pos, T, k);
+  // Use const references to avoid copies and clarify non-ownership
+  const auto &sequence = manager.getSequence();
+  const auto &blockExists = manager.getBlockExists();
+  const auto &blockStrand = manager.getBlockStrand();
+  const auto &gap_map = manager.getGapMap();
+
+  // expect more non-gaps that gaps -- should also try reverse
+  if (__builtin_expect(manager.isGapPosition(pos), 0)) {
+    return false;
+  }
+
+  // Preallocate a fixed buffer for performance
+  alignas(64) static thread_local char
+      buffer[256]; // Align to cache line and make thread local
+
+  // Reset traverser to start at our coordinate
+  const tupleCoord_t *startCoord = manager.getTupleCoord(pos);
+  if (__builtin_expect(!startCoord, 0))
+    throw std::runtime_error("Invalid coordinate");
+
+  // expect more blocks to exist than not
+  if (__builtin_expect(!blockExists[startCoord->blockId].first, 0)) {
+    return false;
+  }
+
+  traverser.reset(startCoord);
+
+  // Get k non-gap characters and store in buffer directly in one pass
+  bool foundEnough = traverser.skipToNthNonGap(k, buffer);
+
+  // Check if we found enough characters
+  if (__builtin_expect(!foundEnough, 0)) {
+    return false;
+  }
+
+  // Get the end position
+  resultEndPos = traverser.getCurrent()->scalar;
+
+  // Calculate hash without string construction (performance critical)
+  try {
+    // Avoid creating std::string - work directly with the buffer
+    auto [fHash, rHash] = seeding::hashSeq(std::string_view(buffer, k));
+    if (fHash < rHash) {
+      resultHash = fHash;
+      resultIsReverse = false;
+    } else {
+      resultHash = rHash;
+      resultIsReverse = true;
+    }
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+// coords (blockId, nucPosition, nucGapPosition)
+// Sequence includes both boundary coordinates
+// Sequence, scalarCoords of sequence, scalarCoords of Gaps, dead blocks
+void seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
+    std::string &seq, std::vector<int64_t> &coords, std::vector<int64_t> &gaps,
+    std::vector<int32_t> &deadBlocks, coordinates::CoordinateManager &manager,
+    int64_t start_scalar, int64_t stop_scalar, const Tree *T,
+    const Node *node) {
+
+  // Clear output vectors
+  seq.clear();
+  coords.clear();
+  gaps.clear();
+  deadBlocks.clear();
+
+  // Validate input scalars
+  if (start_scalar < 0 || stop_scalar < 0) {
+    std::cout << "Error: Invalid negative scalar values: start_scalar="
+              << start_scalar << ", stop_scalar=" << stop_scalar << std::endl;
+    return;
+  }
+
+  // Normalize scalar order if needed
+  if (start_scalar > stop_scalar) {
+    std::cout << "Warning: Normalizing inverted range: start_scalar="
+              << start_scalar << ", stop_scalar=" << stop_scalar << std::endl;
+    std::swap(start_scalar, stop_scalar);
+  }
+
+  // Check for extremely large values that might indicate overflow
+  if (start_scalar > 1000000000 || stop_scalar > 1000000000) {
+    std::cout << "Error: Suspiciously large scalar values: start_scalar="
+              << start_scalar << ", stop_scalar=" << stop_scalar << std::endl;
+    return;
+  }
+
+  // Validate gap map integrity
+  if (!manager.validateGapMap()) {
+    std::cout
+        << "Error: Gap map validation failed. Fixing gap map before proceeding."
+        << std::endl;
+    // Attempt to fix the gap map by optimizing it
+    manager.optimizeGapMap();
+
+    // Check again after optimization
+    if (!manager.validateGapMap()) {
+      std::cout << "Error: Gap map still invalid after optimization. Traversal "
+                   "may be unreliable."
+                << std::endl;
+    }
+  }
+
+  // Get references to block existence and strand information
+  const blockExists_t &blockExists = manager.getBlockExists();
+  const blockStrand_t &blockStrand = manager.getBlockStrand();
+
+  // Get start and stop coordinates
+  const tupleCoord_t *start = manager.getTupleCoord(start_scalar);
+  const tupleCoord_t *stop = manager.getTupleCoord(stop_scalar);
+
+  if (!start || !stop) {
+    std::cout << "Error: Invalid start or stop coordinate" << std::endl;
+    return;
+  }
+
+  // Validate start and stop coordinates
+  if (!manager.validateCoordinate(*start) ||
+      !manager.validateCoordinate(*stop)) {
+    std::cout << "Error: Start or stop coordinate validation failed"
+              << std::endl;
+    return;
+  }
+
+  // Create traverser
+  coordinates::CoordinateTraverser traverser(start, &manager);
+
+  // Set end point for traverser
+  traverser.reset(start, stop);
+
+  // Track seen dead blocks to avoid duplicates
+  std::unordered_set<int32_t> seenDeadBlocks;
+
+  // Calculate traversal length for buffer allocation
+  int64_t traversal_length = stop_scalar - start_scalar + 1;
+
+  // Handle inverted range
+  if (traversal_length <= 0) {
+    std::cout << "Warning: Inverted or zero-length range detected"
+              << " (start_scalar=" << start_scalar
+              << ", stop_scalar=" << stop_scalar << ")" << std::endl;
+    traversal_length = 1; // Set minimum valid length
+  }
+
+  // Estimate a reasonable initial capacity (assuming about 20% of positions are
+  // gaps)
+  seq.reserve(traversal_length);
+  coords.reserve(traversal_length);
+  gaps.reserve(traversal_length / 5);
+  deadBlocks.reserve(10); // Usually there aren't many dead blocks
+
+  // CRITICAL FIX: Create a new visit counter map for each function call
+  // This ensures coordinates visited in previous calls don't trigger false
+  // cycles
+  std::unordered_map<int64_t, int> visitCount;
+  int maxVisits = 3; // Maximum allowed visits to same coordinate
+
+  // Also track positions seen to detect direct back-and-forth cycling
+  const tupleCoord_t *prevCoord = nullptr;
+
+  while (!traverser.isDone()) {
+
+    const tupleCoord_t *currCoord = traverser.getCurrent();
+
+    // std::cout << "currCoord = " << currCoord->blockId << "," <<
+    // currCoord->nucPos << "," << currCoord->nucGapPos << " = " <<
+    // currCoord->scalar << std::endl;
+    if (!currCoord) {
+      std::cout << "Error: Null coordinate encountered during traversal"
+                << std::endl;
+      break;
+    }
+
+    // Enhanced cycle detection - using the non-static visit counter
+    visitCount[currCoord->scalar]++;
+    if (visitCount[currCoord->scalar] > maxVisits) {
+      std::cout << "Error: Detected cycle in coordinate traversal at position "
+                << currCoord->blockId << "," << currCoord->nucPos << ","
+                << currCoord->nucGapPos << " (scalar=" << currCoord->scalar
+                << "). Breaking out of loop." << std::endl;
+      break;
+    }
+
+    // Additional check for direct back-and-forth cycles (ping-pong)
+    if (prevCoord && prevCoord->next == currCoord &&
+        currCoord->next == prevCoord) {
+      std::cout
+          << "Error: Detected direct back-and-forth cycle between positions "
+          << prevCoord->scalar << " and " << currCoord->scalar
+          << ". Breaking out." << std::endl;
+      break;
+    }
+    prevCoord = currCoord;
+
+    int64_t scalar = currCoord->scalar;
+    if (scalar > manager.getNumCoords()) {
+      std::cout << "Error: Scalar value " << scalar
+                << " exceeds coordinate count " << manager.getNumCoords()
+                << std::endl;
+      return;
+    }
+
+    // Get the character at the current position
+    char c = traverser.getChar();
+
+    // Check for end marker 'x'
+    if (c == 'x') {
+      std::cout << "End of block reached" << std::endl;
+      traverser.next();
+      continue;
+    }
+
+    // Determine if we're in an inverted block
+    bool isInvertedBlock = currCoord->blockId < blockStrand.size() &&
+                           !blockStrand[currCoord->blockId].first;
+
+    // Check for valid nucleotide characters
+    if (c != '-' && c != 'A' && c != 'C' && c != 'G' && c != 'T' && c != 'N' &&
+        c != 'a' && c != 'c' && c != 'g' && c != 't' && c != 'n') {
+      std::cout << "Warning: Invalid character '" << c
+                << "' encountered at position " << currCoord->blockId << ","
+                << currCoord->nucPos << "," << currCoord->nucGapPos
+                << ". Skipping." << std::endl;
+      traverser.next();
+      continue;
+    }
+
+    // Check for consecutive gap positions with same blockId and nucPos
+    if (currCoord->nucGapPos > 0) {
+      // We're in a gap position within a nucleotide
+      int currentBlockId = currCoord->blockId;
+      int currentNucPos = currCoord->nucPos;
+
+      // Check if the next position continues the pattern
+      const tupleCoord_t *nextCoord = currCoord->next;
+      if (nextCoord && nextCoord->blockId == currentBlockId &&
+          nextCoord->nucPos == currentNucPos &&
+          nextCoord->nucGapPos == currCoord->nucGapPos + 1) {
+
+        // We're in a consecutive gap run - find the end of it
+        const tupleCoord_t *endOfRun = nextCoord;
+        int skipCount = 1;
+
+        while (endOfRun->next && endOfRun->next->blockId == currentBlockId &&
+               endOfRun->next->nucPos == currentNucPos &&
+               endOfRun->next->nucGapPos == endOfRun->nucGapPos + 1) {
+          endOfRun = endOfRun->next;
+          skipCount++;
+        }
+
+        // If we found a significant run, skip to the end
+        if (skipCount > 10) {
+          std::cout << "Skipping " << skipCount
+                    << " consecutive gap positions at " << currentBlockId << ","
+                    << currentNucPos << std::endl;
+
+          // Add the current gap position
+          gaps.push_back(scalar);
+
+          // For handling inverted blocks correctly
+          int64_t endScalar = endOfRun->scalar;
+
+          // Add the end position of the run to gaps
+          gaps.push_back(endScalar);
+
+          // Log the gap range - useful for debugging
+          debug(
+              "Recording gap run from scalar={} to scalar={} in block {} ({})",
+              scalar, endScalar, currentBlockId,
+              isInvertedBlock ? "inverted" : "forward");
+
+          // Safety check for extremely large gap runs
+          if (skipCount > 100000) {
+            std::cout
+                << "Warning: Extremely large gap run detected (" << skipCount
+                << " positions). This may indicate a problem with the data."
+                << std::endl;
+          }
+
+          // Skip to the position after the run
+          if (endOfRun->next && endOfRun->next->scalar <= stop_scalar) {
+            debug("Skipping to position after gap run: blockId={}, nucPos={}, "
+                  "nucGapPos={}, scalar={}",
+                  endOfRun->next->blockId, endOfRun->next->nucPos,
+                  endOfRun->next->nucGapPos, endOfRun->next->scalar);
+            traverser.reset(endOfRun->next, stop);
+            continue;
+          } else {
+            // We've reached the end of the sequence or the stop position
+            debug("Reached end of sequence or stop position after gap run");
+            break;
+          }
+        }
+      }
+    }
+
+    // std::cout <<"Curr: " << currCoord->blockId << "," << currCoord->nucPos <<
+    // "," << currCoord->nucGapPos << " = " << currCoord->scalar << " -> " <<
+    // traverser.getChar() << std::endl;
+
+    // Check if block is alive
+    if (blockExists[currCoord->blockId].first) {
+      // Live block - process character
+      char c = traverser.getChar();
+
+      // Track gap positions
+      if (c == '-') {
+        gaps.push_back(scalar);
+
+        debug("Found gap at position: blockId={}, nucPos={}, nucGapPos={}, "
+              "scalar={}",
+              currCoord->blockId, currCoord->nucPos, currCoord->nucGapPos,
+              scalar);
+
+        // Check if this is the start of a gap run
+        int64_t gap_run_length = manager.getGapRunLength(scalar);
+        if (gap_run_length > 1) {
+          debug("Detected gap run of length {} at scalar={}", gap_run_length,
+                scalar);
+
+          // We're at a gap run - more efficient handling
+
+          // Add all positions in this gap run to the gaps vector
+          // But only up to the stop_scalar boundary
+          // Limit the number of individual positions we add
+          int64_t max_positions_to_add =
+              std::min(gap_run_length - 1, static_cast<int64_t>(100));
+          for (int64_t i = 1;
+               i <= max_positions_to_add && scalar + i <= stop_scalar; ++i) {
+            gaps.push_back(scalar + i);
+          }
+
+          // Log details about the gap run and our next move
+          debug("Gap run: adding {} gap positions and attempting to skip to "
+                "position after run",
+                max_positions_to_add);
+
+          // Skip directly to the end of this gap run
+          const tupleCoord_t *next_non_gap =
+              manager.getNextNonGapPosition(scalar);
+          if (next_non_gap) {
+            debug("Next non-gap position found: blockId={}, nucPos={}, "
+                  "nucGapPos={}, scalar={}",
+                  next_non_gap->blockId, next_non_gap->nucPos,
+                  next_non_gap->nucGapPos, next_non_gap->scalar);
+
+            if (next_non_gap->scalar <= stop_scalar) {
+              debug("Skipping to next non-gap position within stop boundary");
+              traverser.reset(next_non_gap, stop);
+              continue; // Skip to next iteration with the new position
+            } else {
+              debug("Next non-gap position is beyond stop_scalar ({}), ending "
+                    "traversal",
+                    stop_scalar);
+              break;
+            }
+          } else {
+            debug("No next non-gap position found, ending traversal");
+            // Either we're at the end of the sequence or past stop_scalar
+            // In either case, we're done
+            break;
+          }
+        }
+      } else {
+        // Only add non-gap characters to the sequence
+        // Check for valid nucleotide characters
+        if (c != 'A' && c != 'C' && c != 'G' && c != 'T' && c != 'N' &&
+            c != 'a' && c != 'c' && c != 'g' && c != 't' && c != 'n') {
+          std::cout << "Warning: Skipping invalid character '" << c
+                    << "' at position " << currCoord->blockId << ","
+                    << currCoord->nucPos << "," << currCoord->nucGapPos
+                    << std::endl;
+        } else {
+          seq.push_back(c);
+          coords.push_back(scalar);
+        }
+      }
+    } else {
+      // Dead block - don't add to sequence but track it
+      // Add to deadBlocks if we haven't seen this block already
+      if (seenDeadBlocks.find(currCoord->blockId) == seenDeadBlocks.end()) {
+        deadBlocks.push_back(currCoord->blockId);
+        seenDeadBlocks.insert(currCoord->blockId);
+      }
+
+      // Skip to the next block efficiently
+      traverser.moveToNextBlock();
+      continue;
+    }
+
+    // Move to next coordinate, using the skipGaps optimization
+    if (traverser.getChar() == '-') {
+      traverser.skipGaps();
+    } else {
+      traverser.next();
+    }
+  }
+
+  // If we extracted nothing, log a message
+  if (seq.empty() && !gaps.empty()) {
+    std::cout << "Warning: Extracted sequence is empty but found "
+              << gaps.size() << " gaps" << std::endl;
+  }
+
+  // Report statistics
+  std::cout << "Sequence extraction complete: " << seq.size()
+            << " nucleotides, " << gaps.size() << " gaps, " << deadBlocks.size()
+            << " dead blocks" << std::endl;
+}
+
+void setupSequence(const Tree *T, sequence_t &sequence,
+                   blockExists_t &blockExists, blockStrand_t &blockStrand) {
+  const BlockGapList &blockGaps = T->blockGaps;
+  const std::vector<GapList> &gaps = T->gaps;
+  const std::vector<Block> &blocks = T->blocks;
+
+  // First find maxBlockId
+  int32_t maxBlockId = 0;
+  for (size_t i = 0; i < blocks.size(); i++) {
+    int32_t primaryBlockId = ((int32_t)blocks[i].primaryBlockId);
+    maxBlockId = std::max(maxBlockId, primaryBlockId);
+  }
+
+  // Resize all structures once to final size
+  size_t finalSize = maxBlockId + 1;
+  // msg("Resizing sequence structures to {} blocks", finalSize);
+  sequence.resize(finalSize);
+  blockExists.resize(finalSize, {false, {}});
+  blockStrand.resize(finalSize, {true, {}});
+
+  // Assigning block gaps
+  for (size_t i = 0; i < blockGaps.blockPosition.size(); i++) {
+    int32_t pos = blockGaps.blockPosition[i];
+    if (pos >= finalSize) {
+      err("Block gap position {} exceeds max block id {}", pos, maxBlockId);
+      continue;
+    }
+    sequence[pos].second.resize(blockGaps.blockGapLength[i]);
+    blockExists[pos].second.resize(blockGaps.blockGapLength[i], false);
+    blockStrand[pos].second.resize(blockGaps.blockGapLength[i], true);
+  }
+
+  // Process blocks
+  for (size_t i = 0; i < blocks.size(); i++) {
+    int32_t primaryBlockId = ((int32_t)blocks[i].primaryBlockId);
+    int32_t secondaryBlockId = ((int32_t)blocks[i].secondaryBlockId);
+
+    if (primaryBlockId >= finalSize) {
+      err("Primary block ID {} exceeds max block id {}", primaryBlockId,
+          maxBlockId);
+      continue;
+    }
+
+    for (size_t j = 0; j < blocks[i].consensusSeq.size(); j++) {
       bool endFlag = false;
       for (size_t k = 0; k < 8; k++) {
-        const int nucCode = (c >> (4 * (7 - k))) & 15;
+        const int nucCode =
+            (((blocks[i].consensusSeq[j]) >> (4 * (7 - k))) & 15);
+
         if (nucCode == 0) {
           endFlag = true;
           break;
         }
-        consensus += getNucleotideFromCode(nucCode);
+        const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
+
+        if (secondaryBlockId != -1) {
+          sequence[primaryBlockId].second[secondaryBlockId].push_back(
+              {nucleotide, {}});
+        } else {
+          sequence[primaryBlockId].first.push_back({nucleotide, {}});
+        }
       }
       if (endFlag) {
         break;
       }
     }
+
+    sequence[primaryBlockId].first.push_back({'x', {}});
   }
-  return consensus;
-}
 
-bool seed_annotated_tree::getSeedAt(bool useHotSeeds, HotSeedIndex& hotSeedIndex, std::string &resultString, size_t &resultHash, 
-  int64_t &resultEndPos, bool &resultIsReverse, const int64_t &pos, Tree *T, const int32_t& k,
-  int64_t &dfsIndex,
-    std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord,
-    const sequence_t &sequence, const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const globalCoords_t &globalCoords, CoordNavigator &navigator,
-    std::map<int64_t, int64_t> &gapRuns, const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
-    TIME_FUNCTION;
+  // Assigning nucleotide gaps
+  for (size_t i = 0; i < gaps.size(); i++) {
+    int32_t primaryBId = (gaps[i].primaryBlockId);
+    int32_t secondaryBId = (gaps[i].secondaryBlockId);
 
-    int32_t resultStringIdx = 0;
-
-    {
-        TIME_BLOCK("hotSeedLookup");
-        if (useHotSeeds && hotSeedIndex.getSeed(pos, dfsIndex, resultHash, resultEndPos, resultIsReverse)) {
-            return true;
-        }
+    if (primaryBId >= finalSize) {
+      err("Gap primary block ID {} exceeds max block id {}", primaryBId,
+          maxBlockId);
+      continue;
     }
 
-    
-    tupleCoord_t currCoord = scalarToTupleCoord[pos];
-    if (!blockStrand[currCoord.blockId].first) {
-        currCoord = scalarToTupleCoord[blockRanges[currCoord.blockId].first + blockRanges[currCoord.blockId].second - pos];
-    }
+    for (size_t j = 0; j < gaps[i].nucPosition.size(); j++) {
+      int len = gaps[i].nucGapLength[j];
+      int pos = gaps[i].nucPosition[j];
 
-
-    int32_t prevBlockId = currCoord.blockId;
-    
-    {
-        TIME_BLOCK("seedReconstruction");
-        while (currCoord < tupleCoord_t{-1,-1,-1}){
-            if (blockExists[currCoord.blockId].first) {
-                char c = '-';
-                if (currCoord.nucGapPos == -1){
-                    c = sequence[currCoord.blockId].first[currCoord.nucPos].first;
-                }else{
-                    c = sequence[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
-                }
-                if(c == 'x') c = '-';
-                if(! blockStrand[currCoord.blockId].first){
-                    switch(c){
-                        case 'A':
-                            c = 'T';
-                            break;
-                        case 'T':
-                            c = 'A';
-                            break;
-                        case 'G':
-                            c = 'C';
-                            break;
-                        case 'C':
-                            c = 'G';
-                            break;
-                        
-                        case 'Y':
-                            c = 'R';
-                            break;
-                        case 'R':
-                            c = 'Y';
-                            break;
-                        case 'K':
-                            c = 'M';
-                            break;
-                        case 'M':
-                            c = 'K';
-                            break;
-                        case 'D':
-                            c = 'H';
-                            break;
-                        case 'H':
-                            c = 'D';
-                            break;
-                        case 'V':
-                            c = 'B';
-                            break;
-                        case 'B':
-                            c = 'V';
-                            break;
-                    }
-                }
-
-        if(c != '-'){
-          resultString[resultStringIdx] = c;
-          resultStringIdx++;
-          if (resultStringIdx == k) {
-            resultEndPos = tupleToScalarCoord(currCoord, globalCoords);
-            return true;
-          }
-        } else {
-          int scalar = tupleToScalarCoord(currCoord, globalCoords);
-          if (scalarToTupleCoord.find(gapRuns.find(scalar)->second) != scalarToTupleCoord.end()) {
-            currCoord = scalarToTupleCoord[gapRuns.find(scalar)->second];
-            if (!blockStrand[currCoord.blockId].first) {
-              currCoord = scalarToTupleCoord[blockRanges[currCoord.blockId].first + blockRanges[currCoord.blockId].second - gapRuns.find(scalar)->second];
-            }
-            currCoord = navigator.newincrement(currCoord, blockStrand);
-            prevBlockId = currCoord.blockId;
-            continue;
-          } else {
-            currCoord = tupleCoord_t{-1, -1, -1};
-          }
-        }
+      if (secondaryBId != -1) {
+        sequence[primaryBId].second[secondaryBId][pos].second.resize(len, '-');
       } else {
-        if(blockStrand[currCoord.blockId].first){
-            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence()[currCoord.blockId].first.size() - 1, -1};
-          }else{
-            currCoord.nucPos = 0;
-            currCoord.nucGapPos = 0;
-            if(navigator.sequence()[currCoord.blockId].first[0].second.empty()) {
-              currCoord.nucGapPos = -1;
-            }
-        }
-        if(currCoord.blockId == navigator.sequence().size() - 1){
-          break;
-        }
-      }
-      currCoord = navigator.newincrement(currCoord, blockStrand);
-      if (prevBlockId != currCoord.blockId){
-        if (!blockExists[currCoord.blockId].first) {
-          int scalar = tupleToScalarCoord(currCoord, globalCoords);
-          if (!blockStrand[currCoord.blockId].first) scalar = blockRanges[currCoord.blockId].first + blockRanges[currCoord.blockId].second - scalar;
-          currCoord = scalarToTupleCoord[gapRuns.find(scalar)->second];
-          if (!blockStrand[currCoord.blockId].first) {
-            currCoord = scalarToTupleCoord[blockRanges[currCoord.blockId].first + blockRanges[currCoord.blockId].second - gapRuns.find(scalar)->second];
-          }
-          currCoord = navigator.newincrement(currCoord, blockStrand);
-          prevBlockId = currCoord.blockId;
-          continue;
-        }
-        if (blockStrand[currCoord.blockId].first) {
-          currCoord = globalCoords[currCoord.blockId].first[0].second.empty() ? tupleCoord_t{currCoord.blockId, 0, -1} : tupleCoord_t{currCoord.blockId, 0, 0};
-        } else {
-          currCoord = tupleCoord_t{currCoord.blockId, globalCoords[currCoord.blockId].first.size() - 1, -1};
-        }
-      }
-      prevBlockId = currCoord.blockId;
-    }
-  }
-
-    if (resultStringIdx != k) {
-      throw std::runtime_error("unexpected kmer length during syncmer reconstruction");
-    }
-    resultEndPos = tupleToScalarCoord(currCoord, globalCoords);
-    return true;
-}
-  
-// coords (blockId, nucPosition, nucGapPosition)
-// Sequence includes both boundary coordinates
-//Sequence, scalarCoords of sequence, scalarCoords of Gaps, dead blocks
-std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>> seed_annotated_tree::getNucleotideSequenceFromBlockCoordinates(
-    tupleCoord_t &start, tupleCoord_t &end, const sequence_t &sequence,
-    const blockExists_t &blockExists, const blockStrand_t &blockStrand,
-    const Tree *T, const Node *node, const globalCoords_t &globalCoords, CoordNavigator &navigator) {
-    TIME_FUNCTION;
-    if (end == tupleCoord_t{-1,-1,-1})
-    {
-      end = tupleCoord_t{navigator.sequence().size() - 1, navigator.sequence().back().first.size() - 1, -1};
-    }
-
-    long size = tupleToScalarCoord(end, globalCoords) - tupleToScalarCoord(start, globalCoords) + 1;
-    if(size < 0){
-      size = -size;
-      auto temp = end;
-      end = start;
-      start = temp;
-    }
-    
-
-
-    std::string seq;
-    std::vector<int> coords;
-    int i = 0;
-
-    std::vector<int> gaps;
-    int j = 0;
-
-
-    std::vector<int> deadBlocks;
-
-
-
-    // build sequence by iterating through {blockId, nucPosition, nucGapPosition} coords
-    
-    for(auto currCoord = start; currCoord != end; currCoord = navigator.newincrement(currCoord, blockStrand) ){
-      
-
-      if (blockExists[currCoord.blockId].first) {
-        
-        char c = '-';
-        if (currCoord.nucGapPos == -1){
-          
-          c = navigator.sequence()[currCoord.blockId].first[currCoord.nucPos].first;
-        }else{
-          
-          c = navigator.sequence()[currCoord.blockId].first[currCoord.nucPos].second[currCoord.nucGapPos];
-        }
-        
-        
-        if(c == 'x') c = '-';
-        if(! blockStrand[currCoord.blockId].first){
-          c = getComplementCharacter(c);
-        }
-      int scalar = tupleToScalarCoord(currCoord, globalCoords);
-
-        if(c != '-'){
-          seq.push_back(c);
-          coords.push_back(scalar);
-          i++;
-        }else{
-          gaps.push_back(scalar);
-          j++;
-        }
-      }else{
-        deadBlocks.push_back(currCoord.blockId);
-
-        //jump to start of next block
-        if( blockStrand[currCoord.blockId].first){
-            //not inverted, jump to top of this block
-            currCoord = tupleCoord_t{currCoord.blockId, navigator.sequence()[currCoord.blockId].first.size() - 1, -1};
-          }else{
-            //inverted, jump to bottom of this block
-            //currCoord.blockId += 1;
-            currCoord.nucPos = 0;
-            currCoord.nucGapPos = 0;
-            if(navigator.sequence()[currCoord.blockId].first[0].second.empty()) {
-              currCoord.nucGapPos = -1;
-            }
-        }
-        
-        if(currCoord.blockId == navigator.sequence().size() - 1 || currCoord.blockId == end.blockId){
-          break;
-        }
-
-      }
-
-    }
-    
-    //Adding end character
-    if(blockExists[end.blockId].first){
-        char c = '-';
-        if (end.nucGapPos == -1){
-          c = navigator.sequence()[end.blockId].first[end.nucPos].first;
-        } else {
-          c = navigator.sequence()[end.blockId].first[end.nucPos].second[end.nucGapPos];
-        }
-        if(c == 'x') c = '-';
-        if(!blockStrand[end.blockId].first){
-          c = getComplementCharacter(c);
-        }
-        int scalar = tupleToScalarCoord(end, globalCoords);
-        if(c != '-'){
-          seq.push_back(c);
-          coords.push_back(scalar);
-          i++;
-        } else {
-          gaps.push_back(scalar);
-          j++;
-        }
-    } else {
-      deadBlocks.push_back(end.blockId);
-    }
-
-    return std::make_tuple(seq, coords, gaps, deadBlocks);
-}
-
-/*
-- regap not used anywhere previously -> changed how regap is constructed for the
-purpose of fixing syncmer/seedemr update bug and tracking end positions.
-*/
-
-void getAllStringsHelper(std::unordered_map<std::string, std::string> &strings,
-                         mutableTreeData &data, Tree *T, const Node *node,
-                         globalCoords_t &globalCoords) {
-
-  // /*  Mutate with block and nuc mutations */
-  // blockMutData_t blockMutData;
-  // nucMutData_t nucMutData;
-  // pmi::seedIndex blank;
-  // blank.k = blank.s = blank.j = 0;
-  // seedMap_t seedMap;
-  // std::vector<tupleRange> recompRangesUnused;
-
-  // applyMutations(data, seedMap, blockMutData, recompRangesUnused,
-  //                 nucMutData, T, node, globalCoords, blank);
-  // /* Use current state of mutableTreeData to decode node's sequence */
-  // std::string seq =seed_annotated_tree::getStringFromCurrData(data, T, node, true);
-
-  // strings[node->identifier] = seq;
-
-  // /* Recursive step */
-  // for (Node *child : node->children) {
-  //   getAllStringsHelper(strings, data, T, child, globalCoords);
-  // }
-
-  // /* Undo mutations when backtracking */
-  // undoMutations(data, blank, T, node, blockMutData, nucMutData);
-}
-
-std::unordered_map<std::string, std::string> seed_annotated_tree::getAllNodeStrings(Tree *T) {
-
-  std::unordered_map<std::string, std::string> strings;
-  seed_annotated_tree::mutableTreeData data;
-  seed_annotated_tree::globalCoords_t globalCoords;
-  setup(data, globalCoords, T);
-
-  getAllStringsHelper(strings, data, T, T->root, globalCoords);
-
-  return strings;
-}
-std::string seed_annotated_tree::getStringFromCurrData(mutableTreeData &data, Tree *T,
-                                        const Node *node, const bool aligned) {
-
-  // T should be const but [] operator on T->sequenceInverted is non-const
-  std::string line;
-  if (node == nullptr) { // consensus sequence (all blocks on) rather than a
-                         // node in the tree
-    for (size_t i = 0; i < T->blocks.size(); i++) {
-      if (data.blockStrand[i].first) {
-        for (size_t j = 0; j < data.sequence[i].first.size(); j++) {
-          for (size_t k = 0; k < data.sequence[i].first[j].second.size(); k++) {
-            if (data.sequence[i].first[j].second[k] != '-') {
-              line += data.sequence[i].first[j].second[k];
-            } else if (aligned) {
-              line += '-';
-            }
-          }
-          if (data.sequence[i].first[j].first != '-' &&
-              data.sequence[i].first[j].first != 'x') {
-            line += data.sequence[i].first[j].first;
-          } else if (aligned) {
-            line += '-';
-          }
-        }
-      } else {
-        for (size_t j = data.sequence[i].first.size() - 1; j + 1 > 0; j--) {
-          if (data.sequence[i].first[j].first != '-' &&
-              data.sequence[i].first[j].first != 'x') {
-            line += getComplementCharacter(data.sequence[i].first[j].first);
-          } else if (aligned) {
-            line += '-';
-          }
-          for (size_t k = data.sequence[i].first[j].second.size() - 1;
-               k + 1 > 0; k--) {
-            if (data.sequence[i].first[j].second[k] != '-') {
-              line +=
-                  getComplementCharacter(data.sequence[i].first[j].second[k]);
-            } else if (aligned) {
-              line += '-';
-            }
-          }
-        }
-      }
-    }
-    return line;
-  }
-  for (size_t i = 0; i < data.blockExists.size(); i++) {
-    if (data.blockExists[i].first) {
-      if (data.blockStrand[i].first) {
-        for (size_t j = 0; j < data.sequence[i].first.size(); j++) {
-          for (size_t k = 0; k < data.sequence[i].first[j].second.size(); k++) {
-            if (data.sequence[i].first[j].second[k] != '-') {
-              line += data.sequence[i].first[j].second[k];
-            } else if (aligned) {
-              line += '-';
-            }
-          }
-          if (data.sequence[i].first[j].first != '-' &&
-              data.sequence[i].first[j].first != 'x') {
-            line += data.sequence[i].first[j].first;
-          } else if (aligned) {
-            line += '-';
-          }
-        }
-      } else {
-        for (size_t j = data.sequence[i].first.size() - 1; j + 1 > 0; j--) {
-          if (data.sequence[i].first[j].first != '-' &&
-              data.sequence[i].first[j].first != 'x') {
-            line += getComplementCharacter(data.sequence[i].first[j].first);
-          } else if (aligned) {
-            line += '-';
-          }
-          for (size_t k = data.sequence[i].first[j].second.size() - 1;
-               k + 1 > 0; k--) {
-            if (data.sequence[i].first[j].second[k] != '-') {
-              line +=
-                  getComplementCharacter(data.sequence[i].first[j].second[k]);
-            } else if (aligned) {
-              line += '-';
-            }
-          }
-        }
-      }
-    } else if (aligned) {
-      for (size_t j = 0; j < data.sequence[i].first.size(); j++) {
-        for (size_t k = 0; k < data.sequence[i].first[j].second.size(); k++) {
-          line += '-';
-        }
-        line += '-';
+        sequence[primaryBId].first[pos].second.resize(len, '-');
       }
     }
   }
-
-  return line;
 }
-void seed_annotated_tree::setupGlobalCoordinates(int64_t &ctr, globalCoords_t &globalCoords,
-                                  const BlockGapList &blockGaps,
-                                  const std::vector<Block> &blocks,
-                                  const std::vector<GapList> &gaps,
-                                  const sequence_t &sequence,
-                                  std::unordered_map<int64_t, tupleCoord_t> &scalarToTupleCoord) {
-    TIME_FUNCTION;
-    // Add size validation
-    if (blocks.empty()) {
-        throw std::runtime_error("No blocks in tree");
-    }
-    
-    int maxBlockId = 0;
-    for (const auto& block : blocks) {
-        maxBlockId = std::max(maxBlockId, static_cast<int>(block.primaryBlockId));
-    }
-    
-    // Ensure globalCoords size matches sequence
-    if (maxBlockId >= sequence.size()) {
-        throw std::runtime_error("Block ID exceeds sequence size");
-    }
-    
-    globalCoords.resize(maxBlockId + 1);
 
-    // Assigning block gaps
-    for (size_t i = 0; i < blockGaps.blockPosition.size(); i++) {
-        globalCoords[blockGaps.blockPosition[i]].second.resize(blockGaps.blockGapLength[i]);
-    }
+void seed_annotated_tree::setupPlacement(
+    std::vector<std::optional<seeding::onSeedsHash>> &onSeedsHash,
+    sequence_t &sequence, blockExists_t &blockExists,
+    blockStrand_t &blockStrand, const Tree *T) {
 
-    // Initialize first vectors based on sequence sizes
-    for (size_t i = 0; i < sequence.size(); i++) {
-        globalCoords[i].first.resize(sequence[i].first.size());
-    }
+  setupSequence(T, sequence, blockExists, blockStrand);
 
-    // Now safe to assign nucleotide gaps
-    for (size_t i = 0; i < gaps.size(); i++) {
-        int32_t blockId = gaps[i].primaryBlockId;
-        for (size_t j = 0; j < gaps[i].nucPosition.size(); j++) {
-            int len = gaps[i].nucGapLength[j];
-            int pos = gaps[i].nucPosition[j];
-            globalCoords[blockId].first[pos].second.resize(len, 0);
-        }
-    }
-
-    // Assigning coordinates
-    ctr = 0;
-    for (size_t i = 0; i < globalCoords.size(); i++) {
-        for (size_t j = 0; j < globalCoords[i].first.size(); j++) {
-            for (size_t k = 0; k < globalCoords[i].first[j].second.size(); k++) {
-                globalCoords[i].first[j].second[k] = ctr;
-                scalarToTupleCoord[ctr] = {i, j, k};
-                ctr++;
-            }
-            globalCoords[i].first[j].first = ctr;
-            scalarToTupleCoord[ctr] = {i, j, -1};
-            ctr++;
-        }
-    }
+  onSeedsHash.resize(sequence.size());
 }
-void seed_annotated_tree::setup(mutableTreeData &data, globalCoords_t &globalCoords,
-                 const Tree *T) {
-    TIME_FUNCTION;
-    const BlockGapList &blockGaps = T->blockGaps;
-    const std::vector<GapList> &gaps = T->gaps;
-    const std::vector<Block> &blocks = T->blocks;
 
-    sequence_t sequence(blocks.size() + 1);
-    blockExists_t blockExists(blocks.size() + 1, {false, {}});
-    blockStrand_t blockStrand(
-        blocks.size() + 1,
-        {true,
-         {}}); // TODO: strand is always tru for now and also not used anywhere
-               // and also not set anywhere and also not used in the code and also
-               // not set in the code and n  also not used in the code
-    int32_t maxBlock = 0;
+void seed_annotated_tree::setupIndexing(sequence_t &sequence,
+                                        blockExists_t &blockExists,
+                                        blockStrand_t &blockStrand,
+                                        const Tree *T) {
 
-    for (size_t i = 0; i < blockGaps.blockPosition.size(); i++) {
-      sequence[blockGaps.blockPosition[i]].second.resize(
-          blockGaps.blockGapLength[i]);
-      blockExists[blockGaps.blockPosition[i]].second.resize(
-          blockGaps.blockGapLength[i], false);
-      blockStrand[blockGaps.blockPosition[i]].second.resize(
-          blockGaps.blockGapLength[i], true);
-    }
-
-    for (size_t i = 0; i < blocks.size(); i++) {
-      int32_t b = ((int32_t)blocks[i].primaryBlockId);
-      maxBlock = std::max(maxBlock, b);
-      for (size_t j = 0; j < blocks[i].consensusSeq.size(); j++) {
-        bool stop = false;
-        for (size_t k = 0; k < 8; k++) {
-          const int nc = (((blocks[i].consensusSeq[j]) >> (4 * (7 - k))) & 15);
-          if (nc == 0) {
-            stop = true;
-            break;
-          }
-          const char c = panmanUtils::getNucleotideFromCode(nc);
-          sequence[b].first.push_back({c, {}});
-        }
-        if (stop) {
-          break;
-        }
-      }
-      sequence[b].first.push_back({'x', {}});
-    }
-
-    sequence.resize(maxBlock + 1);
-    blockExists.resize(maxBlock + 1);
-    blockStrand.resize(maxBlock + 1);
-
-    // Assigning nucleotide gaps in blocks
-    for (size_t i = 0; i < gaps.size(); i++) {
-      int32_t id = (gaps[i].primaryBlockId);
-      for (size_t j = 0; j < gaps[i].nucPosition.size(); j++) {
-        int len = gaps[i].nucGapLength[j];
-        int pos = gaps[i].nucPosition[j];
-        sequence[id].first[pos].second.resize(len, '-');
-      }
-    }
-
-    data.sequence = sequence;
-    data.blockExists = blockExists;
-    data.blockStrand = blockStrand;
-    setupGlobalCoordinates(data.maxGlobalCoordinate, globalCoords, blockGaps,
-                           blocks, gaps, sequence, data.scalarToTupleCoord);
+  setupSequence(T, sequence, blockExists, blockStrand);
 }
-int64_t seed_annotated_tree::getGlobalCoordinate(const int blockId, const int nucPosition,
-                                  const int nucGapPosition,
-                                  const globalCoords_t &globalCoords) {
-    TIME_FUNCTION;
-    if (blockId > globalCoords.size() - 1 ||
-        blockId == globalCoords.size() - 1 &&
-            nucPosition > globalCoords.back().first.size() - 1) {
-      return globalCoords[globalCoords.size() - 1]
-          .first[globalCoords.back().first.size() - 1]
-          .first;
-    }
 
-    if (nucGapPosition == -1) {
-      return globalCoords[blockId].first[nucPosition].first;
-    }
-
-    if (globalCoords[blockId].first[nucPosition].second.size() == 0) {
-      return globalCoords[blockId].first[nucPosition].first;
-    }
-
-    return globalCoords[blockId].first[nucPosition].second[nucGapPosition];
-}
 static int getIndexFromNucleotide(char nuc) {
 
   switch (nuc) {
@@ -718,10 +858,10 @@ static size_t getEnd(const std::string &s1, const std::string &s2,
 
   return 0;
 }
-std::pair<size_t, size_t>seed_annotated_tree::getMaskCoorsForMutmat(const std::string &s1,
-                                                      const std::string &s2,
-                                                      size_t window,
-                                                      double threshold) {
+std::pair<size_t, size_t>
+seed_annotated_tree::getMaskCoorsForMutmat(const std::string &s1,
+                                           const std::string &s2, size_t window,
+                                           double threshold) {
 
   assert(s1.size() == s2.size());
   if (window == 0 || threshold == 0.0) {
@@ -732,1062 +872,1305 @@ std::pair<size_t, size_t>seed_annotated_tree::getMaskCoorsForMutmat(const std::s
 }
 
 void seed_annotated_tree::writeMutationMatrices(const mutationMatrices &mutMat,
-                                 std::ofstream &mmfout) {
-    TIME_FUNCTION;
-    for (const std::vector<double> &row : mutMat.submat) {
-      for (const double &prob : row) {
-        mmfout << prob << " ";
-      }
-      mmfout << "\n";
-    }
-
-    for (const auto& [size, count] : mutMat.insmat) {
-      mmfout << size << ":" << count << " ";
+                                                std::ofstream &mmfout) {
+  TIME_FUNCTION;
+  for (const std::vector<double> &row : mutMat.submat) {
+    for (const double &prob : row) {
+      mmfout << prob << " ";
     }
     mmfout << "\n";
-
-    for (const auto& [size, count] : mutMat.delmat) {
-      mmfout << size << ":" << count << " ";
-    }
-    mmfout << "\n";
-}
-
-// void buildMutationMatricesHelper(mutationMatrices &mutMat, Tree *T, Node* node, size_t window,
-//                            double threshold) {
-//   if (node->parent != nullptr) {
-//     std::string curSeq = getStringAtNode(node, T, true);
-//     std::vector<int64_t> curBaseCounts(4, 0);
-//     for (size_t i = 0; i < curSeq.size(); i++) {
-//       char c = curSeq[i];
-//       if (getIndexFromNucleotide(c) < 4) {
-//         curBaseCounts[getIndexFromNucleotide(c)]++;
-//       }
-//     }
-//     std::cout << node->identifier << " true base counts: " << curBaseCounts[0] << " " << curBaseCounts[1] << " " << curBaseCounts[2] << " " << curBaseCounts[3] << std::endl;
-//     std::string parSeq = getStringAtNode(node->parent, T, true);
-//     size_t insLen = 0;
-//     size_t delLen = 0;
-//     std::pair<size_t, size_t> edgeCoor =seed_annotated_tree::getMaskCoorsForMutmat(curSeq, parSeq, window, threshold);
-//     if (edgeCoor.second > edgeCoor.first) {
-//       for (size_t i = edgeCoor.first; i < edgeCoor.second + 1; i++) {
-//         if (parSeq[i] == '-' && curSeq[i] == '-') {
-//           continue;
-//         } else if (parSeq[i] != '-' && curSeq[i] == '-') {
-//           delLen++;
-//           if (insLen > 0) {
-//             if (insLen > mutMat.insmat.size() - 1) {
-//               mutMat.insmat.resize(insLen + 1);
-//             }
-//             mutMat.insmat[insLen]++;
-//             mutMat.total_insmut++;
-//             insLen = 0;
-//           }
-//         } else if (parSeq[i] == '-' && curSeq[i] != '-') {
-//           insLen++;
-//           if (delLen > 0) {
-//             if (delLen > mutMat.delmat.size() - 1) {
-//               mutMat.delmat.resize(delLen + 1);
-//             }
-//             mutMat.delmat[delLen]++;
-//             mutMat.total_delmut++;
-//             delLen = 0;
-//           }
-//         } else {
-//           if (insLen > mutMat.insmat.size() - 1) {
-//             mutMat.insmat.resize(insLen + 1);
-//           }
-//           mutMat.insmat[insLen]++;
-//           mutMat.total_insmut++;
-//           insLen = 0;
-
-//           if (delLen > mutMat.delmat.size() - 1) {
-//             mutMat.delmat.resize(delLen + 1);
-//           }
-//           mutMat.delmat[delLen]++;
-//           mutMat.total_delmut++;
-//           delLen = 0;
-
-//           int parNucIdx = getIndexFromNucleotide(parSeq[i]);
-//           int curNucIdx = getIndexFromNucleotide(curSeq[i]);
-//           if (parNucIdx > 3 || curNucIdx > 3) {
-//             continue;
-//           }
-//           mutMat.submat[parNucIdx][curNucIdx]++;
-//           mutMat.total_submuts[parNucIdx]++;
-//         }
-//       }
-//     }
-//     curSeq.clear();
-//     parSeq.clear();
-//   }
-
-
-//   for (Node *child : node->children) {
-//     buildMutationMatricesHelper(mutMat, T, child, window, threshold);
-//   }
-
-// }
-
-// voidseed_annotated_tree::fillMutationMatricesFromTree(mutationMatrices &mutMat, Tree *T,
-//                                         size_t window, double threshold) {
-//   buildMutationMatricesHelper(mutMat, T, T->root, window, threshold); 
-
-//   for (auto i = 0; i < 4; i++) {
-//     for (auto j = 0; j < 4; j++) {
-//       std::cout << mutMat.submat[i][j] << " ";
-//     }
-//     std::cout << std::endl;
-//   }
-
-//   for (auto i = 0; i < mutMat.insmat.size(); ++i) {
-//     std::cout << mutMat.insmat[i] << " ";
-//   }
-//   std::cout << std::endl;
-//   // deletion
-//   for (auto i = 0; i < mutMat.delmat.size(); ++i) {
-//     std::cout << mutMat.delmat[i] << " ";
-//   }
-//   std::cout << std::endl;
-
-//   // insertion
-//   for (auto i = 0; i < mutMat.insmat.size(); ++i) {
-//     mutMat.insmat[i] = -10 * log10f(mutMat.insmat[i] / mutMat.total_insmut);
-//   }
-//   // deletion
-//   for (auto i = 0; i < mutMat.delmat.size(); ++i) {
-//     mutMat.delmat[i] = -10 * log10f(mutMat.delmat[i] / mutMat.total_delmut);
-//   }
-//   // substitution
-//   for (auto i = 0; i < 4; i++) {
-//     for (auto j = 0; j < 4; j++) {
-//       mutMat.submat[i][j] =
-//           -10 * log10f(mutMat.submat[i][j] / mutMat.total_submuts[i]);
-//     }
-//   }
-//   mutMat.filled = true;
-// }
-
-void clearBlockBaseCounts(
-  int32_t primaryBlockId, mutableTreeData &data, globalCoords_t &globalCoords, CoordNavigator &navigator,
-  std::vector<int64_t> &curBaseCounts, std::vector<int64_t> &parentBaseCountsBacktrack) {
-
-  tupleCoord_t coord = globalCoords[primaryBlockId].first[0].second.empty() ? tupleCoord_t{primaryBlockId, 0, -1} : tupleCoord_t{primaryBlockId, 0, 0};
-  tupleCoord_t end = tupleCoord_t{primaryBlockId, globalCoords[primaryBlockId].first.size() - 1, -1};
-  if (!data.blockStrand[primaryBlockId].first) std::swap(coord, end);
-  while (true) {
-    char c = coord.nucGapPos == -1 ? data.sequence[coord.blockId].first[coord.nucPos].first : data.sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
-    if (!data.blockStrand[primaryBlockId].first) c = getComplementCharacter(c);
-    int64_t scalar = tupleToScalarCoord(coord, globalCoords);
-
-    if (getIndexFromNucleotide(c) <= 3) {
-      --curBaseCounts[getIndexFromNucleotide(c)];
-      ++parentBaseCountsBacktrack[getIndexFromNucleotide(c)];
-
-    }
-    if (coord == end) break;
-    coord = navigator.newincrement(coord, data.blockStrand);
   }
+
+  for (const auto &[size, count] : mutMat.insmat) {
+    mmfout << size << ":" << count << " ";
+  }
+  mmfout << "\n";
+
+  for (const auto &[size, count] : mutMat.delmat) {
+    mmfout << size << ":" << count << " ";
+  }
+  mmfout << "\n";
 }
 
-static void applyMutations(mutableTreeData &data,
-                    blockMutationInfo_t &blockMutationInfo,
-                    mutationInfo_t &mutationInfo, Tree *T, Node *node,
-                    globalCoords_t &globalCoords,
-                    CoordNavigator &navigator, const std::vector<std::pair<int64_t, int64_t>> &blockRanges,
-                    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> &gapRunUpdates,
-                    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> &gapRunBacktracks,
-                    blockExists_t& oldBlockExists, blockStrand_t& oldBlockStrand,
-                    std::vector<int64_t> &curBaseCounts, std::vector<int64_t> &parentBaseCountsBacktrack,
-                    std::vector<std::vector<int64_t>> &subCount, bool& isMutatedNuc)
-{
-  blockExists_t &blockExists = data.blockExists;
-  blockStrand_t &blockStrand = data.blockStrand;
+void seed_annotated_tree::applyMutations(
+    blockMutationInfo_t &blockMutationInfo,
+    std::vector<coordinates::CoordRange> &recompRanges,
+    mutationInfo_t &mutationInfo,
+    std::vector<gap_map::GapUpdate> &gapRunUpdates,
+    std::vector<gap_map::GapUpdate> &gapRunBacktracks,
+    std::vector<gap_map::GapUpdate> &gapMapUpdates, panmanUtils::Tree *T,
+    panmanUtils::Node *node, coordinates::CoordinateTraverser &traverser,
+    bool isPlacement, std::unordered_set<int> &inverseBlockIds,
+    std::vector<std::pair<bool, int>> &inverseBlockIdsBacktrack, int k) {
+  auto &manager = traverser.getCoordManager();
+  auto &blockExists = manager.getBlockExists();
+  auto &blockStrand = manager.getBlockStrand();
+  auto &sequence = manager.getSequence();
 
-
-  oldBlockExists = blockExists;
-  oldBlockStrand = blockStrand;
-
-
-  // here
   auto &blocks = T->blocks;
   auto &gaps = T->gaps;
   auto &blockGaps = T->blockGaps;
   auto &sequenceInverted = T->sequenceInverted;
-  auto &sequence = data.sequence;
   auto &circularSequences = T->circularSequences;
-  // List of blocks. Each block has a nucleotide list. Along with each
-  // nucleotide is a gap list.
+
+  // Helper function to normalize gap ranges
+  auto normalizeGapRange = [&](int64_t &start, int64_t &end) {
+    if (start > end) {
+      warn("Normalizing invalid gap range: original start ({}) > end ({})",
+           start, end);
+      std::swap(start, end);
+    }
+  };
+
+  // Helper function to validate mutation coordinates before access
+  auto isValidMutation = [&](int32_t blockId, int32_t secondaryBlockId,
+                             int32_t nucPos, int32_t nucGapPos) -> bool {
+    // Check primary block ID
+    if (blockId < 0 || blockId >= sequence.size()) {
+      warn("Invalid blockId {} when applying mutation (max: {})", blockId,
+           sequence.size() - 1);
+      return false;
+    }
+
+    if (secondaryBlockId != -1) {
+      // Check secondary block ID
+      if (secondaryBlockId < 0 ||
+          secondaryBlockId >= sequence[blockId].second.size()) {
+        warn(
+            "Invalid secondaryBlockId {} for blockId {} when applying mutation",
+            secondaryBlockId, blockId);
+        return false;
+      }
+
+      // Check nucleotide position for secondary block
+      if (nucPos < 0 ||
+          nucPos >= sequence[blockId].second[secondaryBlockId].size()) {
+        warn("Invalid nucPos {} for blockId {}, secondaryBlockId {} when "
+             "applying mutation",
+             nucPos, blockId, secondaryBlockId);
+        return false;
+      }
+
+      // Check gap position for secondary block
+      if (nucGapPos >= 0 && nucGapPos >= sequence[blockId]
+                                             .second[secondaryBlockId][nucPos]
+                                             .second.size()) {
+        warn("Invalid nucGapPos {} for blockId {}, secondaryBlockId {}, nucPos "
+             "{} when applying mutation",
+             nucGapPos, blockId, secondaryBlockId, nucPos);
+        return false;
+      }
+    } else {
+      // Check nucleotide position for primary block
+      if (nucPos < 0 || nucPos >= sequence[blockId].first.size()) {
+        warn("Invalid nucPos {} for blockId {} when applying mutation", nucPos,
+             blockId);
+        return false;
+      }
+
+      // Check gap position for primary block
+      if (nucGapPos >= 0 &&
+          nucGapPos >= sequence[blockId].first[nucPos].second.size()) {
+        warn("Invalid nucGapPos {} for blockId {}, nucPos {} when applying "
+             "mutation",
+             nucGapPos, blockId, nucPos);
+        return false;
+      }
+    }
+
+    return true;
+  };
 
   // Block Mutations
+  std::unordered_map<int32_t, bool> blockMutated;
 
-  for (auto mutation : node->blockMutation)
-  {
-
+  // First collect block mutation info
+  for (auto mutation : node->blockMutation) {
     int32_t primaryBlockId = mutation.primaryBlockId;
     int32_t secondaryBlockId = mutation.secondaryBlockId;
     bool type = mutation.blockMutInfo;
     bool inversion = mutation.inversion;
 
+    // Validate primary block ID
+    if (primaryBlockId < 0 || primaryBlockId >= sequence.size()) {
+      warn("Skipping block mutation with invalid primaryBlockId {}",
+           primaryBlockId);
+      continue;
+    }
+
+    // Validate secondary block ID if relevant
+    if (secondaryBlockId != -1) {
+      if (secondaryBlockId < 0 ||
+          secondaryBlockId >= sequence[primaryBlockId].second.size()) {
+        warn("Skipping block mutation with invalid secondaryBlockId {} for "
+             "blockId {}",
+             secondaryBlockId, primaryBlockId);
+        continue;
+      }
+    }
+
     bool startingStrand = blockStrand[primaryBlockId].first;
 
-
-    if (type == 1)
-    {
+    // Process block mutation and update state
+    if (type == 1) {
       // insertion
       bool oldStrand;
       bool oldMut;
-      if (secondaryBlockId != -1)
-      {
+      if (secondaryBlockId != -1) {
         oldStrand = blockStrand[primaryBlockId].second[secondaryBlockId];
         oldMut = blockExists[primaryBlockId].second[secondaryBlockId];
         blockExists[primaryBlockId].second[secondaryBlockId] = true;
-
-        // if insertion of inverted block takes place, the strand is backwards
         blockStrand[primaryBlockId].second[secondaryBlockId] = !inversion;
-      }
-      else
-      {
+      } else {
         oldStrand = blockStrand[primaryBlockId].first;
         oldMut = blockExists[primaryBlockId].first;
         blockExists[primaryBlockId].first = true;
-
-        // if insertion of inverted block takes place, the strand is backwards
         blockStrand[primaryBlockId].first = !inversion;
       }
-      blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, true, !inversion));
-    }
-    else
-    {
+      blockMutationInfo.emplace_back(
+          std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId,
+                          oldMut, oldStrand, true, !inversion));
+    } else {
       bool oldMut;
       bool oldStrand;
-      if (inversion)
-      {
+      if (inversion) {
         // This means that this is not a deletion, but instead an inversion
-        if (secondaryBlockId != -1)
-        {
+        if (secondaryBlockId != -1) {
           oldStrand = blockStrand[primaryBlockId].second[secondaryBlockId];
           oldMut = blockExists[primaryBlockId].second[secondaryBlockId];
           blockStrand[primaryBlockId].second[secondaryBlockId] = !oldStrand;
-        }
-        else
-        {
-          clearBlockBaseCounts(primaryBlockId, data, globalCoords, navigator, curBaseCounts, parentBaseCountsBacktrack);
-          
+        } else {
           oldStrand = blockStrand[primaryBlockId].first;
           oldMut = blockExists[primaryBlockId].first;
           blockStrand[primaryBlockId].first = !oldStrand;
         }
-        if (oldMut != true) 
-        {
-          std::cout << "There was a problem in PanMAT generation. Please Report." << std::endl;
+        if (oldMut != true) {
+          warn("There was a problem in PanMAT generation. Please Report.");
         }
-        blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, oldMut, !oldStrand));
-      }
-      else
-      {
+        blockMutationInfo.emplace_back(
+            std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId,
+                            oldMut, oldStrand, oldMut, !oldStrand));
+      } else {
         // Actually a deletion
-
-        if (secondaryBlockId != -1)
-        {
+        if (secondaryBlockId != -1) {
           oldStrand = blockStrand[primaryBlockId].second[secondaryBlockId];
           oldMut = blockExists[primaryBlockId].second[secondaryBlockId];
           blockExists[primaryBlockId].second[secondaryBlockId] = false;
-
-          // resetting strand to true during deletion
           blockStrand[primaryBlockId].second[secondaryBlockId] = true;
-        }
-        else
-        {
-          clearBlockBaseCounts(primaryBlockId, data, globalCoords, navigator, curBaseCounts, parentBaseCountsBacktrack);
+        } else {
           oldStrand = blockStrand[primaryBlockId].first;
           oldMut = blockExists[primaryBlockId].first;
           blockExists[primaryBlockId].first = false;
-          // resetting strand to true during deletion
           blockStrand[primaryBlockId].first = true;
         }
+        blockMutationInfo.emplace_back(
+            std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId,
+                            oldMut, oldStrand, false, true));
       }
-      blockMutationInfo.push_back(std::make_tuple(mutation.primaryBlockId, mutation.secondaryBlockId, oldMut, oldStrand, false, true));
     }
 
+    // Track strand changes
     if (startingStrand != blockStrand[primaryBlockId].first) {
-      flipCoords(primaryBlockId, globalCoords);
+      if (blockStrand[primaryBlockId].first) {
+        inverseBlockIds.erase(primaryBlockId);
+        inverseBlockIdsBacktrack.emplace_back(
+            std::make_pair(false, primaryBlockId));
+      } else {
+        inverseBlockIds.insert(primaryBlockId);
+        inverseBlockIdsBacktrack.emplace_back(
+            std::make_pair(true, primaryBlockId));
+      }
+    }
+
+    // For indexing, track affected block ranges
+    if (!isPlacement) {
+      blockMutated[primaryBlockId] = true; // Mark block as needing recomp range
     }
   }
 
-  // Nuc mutations
-  for (size_t i = 0; i < node->nucMutation.size(); i++)
-  {
-    int32_t primaryBlockId = node->nucMutation[i].primaryBlockId;
-    int32_t secondaryBlockId = node->nucMutation[i].secondaryBlockId;
+  // Reinitialize block coordinates after all block mutations
+  for (const auto &key : blockMutated) {
+    manager.reinitializeBlockCoordinates(key.first);
+  }
 
-    int32_t nucPosition = node->nucMutation[i].nucPosition;
-    int32_t nucGapPosition = node->nucMutation[i].nucGapPosition;
-    uint32_t type = (node->nucMutation[i].mutInfo & 0x7);
-    char newVal = '-';
-    if (type < 3)
-    {
-      // Either S, I or D
-      int len = ((node->nucMutation[i].mutInfo) >> 4);
+  if (!isPlacement) {
+    // Process block mutations for indexing
+    for (const auto &key : blockMutated) {
+      try {
+        const tupleCoord_t *start =
+            manager.getFirstCoordinateInBlock(key.first);
+        const tupleCoord_t *stop = manager.getLastCoordinateInBlock(key.first);
 
-      if (type == panmanUtils::NucMutationType::NS)
-      {
-        // Substitution
-
-        if (secondaryBlockId != -1)
-        {
-          if (nucGapPosition != -1)
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
-            }
-          }
-          else
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
-            }
-          }
+        if (start && stop) {
+          recompRanges.emplace_back(start, stop);
         }
-        else
-        {
-          if (nucGapPosition != -1)
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
-            }
-          }
-          else
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].first[nucPosition + j].first = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
-            }
-          }
-        }
-      }
-      else if (type == panmanUtils::NucMutationType::NI)
-      {
-        // Insertion
-        if (secondaryBlockId != -1)
-        {
-          if (nucGapPosition != -1)
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
-            }
-          }
-          else
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
-            }
-          }
-        }
-        else
-        {
-          if (nucGapPosition != -1)
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, newVal));
-            }
-          }
-          else
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
-              newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-              sequence[primaryBlockId].first[nucPosition + j].first = newVal;
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, newVal));
-            }
-          }
-        }
-      }
-      else if (type == panmanUtils::NucMutationType::ND)
-      {
-        // Deletion
-        if (secondaryBlockId != -1)
-        {
-          if (nucGapPosition != -1)
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j];
-              sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition + j] = '-';
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, '-'));
-            }
-          }
-          else
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first;
-              sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = '-';
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, '-'));
-            }
-          }
-        }
-        else
-        {
-          if (nucGapPosition != -1)
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j];
-              sequence[primaryBlockId].first[nucPosition].second[nucGapPosition + j] = '-';
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition + j, oldVal, '-'));
-            }
-          }
-          else
-          {
-            for (int j = 0; j < len; j++)
-            {
-              char oldVal = sequence[primaryBlockId].first[nucPosition + j].first;
-              sequence[primaryBlockId].first[nucPosition + j].first = '-';
-              mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition + j, nucGapPosition, oldVal, '-'));
-            }
-          }
-        }
-      }
-    }
-    else
-    {
-      int len = 0;
-    
-
-      if (type == panmanUtils::NucMutationType::NSNPS)
-      {
-        // SNP Substitution
-        newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
-        if (secondaryBlockId != -1)
-        {
-          if (nucGapPosition != -1)
-          {
-            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition];
-            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-          else
-          {
-            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first;
-            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-        }
-        else
-        {
-          if (nucGapPosition != -1)
-          {
-            char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition];
-            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-          else
-          {
-            char oldVal = sequence[primaryBlockId].first[nucPosition].first;
-            sequence[primaryBlockId].first[nucPosition].first = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-        }
-      }
-      else if (type == panmanUtils::NucMutationType::NSNPI)
-      {
-        // SNP Insertion
-        newVal = panmanUtils::getNucleotideFromCode(((node->nucMutation[i].nucs) >> 20) & 0xF);
-        if (secondaryBlockId != -1)
-        {
-          if (nucGapPosition != -1)
-          {
-            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition];
-            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-          else
-          {
-            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first;
-            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-        }
-        else
-        {
-          if (nucGapPosition != -1)
-          {
-            char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition];
-            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-          else
-          {
-            char oldVal = sequence[primaryBlockId].first[nucPosition].first;
-            sequence[primaryBlockId].first[nucPosition].first = newVal;
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, newVal));
-          }
-        }
-      }
-      else if (type == panmanUtils::NucMutationType::NSNPD)
-      {
-        // SNP Deletion
-        if (secondaryBlockId != -1)
-        {
-          if (nucGapPosition != -1)
-          {
-            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition];
-            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = '-';
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
-          }
-          else
-          {
-            char oldVal = sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first;
-            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = '-';
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
-          }
-        }
-        else
-        {
-          if (nucGapPosition != -1)
-          {
-            char oldVal = sequence[primaryBlockId].first[nucPosition].second[nucGapPosition];
-            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = '-';
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
-          }
-          else
-          {
-            char oldVal = sequence[primaryBlockId].first[nucPosition].first;
-            sequence[primaryBlockId].first[nucPosition].first = '-';
-            mutationInfo.push_back(std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition, nucGapPosition, oldVal, '-'));
-          }
-        }
+      } catch (const std::exception &e) {
+        err("Failed to create block range: {}", e.what());
       }
     }
   }
-  
 
-  for (auto &mutation : mutationInfo) {
-    int blockId = std::get<0>(mutation);
-    if (oldBlockExists[blockId].first && blockExists[blockId].first && oldBlockStrand[blockId].first == blockStrand[blockId].first) {
-      // on to on -> collect gap runs and nuc runs
-      int nucPos = std::get<2>(mutation);
-      int nucGapPos = std::get<3>(mutation);
-      char parChar = std::get<4>(mutation) == 'x' ? '-' : std::get<4>(mutation);
-      char curChar = std::get<5>(mutation) == 'x' ? '-' : std::get<5>(mutation);
+  // Process nucleotide mutations
+  std::vector<int64_t> mutationLengths;
+  // Store minimal info needed for recomp range creation: blockId, start pos,
+  // gap pos, length
+  struct RecompInfo {
+    int32_t blockId;
+    int32_t startPos;
+    int32_t gapPos;
+    int32_t length;
+    bool isSNP;
+  };
+  std::vector<RecompInfo> recompMutations;
 
-      int64_t scalar = tupleToScalarCoord(tupleCoord_t{blockId, nucPos, nucGapPos}, globalCoords);
-      if (!data.blockStrand[blockId].first) {
-        scalar = blockRanges[blockId].first + blockRanges[blockId].second - scalar;
+  // First collect all nucleotide mutation info
+  for (int64_t i = 0; i < node->nucMutation.size(); i++) {
+    try {
+      int32_t primaryBlockId = node->nucMutation[i].primaryBlockId;
+      int32_t secondaryBlockId = node->nucMutation[i].secondaryBlockId;
+      int32_t nucPosition = node->nucMutation[i].nucPosition;
+      int32_t nucGapPosition = node->nucMutation[i].nucGapPosition;
+      uint32_t type = (node->nucMutation[i].mutInfo & 0x7);
+      int len = (type < 3) ? (node->nucMutation[i].mutInfo >> 4) : 0;
+
+      // Store minimal mutation info for later recomp range creation
+      if (!isPlacement && blockExists[primaryBlockId].first &&
+          !blockMutated[primaryBlockId]) {
+        recompMutations.push_back({
+            primaryBlockId, nucPosition, nucGapPosition, len,
+            type >= 3 // isSNP
+        });
       }
 
-      if (!oldBlockStrand[blockId].first) parChar = getComplementCharacter(parChar);
-      if (!blockStrand[blockId].first) curChar =  getComplementCharacter(curChar);
+      // Apply the mutation - with bounds checking
+      if (type < 3) {
+        if (type == panmanUtils::NucMutationType::NS) {
+          // Substitution
+          if (secondaryBlockId != -1) {
+            if (nucGapPosition != -1) {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition, nucGapPosition + j)) {
+                  continue;
+                }
 
-      if (getIndexFromNucleotide(parChar) <= 3) {
-        --curBaseCounts[getIndexFromNucleotide(parChar)];
-        ++parentBaseCountsBacktrack[getIndexFromNucleotide(parChar)];
-      }
-      if (getIndexFromNucleotide(curChar) <= 3) {
-        ++curBaseCounts[getIndexFromNucleotide(curChar)];
-        --parentBaseCountsBacktrack[getIndexFromNucleotide(curChar)];
-      }
-      if (getIndexFromNucleotide(parChar) <= 3 && getIndexFromNucleotide(curChar) <= 3) {
-        isMutatedNuc = true;
-        ++subCount[getIndexFromNucleotide(parChar)][getIndexFromNucleotide(curChar)];
-      }
-
-
-      if (parChar != '-' && curChar == '-') {
-        // nuc to gap
-        if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true && gapRunUpdates.back().second.second + 1 == scalar) {
-          ++(gapRunUpdates.back().second.second);
-        }
-        else {
-          gapRunUpdates.emplace_back(true, std::make_pair(scalar, scalar)); 
-        }
-      } else if (parChar == '-' && curChar != '-') {
-        // gap to nuc
-        if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false && gapRunUpdates.back().second.second + 1 == scalar) {
-          ++(gapRunUpdates.back().second.second);
-        } else {
-          gapRunUpdates.emplace_back(false, std::make_pair(scalar, scalar));
-        }
-      }
-    }
-  }
-}
-
-static void undoMutations(mutableTreeData &data, Tree *T,
-                   const Node *node, const blockMutationInfo_t &blockMutationInfo,
-                   const mutationInfo_t &mutationInfo, globalCoords_t &globalCoords )
-{
-  auto &sequence = data.sequence;
-  auto &blockExists = data.blockExists;
-  auto &blockStrand = data.blockStrand;
- // Undo block mutations when current node and its subtree have been processed
-    for(auto it = blockMutationInfo.rbegin(); it != blockMutationInfo.rend(); it++) {
-        auto mutation = *it;
-        if(std::get<1>(mutation) != -1) {
-            blockExists[std::get<0>(mutation)].second[std::get<1>(mutation)] = std::get<2>(mutation);
-
-            if(blockStrand[std::get<0>(mutation)].second[std::get<1>(mutation)] != std::get<3>(mutation)){
-              blockStrand[std::get<0>(mutation)].second[std::get<1>(mutation)] = std::get<3>(mutation);
-              flipCoords(std::get<0>(mutation),globalCoords);
-            }
-
-        } else {
-
-            blockExists[std::get<0>(mutation)].first = std::get<2>(mutation);
-
-            if(blockStrand[std::get<0>(mutation)].first != std::get<3>(mutation)){
-              blockStrand[std::get<0>(mutation)].first = std::get<3>(mutation);
-              flipCoords(std::get<0>(mutation),globalCoords);
-            }
-        }
-    }
-
-    // Undo nuc mutations when current node and its subtree have been processed
-    for(auto it = mutationInfo.rbegin(); it != mutationInfo.rend(); it++) {
-        auto mutation = *it;
-        if(std::get<1>(mutation) != -1) {
-            if(std::get<3>(mutation) != -1) {
-                sequence[std::get<0>(mutation)].second[std::get<1>(mutation)][std::get<2>(mutation)].second[std::get<3>(mutation)] = std::get<4>(mutation);
+                char oldVal = sequence[primaryBlockId]
+                                  .second[secondaryBlockId][nucPosition]
+                                  .second[nucGapPosition + j];
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId]
+                    .second[secondaryBlockId][nucPosition]
+                    .second[nucGapPosition + j] = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition,
+                    nucGapPosition + j, oldVal, newVal));
+              }
             } else {
-                sequence[std::get<0>(mutation)].second[std::get<1>(mutation)][std::get<2>(mutation)].first = std::get<4>(mutation);
-            }
-        } else {
-            if(std::get<3>(mutation) != -1) {
-                sequence[std::get<0>(mutation)].first[std::get<2>(mutation)].second[std::get<3>(mutation)] = std::get<4>(mutation);
-            } else {
-                sequence[std::get<0>(mutation)].first[std::get<2>(mutation)].first = std::get<4>(mutation);
-            }
-        }
-    }
-}
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition + j, nucGapPosition)) {
+                  continue;
+                }
 
-interval_set<int64_t> gapMapToNucRunSet(const std::map<int64_t, int64_t> &gapMap, const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
-  interval_set<int64_t> curNucRunSet;
-  int64_t start = -1;
-  for (const auto& [curStart, curEnd] : gapMap) {
-    if (start == -1) {
-      if (curStart != 0) {
-        curNucRunSet.add(interval<int64_t>::closed(0, curStart - 1));
+                char oldVal = sequence[primaryBlockId]
+                                  .second[secondaryBlockId][nucPosition + j]
+                                  .first;
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId]
+                    .second[secondaryBlockId][nucPosition + j]
+                    .first = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition + j,
+                    nucGapPosition, oldVal, newVal));
+              }
+            }
+          } else {
+            if (nucGapPosition != -1) {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition, nucGapPosition + j)) {
+                  continue;
+                }
+
+                char oldVal = sequence[primaryBlockId]
+                                  .first[nucPosition]
+                                  .second[nucGapPosition + j];
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId]
+                    .first[nucPosition]
+                    .second[nucGapPosition + j] = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition,
+                    nucGapPosition + j, oldVal, newVal));
+              }
+            } else {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition + j, nucGapPosition)) {
+                  continue;
+                }
+
+                char oldVal =
+                    sequence[primaryBlockId].first[nucPosition + j].first;
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId].first[nucPosition + j].first = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition + j,
+                    nucGapPosition, oldVal, newVal));
+              }
+            }
+          }
+        } else if (type == panmanUtils::NucMutationType::NI) {
+          // Insertion
+          if (secondaryBlockId != -1) {
+            if (nucGapPosition != -1) {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition, nucGapPosition + j)) {
+                  continue;
+                }
+
+                char oldVal = sequence[primaryBlockId]
+                                  .second[secondaryBlockId][nucPosition]
+                                  .second[nucGapPosition + j];
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId]
+                    .second[secondaryBlockId][nucPosition]
+                    .second[nucGapPosition + j] = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition,
+                    nucGapPosition + j, oldVal, newVal));
+              }
+            } else {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition + j, nucGapPosition)) {
+                  continue;
+                }
+
+                char oldVal = sequence[primaryBlockId]
+                                  .second[secondaryBlockId][nucPosition + j]
+                                  .first;
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId]
+                    .second[secondaryBlockId][nucPosition + j]
+                    .first = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition + j,
+                    nucGapPosition, oldVal, newVal));
+              }
+            }
+          } else {
+            if (nucGapPosition != -1) {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition, nucGapPosition + j)) {
+                  continue;
+                }
+
+                char oldVal = sequence[primaryBlockId]
+                                  .first[nucPosition]
+                                  .second[nucGapPosition + j];
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId]
+                    .first[nucPosition]
+                    .second[nucGapPosition + j] = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition + j,
+                    nucGapPosition, oldVal, newVal));
+              }
+            } else {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition + j, nucGapPosition)) {
+                  continue;
+                }
+
+                char oldVal =
+                    sequence[primaryBlockId].first[nucPosition + j].first;
+                char newVal = panmanUtils::getNucleotideFromCode(
+                    ((node->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
+                sequence[primaryBlockId].first[nucPosition + j].first = newVal;
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition + j,
+                    nucGapPosition, oldVal, newVal));
+              }
+            }
+          }
+        } else if (type == panmanUtils::NucMutationType::ND) {
+          // Deletion
+          if (secondaryBlockId != -1) {
+            if (nucGapPosition != -1) {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition, nucGapPosition + j)) {
+                  continue;
+                }
+
+                char oldVal = sequence[primaryBlockId]
+                                  .second[secondaryBlockId][nucPosition]
+                                  .second[nucGapPosition + j];
+                sequence[primaryBlockId]
+                    .second[secondaryBlockId][nucPosition]
+                    .second[nucGapPosition + j] = '-';
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition,
+                    nucGapPosition + j, oldVal, '-'));
+              }
+            } else {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition + j, nucGapPosition)) {
+                  continue;
+                }
+
+                char oldVal = sequence[primaryBlockId]
+                                  .second[secondaryBlockId][nucPosition + j]
+                                  .first;
+                sequence[primaryBlockId]
+                    .second[secondaryBlockId][nucPosition + j]
+                    .first = '-';
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition + j,
+                    nucGapPosition, oldVal, '-'));
+              }
+            }
+          } else {
+            if (nucGapPosition != -1) {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition, nucGapPosition + j)) {
+                  continue;
+                }
+
+                char oldVal = sequence[primaryBlockId]
+                                  .first[nucPosition]
+                                  .second[nucGapPosition + j];
+                sequence[primaryBlockId]
+                    .first[nucPosition]
+                    .second[nucGapPosition + j] = '-';
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition,
+                    nucGapPosition + j, oldVal, '-'));
+              }
+            } else {
+              for (int j = 0; j < len; j++) {
+                if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                     nucPosition + j, nucGapPosition)) {
+                  continue;
+                }
+
+                char oldVal =
+                    sequence[primaryBlockId].first[nucPosition + j].first;
+                sequence[primaryBlockId].first[nucPosition + j].first = '-';
+                mutationInfo.emplace_back(std::make_tuple(
+                    primaryBlockId, secondaryBlockId, nucPosition + j,
+                    nucGapPosition, oldVal, '-'));
+              }
+            }
+          }
+        }
+      } else {
+        len = 0;
+        if (type == panmanUtils::NucMutationType::NSNPS) {
+          // SNP Substitution
+          char newVal = panmanUtils::getNucleotideFromCode(
+              ((node->nucMutation[i].nucs) >> 20) & 0xF);
+          if (secondaryBlockId != -1) {
+            if (nucGapPosition != -1) {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .second[secondaryBlockId][nucPosition]
+                                .second[nucGapPosition];
+              sequence[primaryBlockId]
+                  .second[secondaryBlockId][nucPosition]
+                  .second[nucGapPosition] = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            } else {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .second[secondaryBlockId][nucPosition]
+                                .first;
+              sequence[primaryBlockId]
+                  .second[secondaryBlockId][nucPosition]
+                  .first = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            }
+          } else {
+            if (nucGapPosition != -1) {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .first[nucPosition]
+                                .second[nucGapPosition];
+              sequence[primaryBlockId]
+                  .first[nucPosition]
+                  .second[nucGapPosition] = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            } else {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId].first[nucPosition].first;
+              sequence[primaryBlockId].first[nucPosition].first = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            }
+          }
+        } else if (type == panmanUtils::NucMutationType::NSNPI) {
+          // SNP Insertion
+          char newVal = panmanUtils::getNucleotideFromCode(
+              ((node->nucMutation[i].nucs) >> 20) & 0xF);
+          if (secondaryBlockId != -1) {
+            if (nucGapPosition != -1) {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .second[secondaryBlockId][nucPosition]
+                                .second[nucGapPosition];
+              sequence[primaryBlockId]
+                  .second[secondaryBlockId][nucPosition]
+                  .second[nucGapPosition] = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            } else {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .second[secondaryBlockId][nucPosition]
+                                .first;
+              sequence[primaryBlockId]
+                  .second[secondaryBlockId][nucPosition]
+                  .first = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            }
+          } else {
+            if (nucGapPosition != -1) {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .first[nucPosition]
+                                .second[nucGapPosition];
+              sequence[primaryBlockId]
+                  .first[nucPosition]
+                  .second[nucGapPosition] = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            } else {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId].first[nucPosition].first;
+              sequence[primaryBlockId].first[nucPosition].first = newVal;
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, newVal));
+            }
+          }
+        } else if (type == panmanUtils::NucMutationType::NSNPD) {
+          // SNP Deletion
+          if (secondaryBlockId != -1) {
+            if (nucGapPosition != -1) {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .second[secondaryBlockId][nucPosition]
+                                .second[nucGapPosition];
+              sequence[primaryBlockId]
+                  .second[secondaryBlockId][nucPosition]
+                  .second[nucGapPosition] = '-';
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, '-'));
+            } else {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .second[secondaryBlockId][nucPosition]
+                                .first;
+              sequence[primaryBlockId]
+                  .second[secondaryBlockId][nucPosition]
+                  .first = '-';
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, '-'));
+            }
+          } else {
+            if (nucGapPosition != -1) {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId]
+                                .first[nucPosition]
+                                .second[nucGapPosition];
+              sequence[primaryBlockId]
+                  .first[nucPosition]
+                  .second[nucGapPosition] = '-';
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, '-'));
+            } else {
+              if (!isValidMutation(primaryBlockId, secondaryBlockId,
+                                   nucPosition, nucGapPosition)) {
+                continue;
+              }
+
+              char oldVal = sequence[primaryBlockId].first[nucPosition].first;
+              sequence[primaryBlockId].first[nucPosition].first = '-';
+              mutationInfo.emplace_back(
+                  std::make_tuple(primaryBlockId, secondaryBlockId, nucPosition,
+                                  nucGapPosition, oldVal, '-'));
+            }
+          }
+        }
+      }
+    } catch (const std::exception &e) {
+      err("Exception in applyMutations for nucleotide mutation at index {}: {}",
+          i, e.what());
+      continue; // Skip this mutation and continue with the rest
+    }
+  }
+
+  // Create recomp ranges after all mutations are applied
+  if (!isPlacement) {
+    // Then handle nucleotide mutations
+    for (const auto &mut : recompMutations) {
+      if (blockMutated[mut.blockId]) {
+        continue; // already created recomp range for this block
+      }
+
+      try {
+        // Create start coordinate
+        tupleCoord_t startCoord{mut.blockId, mut.startPos, mut.gapPos};
+        const tupleCoord_t *start = manager.findTupleCoord(startCoord);
+
+        traverser.reset(start);
+        traverser.prev();
+        start = traverser.getCurrent();
+
+        if (!start)
+          continue;
+
+        // Create stop coordinate
+        tupleCoord_t stopCoord;
+
+        if (mut.gapPos != -1) {
+          stopCoord.blockId = mut.blockId;
+          stopCoord.nucPos = mut.startPos;
+          stopCoord.nucGapPos = std::min(
+              mut.gapPos + mut.length + k,
+              (int)sequence[mut.blockId].first[mut.startPos].second.size() - 1);
+        } else {
+          stopCoord.blockId = mut.blockId;
+          stopCoord.nucPos =
+              std::min(mut.startPos + mut.length + k,
+                       (int)sequence[mut.blockId].first.size() - 1);
+          stopCoord.nucGapPos = -1;
+        }
+
+        // vector lookup, fast
+        const tupleCoord_t *stop = manager.findTupleCoord(stopCoord);
+
+        traverser.reset(stop);
+        traverser.next();
+        stop = traverser.getCurrent();
+
+        if (stop) {
+          recompRanges.emplace_back(start, stop);
+        } else {
+          err("Bad stop lookup {},{},{} for block {}", stopCoord.blockId,
+              stopCoord.nucPos, stopCoord.nucGapPos, mut.blockId);
+          throw std::runtime_error("Bad stop");
+        }
+      } catch (const std::exception &e) {
+        err("Failed to create mutation range: {}", e.what());
+      }
+    }
+  }
+
+  // Process gap updates and normalize ranges before updating gap map
+  for (auto &update : gapRunUpdates) {
+    auto &[erase, range] = update;
+    auto &[pos, length] = range;
+
+    // Skip invalid updates
+    if (pos < 0 || pos >= manager.size()) {
+      warn("Skipping gap update with invalid position {} (max: {})", pos,
+           manager.size() - 1);
+      continue;
+    }
+
+    // For non-erase operations, ensure length is positive
+    if (!erase && length <= 0) {
+      warn("Skipping gap update with invalid length {} at position {}", length,
+           pos);
+      continue;
+    }
+  }
+
+  // Update gap map with current mutations
+  manager.updateGapMap(gapRunUpdates, gapRunBacktracks, gapMapUpdates);
+
+  // Process gap mutations for proper backtracking
+  for (auto &mutation : gapRunUpdates) {
+    const auto &[erase, range] = mutation;
+    const auto &[pos, length] = range;
+
+    if (erase) {
+      // This is removing a gap run
+      auto it = manager.getGapMap().find(pos);
+      if (it != manager.getGapMap().end()) {
+        // Record this for backtracking - we're modifying an existing entry
+        gapRunBacktracks.emplace_back(false, std::make_pair(pos, it->second));
+        // Record the update for later use
+        gapMapUpdates.emplace_back(true, std::make_pair(pos, it->second));
       }
     } else {
-      curNucRunSet.add(interval<int64_t>::closed(start, curStart - 1));
+      // This is adding or modifying a gap run
+      auto it = manager.getGapMap().find(pos);
+      if (it != manager.getGapMap().end()) {
+        // Record this for backtracking - we're modifying an existing entry
+        gapRunBacktracks.emplace_back(false, std::make_pair(pos, it->second));
+      } else {
+        // Record this for backtracking - we're adding a new entry
+        gapRunBacktracks.emplace_back(true, std::make_pair(pos, 0));
+      }
+      // Record the update for later use
+      gapMapUpdates.emplace_back(false, std::make_pair(pos, length));
     }
-    start = curEnd + 1;
   }
-  if (start <= blockRanges.back().second) {
-    curNucRunSet.add(interval<int64_t>::closed(start, blockRanges.back().second));
+}
+
+void seed_annotated_tree::undoMutations(
+    Tree *T, const Node *node, const blockMutationInfo_t &blockMutationInfo,
+    const mutationInfo_t &mutationInfo,
+    coordinates::CoordinateTraverser &traverser,
+    std::vector<gap_map::GapUpdate> &gapRunBacktracks) {
+  auto &sequence = traverser.getCoordManager().getSequence();
+  auto &blockExists = traverser.getCoordManager().getBlockExists();
+  auto &blockStrand = traverser.getCoordManager().getBlockStrand();
+
+  // Counters for tracking validity issues
+  int invalid_blockId = 0;
+  int invalid_secondaryBlockId = 0;
+  int invalid_nucPos = 0;
+  int invalid_nucGapPos = 0;
+
+  // For debugging
+  msg("Undoing {} block mutations and {} nucleotide mutations for node {}",
+      blockMutationInfo.size(), mutationInfo.size(), node->identifier);
+
+  // STEP 1: Verify gap map integrity before restoring
+  if (!traverser.getCoordManager().validateGapMap()) {
+    warn("Gap map validation failed before undo. Optimizing gap map.");
+    traverser.getCoordManager().optimizeGapMap();
   }
-  return curNucRunSet;
+
+  // STEP 2: Restore the gap map to its previous state using backtracking
+  // information
+  msg("Restoring gap map state from {} backtrack entries",
+      gapRunBacktracks.size());
+
+  // Enhanced restoration - apply backtracking entries more safely
+  try {
+    // Backup current gap map in case restoration fails
+    auto originalGapMap = traverser.getCoordManager().getGapMap();
+
+    // Try to restore the gap map
+    traverser.getCoordManager().restoreGapMapFromBacktracks(gapRunBacktracks);
+
+    // Verify the restored gap map is valid
+    if (!traverser.getCoordManager().validateGapMap(false)) {
+      warn("Gap map validation failed after restoring previous state. Will "
+           "attempt repair.");
+      traverser.getCoordManager().optimizeGapMap();
+    }
+  } catch (const std::exception &e) {
+    err("Exception during gap map restoration: {}. Continuing with current "
+        "state.",
+        e.what());
+  }
+
+  // STEP 3: Take a snapshot of the current state for validation
+  // This is useful for detecting state changes during the undo process
+  auto sequenceSnapshot = sequence;
+  auto blockExistsSnapshot = blockExists;
+  auto blockStrandSnapshot = blockStrand;
+
+  // STEP 4: First pass - Identify blocks with strand changes
+  std::vector<int32_t> strandChangedBlocks;
+  for (auto it = blockMutationInfo.rbegin(); it != blockMutationInfo.rend();
+       it++) {
+    auto mutation = *it;
+    try {
+      int32_t blockId = std::get<0>(mutation);
+      int32_t secondaryBlockId = std::get<1>(mutation);
+      bool oldStrand = std::get<3>(mutation);
+
+      // If primary block's strand is changing
+      if (secondaryBlockId == -1 && blockStrand[blockId].first != oldStrand) {
+        // Record for special handling
+        strandChangedBlocks.push_back(blockId);
+      }
+      // If secondary block's strand is changing
+      else if (secondaryBlockId != -1 && blockId < blockStrand.size() &&
+               secondaryBlockId < blockStrand[blockId].second.size() &&
+               blockStrand[blockId].second[secondaryBlockId] != oldStrand) {
+        // Secondary blocks with strand changes need special handling too
+        msg("Secondary block strand change detected: blockId={}, "
+            "secondaryBlockId={}",
+            blockId, secondaryBlockId);
+        // Currently we don't handle secondary blocks specially - this would
+        // need implementation
+      }
+    } catch (const std::exception &e) {
+      warn("Exception identifying strand changes: {}. Skipping.", e.what());
+    }
+  }
+
+  if (!strandChangedBlocks.empty()) {
+    msg("Detected {} blocks with strand changes that need special handling",
+        strandChangedBlocks.size());
+  }
+
+  // STEP 5: Apply the block mutations in reverse order
+  msg("Undoing block mutations");
+  for (auto it = blockMutationInfo.rbegin(); it != blockMutationInfo.rend();
+       it++) {
+    auto mutation = *it;
+    try {
+      int32_t blockId = std::get<0>(mutation);
+      int32_t secondaryBlockId = std::get<1>(mutation);
+      bool oldExists = std::get<2>(mutation);
+      bool oldStrand = std::get<3>(mutation);
+
+      // Validate blockId
+      if (blockId < 0 || blockId >= blockExists.size()) {
+        warn("Invalid blockId {} during undo (max: {}). Skipping.", blockId,
+             blockExists.size() - 1);
+        invalid_blockId++;
+        continue;
+      }
+
+      // Process secondary block mutations if needed
+      if (secondaryBlockId != -1) {
+        // Validate secondaryBlockId
+        if (secondaryBlockId < 0 ||
+            secondaryBlockId >= blockExists[blockId].second.size()) {
+          warn("Invalid secondaryBlockId {} for blockId {} during undo. "
+               "Skipping.",
+               secondaryBlockId, blockId);
+          invalid_secondaryBlockId++;
+          continue;
+        }
+
+        // Restore old block existence state
+        blockExists[blockId].second[secondaryBlockId] = oldExists;
+
+        // Restore old strand state if different
+        if (blockStrand[blockId].second[secondaryBlockId] != oldStrand) {
+          blockStrand[blockId].second[secondaryBlockId] = oldStrand;
+        }
+      } else {
+        // Restore old block existence state
+        blockExists[blockId].first = oldExists;
+
+        // Restore old strand state if different
+        if (blockStrand[blockId].first != oldStrand) {
+          blockStrand[blockId].first = oldStrand;
+        }
+      }
+
+      // Crucial step: After each block mutation undo, reinitialize the block
+      // coordinates This ensures correct traversal for subsequent operations
+      try {
+        traverser.getCoordManager().reinitializeBlockCoordinates(blockId);
+        debug("Successfully reinitialized block {}", blockId);
+      } catch (const std::exception &e) {
+        warn("Error reinitializing block {}: {}", blockId, e.what());
+      }
+
+    } catch (const std::exception &e) {
+      warn("Exception in undoMutations (block mutation): {}. Skipping.",
+           e.what());
+      continue; // Skip this mutation and continue processing
+    }
+  }
+
+  // STEP 6: Special handling for blocks that had strand changes
+  // For each block that changed strand, re-invert its gap map
+  std::vector<gap_map::GapUpdate> strandChangeBacktracks;
+  std::vector<gap_map::GapUpdate> strandChangeUpdates;
+
+  for (int32_t blockId : strandChangedBlocks) {
+    // Get block range
+    auto range = traverser.getCoordManager().getBlockRange(blockId);
+    if (range.first < 0 || range.second < range.first) {
+      warn("Invalid block range [{}, {}] for block {} with strand change. "
+           "Skipping.",
+           range.first, range.second, blockId);
+      continue;
+    }
+
+    msg("Re-inverting gap map for block {} with range [{}, {}] after strand "
+        "change",
+        blockId, range.first, range.second);
+
+    // Re-invert gap runs in this range
+    traverser.getCoordManager().invertGapMap(range, strandChangeBacktracks,
+                                             strandChangeUpdates);
+  }
+
+  if (!strandChangeBacktracks.empty()) {
+    msg("Created {} backtrack entries while re-inverting gaps for strand "
+        "changes",
+        strandChangeBacktracks.size());
+  }
+
+  // STEP 7: Undo nucleotide mutations in reverse order from application
+  msg("Undoing nucleotide mutations");
+  for (auto it = mutationInfo.rbegin(); it != mutationInfo.rend(); it++) {
+    auto mutation = *it;
+    try {
+      // Extract mutation components
+      int32_t blockId = std::get<0>(mutation);
+      int32_t secondaryBlockId = std::get<1>(mutation);
+      int32_t nucPos = std::get<2>(mutation);
+      int32_t nucGapPos = std::get<3>(mutation);
+      char oldValue = std::get<4>(mutation);
+      char newValue = std::get<5>(mutation);
+
+      // Skip if invalid blockId
+      if (blockId < 0 || blockId >= sequence.size()) {
+        invalid_blockId++;
+        if (invalid_blockId <= 5) { // Limit excessive logging
+          warn("Invalid blockId {} when undoing mutation (max: {})", blockId,
+               sequence.size() - 1);
+        }
+        continue;
+      }
+
+      // Skip if block doesn't exist
+      if (!blockExists[blockId].first) {
+        debug("Skipping nucleotide mutation for dead block {}", blockId);
+        continue;
+      }
+
+      // Separate handling for secondary blocks vs primary blocks
+      if (secondaryBlockId != -1) {
+        // Check if secondaryBlockId is valid
+        if (secondaryBlockId < 0 ||
+            secondaryBlockId >= sequence[blockId].second.size()) {
+          invalid_secondaryBlockId++;
+          if (invalid_secondaryBlockId <= 5) {
+            warn("Invalid secondaryBlockId {} for blockId {}", secondaryBlockId,
+                 blockId);
+          }
+          continue;
+        }
+
+        // Handle gap positions vs non-gap positions
+        if (nucGapPos != -1) {
+          // Validate nucPos
+          if (nucPos < 0 ||
+              nucPos >= sequence[blockId].second[secondaryBlockId].size()) {
+            invalid_nucPos++;
+            if (invalid_nucPos <= 5) {
+              warn("Invalid nucPos {} for blockId {}, secondaryBlockId {}",
+                   nucPos, blockId, secondaryBlockId);
+            }
+            continue;
+          }
+
+          // Validate nucGapPos
+          if (nucGapPos < 0 ||
+              nucGapPos >= sequence[blockId]
+                               .second[secondaryBlockId][nucPos]
+                               .second.size()) {
+            invalid_nucGapPos++;
+            if (invalid_nucGapPos <= 5) {
+              warn("Invalid nucGapPos {} for blockId {}, secondaryBlockId {}, "
+                   "nucPos {}",
+                   nucGapPos, blockId, secondaryBlockId, nucPos);
+            }
+            continue;
+          }
+
+          // Safe access - restore original value
+          char currentValue = sequence[blockId]
+                                  .second[secondaryBlockId][nucPos]
+                                  .second[nucGapPos];
+          if (currentValue != newValue && newValue != '\0') {
+            warn("Value mismatch during undo at [{},{},{},{}]: expected '{}', "
+                 "found '{}'",
+                 blockId, secondaryBlockId, nucPos, nucGapPos, newValue,
+                 currentValue);
+          }
+          sequence[blockId].second[secondaryBlockId][nucPos].second[nucGapPos] =
+              oldValue;
+
+        } else {
+          // Validate nucPos
+          if (nucPos < 0 ||
+              nucPos >= sequence[blockId].second[secondaryBlockId].size()) {
+            invalid_nucPos++;
+            if (invalid_nucPos <= 5) {
+              warn("Invalid nucPos {} for blockId {}, secondaryBlockId {}",
+                   nucPos, blockId, secondaryBlockId);
+            }
+            continue;
+          }
+
+          // Safe access - restore original value
+          char currentValue =
+              sequence[blockId].second[secondaryBlockId][nucPos].first;
+          if (currentValue != newValue && newValue != '\0') {
+            warn("Value mismatch during undo at [{},{},{}]: expected '{}', "
+                 "found '{}'",
+                 blockId, secondaryBlockId, nucPos, newValue, currentValue);
+          }
+          sequence[blockId].second[secondaryBlockId][nucPos].first = oldValue;
+        }
+      } else {
+        // Handle primary block mutations
+        if (nucGapPos != -1) {
+          // Validate nucPos
+          if (nucPos < 0 || nucPos >= sequence[blockId].first.size()) {
+            invalid_nucPos++;
+            if (invalid_nucPos <= 5) {
+              warn("Invalid nucPos {} for blockId {}", nucPos, blockId);
+            }
+            continue;
+          }
+
+          // Validate nucGapPos
+          if (nucGapPos < 0 ||
+              nucGapPos >= sequence[blockId].first[nucPos].second.size()) {
+            invalid_nucGapPos++;
+            if (invalid_nucGapPos <= 5) {
+              warn("Invalid nucGapPos {} for blockId {}, nucPos {}", nucGapPos,
+                   blockId, nucPos);
+            }
+            continue;
+          }
+
+          // Safe access - restore original value
+          char currentValue = sequence[blockId].first[nucPos].second[nucGapPos];
+          if (currentValue != newValue && newValue != '\0') {
+            warn("Value mismatch during undo at [{},{},{}]: expected '{}', "
+                 "found '{}'",
+                 blockId, nucPos, nucGapPos, newValue, currentValue);
+          }
+          sequence[blockId].first[nucPos].second[nucGapPos] = oldValue;
+
+        } else {
+          // Validate nucPos
+          if (nucPos < 0 || nucPos >= sequence[blockId].first.size()) {
+            invalid_nucPos++;
+            if (invalid_nucPos <= 5) {
+              warn("Invalid nucPos {} for blockId {}", nucPos, blockId);
+            }
+            continue;
+          }
+
+          // Safe access - restore original value
+          char currentValue = sequence[blockId].first[nucPos].first;
+          if (currentValue != newValue && newValue != '\0') {
+            warn("Value mismatch during undo at [{},{}]: expected '{}', found "
+                 "'{}'",
+                 blockId, nucPos, newValue, currentValue);
+          }
+          sequence[blockId].first[nucPos].first = oldValue;
+        }
+      }
+    } catch (const std::exception &e) {
+      warn("Exception in undoMutations: {}. Continuing with next mutation.",
+           e.what());
+      continue;
+    }
+  }
+
+  // Log summary of skipped invalid positions
+  if (invalid_blockId > 0 || invalid_secondaryBlockId > 0 ||
+      invalid_nucPos > 0 || invalid_nucGapPos > 0) {
+    warn("Skipped invalid positions during undo - "
+         "blockId: {}, secondaryBlockId: {}, nucPos: {}, nucGapPos: {}",
+         invalid_blockId, invalid_secondaryBlockId, invalid_nucPos,
+         invalid_nucGapPos);
+  } else {
+    msg("All nucleotide mutations successfully undone");
+  }
+
+  // STEP 8: Final verification step and gap map sanity check
+  if (!traverser.getCoordManager().validateGapMap(true)) {
+    warn("Gap map has issues after undoing all mutations - attempting to "
+         "optimize");
+    traverser.getCoordManager().optimizeGapMap();
+  }
+
+  // STEP 9: One final pass to ensure block coordinates are properly linked
+  try {
+    msg("Performing final coordinate system cleanup");
+    bool prev_linked = false;
+    int32_t prev_live_blockId = -1;
+
+    // Link all blocks in sequence
+    for (int32_t blockId = 0; blockId < blockExists.size(); blockId++) {
+      if (blockExists[blockId].first) {
+        // This is a live block
+        traverser.getCoordManager().reinitializeBlockCoordinates(blockId);
+
+        // Connect this block to previous live block if it exists
+        if (prev_linked && prev_live_blockId >= 0) {
+          const tupleCoord_t *prev_last =
+              traverser.getCoordManager().getLastCoordinateInBlock(
+                  prev_live_blockId);
+          const tupleCoord_t *curr_first =
+              traverser.getCoordManager().getFirstCoordinateInBlock(blockId);
+
+          if (prev_last && curr_first) {
+            // Link previous block's last coordinate to this block's first
+            // We cast away const because we need to update the pointers
+            tupleCoord_t *mutable_prev_last =
+                const_cast<tupleCoord_t *>(prev_last);
+            tupleCoord_t *mutable_curr_first =
+                const_cast<tupleCoord_t *>(curr_first);
+
+            mutable_prev_last->next = mutable_curr_first;
+            mutable_curr_first->prev = mutable_prev_last;
+          }
+        }
+
+        prev_linked = true;
+        prev_live_blockId = blockId;
+      }
+    }
+  } catch (const std::exception &e) {
+    warn("Exception during final coordinate cleanup: {}", e.what());
+  }
+
+  msg("Mutation undo complete for node {}", node->identifier);
 }
 
 void buildMutationMatricesHelper_test(
-  mutationMatrices &mutMat, Tree *T, Node* node, mutableTreeData &data, std::map<int64_t, int64_t> &gapMap,
-  globalCoords_t &globalCoords, CoordNavigator &navigator, std::vector<int> &scalarCoordToBlockId,
-  std::vector<std::unordered_set<int>> &BlocksToSeeds, std::vector<int> &BlockSizes,
-  const std::vector<std::pair<int64_t, int64_t>>& blockRanges,
-  std::vector<int64_t> &parentBaseCounts, std::vector<int64_t> &totalBaseCounts,
-  std::vector<std::vector<int64_t>> &subCount, std::unordered_map<int64_t, int64_t> &insCount, std::unordered_map<int64_t, int64_t> &delCount
-) {
-  blockMutationInfo_t blockMutationInfo;
-  mutationInfo_t mutationInfo;
+    mutationMatrices &mutMat, Tree *T, Node *node,
+    std::map<int64_t, int64_t> &gapMap,
+    coordinates::CoordinateTraverser &traverser,
+    std::vector<int64_t> &scalarCoordToBlockId,
+    std::vector<std::unordered_set<int>> &BlocksToSeeds,
+    std::vector<int> &BlockSizes,
+    const std::vector<std::pair<int64_t, int64_t>> &blockRanges,
+    std::vector<int64_t> &parentBaseCounts,
+    std::vector<int64_t> &totalBaseCounts,
+    std::vector<std::vector<int64_t>> &subCount,
+    std::unordered_map<int64_t, int64_t> &insCount,
+    std::unordered_map<int64_t, int64_t> &delCount) {
 
-  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunUpdates;
-  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
-  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapMapUpdates;
-
-  blockExists_t oldBlockExists;
-  blockStrand_t oldBlockStrand;
-
-  std::vector<int64_t> curBaseCounts = parentBaseCounts;
-  std::vector<int64_t> parentBaseCountsBacktrack(4);
-  bool isMutatedNuc = false;
-
-  applyMutations(data, blockMutationInfo, mutationInfo, T, node, globalCoords,
-    navigator, blockRanges, gapRunUpdates, gapRunBacktracks, oldBlockExists,
-    oldBlockStrand, curBaseCounts, parentBaseCountsBacktrack, subCount, isMutatedNuc);
-
-
-  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
-
-  auto parentGapMap = gapMap;
-  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> tmpGapRunBlocksBacktracks;
-  for (size_t i = 0; i < oldBlockStrand.size(); ++i) {
-    if (!oldBlockStrand[i].first) {
-      invertGapMap(parentGapMap, blockRanges[i], tmpGapRunBlocksBacktracks, gapMapUpdates);
-    }
-  }
-  interval_set<int64_t> parNucRunSet = gapMapToNucRunSet(parentGapMap, blockRanges);
-  interval_set<int64_t> flippedSet;
-  parentGapMap.clear();
-  tmpGapRunBlocksBacktracks.clear();
-
-  updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
-  std::vector<int64_t> invertedBlocks;
-  for (int i = 0; i < data.blockExists.size(); i++) {
-    const bool& oldExists = oldBlockExists[i].first;
-    const bool& newExists = data.blockExists[i].first;
-    if (newExists && !data.blockStrand[i].first) {
-      invertedBlocks.push_back(i);
-    }
-    if (oldExists && !newExists) {
-      // on to off -> block range to all gaps
-      const auto& [start, end] = blockRanges[i];
-      updateGapMapStep(gapMap, {true, {start, end}}, gapRunBacktracks, gapMapUpdates);
-
-    } else if (!oldExists && newExists) {
-      // off to on -> recompute across entire block
-      tupleCoord_t coord = globalCoords[i].first[0].second.empty() ? tupleCoord_t{i, 0, -1} : tupleCoord_t{i, 0, 0};
-      tupleCoord_t end = tupleCoord_t{i, globalCoords[i].first.size() - 1, -1};
-      if (!data.blockStrand[i].first) std::swap(coord, end);
-      std::pair<int64_t, int64_t> curNucRange = {-1, -1};
-      std::vector<std::pair<int64_t, int64_t>> nucRanges;
-      while (true) {
-        char c = coord.nucGapPos == -1 ? data.sequence[coord.blockId].first[coord.nucPos].first : data.sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
-        c = c == 'x' ? '-' : c;
-        if (!data.blockStrand[i].first) c = getComplementCharacter(c);
-
-        int64_t scalar = tupleToScalarCoord(coord, globalCoords);
-
-        if (c != '-') {
-          if (getIndexFromNucleotide(c) <= 3) {
-            ++curBaseCounts[getIndexFromNucleotide(c)];
-            --parentBaseCountsBacktrack[getIndexFromNucleotide(c)];
-          }
-
-          if (curNucRange.first != -1 && curNucRange.second + 1 == scalar) {
-            ++curNucRange.second;
-          } else {
-            if (curNucRange.first != -1) {
-              nucRanges.push_back(curNucRange);
-            }
-            curNucRange = {scalar, scalar};
-          }
-        }
-
-        if (coord == end) break;
-        coord = navigator.newincrement(coord, data.blockStrand);
-      }
-
-      if (curNucRange.first != -1) {
-        nucRanges.push_back(curNucRange);
-      }
-
-
-      if (data.blockStrand[i].first) {
-        for (const auto& range : nucRanges) {
-          updateGapMapStep(gapMap, {false, range}, gapRunBacktracks, gapMapUpdates);
-        }
-      } else {
-        std::vector<std::pair<int64_t, int64_t>> invertedRanges = invertRanges(nucRanges, blockRanges[i]);
-        for (const auto& range : invertedRanges) {
-          updateGapMapStep(gapMap, {false, range}, gapRunBacktracks, gapMapUpdates);
-        }
-      }
-    } else if (oldExists && newExists && (data.blockStrand[i].first != oldBlockStrand[i].first)) {
-      // on to on -> but strand flipped
-      flippedSet.add(interval<int64_t>::closed(blockRanges[i].first, blockRanges[i].second));
-
-      tupleCoord_t coord = globalCoords[i].first[0].second.empty() ? tupleCoord_t{i, 0, -1} : tupleCoord_t{i, 0, 0};
-      tupleCoord_t end = tupleCoord_t{i, globalCoords[i].first.size() - 1, -1};
-      if (!data.blockStrand[i].first) std::swap(coord, end);
-      while (true) {
-        char c = coord.nucGapPos == -1 ? data.sequence[coord.blockId].first[coord.nucPos].first : data.sequence[coord.blockId].first[coord.nucPos].second[coord.nucGapPos];
-        c = c == 'x' ? '-' : c;
-        if (!data.blockStrand[i].first) c = getComplementCharacter(c);
-        int64_t scalar = tupleToScalarCoord(coord, globalCoords);
-
-        if (getIndexFromNucleotide(c) <= 3) {
-          ++curBaseCounts[getIndexFromNucleotide(c)];
-          --parentBaseCountsBacktrack[getIndexFromNucleotide(c)];
-        }
-
-        if (coord == end) break;
-        coord = navigator.newincrement(coord, data.blockStrand);
-      }
-    }
-  }
-
-  for (const auto& blockId : invertedBlocks) {
-    invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks, gapMapUpdates);
-  }
-
-  if (node->parent != nullptr) {
-    // make nuc run interval set from gap map
-    interval_set<int64_t> curNucRunSet = gapMapToNucRunSet(gapMap, blockRanges);
-
-    // remove flipped blocks from nucRunSet so they are not counted as indels
-    curNucRunSet -= flippedSet;
-    parNucRunSet -= flippedSet;
-
-    // XOR ranges between cur and par
-    interval_set<int64_t> xorSet = curNucRunSet ^ parNucRunSet;
-
-    // AND ranges bewteen xor and par -> deletion
-    interval_set<int64_t> deletionSet = xorSet & parNucRunSet;
-
-    // AND ranges between xor and cur -> insertion
-    interval_set<int64_t> insertionSet = xorSet & curNucRunSet;
-
-    // std::cout << node->identifier << " test base counts: " << curBaseCounts[0] << " " << curBaseCounts[1] << " " << curBaseCounts[2] << " " << curBaseCounts[3] << std::endl;
-    
-    if (isMutatedNuc || !insertionSet.empty() || !deletionSet.empty()) {
-      for (const auto& interval : insertionSet) {
-        int64_t size = boost::icl::last(interval) - boost::icl::first(interval) + 1;
-        assert(size > 0);
-        if (insCount.find(size) == insCount.end()) {
-          insCount[size] = 0;
-        }
-        ++insCount[size];
-      }
-
-      for (const auto& interval : deletionSet) {
-        int64_t size = boost::icl::last(interval) - boost::icl::first(interval) + 1;
-        assert(size > 0);
-        if (delCount.find(size) == delCount.end()) {
-          delCount[size] = 0;
-        }
-        ++delCount[size];
-      }
-
-      for (size_t i = 0; i < 4; ++i) {
-        totalBaseCounts[i] += curBaseCounts[i];
-      }
-    }
-  }
-
-  parentBaseCounts = curBaseCounts;
-
-
-  for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
-    const auto& [del, range] = *it;
-    if (del) {
-      gapMap.erase(range.first);
-    } else {
-      gapMap[range.first] = range.second;
-    }
-  }
-
-  gapRunUpdates.clear();
-
-  for (Node *child : node->children) {
-    buildMutationMatricesHelper_test(mutMat, T, child, data, gapMap, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
-  }
-
-  // undo gapMap updates
-  for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
-    const auto& [del, range] = *it;
-    if (del) {
-      gapMap.erase(range.first);
-    } else {
-      gapMap[range.first] = range.second;
-    }
-  }
-
-  // undo base counts
-  for (int i = 0; i < 4; i++) {
-    parentBaseCounts[i] += parentBaseCountsBacktrack[i];
-  }
-
-  undoMutations(data, T, node, blockMutationInfo, mutationInfo, globalCoords);
+  return;
 }
 
 void seed_annotated_tree::fillMutationMatricesFromTree_test(
-  mutationMatrices &mutMat, Tree *T, const std::string& path
-) {
-    TIME_FUNCTION;
-    seed_annotated_tree::mutableTreeData data;
-    seed_annotated_tree::globalCoords_t globalCoords;
-    seed_annotated_tree::setup(data, globalCoords, T);
-
-    CoordNavigator navigator(data.sequence);
-
-    std::vector<int> BlockSizes(data.sequence.size(),0);
-    std::vector<std::pair<int64_t, int64_t>> blockRanges(data.blockExists.size());
-    
-    std::vector<int> scalarCoordToBlockId(globalCoords.back().first.back().first + 1);
-    auto currCoord = tupleCoord_t{0,0,0};
-    if(navigator.sequence()[0].first[0].second.empty()) {
-      currCoord.nucGapPos = -1;
-    }
-
-    for(int i = 0; i < scalarCoordToBlockId.size(); i++){
-      scalarCoordToBlockId[i] = currCoord.blockId;
-      BlockSizes[currCoord.blockId] ++; 
-      currCoord = navigator.newincrement(currCoord, data.blockStrand);
-    }
-
-    for (size_t i = 0; i < blockRanges.size(); ++i) {
-      int64_t start = globalCoords[i].first[0].second.empty() ? tupleToScalarCoord({i, 0, -1}, globalCoords) : tupleToScalarCoord({i, 0, 0}, globalCoords);
-      int64_t end = tupleToScalarCoord({i, globalCoords[i].first.size() - 1, -1}, globalCoords);
-      blockRanges[i] = std::make_pair(start, end);
-    }
-
-    std::vector<std::unordered_set<int>> BlocksToSeeds(data.sequence.size());
-    std::map<int64_t, int64_t> gapMap;
-    gapMap[0] = tupleToScalarCoord({blockRanges.size() - 1, globalCoords[blockRanges.size() - 1].first.size() - 1, -1}, globalCoords);
-    
-    std::vector<int64_t> parentBaseCounts(4);
-    std::vector<int64_t> totalBaseCounts(4);
-    std::vector<std::vector<int64_t>> subCount(4, std::vector<int64_t>(4, 0));
-    std::unordered_map<int64_t, int64_t> insCount;
-    std::unordered_map<int64_t, int64_t> delCount;
-
-    // update baseCounts
-    //   update nucMut when block on -> on
-    //   recompute when block off->on or on->off
-    // update totalBaseCounts
-    //   add baseCounts to totalbaseCounts if there is any indel or substitution
-    //   do nothing if there is no indel or substitution
-    buildMutationMatricesHelper_test(mutMat, T, T->root, data, gapMap, globalCoords, navigator, scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
-
-    int64_t totalNucCounts = 0;
-    int64_t totalInsCounts = 0;
-    int64_t totalDelCounts = 0;
-    for (const auto& count : totalBaseCounts) totalNucCounts += count;
-    for (const auto& [size, count] : insCount) totalInsCounts += count;
-    for (const auto& [size, count] : delCount) totalDelCounts += count;
-    insCount[0] = totalNucCounts - totalInsCounts;
-    delCount[0] = totalNucCounts - totalDelCounts;
-
-    for (int i = 0; i < 4; ++i) {
-      mutMat.submat[i][i] = static_cast<double>(totalBaseCounts[i]);
-    }
-    for (int i = 0; i < 4; ++i) {
-      for (int j = 0; j < 4; ++j) {
-        if (i != j) {
-          mutMat.submat[i][j] = static_cast<double>(subCount[i][j]);
-          mutMat.submat[i][i] -= mutMat.submat[i][j];
-        }
-      }
-    }
-
-    for (const auto& [size, count] : insCount) {
-      mutMat.insmat[size] = static_cast<double>(count);
-    }
-    for (const auto& [size, count] : delCount) {
-      mutMat.delmat[size] = static_cast<double>(count);
-    }
-
-    // insertion
-    for (auto [size, count] : mutMat.insmat) {
-      mutMat.insmat[size] = -10 * log10f(count / static_cast<double>(totalNucCounts));
-    }
-    // deletion
-    for (auto [size, count] : mutMat.delmat) {
-      mutMat.delmat[size] = -10 * log10f(count / static_cast<double>(totalNucCounts));
-    }
-
-    // substitution
-    for (auto i = 0; i < 4; i++) {
-      for (auto j = 0; j < 4; j++) {
-        mutMat.submat[i][j] = -10 * log10f(mutMat.submat[i][j] / static_cast<double>(totalBaseCounts[i]));
-      }
-    }
-    mutMat.filled = true;
-
-    std::ofstream outFile(path);
-    for (auto i = 0; i < 4; i++) {
-      for (auto j = 0; j < 4; j++) {
-        outFile << mutMat.submat[i][j] << " ";
-      }
-      outFile << "\n";
-    }
-
-    std::vector<std::pair<int64_t, double>> insmat_sorted(mutMat.insmat.begin(), mutMat.insmat.end());
-    std::sort(insmat_sorted.begin(), insmat_sorted.end(), [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
-      return a.first < b.first;
-    });
-    for (const auto& [size, logProb] : insmat_sorted) {
-      outFile << size << ":" << logProb << " ";
-    }
-    outFile << "\n";
-
-    std::vector<std::pair<int64_t, double>> delmat_sorted(mutMat.delmat.begin(), mutMat.delmat.end());
-    std::sort(delmat_sorted.begin(), delmat_sorted.end(), [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
-      return a.first < b.first;
-    });
-    for (const auto& [size, logProb] : delmat_sorted) {
-      outFile << size << ":" << logProb << " ";
-    }
-    outFile << "\n";
-    outFile.close();
+    mutationMatrices &mutMat, Tree *T, const std::string &path) {
+  return;
 }
 
 void seed_annotated_tree::fillMutationMatricesFromFile(mutationMatrices &mutMat,
-                                        std::ifstream &inf) {
-    TIME_FUNCTION;
-    std::string line;
-    int idx = 0;
-    while (getline(inf, line)) {
+                                                       std::ifstream &inf) {
+  TIME_FUNCTION;
+  std::string line;
+  int idx = 0;
+  while (getline(inf, line)) {
+    std::vector<double> probs;
+    std::vector<std::string> fields;
+    stringSplit(line, ' ', fields);
+    for (const auto &f : fields) {
+      probs.push_back(std::stod(f));
+    }
+    if (probs.size() == 0) {
+      break;
+    }
+
+    if (idx < 4) {
+      if (probs.size() != 4) {
+        throw std::invalid_argument(
+            "Received invalid mutation matrix (.mm) file");
+      }
+
       std::vector<double> probs;
-      std::vector<std::string> fields;
-      stringSplit(line, ' ', fields);
       for (const auto &f : fields) {
         probs.push_back(std::stod(f));
       }
-      if (probs.size() == 0) {
-        break;
+      mutMat.submat[idx] = std::move(probs);
+    } else if (idx == 4) {
+      if (probs.size() < 1) {
+        throw std::invalid_argument(
+            "Received invalid mutation matrix (.mm) file");
       }
 
-      if (idx < 4) {
-        if (probs.size() != 4) {
-          throw std::invalid_argument(
-              "Received invalid mutation matrix (.mm) file");
-        }
+      for (const auto &f : fields) {
+        std::vector<std::string> subFields;
+        stringSplit(f, ':', subFields);
+        int64_t size = std::stoll(subFields[0]);
+        double prob = std::stod(subFields[1]);
+        mutMat.insmat[size] = prob;
+      }
+    } else if (idx == 5) {
+      if (probs.size() < 1) {
+        throw std::invalid_argument(
+            "Received invalid mutation matrix (.mm) file");
+      }
 
-        std::vector<double> probs;
-        for (const auto &f : fields) {
-          probs.push_back(std::stod(f));
-        }
-        mutMat.submat[idx] = std::move(probs);
-      } else if (idx == 4) {
-        if (probs.size() < 1) {
-          throw std::invalid_argument(
-              "Received invalid mutation matrix (.mm) file");
-        }
-
-        for (const auto& f : fields) {
-          std::vector<std::string> subFields;
-          stringSplit(f, ':', subFields);
-          int64_t size = std::stoll(subFields[0]);
-          double prob = std::stod(subFields[1]);
-          mutMat.insmat[size] = prob;
-        }
-      } else if (idx == 5) {
-        if (probs.size() < 1) {
-          throw std::invalid_argument(
-              "Received invalid mutation matrix (.mm) file");
-        }
-
-      for (const auto& f : fields) {
+      for (const auto &f : fields) {
         std::vector<std::string> subFields;
         stringSplit(f, ':', subFields);
         int64_t size = std::stoll(subFields[0]);
@@ -1802,594 +2185,4 @@ void seed_annotated_tree::fillMutationMatricesFromFile(mutationMatrices &mutMat,
     throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
   }
   mutMat.filled = true;
-}
-
-std::string seed_annotated_tree::getStringAtNode(Node *node, Tree *T, bool aligned) {
-
-  Node *referenceNode = nullptr;
-
-  for (auto u : T->allNodes) {
-    if (u.first == node->identifier) {
-      referenceNode = u.second;
-      break;
-    }
-  }
-  auto &allNodes = T->allNodes;
-  auto &blocks = T->blocks;
-  auto &gaps = T->gaps;
-  std::string reference = node->identifier;
-  auto &blockGaps = T->blockGaps;
-  auto &sequenceInverted = T->sequenceInverted;
-  auto &root = T->root;
-  auto &circularSequences = T->circularSequences;
-
-  if (referenceNode == nullptr) {
-    return "Error: Reference sequence with matching name not found!";
-  }
-
-  std::vector<panmanUtils::Node *> path;
-  Node *it = referenceNode;
-
-  while (it != root) {
-    path.push_back(it);
-    it = it->parent;
-  }
-  path.push_back(root);
-
-  // List of blocks. Each block has a nucleotide list. Along with each
-  // nucleotide is a gap list.
-  std::vector<
-      std::pair<std::vector<std::pair<char, std::vector<char>>>,
-                std::vector<std::vector<std::pair<char, std::vector<char>>>>>>
-      sequence(blocks.size() + 1);
-  std::vector<std::pair<bool, std::vector<bool>>> blockExists(blocks.size() + 1,
-                                                              {false, {}});
-  blockStrand_t blockStrand(blocks.size() + 1, {true, {}});
-
-  // Assigning block gaps
-  for (size_t i = 0; i < blockGaps.blockPosition.size(); i++) {
-    sequence[blockGaps.blockPosition[i]].second.resize(
-        blockGaps.blockGapLength[i]);
-    blockExists[blockGaps.blockPosition[i]].second.resize(
-        blockGaps.blockGapLength[i], false);
-    blockStrand[blockGaps.blockPosition[i]].second.resize(
-        blockGaps.blockGapLength[i], true);
-  }
-
-  int32_t maxBlockId = 0;
-
-  // Create block consensus sequences
-  for (size_t i = 0; i < blocks.size(); i++) {
-    int32_t primaryBlockId = ((int32_t)blocks[i].primaryBlockId);
-    int32_t secondaryBlockId = ((int32_t)blocks[i].secondaryBlockId);
-    maxBlockId = std::max(maxBlockId, primaryBlockId);
-
-    for (size_t j = 0; j < blocks[i].consensusSeq.size(); j++) {
-      bool endFlag = false;
-      for (size_t k = 0; k < 8; k++) {
-        const int nucCode =
-            (((blocks[i].consensusSeq[j]) >> (4 * (7 - k))) & 15);
-
-        if (nucCode == 0) {
-          endFlag = true;
-          break;
-        }
-        const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
-
-        if (secondaryBlockId != -1) {
-          sequence[primaryBlockId].second[secondaryBlockId].push_back(
-              {nucleotide, {}});
-        } else {
-          sequence[primaryBlockId].first.push_back({nucleotide, {}});
-        }
-      }
-      if (endFlag) {
-        break;
-      }
-    }
-
-    // End character to incorporate for gaps at the end
-    if (secondaryBlockId != -1) {
-      sequence[primaryBlockId].second[secondaryBlockId].push_back({'x', {}});
-    } else {
-      sequence[primaryBlockId].first.push_back({'x', {}});
-    }
-  }
-
-  sequence.resize(maxBlockId + 1);
-  blockExists.resize(maxBlockId + 1);
-  blockStrand.resize(maxBlockId + 1);
-
-  // Assigning nucleotide gaps
-  for (size_t i = 0; i < gaps.size(); i++) {
-    int32_t primaryBId = (gaps[i].primaryBlockId);
-    int32_t secondaryBId = (gaps[i].secondaryBlockId);
-
-    for (size_t j = 0; j < gaps[i].nucPosition.size(); j++) {
-      int len = gaps[i].nucGapLength[j];
-      int pos = gaps[i].nucPosition[j];
-
-      if (secondaryBId != -1) {
-        sequence[primaryBId].second[secondaryBId][pos].second.resize(len, '-');
-      } else {
-        sequence[primaryBId].first[pos].second.resize(len, '-');
-      }
-    }
-  }
-
-  // Get all blocks on the path
-  for (auto node = path.rbegin(); node != path.rend(); node++) {
-    for (auto mutation : (*node)->blockMutation) {
-      int primaryBlockId = mutation.primaryBlockId;
-      int secondaryBlockId = mutation.secondaryBlockId;
-      int type = (mutation.blockMutInfo);
-      bool inversion = mutation.inversion;
-
-      if (type == panmanUtils::BlockMutationType::BI) {
-        if (secondaryBlockId != -1) {
-          blockExists[primaryBlockId].second[secondaryBlockId] = true;
-
-          // if insertion of inverted block takes place, the strand is backwards
-          blockStrand[primaryBlockId].second[secondaryBlockId] = !inversion;
-        } else {
-          blockExists[primaryBlockId].first = true;
-
-          // if insertion of inverted block takes place, the strand is backwards
-          blockStrand[primaryBlockId].first = !inversion;
-        }
-      } else {
-        if (inversion) {
-          // This is not actually a deletion but an inversion
-          if (secondaryBlockId != -1) {
-            blockStrand[primaryBlockId].second[secondaryBlockId] =
-                !blockStrand[primaryBlockId].second[secondaryBlockId];
-          } else {
-            blockStrand[primaryBlockId].first =
-                !blockStrand[primaryBlockId].first;
-          }
-        } else {
-          // Actually a deletion
-          if (secondaryBlockId != -1) {
-            blockExists[primaryBlockId].second[secondaryBlockId] = false;
-            blockStrand[primaryBlockId].second[secondaryBlockId] = true;
-          } else {
-            blockExists[primaryBlockId].first = false;
-            blockStrand[primaryBlockId].first = true;
-          }
-        }
-      }
-    }
-  }
-
-  // Apply nucleotide mutations
-  for (auto node = path.rbegin(); node != path.rend(); node++) {
-
-    for (size_t i = 0; i < (*node)->nucMutation.size(); i++) {
-
-      int32_t primaryBlockId = (*node)->nucMutation[i].primaryBlockId;
-      int32_t secondaryBlockId = (*node)->nucMutation[i].secondaryBlockId;
-
-      if (secondaryBlockId != -1) {
-        if (!blockExists[primaryBlockId].second[secondaryBlockId]) {
-          continue;
-        }
-      } else {
-        if (!blockExists[primaryBlockId].first) {
-          continue;
-        }
-      }
-
-      int32_t nucPosition = (*node)->nucMutation[i].nucPosition;
-      int32_t nucGapPosition = (*node)->nucMutation[i].nucGapPosition;
-      uint32_t type = ((*node)->nucMutation[i].mutInfo & 0x7);
-      char newVal = '-';
-
-      if (type < 3) {
-
-        int len = (((*node)->nucMutation[i].mutInfo) >> 4);
-
-        if (type == panmanUtils::NucMutationType::NS) {
-          if (secondaryBlockId != -1) {
-            if (nucGapPosition != -1)
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId]
-                    .second[secondaryBlockId][nucPosition]
-                    .second[nucGapPosition + j] = newVal;
-              }
-            }
-            else
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId]
-                    .second[secondaryBlockId][nucPosition + j]
-                    .first = newVal;
-              }
-            }
-          }
-          else
-          {
-            if (nucGapPosition != -1)
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId]
-                    .first[nucPosition]
-                    .second[nucGapPosition + j] = newVal;
-              }
-            }
-            else
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId].first[nucPosition + j].first = newVal;
-              }
-            }
-          }
-        }
-        else if (type == panmanUtils::NucMutationType::NI) {
-          if (secondaryBlockId != -1) {
-            if (nucGapPosition != -1)
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId]
-                    .second[secondaryBlockId][nucPosition]
-                    .second[nucGapPosition + j] = newVal;
-              }
-            }
-            else
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId]
-                    .second[secondaryBlockId][nucPosition + j]
-                    .first = newVal;
-              }
-            }
-          }
-          else
-          {
-            if (nucGapPosition != -1)
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId]
-                    .first[nucPosition]
-                    .second[nucGapPosition + j] = newVal;
-              }
-            }
-            else
-            {
-              for (int j = 0; j < len; j++)
-              {
-                newVal = panmanUtils::getNucleotideFromCode(
-                    (((*node)->nucMutation[i].nucs) >> (4 * (5 - j))) & 0xF);
-                sequence[primaryBlockId].first[nucPosition + j].first = newVal;
-              }
-            }
-          }
-        }
-        else if (type == panmanUtils::NucMutationType::ND) {
-          if (secondaryBlockId != -1) {
-            if (nucGapPosition != -1)
-            {
-              for (int j = 0; j < len; j++)
-              {
-                sequence[primaryBlockId]
-                    .second[secondaryBlockId][nucPosition]
-                    .second[nucGapPosition + j] = '-';
-              }
-            }
-            else
-            {
-              for (int j = 0; j < len; j++)
-              {
-                sequence[primaryBlockId]
-                    .second[secondaryBlockId][nucPosition + j]
-                    .first = '-';
-              }
-            }
-          }
-          else
-          {
-            if (nucGapPosition != -1)
-            {
-              for (int j = 0; j < len; j++)
-              {
-                sequence[primaryBlockId]
-                    .first[nucPosition]
-                    .second[nucGapPosition + j] = '-';
-              }
-            }
-            else
-            {
-              for (int j = 0; j < len; j++)
-              {
-                sequence[primaryBlockId].first[nucPosition + j].first = '-';
-              }
-            }
-          }
-        }
-      }
-      else
-      {
-        if (type == panmanUtils::NucMutationType::NSNPS) {
-          newVal = panmanUtils::getNucleotideFromCode(
-              (((*node)->nucMutation[i].nucs) >> 20) & 0xF);
-          if (secondaryBlockId != -1) {
-            if (nucGapPosition != -1)
-            {
-              sequence[primaryBlockId]
-                  .second[secondaryBlockId][nucPosition]
-                  .second[nucGapPosition] = newVal;
-            }
-            else
-            {
-              sequence[primaryBlockId]
-                  .second[secondaryBlockId][nucPosition]
-                  .first = newVal;
-            }
-          }
-          else
-          {
-            if (nucGapPosition != -1)
-            {
-              sequence[primaryBlockId]
-                  .first[nucPosition]
-                  .second[nucGapPosition] = newVal;
-            }
-            else
-            {
-              sequence[primaryBlockId].first[nucPosition].first = newVal;
-            }
-          }
-        }
-        else if (type == panmanUtils::NucMutationType::NSNPI) {
-          newVal = panmanUtils::getNucleotideFromCode(
-              (((*node)->nucMutation[i].nucs) >> 20) & 0xF);
-          if (secondaryBlockId != -1) {
-            if (nucGapPosition != -1)
-            {
-              sequence[primaryBlockId]
-                  .second[secondaryBlockId][nucPosition]
-                  .second[nucGapPosition] = newVal;
-            }
-            else
-            {
-              sequence[primaryBlockId]
-                  .second[secondaryBlockId][nucPosition]
-                  .first = newVal;
-            }
-          }
-          else
-          {
-            if (nucGapPosition != -1)
-            {
-              sequence[primaryBlockId]
-                  .first[nucPosition]
-                  .second[nucGapPosition] = newVal;
-            }
-            else
-            {
-              sequence[primaryBlockId].first[nucPosition].first = newVal;
-            }
-          }
-        }
-        else if (type == panmanUtils::NucMutationType::NSNPD) {
-          if (secondaryBlockId != -1) {
-            if (nucGapPosition != -1)
-            {
-              sequence[primaryBlockId]
-                  .second[secondaryBlockId][nucPosition]
-                  .second[nucGapPosition] = '-';
-            }
-            else
-            {
-              sequence[primaryBlockId]
-                  .second[secondaryBlockId][nucPosition]
-                  .first = '-';
-            }
-          }
-          else
-          {
-            if (nucGapPosition != -1)
-            {
-              sequence[primaryBlockId]
-                  .first[nucPosition]
-                  .second[nucGapPosition] = '-';
-            }
-            else
-            {
-              sequence[primaryBlockId].first[nucPosition].first = '-';
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (!aligned &&
-      T->rotationIndexes.find(reference) != T->rotationIndexes.end() &&
-      T->rotationIndexes[reference] != 0) {
-    int ctr = -1, rotInd = 0;
-    for (size_t i = 0; i < blockExists.size(); i++) {
-      if (blockExists[i].first) {
-        ctr++;
-      }
-      if (ctr == T->rotationIndexes[reference]) {
-        rotInd = i;
-        break;
-      }
-    }
-    rotate(sequence.begin(), sequence.begin() + rotInd, sequence.end());
-    rotate(blockExists.begin(), blockExists.begin() + rotInd,
-           blockExists.end());
-    rotate(blockStrand.begin(), blockStrand.begin() + rotInd,
-           blockStrand.end());
-  }
-
-  if (sequenceInverted.find(reference) != sequenceInverted.end() &&
-      sequenceInverted[reference]) {
-    reverse(sequence.begin(), sequence.end());
-    reverse(blockExists.begin(), blockExists.end());
-    reverse(blockStrand.begin(), blockStrand.end());
-  }
-
-  std::string sequenceString;
-  for (size_t i = 0; i < sequence.size(); i++) {
-    // Iterate through gap blocks - CURRENTLY NOT BEING USED
-    for (size_t j = 0; j < sequence[i].second.size(); j++) {
-      if (blockExists[i].second[j]) {
-        if (blockStrand[i].second[j]) {
-          // If forward strand
-          for (size_t k = 0; k < sequence[i].second[j].size(); k++) {
-            for (size_t w = 0; w < sequence[i].second[j][k].second.size();
-                 w++) {
-              if (sequence[i].second[j][k].second[w] == 'x' ||
-                  sequence[i].second[j][k].second[w] == '-') {
-                if (aligned) {
-                  sequenceString += '-';
-                }
-              } else {
-                sequenceString += sequence[i].second[j][k].second[w];
-              }
-            }
-            if (sequence[i].second[j][k].first == 'x' ||
-                sequence[i].second[j][k].first == '-') {
-              if (aligned) {
-                sequenceString += '-';
-              }
-            } else {
-              sequenceString += sequence[i].second[j][k].first;
-            }
-          }
-        } else {
-          for (size_t k = sequence[i].second[j].size() - 1; k + 1 > 0; k--) {
-            // If reverse strand
-            if (sequence[i].second[j][k].first == 'x' ||
-                sequence[i].second[j][k].first == '-') {
-              if (aligned) {
-                sequenceString += '-';
-              }
-            } else {
-              sequenceString += sequence[i].second[j][k].first;
-            }
-            for (size_t w = sequence[i].second[j][k].second.size() - 1;
-                 w + 1 > 0; w--) {
-              if (sequence[i].second[j][k].second[w] == 'x' ||
-                  sequence[i].second[j][k].second[w] == '-') {
-                if (aligned) {
-                  sequenceString += '-';
-                }
-              } else {
-                sequenceString += sequence[i].second[j][k].second[w];
-              }
-            }
-          }
-        }
-      } else {
-        if (aligned) {
-          for (size_t k = 0; k < sequence[i].second[j].size(); k++) {
-            for (size_t w = 0; w < sequence[i].second[j][k].second.size();
-                 w++) {
-              sequenceString += '-';
-            }
-            sequenceString += '-';
-          }
-        }
-      }
-    }
-
-    // Main block
-    if (blockExists[i].first) {
-      if (blockStrand[i].first) {
-        for (size_t j = 0; j < sequence[i].first.size(); j++) {
-          for (size_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-            if (sequence[i].first[j].second[k] == 'x' ||
-                sequence[i].first[j].second[k] == '-') {
-              // This shouldn't be possible but I'm still keeping it since it
-              // doesn't hurt
-              if (aligned) {
-                sequenceString += '-';
-              }
-            } else {
-              sequenceString += sequence[i].first[j].second[k];
-            }
-          }
-          if (sequence[i].first[j].first == 'x' ||
-              sequence[i].first[j].first == '-') {
-            if (aligned) {
-              sequenceString += '-';
-            }
-          } else {
-            sequenceString += sequence[i].first[j].first;
-          }
-        }
-      } else {
-        // If reverse strand
-        for (size_t j = sequence[i].first.size() - 1; j + 1 > 0; j--) {
-          if (sequence[i].first[j].first == 'x' ||
-              sequence[i].first[j].first == '-') {
-            if (aligned) {
-              sequenceString += '-';
-            }
-          } else {
-            sequenceString +=
-                getComplementCharacter(sequence[i].first[j].first);
-          }
-          for (size_t k = sequence[i].first[j].second.size() - 1; k + 1 > 0;
-               k--) {
-            if (sequence[i].first[j].second[k] == 'x' ||
-                sequence[i].first[j].second[k] == '-') {
-              // This shouldn't be possible but I'm still keeping it since it
-              // doesn't hurt
-              if (aligned) {
-                sequenceString += '-';
-              }
-            } else {
-              sequenceString +=
-                  getComplementCharacter(sequence[i].first[j].second[k]);
-            }
-          }
-        }
-      }
-    } else {
-      if (aligned) {
-        for (size_t j = 0; j < sequence[i].first.size(); j++) {
-          for (size_t k = 0; k < sequence[i].first[j].second.size(); k++) {
-            sequenceString += '-';
-          }
-          sequenceString += '-';
-        }
-      }
-    }
-  }
-
-  int offset = 0;
-  if (!aligned &&
-      circularSequences.find(reference) != circularSequences.end()) {
-    offset = circularSequences[reference];
-  }
-  if (offset == 0) {
-    return sequenceString;
-  } else {
-    return sequenceString.substr(offset) + sequenceString.substr(0, offset);
-  }
 }
