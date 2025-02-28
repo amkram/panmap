@@ -1,63 +1,37 @@
-#include "genotype.hpp"
-#include "place.hpp"
-#include "pmi.hpp"
-#include "seed_annotated_tree.hpp"
-#include <panmanUtils.hpp>
+#include "coordinate_tests.hpp"
+#include "docopt.h"
+#include "genotyping.hpp"
+#include "index.capnp.h"
+#include "indexing.hpp"
+#include "logging.hpp"
+#include "placement.hpp"
 #include <boost/filesystem.hpp>
 #include <boost/iostreams/filter/lzma.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/program_options.hpp>
-#include <csignal>
-#include <cstdio>
-#include <iostream>
-#include <minimap2/kseq.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string>
-#include <tbb/global_control.h>
-#include "docopt.h"
-#include "index.capnp.h"
-#include <capnp/message.h>
-#include <capnp/serialize-packed.h>
 #include <fcntl.h>
-#include <chrono>
-#include <thread>
-// #include <nlohmann/json.hpp>
-#include <cstdlib>
-#include <thread>
-#include <future>
-#include <iostream>
+#include <minimap2/kseq.h>
+#include <panmanUtils.hpp>
+#include <tbb/global_control.h>
 
+static const char USAGE[] =
+    R"(panmap -- v0.0 ⟗ ⟗
 
-using namespace pmi;
-namespace po = boost::program_options;
-namespace fs = boost::filesystem;
-namespace sat = seed_annotated_tree;
-
-static const char USAGE[] = 
-R"(panmap -- v0.0 ⟗ ⟗
-
-Assemble haplotypes from reads and a pangenome guide tree.
-
-Default outputs (see -o for more options):
-    - BAM alignment to the reference selected by panmap (panmap.bam)
-    - VCF of variant calls (panmap.vcf)
-    - FASTA of the assembled consensus haplotype (panmap.fasta)
-    - Log of the panmap run (panmap.log)
+Pangenome phylogenetic placement, alignment, genotyping, and assembly of reads
 
 Usage:
-  panmap <guide> [<reads1.fastq>] [<reads2.fastq>] [options]
+  panmap <guide.panman> [<reads1.fastq>] [<reads2.fastq>] [options]
 
-<guide>         Path to pangenome reference tree (pan-MAT or pan-MAN file).
+<guide.panman>  Path to pangenome reference (PanMAN file).
 <reads1.fastq>  [Optional] Path to first FASTQ file.
 <reads2.fastq>  [Optional] Path to second FASTQ file (for paired-end reads).
 
-
 Input/output options:
+  -b --batch <tsv>          Path to tsv file with reads to process (one per line or two per line for paired-end reads).
   -p --prefix <prefix>      Prefix for output files. [default: panmap]
   -o <outputs>              List of outputs to generate.
                               Accepted values:
-                                  placement / p:  Save phylogenetic placement results to <prefix>.placement
+                                  placement / p:  Save phylogenetic placement results to <prefix>.placement.tsv (or <prefix>.placements.tsv in batch mode)
                                   assembly / a:   Save consensus assembly to <prefix>.assembly.fa
                                   reference / r:  Save panmap's selected reference to <prefix>.reference.fa
                                   spectrum / c:   Save mutation spectrum matrix to <prefix>.mm
@@ -71,7 +45,7 @@ Input/output options:
   -i --index <path>         Provide a precomputed panmap index. If not specified, index
                                 is loaded from <guide.pmat>.pmi, if it exists, otherwise
                                 it is built with parameters <k> and <s> (see below). [default: ]
-  
+
   -m --mutmat <path>        Provide a precomputed mutation spectrum matrix instead of computing
                                 one from the tree. if not specified, one is computed from the tree.
                                 Overrides --prior. [default: ]
@@ -81,7 +55,7 @@ Seeding/alignment options:
   -s <s>                             Length of s-mers for seed (syncmer) selection. [default: 8]
   -a --aligner <method>              The alignment algorithm to use ('minimap2' or 'bwa-aln').
                                      For very short or damaged reads, use bwa-aln. [default: minimap2]
-  -r --ref <node_id>                 Provide a reference node to align reads to (skip placement) [default: ].    
+  -r --ref <node_id>                 Provide a reference node to align reads to (skip placement) [default: ].
   -P --prior                         Compute and use a mutation spectrum prior for genotyping.
   -f --reindex                       Don't load index from disk, build it from scratch.
 
@@ -100,33 +74,7 @@ Other options:
   -h --help                 Show this screen.
   -D --dump                 Dump all seeds to file.
   -X --dump-real            Dump true seeds to file.
-  --hot-threshold <int>     Mutation frequency threshold for hot positions to index. [default: 1000]
-
-Placement-per-read options:
-  --place-per-read                       Place reads per read (panmama)
-  --maximum-gap <int>                   Maximum gap between matches. [default: 10]
-  --minimum-count <int>                 Minimum count of seeds in a match. [default: 0]
-  --minimum-score <int>                 Minimum score of seeds in a match. [default: 0]
-  --error-rate <double>                 Error rate of kminmer [default: 0.005]
-  --redo-read-threshold <int>           Re-chain reads when the number of kminmers need to be updated exceeds this threshold [default: 5]
-  --recalculate-score                   Recalculate chain scores for every read at each node (Sometimes, although rarely, a read's kminmer matches are not affected but the coordinate of the kminmer changes, which can affect the chaining score. This typically affects the scores very slightly.)
-  --rescue-duplicates-threshold <double>  Rescue reads with ratio of duplicates to total seeds not greater than <threshold>. Default is 0, which means no rescue. [default: 0]
-  --exclude-duplicates-threshold <double> Exclude reads with ratio of duplicates to total seeds greater than <threshold>. To include all reads, set to 1. [default: 0.5]
-  --preem-filter-method <method>        Pre-filter method for haplotype filtering. Accepted values:
-                                          'null' - No pre-filtering.
-                                          'uhs' - Keep haplotypes with at least one highest score read with no ties.
-                                          'hsc' - Keep haplotypes with at least one highest score read, allowing ties.
-                                          [default: null]
-  --preem-filter-n-order <int>          Order of neighbors to consider when filtering haplotypes with ties in highest score reads. [default: 1]
-  --preem-filter-mbc-num <int>          Top <int> nodes to include in the MBC filter not including nodes with 100% coverage. [default: 1000]
-  --em-filter-round <int>               Maximum number of rounds to filter low probability haplotypes during EM filtering. [default: 5]
-  --check-frequency <int>               Number of iterations between each em-filter-round. [default: 20]
-  --remove-iteration <int>              Remove haplotypes that has probability less than insig-prob for more than remove-iteration consecutive iterations. [default: 20]
-  --insig-prop <double>                 As described in --remove-iteration. (default is calculated from total number of nodes, where default = 1 / (total number of nodes * 10))
-  --rounds-remove <int>                 Number of rounds to clean up and remove low probability haplotypes after EM. [default: 3]
-  --remove-threshold <double>           Remove haplotypes with probability less than this threshold during rounds-remove. [default: 0.005]
-  --leaf-nodes-only                     Only consider leaf nodes when placing reads.
-  --call-subconsensus                   Call subconsensus sequence from reads.
+  --test                    Run coordinate system tests.
 
 Developer options:
   --genotype-from-sam                   Generate VCF from SAM file using mutation spectrum as prior.
@@ -136,412 +84,483 @@ Developer options:
   --save-kminmer-binary-coverage        Save kminmer binary coverage to <prefix>.kminmer_binary_coverage.txt
   --parallel-tester                     Run parallel tester.
   --eval <path>                         Evaluate accuracy of placement. <path> is a tsv file.
+  --dump-sequence <nodeID>              Dump sequence for a specified node ID to <panmanfile>.<nodeID>.fa
 
 Placement options:
   --candidate-threshold <proportion>    Initial seed matching retains the top <proportion> of all nodes as candidates, whose scores are refined by seed extension. [default: 0.01]
   --max-candidates <count>              Maximum number of candidate nodes to consider [default: 16]
 )";
 
+// Namespace aliases
+namespace fs = boost::filesystem;
+namespace po = boost::program_options;
+namespace sat = seed_annotated_tree;
+using namespace logging;
 
-using namespace std;
+using namespace coordinates; // For coordinate types and traversal
+using namespace seed_annotated_tree;
+using namespace placement;
+using namespace genotyping;
 
+// Global constants
+static constexpr int DEFAULT_K = 15;
+static constexpr int DEFAULT_S = 8;
+static constexpr bool DEFAULT_REINDEX = false;
 
-void writeCapnp(::capnp::MallocMessageBuilder &message, std::string &filename) {
-  int fd = open(filename.c_str(), O_WRONLY | O_CREAT, 0644);
+// Thread safety
+namespace {
+std::mutex outputMutex, indexMutex, placementMutex;
+std::atomic<bool> shouldStop{false};
 
-  if (fd < 0) {
-    perror("Failed to open proto file for writing");
-    return;
-  }
+void log(const std::string &prefix, const std::string &message) {
+  std::lock_guard<std::mutex> lock(outputMutex);
+  std::cout << "[" << prefix << "] " << message << std::endl;
+}
 
-  try {
-    capnp::writePackedMessageToFd(fd, message);
-  } catch (const std::exception &e) {
-    std::cerr << "Failed to write Cap'n Proto message: " << e.what() << std::endl;
-  }
-
+void writeCapnp(::capnp::MallocMessageBuilder &message,
+                const std::string &path) {
+  std::lock_guard<std::mutex> lock(indexMutex);
+  int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0)
+    throw std::runtime_error("Failed to open file for writing: " + path);
+  writePackedMessageToFd(fd, message);
   close(fd);
 }
 
-std::unique_ptr<::capnp::PackedFdMessageReader> readCapnp(std::string &filename) {
-  int fd = open(filename.c_str(), O_RDONLY);
-  ::capnp::ReaderOptions options = {(uint64_t) -1, 64};
-  auto message = std::make_unique<::capnp::PackedFdMessageReader>(fd, options);
-  return message;
+std::unique_ptr<::capnp::PackedFdMessageReader>
+readCapnp(const std::string &path) {
+  std::lock_guard<std::mutex> lock(indexMutex);
+  int fd = open(path.c_str(), O_RDONLY);
+  if (fd < 0)
+    throw std::runtime_error("Failed to open file for reading: " + path);
+  auto reader = std::make_unique<::capnp::PackedFdMessageReader>(fd);
+  close(fd);
+  return reader;
 }
 
-panmanUtils::Tree* loadPanmanOrPanmat(const std::string &pmatFile) {
-    // If the data structure loaded into memory is a PanMAT, it is pointed to by T
-    panmanUtils::Tree *T = nullptr;
-    // If the data structure loaded into memory is a PanMAN, it is pointed to by TG
-    panmanUtils::TreeGroup *TG = nullptr;
+void signalHandler(int signum) { shouldStop = true; }
 
+bool isFileReadable(const std::string &path) {
+  std::ifstream file(path);
+  return file.good();
+}
+
+bool isFileWritable(const std::string &path) {
+  if (fs::exists(path)) {
+    std::ofstream file(path, std::ios::app);
+    return file.good();
+  }
+
+  auto dir = fs::path(path).parent_path();
+  if (!fs::exists(dir)) {
     try {
-        // Try to load PanMAN file directly into memory
-        std::ifstream inputFile(pmatFile);
-        boost::iostreams::filtering_streambuf< boost::iostreams::input> inPMATBuffer;
-        inPMATBuffer.push(boost::iostreams::lzma_decompressor());
-        inPMATBuffer.push(inputFile);
-        std::istream inputStream(&inPMATBuffer);
+      fs::create_directories(dir);
+    } catch (const fs::filesystem_error &) {
+      return false;
+    }
+  }
 
+  std::ofstream file(path);
+  if (!file.good())
+    return false;
+  fs::remove(path);
+  return true;
+}
 
-        TG = new panmanUtils::TreeGroup(inputStream);
+void validateInputFile(const std::string &path,
+                       const std::string &description) {
+  if (path.empty())
+    throw std::runtime_error(description + " path is empty");
+  if (!fs::exists(path))
+    throw std::runtime_error(description + " not found: " + path);
+  if (!isFileReadable(path))
+    throw std::runtime_error("Cannot read " + description + ": " + path);
+}
 
-        
-        inputFile.close();
+void validateOutputFile(const std::string &path,
+                        const std::string &description) {
+  if (path.empty())
+    throw std::runtime_error(description + " path is empty");
+  if (!isFileWritable(path))
+    throw std::runtime_error("Cannot write to " + description + ": " + path);
+}
+} // namespace
+
+// Forward declarations
+static void writeCapnp(::capnp::MallocMessageBuilder &message,
+                       const std::string &path);
+static std::unique_ptr<::capnp::PackedFdMessageReader>
+readCapnp(const std::string &path);
+
+using namespace std;
+
+void writeCapnp(::capnp::MallocMessageBuilder &message, std::string &filename) {
+  int fd = open(filename.c_str(), O_WRONLY | O_CREAT, 0644);
+  if (fd < 0) {
+    err("Failed to open proto file for writing");
+    return;
+  }
+  try {
+    capnp::writePackedMessageToFd(fd, message);
+  } catch (const std::exception &e) {
+    err("Failed to write Cap'n Proto message: {}", e.what());
+  }
+  close(fd);
+}
+
+std::unique_ptr<::capnp::PackedFdMessageReader>
+readCapnp(std::string &filename) {
+  int fd = open(filename.c_str(), O_RDONLY);
+  ::capnp::ReaderOptions options = {(uint64_t)-1, 64};
+  return std::make_unique<::capnp::PackedFdMessageReader>(fd, options);
+}
+
+panmanUtils::Tree *loadPanmanOrPanmat(const std::string &pmatFile) {
+  panmanUtils::Tree *T = nullptr;
+  panmanUtils::TreeGroup *TG = nullptr;
+
+  try {
+    // Try loading as PanMAN
+    std::ifstream inputFile(pmatFile);
+    boost::iostreams::filtering_streambuf<boost::iostreams::input> inBuffer;
+    inBuffer.push(boost::iostreams::lzma_decompressor());
+    inBuffer.push(inputFile);
+    std::istream inputStream(&inBuffer);
+    TG = new panmanUtils::TreeGroup(inputStream);
+    inputFile.close();
+  } catch (const std::exception &e) {
+    msg("Attempting to load as PanMAT...");
+    try {
+      std::ifstream inputFile(pmatFile);
+      boost::iostreams::filtering_streambuf<boost::iostreams::input> inBuffer;
+      inBuffer.push(boost::iostreams::lzma_decompressor());
+      inBuffer.push(inputFile);
+      std::istream inputStream(&inBuffer);
+      T = new panmanUtils::Tree(inputStream);
     } catch (const std::exception &e) {
-        std::cout << "Attempting to load as PanMAT...\n";
-        try {
-            std::ifstream inputFile(pmatFile);
-            boost::iostreams::filtering_streambuf< boost::iostreams::input> inPMATBuffer;
-            inPMATBuffer.push(boost::iostreams::lzma_decompressor());
-            inPMATBuffer.push(inputFile);
-            std::istream inputStream(&inPMATBuffer);
-
-
-            T = new panmanUtils::Tree(inputStream);
-
-
-        } catch (const std::exception &e) {
-            return nullptr;
-        }
+      return nullptr;
     }
-    if (TG != nullptr) {
-      return &(TG->trees[0]);
-    }
-    return T;
+  }
+  return TG ? &(TG->trees[0]) : T;
 }
 
-void log(const std::string& prefix, const std::string& message) {
-    std::cout << message << std::endl;
-}
+int main(int argc, const char **argv) {
+  auto main_start = std::chrono::high_resolution_clock::now();
 
-int main(int argc, const char** argv) {
+  // Parse command line arguments
+  std::map<std::string, docopt::value> args =
+      docopt::docopt(USAGE, {argv + 1, argv + argc}, true, "panmap 0.0");
 
-    auto main_start = std::chrono::high_resolution_clock::now();
-    
-    std::map<std::string, docopt::value> args = docopt::docopt(USAGE, { argv + 1, argv + argc }, true, "panmap 0.0");
-    tbb::global_control c(tbb::global_control::max_allowed_parallelism, std::stoi(args["--cpus"].asString()));
-    std::string guide = args["<guide>"].asString();
-    std::string reads1 = args["<reads1.fastq>"] ? args["<reads1.fastq>"].asString() : "";
-    std::string reads2 = args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";
-    std::string prefix = args["--prefix"] ? args["--prefix"].asString() : "panmap";
-    std::string outputs = args["-o"] && args["-o"].isString() ? args["-o"].asString() : "bam,vcf,assembly";
-    std::string aligner = args["--aligner"] ? args["--aligner"].asString() == "bwa-aln" ? "bwa-aln" : "minimap2" : "minimap2";
-    std::string refNode = args["--ref"] ? args["--ref"].asString() : "";
-    std::string eval = args["--eval"] ? args["--eval"].asString() : "";
+  // Set up parallel processing
+  tbb::global_control c(tbb::global_control::max_allowed_parallelism,
+                        std::stoi(args["--cpus"].asString()));
 
-    std::vector<std::string> outputs_seperated;
+  // Check if --test flag is set
+  if (args["--test"].asBool()) {
+    coordinate_tests::runAllTests();
+    return 0;
+  }
 
-    std::string token;
-    std::stringstream ss(outputs);
-    while (std::getline(ss, token, ',')) {
-        outputs_seperated.push_back(token);
+  // Get basic parameters
+  if (!args["<guide.panman>"] || !args["<guide.panman>"].isString()) {
+    err("Missing required pangenome file argument");
+    return 1;
+  }
+  std::string guide = args["<guide.panman>"].asString();
+  std::string reads1 =
+      args["<reads1.fastq>"] ? args["<reads1.fastq>"].asString() : "";
+  std::string reads2 =
+      args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";
+  std::string prefix =
+      args["--prefix"] ? args["--prefix"].asString() : "panmap";
+  std::string outputs = args["-o"] && args["-o"].isString()
+                            ? args["-o"].asString()
+                            : "bam,vcf,assembly";
+  std::string aligner =
+      args["--aligner"].asString() == "bwa-aln" ? "bwa-aln" : "minimap2";
+  std::string refNode = args["--ref"] ? args["--ref"].asString() : "";
+  std::string eval = args["--eval"] ? args["--eval"].asString() : "";
+
+  // Validate input file exists
+  if (!fs::exists(guide)) {
+    err("Pangenome file not found: {}", guide);
+    return 1;
+  }
+
+  // Parse output options
+  std::vector<std::string> outputs_seperated;
+  std::stringstream ss(outputs);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    outputs_seperated.push_back(token);
+  }
+
+  // Initialize output filenames
+  std::string refFileName, samFileName, bamFileName, mpileupFileName,
+      vcfFileName;
+
+  for (const auto &output : outputs_seperated) {
+    if (output.size() == 1) {
+      switch (output[0]) {
+      case 'r':
+        refFileName = prefix + ".reference.fa";
+        break;
+      case 's':
+        samFileName = prefix + ".sam";
+        break;
+      case 'b':
+        bamFileName = prefix + ".bam";
+        break;
+      case 'm':
+        mpileupFileName = prefix + ".mpileup";
+        break;
+      case 'v':
+        vcfFileName = prefix + ".vcf";
+        break;
+      case 'A':
+        refFileName = prefix + ".reference.fa";
+        samFileName = prefix + ".sam";
+        bamFileName = prefix + ".bam";
+        mpileupFileName = prefix + ".mpileup";
+        vcfFileName = prefix + ".vcf";
+        break;
+      }
+    } else {
+      if (output == "reference")
+        refFileName = prefix + ".reference.fa";
+      else if (output == "sam")
+        samFileName = prefix + ".sam";
+      else if (output == "bam") {
+        samFileName = prefix + ".sam";
+        bamFileName = prefix + ".bam";
+      } else if (output == "mpileup")
+        mpileupFileName = prefix + ".mpileup";
+      else if (output == "vcf")
+        vcfFileName = prefix + ".vcf";
+      else if (output == "all") {
+        refFileName = prefix + ".reference.fa";
+        samFileName = prefix + ".sam";
+        bamFileName = prefix + ".bam";
+        mpileupFileName = prefix + ".mpileup";
+        vcfFileName = prefix + ".vcf";
+      }
     }
+  }
 
-    std::string refFileName = "";
-    std::string samFileName = "";
-    std::string bamFileName = "";
-    std::string mpileupFileName = ""; 
-    std::string vcfFileName = "";
+  // Get remaining parameters
+  bool reindex = args["--reindex"] && args["--reindex"].isBool()
+                     ? args["--reindex"].asBool()
+                     : false;
+  bool prior = args["--prior"] && args["--prior"].isBool()
+                   ? args["--prior"].asBool()
+                   : false;
+  bool placement_per_read =
+      args["--place-per-read"] && args["--place-per-read"].isBool()
+          ? args["--place-per-read"].asBool()
+          : false;
+  bool genotype_from_sam =
+      args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool()
+          ? args["--genotype-from-sam"].asBool()
+          : false;
+  bool save_jaccard = args["--save-jaccard"] && args["--save-jaccard"].isBool()
+                          ? args["--save-jaccard"].asBool()
+                          : false;
+  bool show_time = args["--time"] && args["--time"].isBool()
+                       ? args["--time"].asBool()
+                       : false;
 
-    
-    for (const auto& output : outputs_seperated) {
-        if(output.size() == 1){
-          switch(output[0]){
-            case 'r':
-              refFileName = prefix + ".reference.fa";
-              break;
-            case 's':
-              samFileName = prefix + ".sam";
-              break;
-            case 'b':
-              bamFileName = prefix + ".bam";
-              break;
-            case 'm':
-              mpileupFileName = prefix + ".mpileup";
-              break;
-            case 'v':
-              vcfFileName = prefix + ".vcf";
-              break;
-            case 'A':
-              refFileName = prefix + ".reference.fa";
-              samFileName = prefix + ".sam";
-              bamFileName = prefix + ".bam";
-              mpileupFileName = prefix + ".mpileup";
-              vcfFileName = prefix + ".vcf";
-              break;
-          }
-        }else{
-          
-            if(output == "reference"){
-              refFileName = prefix + ".reference.fa";
-            }else if(output == "sam"){
-              samFileName = prefix + ".sam";
-            }else if(output == "bam"){
-              samFileName = prefix + ".sam";
-              bamFileName = prefix + ".bam";
-            }else if(output == "mpileup"){
-              mpileupFileName = prefix + ".mpileup";
-            }else if(output == "vcf"){
-              vcfFileName = prefix + ".vcf";
-            }else if(output == "all"){
-              refFileName = prefix + ".reference.fa";
-              samFileName = prefix + ".sam";
-              bamFileName = prefix + ".bam";
-              mpileupFileName = prefix + ".mpileup";
-              vcfFileName = prefix + ".vcf";
-            }
-        }
-    }
+  int k = std::stoi(args["-k"].asString());
+  int s = std::stoi(args["-s"].asString());
+  std::string index_path = args["--index"] ? args["--index"].asString() : "";
 
+  // Load pangenome
+  msg("Loading pangenome from: {}", guide);
+  panmanUtils::Tree *T = loadPanmanOrPanmat(guide);
+  if (!T) {
+    err("Failed to load guide panMAN/panMAT");
+    return 1;
+  }
+  msg("Successfully loaded pangenome with {} nodes", T->allNodes.size());
 
-    bool reindex = args["--reindex"] && args["--reindex"].isBool() ? args["--reindex"].asBool() : false;
-    bool prior = args["--prior"] && args["--prior"].isBool() ? args["--prior"].asBool() : false;
-    bool placement_per_read = args["--place-per-read"] && args["--place-per-read"].isBool() ? args["--place-per-read"].asBool() : false;
-    bool genotype_from_sam = args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool() ? args["--genotype-from-sam"].asBool() : false;
-    bool save_jaccard = args["--save-jaccard"] && args["--save-jaccard"].isBool() ? args["--save-jaccard"].asBool() : false;
-    bool show_time = args["--time"] && args["--time"].isBool() ? args["--time"].asBool() : false;
-
-
-    int k = std::stoi(args["-k"].asString());
-    int s = std::stoi(args["-s"].asString());
-    std::string index_path = args["--index"] ? args["--index"].asString() : "";
-    std::cout << std::endl;
-    std::cout << "   ┏━┳━● pan" << std::endl;
-    std::cout << "  ━┫ ┗━━━● map" << std::endl;
-    std::cout << "   ┗━ v0.0 ━●" << std::endl << std::endl;
-
-    panmanUtils::Tree *T = loadPanmanOrPanmat(guide);
-    if (T == nullptr) {
-      std::cout << "Failed to load guide panMAN/panMAT.\n";
+  // Handle --dump-sequence parameter if provided
+  if (args["--dump-sequence"] && args["--dump-sequence"].isString()) {
+    std::string nodeID = args["--dump-sequence"].asString();
+    if (T->allNodes.find(nodeID) == T->allNodes.end()) {
+      err("Node ID {} not found in the tree", nodeID);
       return 1;
     }
 
+    std::string sequence = T->getStringFromReference(nodeID, false, true);
+    std::string outputFileName = guide + "." + nodeID + ".fa";
+    std::ofstream outFile(outputFileName);
 
-    log(prefix, "--- Settings ---");
-    log(prefix, "Pangenome: " + guide + " (" + std::to_string(T->allNodes.size()) + " nodes)");
-    if (!reads1.empty()) {
-      log(prefix, "Reads: " + reads1 + (reads2.empty() ? "" : " + " + reads2));
+    if (outFile.is_open()) {
+      outFile << ">" << nodeID << "\n";
+      outFile << sequence << "\n";
+      outFile.close();
+      msg("Sequence for node {} written to {}", nodeID, outputFileName);
+      return 0; // Exit after dumping sequence
     } else {
-      log(prefix, "Reads: <none>");
+      err("Failed to open file {} for writing", outputFileName);
+      return 1;
     }
-    log(prefix, "Output prefix: " + prefix);
-    log(prefix, "Outputs: " + outputs);
-    log(prefix, "Reindex: " + std::to_string(reindex));
-    log(prefix, "k-mer length: " + std::to_string(k));
-    log(prefix, "s-mer length: " + std::to_string(s));
+  }
 
+  // Log settings
+  msg("--- Settings ---");
+  msg("Reads: {}",
+      (reads1.empty() ? "<none>"
+                      : reads1 + (reads2.empty() ? "" : " + " + reads2)));
+  msg("Reference PanMAN: {} ({} nodes)", guide, T->allNodes.size());
+  msg("Using {} threads", args["--cpus"].asString());
+  msg("k={}, s={}", k, s);
 
-    bool build = true;
-    ::capnp::MallocMessageBuilder outMessage;
-    std::unique_ptr<::capnp::PackedFdMessageReader> inMessage;
-    std::string default_index_path = guide + ".pmi";
+  // Handle indexing
+  bool build = true;
+  ::capnp::MallocMessageBuilder outMessage;
+  std::unique_ptr<::capnp::PackedFdMessageReader> inMessage;
+  std::string default_index_path = guide + ".pmi";
 
-    if (!index_path.empty() && !reindex) {
-      log(prefix, "Index path: " + index_path);
-    } else {
-      if (!reindex && fs::exists(default_index_path)) {
-        log(prefix, "Index loaded from: " + default_index_path);
-        inMessage = readCapnp(default_index_path);
-        build = false;
-      } else if (reindex) {
-        log(prefix, "Reindexing.");
-      } else {
-        log(prefix, "Index not found at: " + default_index_path + ", will build.");
-      }
-    }
-    if (args["--stop-after"]) {
-        std::string stop_after = args["--stop-after"].asString();
-        log(prefix, "Will stop after stage: " + stop_after);
-    }
-    int64_t hot_threshold = args["--hot-threshold"] ? std::stoi(args["--hot-threshold"].asString()) : 1000;
-    log(prefix, "Hot threshold: " + std::to_string(hot_threshold));
+  if (!index_path.empty() && !reindex) {
+    msg("Using provided index: {}", index_path);
+  } else if (!reindex && fs::exists(default_index_path)) {
+    msg("Loading existing index from: {}", default_index_path);
+    inMessage = readCapnp(default_index_path);
+    build = false;
+  } else {
+    msg(reindex ? "Will re-build index (-f)"
+                : "No index found, will build new index");
+  }
 
-    if (build) {
-      // build
-      log(prefix, "--- Run ---");
-      log(prefix, "Indexing...");
+  // Build index if needed
+  if (build) {
 
-      // capnp index object
+    try {
       Index::Builder index = outMessage.initRoot<Index>();
-      
-      index.setK(k);
-      index.setS(s);
-      index.setT(1);
-      index.setOpen(false);
-      index.setL(3);
+      if (k <= 0 || s <= 0 || s >= k) {
+        throw std::runtime_error("Invalid k-mer or s-mer parameters");
+      }
 
       auto start = std::chrono::high_resolution_clock::now();
-      pmi::build(T, index, hot_threshold);
-      auto end = std::chrono::high_resolution_clock::now();
-      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-      log(prefix, "Build time: " + std::to_string(duration.count()) + " milliseconds");
+      indexing::index(T, index, k, s);
+      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::high_resolution_clock::now() - start);
 
       writeCapnp(outMessage, default_index_path);
+      msg("Index written to: {}", default_index_path);
+    } catch (const std::exception &e) {
+      err("ERROR during indexing: {}", e.what());
+      return 1;
     }
+  }
 
+  // Load mutation matrices
+  msg("=== Loading Mutation Matrices ===");
+  sat::mutationMatrices mutMat;
+  std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
+  std::string default_mutmat_path = guide + ".mm";
 
+  if (!mutmat_path.empty()) {
+    msg("Loading mutation matrices from: {}", mutmat_path);
+    std::ifstream mutmat_file(mutmat_path);
+    sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+  } else if (fs::exists(default_mutmat_path)) {
+    msg("Loading default mutation matrices from: {}", default_mutmat_path);
+    std::ifstream mutmat_file(default_mutmat_path);
+    sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
+  } else {
+    msg("Building new mutation matrices");
+    sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
+  }
 
+  msg("Reading index...");
+  inMessage = readCapnp(default_index_path);
+  Index::Reader index_input = inMessage->getRoot<Index>();
 
-    sat::mutationMatrices mutMat;
-    std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
-    std::string default_mutmat_path = guide + ".mm";
-    if (!mutmat_path.empty()) {
-      log(prefix, "Loading mutation matrices from: " + mutmat_path);
-      std::ifstream mutmat_file(mutmat_path);
-      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
-    } else if (fs::exists(default_mutmat_path)) {
-      log(prefix, "Loading default mutation matrices from: " + default_mutmat_path);
-      std::ifstream mutmat_file(default_mutmat_path);
-      sat::fillMutationMatricesFromFile(mutMat, mutmat_file);
-    } else {
-      log(prefix, "No mutation matrices found, building...");
-      sat::fillMutationMatricesFromTree_test(mutMat, T, default_mutmat_path);
-    }
+  if (!eval.empty()) {
+    msg("[Developer mode] --- Evaluate placement accuracy ---");
+    std::exit(0);
+  }
 
-    log(prefix, "Reading...");
-    inMessage = readCapnp(default_index_path);
-    Index::Reader index_input = inMessage->getRoot<Index>();
+  // Placement phase
+  msg("=== Starting Read Placement ===");
+  auto start = std::chrono::high_resolution_clock::now();
 
-    if (!eval.empty()) {
-      log(prefix, "[Developer mode] --- Evaluate placement accuracy ---");
-      // get /path/to/<eval>.tsv into a string, but just the <eval> basename
-      std::string eval_basename = fs::path(eval).filename().string();
-      double score_proportion = args["--candidate-threshold"] ? std::stod(args["--candidate-threshold"].asString()) : 0.01;
-      int max_candidates = args["--max-candidates"] ? std::stoi(args["--max-candidates"].asString()) : 16;
-
-      if (eval_basename.find("sars_pre") != std::string::npos) {
-        std::cout << "Species: SARS-CoV-2" << std::endl;
-        pmi::evaluate(T, eval, index_input, mutMat, aligner, "sars", main_start, default_index_path, default_mutmat_path,
-                     score_proportion, max_candidates);
-      } else if (eval_basename.find("rsv_pre") != std::string::npos) {
-        std::cout << "Species: RSV" << std::endl;
-        pmi::evaluate(T, eval, index_input, mutMat, aligner, "rsv", main_start, default_index_path, default_mutmat_path,
-                     score_proportion, max_candidates);
-      } else if (eval_basename.find("tb_pre") != std::string::npos) {
-        std::cout << "Species: M. tuberculosis" << std::endl;
-        pmi::evaluate(T, eval, index_input, mutMat, aligner, "tb", main_start, default_index_path, default_mutmat_path,
-                     score_proportion, max_candidates);
-      }
-      std::exit(0);
-    }
-
-
-    log(prefix, "Placing...");
-    auto start = std::chrono::high_resolution_clock::now();
+  try {
     if (genotype_from_sam) {
-      // Print debug statement
-      std::cout << "genotypefromsam" << std::endl;
-      
-      std::string samFileName = args["--sam-file"] ? args["--sam-file"].asString() : "";
-      std::string refFileName = args["--ref-file"] ? args["--ref-file"].asString() : "";
-      callVariantsFromSAM(samFileName, refFileName, mutMat, prefix);
-    } else if (placement_per_read) {
-      std::cout << "placementsperread" << std::endl;
-      int maximumGap                = args["--maximum-gap"] ? std::stoi(args["--maximum-gap"].asString()) : 10;
-      int minimumCount              = args["--minimum-count"] ? std::stoi(args["--minimum-count"].asString()) : 0;
-      int minimumScore              = args["--minimum-score"] ? std::stoi(args["--minimum-score"].asString()) : 0;
-      double errorRate              = args["--error-rate"] ? std::stod(args["--error-rate"].asString()) : 0.005;
-      int redoReadThreshold         = args["--redo-read-threshold"] ? std::stoi(args["--redo-read-threshold"].asString()) : 5;
-      bool recalculateScore         = args["--recalculate-score"] && args["--recalculate-score"].isBool() ? args["--recalculate-score"].asBool() : false;
-      double rescueDuplicatesThreshold = args["--rescue-duplicates-threshold"] ? std::stod(args["--rescue-duplicates-threshold"].asString()) : 0.5;
-      double excludeDuplicatesThreshold = args["--exclude-duplicates-threshold"] ? std::stod(args["--exclude-duplicates-threshold"].asString()) : 0.5;
-      std::string preEMFilterMethod = args["--preem-filter-method"] ? args["--preem-filter-method"].asString() : "null";
-      int preEMFilterNOrder         = args["--preem-filter-n-order"] ? std::stoi(args["--preem-filter-n-order"].asString()) : 1;
-      int preEMFilterMBCNum         = args["--preem-filter-mbc-num"] ? std::stoi(args["--preem-filter-mbc-num"].asString()) : 1000;
-      int emFilterRound             = args["--em-filter-round"] ? std::stoi(args["--em-filter-round"].asString()) : 5;
-      int checkFrequency            = args["--check-frequency"] ? std::stoi(args["--check-frequency"].asString()) : 20;
-      int removeIteration           = args["--remove-iteration"] ? std::stoi(args["--remove-iteration"].asString()) : 20;
-      double insigProp              = args["--insig-prop"] ? std::stod(args["--insig-prop"].asString()) : -1;
-      int roundsRemove              = args["--rounds-remove"] ? std::stoi(args["--rounds-remove"].asString()) : 3;
-      double removeThreshold        = args["--remove-threshold"] ? std::stod(args["--remove-threshold"].asString()) : 0.005;
-      bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
-      bool callSubconsensus         = args["--call-subconsensus"] && args["--call-subconsensus"].isBool() ? args["--call-subconsensus"].asBool() : false;
-      bool save_kminmer_binary_coverage = args["--save-kminmer-binary-coverage"] && args["--save-kminmer-binary-coverage"].isBool() ? args["--save-kminmer-binary-coverage"].asBool() : false;
-
-      log(prefix, "Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
-        "\nminimum-count: " + std::to_string(minimumCount) +
-        "\nminimum-score: " + std::to_string(minimumScore) +
-        "\nerror-rate: " + std::to_string(errorRate) +
-        "\nredo-read-threshold: " + std::to_string(redoReadThreshold) +
-        "\nrecalculate-score: " + (recalculateScore ? "true" : "false") +
-        "\nrescue-duplicates-threshold: " + std::to_string(rescueDuplicatesThreshold) +
-        "\nexclude-duplicates-threshold: " + std::to_string(excludeDuplicatesThreshold) +
-        "\npre-em-filter-method: " + preEMFilterMethod +
-        "\nem-filter-round: " + std::to_string(emFilterRound) +
-        "\ncheck-frequency: " + std::to_string(checkFrequency) +
-        "\nremove-iteration: " + std::to_string(removeIteration) +
-        "\ninsig-prop: " + std::to_string(insigProp) +
-        "\nrounds-remove: " + std::to_string(roundsRemove) +
-        "\nremove-threshold: " + std::to_string(removeThreshold) +
-        "\nleaf-nodes-only: " + (leafNodesOnly ? "true" : "false") + "\n" +
-        "\ncall-subconsensus: " + (callSubconsensus ? "true" : "false") + "\n" +
-        "\npreem-filter-mbc-num: " + std::to_string(preEMFilterMBCNum) + "\n" +
-        "\nsave-kminmer-binary-coverage: " + (save_kminmer_binary_coverage ? "true" : "false") + "\n");
-
-      bool rescueDuplicates = rescueDuplicatesThreshold > 0;
-      pmi::place_per_read(
-        T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
-        errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
-        rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod,
-        preEMFilterNOrder, preEMFilterMBCNum, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
-        removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage);
-    } else {
-      if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
-        std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;
-        return 1;
+      msg("Genotyping from SAM file");
+      if (samFileName.empty() || refFileName.empty()) {
+        throw std::runtime_error(
+            "SAM file and reference file are required for genotyping from SAM");
       }
-      PlacementResult result;
-      double score_proportion = args["--candidate-threshold"] ? std::stod(args["--candidate-threshold"].asString()) : 0.01;
-      int max_candidates = args["--max-candidates"] ? std::stoi(args["--max-candidates"].asString()) : 16;
-      int64_t maxHitsInAnyGenome = 0;
-      LinkedNode *maxHitsNode = nullptr;
-      std::vector<std::optional<seeding::onSeedsHash>> maxHitsNodeSeeds;
-      double bestJaccardScore = 0.0;
-      LinkedNode* bestJaccardNode = nullptr;
-      std::vector<std::optional<seeding::onSeedsHash>> bestJaccardNodeSeeds;
-      double bestCosineScore = 0.0;
-      LinkedNode* bestCosineNode = nullptr;
-      std::vector<std::optional<seeding::onSeedsHash>> bestCosineNodeSeeds;
-      double bestJaccardScoreGF1 = 0.0;
-      LinkedNode* bestJaccardNodeGF1 = nullptr;
-      std::vector<std::optional<seeding::onSeedsHash>> bestJaccardNodeSeedsGF1;
-      double bestCosineScoreGF1 = 0.0;
-      LinkedNode* bestCosineNodeGF1 = nullptr;
-      std::vector<std::optional<seeding::onSeedsHash>> bestCosineNodeSeedsGF1;
-      pmi::place(maxHitsInAnyGenome, maxHitsNode, bestJaccardScore, bestJaccardNode, bestCosineScore, bestCosineNode, bestJaccardScoreGF1, bestJaccardNodeGF1, bestCosineScoreGF1, bestCosineNodeGF1, result, T, index_input, reads1, reads2, mutMat, prefix, refFileName, samFileName, 
-                bamFileName, mpileupFileName, vcfFileName, aligner, refNode, save_jaccard, show_time,
-                score_proportion, max_candidates, "", "", 0, 0, hot_threshold);
+      genotype(prefix, refFileName, "", bamFileName, mpileupFileName,
+               vcfFileName, mutMat);
+    } else if (placement_per_read) {
+      throw std::runtime_error("PLACEMENT PER READ REMOVED IN THIS BRANCH");
+    } else {
+      if (!refNode.empty()) {
+        msg("Using reference node: {}", refNode);
+        if (T->allNodes.find(refNode) == T->allNodes.end()) {
+          throw std::runtime_error("Reference node not found in pangenome");
+        }
+      }
+
+      // Check if batch mode is enabled
+      std::string batchFilePath =
+          args["--batch"] ? args["--batch"].asString() : "";
+      if (!batchFilePath.empty()) {
+        msg("Running in batch mode with file: {}", batchFilePath);
+
+        // Validate batch file exists
+        if (!fs::exists(batchFilePath)) {
+          throw std::runtime_error("Batch file not found: " + batchFilePath);
+        }
+
+        // Process batch file
+        placement::placeBatch(T, index_input, batchFilePath, mutMat, prefix,
+                              refFileName, samFileName, bamFileName,
+                              mpileupFileName, vcfFileName, aligner, refNode,
+                              save_jaccard, show_time, 0.01f, 16);
+
+        msg("Batch processing completed");
+      } else {
+        // Process single sample mode
+        // Initialize placement variables
+        placement::PlacementResult result;
+        panmanUtils::Node *maxHitsNode = nullptr, *bestJaccardNode = nullptr,
+                          *bestCosineNode = nullptr;
+        int64_t maxHitsInAnyGenome = 0;
+        double bestJaccardScore = 0.0, bestCosineScore = 0.0;
+
+        std::string placementFileName = prefix + ".placement.tsv";
+        // Perform placement
+        placement::place(maxHitsInAnyGenome, maxHitsNode, bestJaccardScore,
+                         bestJaccardNode, bestCosineScore, bestCosineNode,
+                         result, T, index_input, reads1, reads2, mutMat, prefix,
+                         refFileName, samFileName, bamFileName, mpileupFileName,
+                         vcfFileName, aligner, refNode, save_jaccard, show_time,
+                         0.01f, 16, "", "", 0, 0, placementFileName);
+        msg("Placed sample at {} ({} seed matches)", maxHitsNode->identifier,
+            maxHitsInAnyGenome);
+      }
     }
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    log(prefix, "Placement time: " + std::to_string(duration.count()) + " milliseconds");
+  } catch (const std::exception &e) {
+    err("ERROR during placement: {}", e.what());
+    return 1;
+  }
 
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::high_resolution_clock::now() - start);
+  msg("Placement completed in {}ms", duration.count());
 
+  auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::high_resolution_clock::now() - main_start);
+  msg("=== panmap run completed ===");
+  msg("Total runtime: {}ms", total_duration.count());
 
-    // Mapping
-    //log("Mapping...");
-    // Mapping logic here
+  if (show_time) {
+    timing::Timer::report();
+  }
 
-    // Genotyping
-    //log("Genotyping...");
-    // Genotyping logic here
-
-
-
-
-
-    // Assembly
-    //log("Assembly...");
-    // Assembly logic here
-
-    log(prefix, "panmap run completed.");
-
-    if (show_time) {
-        Timer::report();
-    }
-
-    return 0;
+  return 0;
 }
