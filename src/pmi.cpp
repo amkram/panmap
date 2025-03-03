@@ -3723,7 +3723,7 @@ void pmi::place_per_read(
   std::cout << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
   std::cerr << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << "\n" << std::endl;
 
-  exit(0);
+
   size_t numReads = readSequences.size();
   std::atomic<size_t> numLowScoreReads = 0;
   std::vector<bool> lowScoreReads(reads.size(), false);
@@ -3741,7 +3741,7 @@ void pmi::place_per_read(
 
 
   mgsr::squaremHelper_test_1(
-    T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
+    T, readScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
     leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder, preEMFilterMBCNum,
     emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "", save_kminmer_binary_coverage, prefix);
   
@@ -3776,7 +3776,7 @@ void pmi::place_per_read(
   std::cout << "Wrote abundance file: " << abundanceOutFile << std::endl;
   std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
-
+  exit(0);
   if (callSubconsensus) {
     // calling consensus
     std::cout << "Calling consensus" << std::endl;
