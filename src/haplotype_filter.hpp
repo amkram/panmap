@@ -187,6 +187,7 @@ void filter_method_mbc(
     nodes.push_back(node);
     ++colIndex;
   }
+
   std::cerr << "Finished mbc filter: " << nodes.size() << " nodes" << std::endl;
 
 }
