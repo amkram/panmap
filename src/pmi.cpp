@@ -3631,14 +3631,6 @@ void pmi::place_per_read(
 
   auto end_time = std::chrono::high_resolution_clock::now();
 
-  std::vector<std::pair<std::string, double>> sortedKminmerBinaryCoverage(kminmer_binary_coverage.begin(), kminmer_binary_coverage.end());
-  std::sort(sortedKminmerBinaryCoverage.begin(), sortedKminmerBinaryCoverage.end(), [](const auto& a, const auto& b) {
-    return a.second > b.second;
-  });
-  for (const auto& [nodeIdentifier, coverage] : sortedKminmerBinaryCoverage) {
-    debugOut << nodeIdentifier << "\t" << coverage << std::endl;
-  }
-
   std::cerr << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
   std::cout << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
 
