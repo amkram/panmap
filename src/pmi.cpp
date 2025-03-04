@@ -2754,6 +2754,7 @@ void place_per_read_DFS(
   auto& oldSeedmerStatus = seedmersIndex.seedmerStatus;
   for (const size_t& hash : affectedSeedmers) {
     mgsr::SeedmerStatus refSeemderOldStatus;
+    mgsr::SeedmerChangeType SeedmerChangeType;
     if (oldSeedmerStatus.find(hash) == oldSeedmerStatus.end()) {
       refSeemderOldStatus = mgsr::SeedmerStatus::NOT_EXIST;
     } else {
@@ -2763,35 +2764,67 @@ void place_per_read_DFS(
 
     seedmerStatusBacktrack.emplace_back(std::make_pair(hash, refSeemderOldStatus));
 
+    // no change -> skip this seedmer
     if (refSeemderOldStatus == refSeemderNewStatus) continue;
 
     if (refSeemderOldStatus == mgsr::SeedmerStatus::NOT_EXIST) {
+      // old not exist -> new exist
       ref_kminmer_count += 1.0;
       ref_kminmer_count_backtrack -= 1.0;
       if (seedmerToReads.find(hash) != seedmerToReads.end()) {
         binary_intersect_kminmer_count += 1.0;
         binary_intersect_kminmer_count_backtrack -= 1.0;
       }
+
+      if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
+        SeedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE;
+      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
+        SeedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE;
+      } else {
+        std::cout << "Error: invalid seedmer status" << std::endl;
+        exit(1);
+      }
+
       oldSeedmerStatus[hash] = refSeemderNewStatus;
     } else if (refSeemderOldStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
       if (refSeemderNewStatus == mgsr::SeedmerStatus::NOT_EXIST) {
+        // old exist unique -> new not exist
         ref_kminmer_count -= 1.0;
         ref_kminmer_count_backtrack += 1.0;
         if (seedmerToReads.find(hash) != seedmerToReads.end()) {
           binary_intersect_kminmer_count -= 1.0;
           binary_intersect_kminmer_count_backtrack += 1.0;
         }
+
+        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST;
+
         oldSeedmerStatus.erase(hash);
+      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
+        // old exist unique -> new exist duplicate
+        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE;
+      } else {
+        std::cout << "Error: invalid seedmer status" << std::endl;
+        exit(1);
       }
     } else if (refSeemderOldStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
       if (refSeemderNewStatus == mgsr::SeedmerStatus::NOT_EXIST) {
+        // old exist duplicate -> new not exist
         ref_kminmer_count -= 1.0;
         ref_kminmer_count_backtrack += 1.0;
         if (seedmerToReads.find(hash) != seedmerToReads.end()) {
           binary_intersect_kminmer_count -= 1.0;
           binary_intersect_kminmer_count_backtrack += 1.0;
         }
+
+        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST;
+
         oldSeedmerStatus.erase(hash);
+      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
+        // old exist duplicate -> new exist unique
+        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE;
+      } else {
+        std::cout << "Error: invalid seedmer status" << std::endl;
+        exit(1);
       }
     } else {
       std::cout << "Error: invalid seedmer status" << std::endl;
@@ -2800,50 +2833,6 @@ void place_per_read_DFS(
   }
 
   kminmer_binary_coverage[node->identifier] = binary_intersect_kminmer_count / std::min(ref_kminmer_count, static_cast<double>(seedmerToReads.size()));
-
-  if (debug) {
-    // print out seeds at node
-    std::cout << std::endl;
-    if (method == Step::PLACE) {
-      std::cout << node->identifier << " place seedmers: ";
-      for (const auto& seedmer : positionMap) {
-        const auto& beg = seedmer.first;
-        const auto& [end, fhash, rhash, rev] = seedmer.second;
-        if (fhash != rhash) {
-          std::cout << mgsr::degapGlobal(beg, degapCoordIndex) << "-" << mgsr::degapGlobal(end, degapCoordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
-          // std::cout << beg << "|" << mgsr::degapGlobal(beg, coordIndex) << "-" << end << "|" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
-        }
-      }
-    }
-
-    for (const auto& [hash, positions] : hashToPositionsMap) {
-      if (positions.size() == 0) {
-        std::cout << "Error: hashToPositionsMap contains empty positions" << std::endl;
-        exit(1);
-      }
-      for (const auto& position : positions) {
-        if (position->second.fhash != position->second.rhash) {
-          if (std::min(position->second.fhash, position->second.rhash) != hash) {
-            std::cout << "Error: min(fhash, rhash) != hash" << std::endl;
-            exit(1);
-          }
-        } else {
-          std::cout << "Error: fhash == rhash" << std::endl;
-          exit(1);
-        }
-      }
-    }
-    std::cout << std::endl;
-
-
-    std::cout << node->identifier << " true seedmers: ";
-    auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
-    auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
-    for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
-      std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
-    }
-    std::cout << std::endl;
-  }
 
 
   tbb::concurrent_vector<std::pair<size_t, boost::icl::split_interval_map<int32_t, int>>> readBackTrack;
@@ -2910,16 +2899,6 @@ void place_per_read_DFS(
             }
           }
         }
-
-        // for (const size_t& affectedSeedmer : affectedSeedmers) {
-        //   const auto& affectedSeedmerToReads = seedmerToReads.find(affectedSeedmer);
-        //   if (affectedSeedmerToReads == seedmerToReads.end()) continue;
-        //   for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
-        //     for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
-        //       readToAffectedSeedmerIndex[readIndex].push_back(affectedSeedmerIndex);
-        //     }
-        //   }
-        // }
       }
 
       readToAffectedSeedmerIndexVec.reserve(readToAffectedSeedmerIndex.size());
@@ -3634,6 +3613,7 @@ void pmi::place_per_read(
   std::cerr << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
   std::cout << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
 
+  exit(0);
   std::cout << "finished scoring DFS" << std::endl;
   std::cerr << "finished scoring DFS" << std::endl;
 
