@@ -2691,7 +2691,7 @@ void place_per_read_DFS(
   std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes,
   std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap,
   std::unordered_set<int64_t>& inverseBlockIds, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
-  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<bool>& excludeReads,
+  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<mgsr::readType>& readTypes,
   std::unordered_map<std::string, double>& kminmer_binary_coverage, mgsr::ReadScores& readScores, std::vector<std::pair<std::string, int32_t>>& totalScores,
   double& binary_intersect_kminmer_count, double& ref_kminmer_count, std::ofstream& debugOut
 ) {
@@ -2865,7 +2865,7 @@ void place_per_read_DFS(
       readScores.setScore(i, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[i].size());
       readScores.addScoreMutation(dfsIndex, i, pseudoScore, pseudoProb);
 
-      if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) excludeReads[i] = true;
+      if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[i] = mgsr::readType::HIGH_DUPLICATES;
     }
     totalScores.emplace_back(std::make_pair(node->identifier, readScores.totalScore));
   } else {
@@ -3094,7 +3094,7 @@ void place_per_read_DFS(
           readScores.setScore(readIndex, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[readIndex].size());
           readScores.addScoreMutation(dfsIndex, readIndex, pseudoScore, pseudoProb);
         }
-        if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) excludeReads[readIndex] = true;
+        if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[readIndex] = mgsr::readType::HIGH_DUPLICATES;
       }
       totalScores.emplace_back(std::make_pair(node->identifier, readScores.totalScore));
     }
@@ -3110,7 +3110,7 @@ void place_per_read_DFS(
       data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, reads, readSeedmersDuplicatesIndex, readSeedmersIndex,
       identicalPairs, seedK, seedS, seedT, seedL, openSyncmers, T, child, globalCoords, navigator,
       scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap,
-      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads,
+      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, readTypes,
       kminmer_binary_coverage, readScores, totalScores, binary_intersect_kminmer_count, ref_kminmer_count, debugOut
     );
   }
@@ -3610,7 +3610,7 @@ void pmi::place_per_read(
   // A = ref kminmers, B = read kminmers
   // kminmer_binary_coverage = A intersect B / A
   std::unordered_map<std::string, double> kminmer_binary_coverage;
-  std::vector<bool> excludeReads(reads.size(), false);
+  std::vector<mgsr::readType> readTypes(reads.size(), mgsr::readType::PASS);
 
   std::cerr << "start scoring DFS" << std::endl;
   std::cout << "start scoring DFS" << std::endl;
@@ -3626,7 +3626,7 @@ void pmi::place_per_read(
     readSeedmersIndex, identicalPairs, k, s, t, l, openSyncmers, T, T->root, globalCoords, navigator, scalarCoordToBlockId,
     BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap, minimumCount, minimumScore,
     errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold,
-    excludeReads, kminmer_binary_coverage, readScores, totalScores, binary_intersect_kminmer_count, ref_kminmer_count, debugOut
+    readTypes, kminmer_binary_coverage, readScores, totalScores, binary_intersect_kminmer_count, ref_kminmer_count, debugOut
   );
 
   auto end_time = std::chrono::high_resolution_clock::now();
@@ -3741,7 +3741,7 @@ void pmi::place_per_read(
 
 
   mgsr::squaremHelper_test_1(
-    T, readScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
+    T, readScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, readTypes,
     leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder, preEMFilterMBCNum,
     emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "", save_kminmer_binary_coverage, prefix);
   

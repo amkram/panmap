@@ -11,7 +11,6 @@
 #include "index.capnp.h"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
-#include "haplotype_filter.hpp"
 #define EIGEN_USE_THREADS
 #include <eigen3/Eigen/Dense>
 #include <tbb/global_control.h>
@@ -26,9 +25,14 @@ using namespace boost::icl;
 typedef std::pair<std::vector<std::tuple<size_t*, int32_t, int32_t, bool, int32_t>>, std::unordered_set<size_t>> readSeedmers_t;
 typedef std::tuple<int32_t, int32_t, int32_t, int32_t, bool, int32_t> match_t;
 
-using namespace haplotype_filter;
 
 namespace mgsr {
+  enum readType : uint8_t {
+    PASS,
+    HIGH_DUPLICATES,
+    IDENTICAL_SCORE_ACROSS_NODES
+  };
+  
   enum SeedmerStatus : uint8_t {
     EXIST_UNIQUE,
     EXIST_DUPLICATE,
@@ -1055,10 +1059,36 @@ namespace mgsr {
     ++curit;
   }
 
+  void exclude_noninformative_reads(std::vector<mgsr::readType>& readTypes, const std::vector<std::pair<std::string, std::vector<std::pair<int32_t, double>>>>& ProbableNodeScores) {
+    std::vector<size_t> uninformativeReads;
+
+    for (size_t i = 0; i < ProbableNodeScores[0].second.size(); ++i) {
+      int32_t curScore = -1;
+      bool informative = false;
+      for (const auto& [node, scores] : ProbableNodeScores) {
+        if (curScore == -1) {
+          curScore = scores[i].first;
+        } else {
+          if (scores[i].first != curScore) {
+            informative = true;
+            break;
+          }
+        }
+      }
+      if (!informative) {
+        uninformativeReads.push_back(i);
+        readTypes[i] = mgsr::readType::IDENTICAL_SCORE_ACROSS_NODES;
+      }
+    }
+
+    std::cout << "There are " << uninformativeReads.size() << " reads that have identical scores across all probable nodes" << std::endl;
+    std::cerr << "There are " << uninformativeReads.size() << " reads that have identical scores across all probable nodes" << std::endl;
+  }
+
   void filter_by_mbc(
     std::vector<std::string>& nodes, Eigen::MatrixXd& probs, mgsr::ReadScores& readScores,
     const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
-    const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, std::vector<bool>& excludeReads,
+    const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, std::vector<mgsr::readType>& readTypes,
     const std::unordered_map<std::string, double>& kminmer_binary_coverage, const int& preEMFilterMBCNum, const bool& save_kminmer_binary_coverage, const std::string& prefix
   ) {
     std::cerr << "Filter method mbc: filter out haplotypes that do not have a unique best read score" << std::endl;
@@ -1105,25 +1135,31 @@ namespace mgsr {
       }
     }
 
-    // exclude_noninformative_reads(excludeReads, probableNodes, allScores);
+    std::vector<std::pair<std::string, std::vector<std::pair<int32_t, double>>>> probableNodeScores;
+    for (const auto& node : probableNodes) {
+      const auto& curNodeScores = readScores.getScoresAtNode(node);
+      probableNodeScores.emplace_back(std::make_pair(node, curNodeScores));
+    }
 
-    size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
+    exclude_noninformative_reads(readTypes, probableNodeScores);
 
+    size_t numExcludedReads = readTypes.size() - std::count(readTypes.begin(), readTypes.end(), mgsr::readType::PASS);
+
+    std::cout << "Excluding " << numExcludedReads << " reads in total" << std::endl;
     std::cerr << "Excluding " << numExcludedReads << " reads in total" << std::endl;
     
     probs.resize(readScores.scores.size() - numExcludedReads, probableNodes.size());
 
     size_t colIndex = 0;
-    for (const auto& node : probableNodes) {
+    for (const auto& [node, scores] : probableNodeScores) {
       if (leastRecentIdenticalAncestor.find(node) != leastRecentIdenticalAncestor.end()) {
         std::cerr << "Error: Node " << node << " has a least recent identical ancestor." << std::endl;
         exit(1);
       }
-      const auto& curNodeScores = readScores.getScoresAtNode(node);
       size_t rowIndex = 0;
-      for (size_t i = 0; i < curNodeScores.size(); ++i) {
-        if (excludeReads[i]) continue;
-        probs(rowIndex, colIndex) = curNodeScores[i].second;
+      for (size_t i = 0; i < scores.size(); ++i) {
+        if (readTypes[i] != mgsr::readType::PASS) continue;
+        probs(rowIndex, colIndex) = scores[i].second;
         ++rowIndex;
       }
       nodes.push_back(node);
@@ -1138,7 +1174,7 @@ namespace mgsr {
   void squaremHelper_test_1(
     Tree *T, mgsr::ReadScores& readScores,
     const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, const std::vector<bool>& lowScoreReads,
-    const int32_t& numReads, const size_t& numLowScoreReads, std::vector<bool>& excludeReads,
+    const int32_t& numReads, const size_t& numLowScoreReads, std::vector<mgsr::readType>& readTypes,
     std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestors,
     std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets, Eigen::MatrixXd& probs,
     std::vector<std::string>& nodes, Eigen::VectorXd& props, double& llh, const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum,
@@ -1161,7 +1197,7 @@ namespace mgsr {
     if (preEMFilterMethod == "null") {  
       // haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "mbc") {
-      filter_by_mbc(nodes, probs, readScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, excludeReads, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
+      filter_by_mbc(nodes, probs, readScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, readTypes, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
     } else {
       std::cerr << "pre-EM filter method not recognized" << std::endl;
       exit(1);
@@ -1185,13 +1221,13 @@ namespace mgsr {
 
     props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
     size_t totalNodes = readScores.nodeToDfsIndex.size() - leastRecentIdenticalAncestors.size();
-    size_t numExcludedReads = std::count(excludeReads.begin(), excludeReads.end(), true);
+    size_t numExcludedReads = readTypes.size() - std::count(readTypes.begin(), readTypes.end(), mgsr::readType::PASS);
     Eigen::VectorXd readDuplicates(readScores.scores.size() - numLowScoreReads - numExcludedReads);
     
     size_t indexReadDuplicates = 0;
     size_t numHighScoreReads = 0;
     for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
-      if (excludeReads[i]) continue;
+      if (readTypes[i] != mgsr::readType::PASS) continue;
       if (!lowScoreReads[i]) {
         readDuplicates(indexReadDuplicates) = readSeedmersDuplicatesIndex[i].size();
         numHighScoreReads += readSeedmersDuplicatesIndex[i].size();
