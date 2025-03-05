@@ -155,7 +155,7 @@ namespace mgsr {
     }
 
     template <typename T>
-    std::pair<SeedmerStatus, decltype(positionMap)::iterator> getCurrentSeedmerStatus(const T& hashOrIterator) {
+    SeedmerStatus getCurrentSeedmerStatus(const T& hashOrIterator) {
       decltype(hashToPositionsMap)::iterator hashToPositionIt;
       
       if constexpr (std::is_same_v<T, size_t>) {
@@ -165,11 +165,11 @@ namespace mgsr {
       }
       
       if (hashToPositionIt == hashToPositionsMap.end()) {
-        return std::make_pair(SeedmerStatus::NOT_EXIST, positionMap.end());
+        return SeedmerStatus::NOT_EXIST;
       } else if (hashToPositionIt->second.size() == 1) {
-        return std::make_pair(SeedmerStatus::EXIST_UNIQUE, *(hashToPositionIt->second.begin()));
+        return SeedmerStatus::EXIST_UNIQUE;
       } else if (hashToPositionIt->second.size() > 1) {
-        return std::make_pair(SeedmerStatus::EXIST_DUPLICATE, positionMap.end());
+        return SeedmerStatus::EXIST_DUPLICATE;
       } else {
         std::cerr << "Error: Invalid seedmer status." << std::endl;
         exit(1);
@@ -186,15 +186,9 @@ namespace mgsr {
     const int32_t iorder;
   };
 
-  struct SeedmerState {
-    bool match;
-    bool rev;
-  };
-
   class Read {
     public:
     std::vector<readSeedmer> seedmersList;
-    std::vector<SeedmerState> seedmerStates;
     std::unordered_map<size_t, std::vector<int32_t>> uniqueSeedmers;
     boost::icl::split_interval_map<int32_t, int> matches;
     std::unordered_set<int32_t> duplicates;
@@ -204,6 +198,7 @@ namespace mgsr {
     // size_t numDuplicates = 0;
     // size_t numAbsentees = 0;
   };
+
 
   class ReadScores {
     public:
@@ -680,24 +675,6 @@ namespace mgsr {
       }
     }
     return c;
-  }
-
-  void initializeSeedmerStates(mgsr::Read& curRead, mgsr::refSeedmers& seedmersIndex) {
-    auto& curSeedmerList = curRead.seedmersList;
-    auto& curSeedmerStates = curRead.seedmerStates;
-    for (size_t i = 0; i < curSeedmerList.size(); ++i) {
-      auto hashToPositionIt = seedmersIndex.hashToPositionsMap.find(curSeedmerList[i].hash);
-      auto [status, positionIt] = seedmersIndex.getCurrentSeedmerStatus(hashToPositionIt);
-      if (status == mgsr::SeedmerStatus::EXIST_UNIQUE) {
-        curSeedmerStates[i].match = true;
-        curSeedmerStates[i].rev = curSeedmerList[i].rev != positionIt->second.rev;
-      } else if (status == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
-        curSeedmerStates[i].match = false;
-        curRead.duplicates.insert(i);
-      } else {
-        curSeedmerStates[i].match = false;
-      }
-    }
   }
 
   void initializeMatches(mgsr::Read& curRead, std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap) {

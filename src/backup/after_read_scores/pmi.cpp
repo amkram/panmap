@@ -2691,7 +2691,7 @@ void place_per_read_DFS(
   std::vector<int64_t>& scalarCoordToBlockId, std::vector<std::unordered_set<int>>& BlocksToSeeds, std::vector<int>& BlockSizes,
   std::vector<std::pair<int64_t, int64_t>>& blockRanges, int64_t& dfsIndex, std::map<int64_t, int64_t>& gapMap,
   std::unordered_set<int64_t>& inverseBlockIds, const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
-  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<mgsr::readType>& readTypes,
+  const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates, const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold, std::vector<bool>& excludeReads,
   std::unordered_map<std::string, double>& kminmer_binary_coverage, mgsr::ReadScores& readScores, std::vector<std::pair<std::string, int32_t>>& totalScores,
   double& binary_intersect_kminmer_count, double& ref_kminmer_count, std::ofstream& debugOut
 ) {
@@ -2749,125 +2749,123 @@ void place_per_read_DFS(
   auto& hashToPositionsMap = seedmersIndex.hashToPositionsMap;
   updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, backTrackPositionMapChAdd, backTrackPositionMapErase);
 
-
-  std::unordered_map<size_t, std::vector<std::tuple<int32_t, mgsr::SeedmerChangeType, std::map<int32_t, mgsr::positionInfo>::iterator>>> readToAffectedSeedmerIndex;
- 
   auto& seedmerToReads = readSeedmersIndex.seedmerToReads;
+  
   auto& oldSeedmerStatus = seedmersIndex.seedmerStatus;
   for (const size_t& hash : affectedSeedmers) {
     mgsr::SeedmerStatus refSeemderOldStatus;
-    mgsr::SeedmerChangeType SeedmerChangeType;
     if (oldSeedmerStatus.find(hash) == oldSeedmerStatus.end()) {
       refSeemderOldStatus = mgsr::SeedmerStatus::NOT_EXIST;
     } else {
       refSeemderOldStatus = oldSeedmerStatus.at(hash);
     }
-    const auto& [refSeemderNewStatus, positionIt] = seedmersIndex.getCurrentSeedmerStatus(hash);
+    const mgsr::SeedmerStatus& refSeemderNewStatus = seedmersIndex.getCurrentSeedmerStatus(hash);
 
     seedmerStatusBacktrack.emplace_back(std::make_pair(hash, refSeemderOldStatus));
 
-    // no change -> skip this seedmer
     if (refSeemderOldStatus == refSeemderNewStatus) continue;
 
     if (refSeemderOldStatus == mgsr::SeedmerStatus::NOT_EXIST) {
-      // old not exist -> new exist
       ref_kminmer_count += 1.0;
       ref_kminmer_count_backtrack -= 1.0;
       if (seedmerToReads.find(hash) != seedmerToReads.end()) {
         binary_intersect_kminmer_count += 1.0;
         binary_intersect_kminmer_count_backtrack -= 1.0;
       }
-
-      if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
-        SeedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE;
-      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
-        SeedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE;
-      } else {
-        std::cout << "Error: invalid seedmer status" << std::endl;
-        exit(1);
-      }
-
       oldSeedmerStatus[hash] = refSeemderNewStatus;
     } else if (refSeemderOldStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
       if (refSeemderNewStatus == mgsr::SeedmerStatus::NOT_EXIST) {
-        // old exist unique -> new not exist
         ref_kminmer_count -= 1.0;
         ref_kminmer_count_backtrack += 1.0;
         if (seedmerToReads.find(hash) != seedmerToReads.end()) {
           binary_intersect_kminmer_count -= 1.0;
           binary_intersect_kminmer_count_backtrack += 1.0;
         }
-
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST;
-
         oldSeedmerStatus.erase(hash);
-      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
-        // old exist unique -> new exist duplicate
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE;
-      } else {
-        std::cout << "Error: invalid seedmer status" << std::endl;
-        exit(1);
       }
     } else if (refSeemderOldStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
       if (refSeemderNewStatus == mgsr::SeedmerStatus::NOT_EXIST) {
-        // old exist duplicate -> new not exist
         ref_kminmer_count -= 1.0;
         ref_kminmer_count_backtrack += 1.0;
         if (seedmerToReads.find(hash) != seedmerToReads.end()) {
           binary_intersect_kminmer_count -= 1.0;
           binary_intersect_kminmer_count_backtrack += 1.0;
         }
-
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST;
-
         oldSeedmerStatus.erase(hash);
-      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
-        // old exist duplicate -> new exist unique
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE;
-      } else {
-        std::cout << "Error: invalid seedmer status" << std::endl;
-        exit(1);
       }
     } else {
       std::cout << "Error: invalid seedmer status" << std::endl;
       exit(1);
     }
-
-    const auto& affectedSeedmerToReads = seedmerToReads.find(hash);
-    if (affectedSeedmerToReads == seedmerToReads.end()) continue;
-    for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
-      for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
-        readToAffectedSeedmerIndex[readIndex].emplace_back(std::make_tuple(affectedSeedmerIndex, SeedmerChangeType, positionIt));
-      }
-    }
   }
 
   kminmer_binary_coverage[node->identifier] = binary_intersect_kminmer_count / std::min(ref_kminmer_count, static_cast<double>(seedmerToReads.size()));
 
+  if (debug) {
+    // print out seeds at node
+    std::cout << std::endl;
+    if (method == Step::PLACE) {
+      std::cout << node->identifier << " place seedmers: ";
+      for (const auto& seedmer : positionMap) {
+        const auto& beg = seedmer.first;
+        const auto& [end, fhash, rhash, rev] = seedmer.second;
+        if (fhash != rhash) {
+          std::cout << mgsr::degapGlobal(beg, degapCoordIndex) << "-" << mgsr::degapGlobal(end, degapCoordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
+          // std::cout << beg << "|" << mgsr::degapGlobal(beg, coordIndex) << "-" << end << "|" << mgsr::degapGlobal(end, coordIndex) << ":" << std::min(fhash, rhash) << "|" << rev << " ";
+        }
+      }
+    }
 
-  std::vector<std::tuple<size_t, int32_t, bool>> readSeedmerMatchStatesBacktrack;
-  std::vector<std::tuple<size_t, int32_t, bool>> readSeedmerRevStatesBacktrack;
-  std::vector<std::tuple<size_t, int32_t, bool>> readDuplicatesBacktrack;
+    for (const auto& [hash, positions] : hashToPositionsMap) {
+      if (positions.size() == 0) {
+        std::cout << "Error: hashToPositionsMap contains empty positions" << std::endl;
+        exit(1);
+      }
+      for (const auto& position : positions) {
+        if (position->second.fhash != position->second.rhash) {
+          if (std::min(position->second.fhash, position->second.rhash) != hash) {
+            std::cout << "Error: min(fhash, rhash) != hash" << std::endl;
+            exit(1);
+          }
+        } else {
+          std::cout << "Error: fhash == rhash" << std::endl;
+          exit(1);
+        }
+      }
+    }
+    std::cout << std::endl;
 
 
+    std::cout << node->identifier << " true seedmers: ";
+    auto seq = seed_annotated_tree::getStringAtNode(node, T, false);
+    auto seedmers = extractSeedmers(seq, seedK, seedS, seedT, seedL, openSyncmers);
+    for (const auto &[seedmer, hash, isReverse, startPos, endPos] : seedmers) {
+      std::cout << startPos << "-" << endPos << ":" << hash << "|" << isReverse << " ";
+    }
+    std::cout << std::endl;
+  }
+
+
+  tbb::concurrent_vector<std::pair<size_t, boost::icl::split_interval_map<int32_t, int>>> readBackTrack;
+  tbb::concurrent_vector<std::pair<size_t, std::unordered_set<int32_t>>> readDuplicateSetsBackTrack;
+  tbb::concurrent_vector<std::pair<size_t, std::vector<std::pair<int32_t, bool>>>> readDuplicatesBackTrack;
   // std::cout << node->identifier << " SCORE: ";
   if (node->identifier == T->root->identifier) {
     readScores.assignDfsIndex(node->identifier, dfsIndex);
     readScoresBacktrack.reserve(reads.size());
     for (size_t i = 0; i < reads.size(); ++i) {
       mgsr::Read& curRead = reads[i];
-      initializeSeedmerStates(curRead, seedmersIndex);
+      curRead.matches.clear();
+      curRead.duplicates.clear();
+      initializeMatches(curRead, positionMap, hashToPositionsMap);
+      int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
+      double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
 
-      // int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
-      // double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
-      int64_t pseudoScore = dfsIndex;
-      double pseudoProb = 1/(dfsIndex+1);
-
-      readScoresBacktrack.emplace_back(std::make_pair(i, readScores.scores[i]));
+      readScoresBacktrack.emplace_back(std::make_pair(i, readScores.getScoreAtCurrentNode(i)));
       readScores.setScore(i, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[i].size());
       readScores.addScoreMutation(dfsIndex, i, pseudoScore, pseudoProb);
 
-      if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[i] = mgsr::readType::HIGH_DUPLICATES;
+      if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) excludeReads[i] = true;
     }
     totalScores.emplace_back(std::make_pair(node->identifier, readScores.totalScore));
   } else {
@@ -2876,6 +2874,11 @@ void place_per_read_DFS(
       identicalPairs[node->identifier] = node->parent->identifier;
     } else if (positionMap.empty()) {
       for (size_t i = 0; i < reads.size(); ++i) {
+        readBackTrack.emplace_back(std::make_pair(i, reads[i].matches));
+        readDuplicateSetsBackTrack.emplace_back(std::make_pair(i, reads[i].duplicates));
+        reads[i].matches.clear();
+        reads[i].duplicates.clear();
+
         if (readScores.scores[i].first != 0) {
           readScoresBacktrack.emplace_back(std::make_pair(i, readScores.scores[i]));
           readScores.setScore(i, 0, 0, readSeedmersDuplicatesIndex[i].size());
@@ -2883,65 +2886,215 @@ void place_per_read_DFS(
         }
       }
     } else {
-      for (const auto& [readIndex, affectedSeedmerInfo] : readToAffectedSeedmerIndex) {
-        if (affectedSeedmerInfo.empty()) {
-          std::cout << "Error: affectedSeedmerInfo is empty" << std::endl;
-          exit(1);
+      std::unordered_map<uint32_t, std::vector<int32_t>> readToAffectedSeedmerIndex;
+      std::vector<std::pair<uint32_t, std::vector<int32_t>>> readToAffectedSeedmerIndexVec;
+
+      if (redoReadThreshold > 0) {
+        for (const size_t& affectedSeedmer : affectedSeedmers) {
+          const auto& affectedSeedmerToReads = seedmerToReads.find(affectedSeedmer);
+          if (affectedSeedmerToReads == seedmerToReads.end()) continue;
+          for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
+            for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
+              readToAffectedSeedmerIndex[readIndex].push_back(affectedSeedmerIndex);
+            }
+          }
         }
-
-        mgsr::Read& curRead = reads[readIndex];
-        auto& seedmerStates = curRead.seedmerStates;
-        auto& seedmerDuplicates = curRead.duplicates;
-
-        for (const auto& [affectedSeedmerIndex, SeedmerChangeType, positionIt] : affectedSeedmerInfo) {
-          auto& statesInfo = seedmerStates[affectedSeedmerIndex];
-          switch (SeedmerChangeType) {
-            case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE:
-              readSeedmerMatchStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.match));
-              readSeedmerRevStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.rev));
-              statesInfo.match = true;
-              statesInfo.rev = curRead.seedmersList[affectedSeedmerIndex].rev != positionIt->second.rev;
-              break;
-            case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE:
-              readSeedmerMatchStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.match));
-              readSeedmerRevStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.rev));
-              readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, false));
-              statesInfo.match = true;
-              statesInfo.rev = curRead.seedmersList[affectedSeedmerIndex].rev != positionIt->second.rev;
-              curRead.duplicates.erase(affectedSeedmerIndex);
-              break;
-            case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE:
-              readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, true));
-              curRead.duplicates.insert(affectedSeedmerIndex);
-              break;
-            case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE:
-              readSeedmerMatchStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.match));
-              readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, true));
-              statesInfo.match = false;
-              curRead.duplicates.insert(affectedSeedmerIndex);
-              break;
-            case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST:
-              readSeedmerMatchStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.match));
-              statesInfo.match = false;
-              break;
-            case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST:
-              readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, false));
-              curRead.duplicates.erase(affectedSeedmerIndex);
-              break;
+      } else {
+        for (const size_t& affectedSeedmer : affectedSeedmers) {
+          const auto& affectedSeedmerToReads = seedmerToReads.find(affectedSeedmer);
+          if (affectedSeedmerToReads == seedmerToReads.end()) continue;
+          for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
+            const auto& readtoAffectedSeedmerIndexIt = readToAffectedSeedmerIndex.find(readIndex);
+            if (readtoAffectedSeedmerIndexIt == readToAffectedSeedmerIndex.end()) {
+              readToAffectedSeedmerIndex[readIndex].push_back(0);
+            }
           }
         }
 
-        // int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
-        // double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
-        int64_t pseudoScore = dfsIndex;
-        double pseudoProb = 1/(dfsIndex+1);
+        // for (const size_t& affectedSeedmer : affectedSeedmers) {
+        //   const auto& affectedSeedmerToReads = seedmerToReads.find(affectedSeedmer);
+        //   if (affectedSeedmerToReads == seedmerToReads.end()) continue;
+        //   for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
+        //     for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
+        //       readToAffectedSeedmerIndex[readIndex].push_back(affectedSeedmerIndex);
+        //     }
+        //   }
+        // }
+      }
+
+      readToAffectedSeedmerIndexVec.reserve(readToAffectedSeedmerIndex.size());
+      for (const auto& [readIndex, affectedSeedmerIndices] : readToAffectedSeedmerIndex) {
+          readToAffectedSeedmerIndexVec.emplace_back(readIndex, std::move(affectedSeedmerIndices));
+      }
+      readToAffectedSeedmerIndex.clear();
+
+      for (size_t i = 0; i < readToAffectedSeedmerIndexVec.size(); ++i) {
+        const auto& [readIndex, affectedSeedmerIndices] = readToAffectedSeedmerIndexVec[i];
+        mgsr::Read& curRead = reads[readIndex];
+
+        if (affectedSeedmerIndices.empty()) {
+          std::cout << "Error: affectedSeedmerIndices is empty" << std::endl;
+          exit(1);
+        }
+
+        readBackTrack.emplace_back(std::make_pair(readIndex, curRead.matches));
+        if (affectedSeedmerIndices.size() > redoReadThreshold) {
+          readDuplicateSetsBackTrack.emplace_back(std::make_pair(readIndex, curRead.duplicates));
+          curRead.matches.clear();
+          curRead.duplicates.clear();
+          initializeMatches(curRead, positionMap, hashToPositionsMap);
+        } else {
+          std::vector<std::pair<int32_t, bool>> curReadDuplicatesBackTrack;
+
+          for (const auto& index : affectedSeedmerIndices) {
+            const size_t& affectedSeedmer = curRead.seedmersList[index].hash;
+
+            const auto& affectedSeedmerHashToPositionIt = hashToPositionsMap.find(affectedSeedmer);
+            
+            // if affected seedmer exists and unique in ref
+            if (affectedSeedmerHashToPositionIt != hashToPositionsMap.end() && affectedSeedmerHashToPositionIt->second.size() == 1) {
+              if (curRead.duplicates.find(index) != curRead.duplicates.end()) {
+                curRead.duplicates.erase(index);
+                curReadDuplicatesBackTrack.push_back({index, false});
+              }
+
+              // if not inside a range in read matches
+              if (isContained(curRead.matches, index)) {
+                auto curIntervalIt = curRead.matches.find(index);
+                curRead.matches.subtract({discrete_interval<int32_t>::closed(index, index), curIntervalIt->second});
+              }
+
+              const auto& affectedPositionRefIt = *(affectedSeedmerHashToPositionIt->second.begin());
+              int currev = curRead.seedmersList[index].rev == affectedPositionRefIt->second.rev ? 1 : 2;
+              // check left and right flanking bases and merge if possible
+              auto leftFlank = curRead.matches.find(index - 1);
+              auto rightFlank = curRead.matches.find(index + 1);
+              bool mergedWithLeft = false;
+              bool mergedWithRight = false;
+
+              if (leftFlank != curRead.matches.end() && leftFlank->second == currev) {
+                // left flank exists check if mergeable -> left adjacent kminmers matching and in the same direction
+                const size_t& leftFlankSeedmer = curRead.seedmersList[index-1].hash;
+                const auto& leftFlankSeedmerRefIt = hashToPositionsMap.find(leftFlankSeedmer);
+                if (leftFlankSeedmerRefIt != hashToPositionsMap.end() && leftFlankSeedmerRefIt->second.size() == 1) {
+                  // leftFlankSeedmer exists and is unique in ref
+                  size_t prevSeedmerRef = 0;
+                  if (leftFlank->second == 1) {
+                    auto prevIt = std::prev(affectedPositionRefIt);
+                    while (prevIt->second.fhash == prevIt->second.rhash) {
+                      if (prevIt == positionMap.begin()) {
+                        prevSeedmerRef = std::numeric_limits<size_t>::max();
+                        break;
+                      }
+                      --prevIt;
+                    }
+                    if (prevSeedmerRef == 0) prevSeedmerRef = std::min(prevIt->second.fhash, prevIt->second.rhash);
+                  } else {
+                    auto nextIt = std::next(affectedPositionRefIt);
+                    while (nextIt->second.fhash == nextIt->second.rhash) {
+                      ++nextIt;
+                      if (nextIt == positionMap.end()) {
+                        prevSeedmerRef = std::numeric_limits<size_t>::max();
+                        break;
+                      }
+                    }
+                    if (prevSeedmerRef == 0) prevSeedmerRef = std::min(nextIt->second.fhash, nextIt->second.rhash);
+                  }
+                  if (prevSeedmerRef == leftFlankSeedmer) {
+                    // merge
+                    auto newBeg = first(leftFlank->first);
+                    auto newEnd = last(leftFlank->first) + 1;
+                    auto newRev = leftFlank->second;
+
+                    curRead.matches.subtract({leftFlank->first, leftFlank->second});
+                    curRead.matches.add({discrete_interval<int32_t>::closed(newBeg, newEnd), newRev});
+                    mergedWithLeft = true;
+                  }
+                }
+              }
+
+              if (rightFlank != curRead.matches.end() && rightFlank->second == currev) {
+                // right flank exists check if mergeable -> right adjacent kminmers matching and in the same direction
+                const size_t& rightFlankSeedmer = curRead.seedmersList[index+1].hash;
+                const auto& rightFlankSeedmerRefIt = hashToPositionsMap.find(rightFlankSeedmer);
+                if (rightFlankSeedmerRefIt != hashToPositionsMap.end() && rightFlankSeedmerRefIt->second.size() == 1) {
+                  // rightFlankSeedmer exists and is unique in ref
+                  size_t nextSeedmerRef = 0;
+                  if (rightFlank->second == 1) {
+                    auto nextIt = std::next(affectedPositionRefIt);
+                    while (nextIt->second.fhash == nextIt->second.rhash) {
+                      ++nextIt;
+                      if (nextIt == positionMap.end()) {
+                        nextSeedmerRef = std::numeric_limits<size_t>::max();
+                        break;
+                      }
+                    }
+                    if (nextSeedmerRef == 0) nextSeedmerRef = std::min(nextIt->second.fhash, nextIt->second.rhash);
+                  } else {
+                    auto prevIt = std::prev(affectedPositionRefIt);
+                    while (prevIt->second.fhash == prevIt->second.rhash) {
+                      if (prevIt == positionMap.begin()) {
+                        nextSeedmerRef = std::numeric_limits<size_t>::max();
+                        break;
+                      }
+                      --prevIt;
+                    }
+                    if (nextSeedmerRef == 0) nextSeedmerRef = std::min(prevIt->second.fhash, prevIt->second.rhash);
+                  }
+                  if (nextSeedmerRef == rightFlankSeedmer) {
+                    // merge
+                    auto newBeg = mergedWithLeft ? first(curRead.matches.find(index)->first) : first(rightFlank->first) - 1;
+                    auto newEnd = last(rightFlank->first);
+                    auto newRev = rightFlank->second;
+
+                    curRead.matches.subtract({rightFlank->first, rightFlank->second});
+                    if (mergedWithLeft) {
+                      curRead.matches.subtract({discrete_interval<int32_t>::closed(newBeg, index), newRev});
+                    }
+                    curRead.matches.add({discrete_interval<int32_t>::closed(newBeg, newEnd), newRev});
+                    mergedWithRight = true;
+                  }
+                }
+              }
+
+              if (!mergedWithLeft && !mergedWithRight) {
+                // start new range
+                curRead.matches.add({discrete_interval<int32_t>::closed(index, index), currev});
+              }
+            
+            } else if (affectedSeedmerHashToPositionIt == hashToPositionsMap.end() || affectedSeedmerHashToPositionIt->second.size() > 1) {
+              if (affectedSeedmerHashToPositionIt == hashToPositionsMap.end()) {
+                if (curRead.duplicates.find(index) != curRead.duplicates.end()) {
+                  curRead.duplicates.erase(index);
+                  curReadDuplicatesBackTrack.push_back({index, false});
+                }
+              } else {
+                if (curRead.duplicates.find(index) == curRead.duplicates.end()) {
+                  curRead.duplicates.insert(index);
+                  curReadDuplicatesBackTrack.push_back({index, true});
+                }
+              }
+
+              // if inside a range in read matches
+              if (isContained(curRead.matches, index)) {
+                // split range
+                auto curIntervalIt = curRead.matches.find(index);
+                curRead.matches.subtract({discrete_interval<int32_t>::closed(index, index), curIntervalIt->second});
+              }
+            }
+          }
+          if (!curReadDuplicatesBackTrack.empty()) {
+            readDuplicatesBackTrack.emplace_back(std::make_pair(readIndex, std::move(curReadDuplicatesBackTrack)));
+          }
+        }
+        int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
+        double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
         if (pseudoScore != readScores.scores[readIndex].first) {
           readScoresBacktrack.emplace_back(std::make_pair(readIndex, readScores.scores[readIndex]));
           readScores.setScore(readIndex, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[readIndex].size());
           readScores.addScoreMutation(dfsIndex, readIndex, pseudoScore, pseudoProb);
         }
-
-        if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[readIndex] = mgsr::readType::HIGH_DUPLICATES;
+        if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) excludeReads[readIndex] = true;
       }
       totalScores.emplace_back(std::make_pair(node->identifier, readScores.totalScore));
     }
@@ -2957,7 +3110,7 @@ void place_per_read_DFS(
       data, onSeedsHashMap, seedmersIndex, perNodeSeedMutations_Index, perNodeGapMutations_Index, reads, readSeedmersDuplicatesIndex, readSeedmersIndex,
       identicalPairs, seedK, seedS, seedT, seedL, openSyncmers, T, child, globalCoords, navigator,
       scalarCoordToBlockId, BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap,
-      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, readTypes,
+      minimumCount, minimumScore, errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold, excludeReads,
       kminmer_binary_coverage, readScores, totalScores, binary_intersect_kminmer_count, ref_kminmer_count, debugOut
     );
   }
@@ -3036,23 +3189,27 @@ void place_per_read_DFS(
     positionMap.erase(toEraseIt);
   }
 
-
-
   // undo read matches changes
-  for (const auto& [readIdx, affectedSeedmerIndex, match] : readSeedmerMatchStatesBacktrack) {
-    reads[readIdx].seedmerStates[affectedSeedmerIndex].match = match;
+  for (size_t i = 0; i < readBackTrack.size(); ++i) {
+    const auto& [readIdx, matches] = readBackTrack[i];
+    reads[readIdx].matches = std::move(matches);
   }
 
-  for (const auto& [readIdx, affectedSeedmerIndex, rev] : readSeedmerRevStatesBacktrack) {
-    reads[readIdx].seedmerStates[affectedSeedmerIndex].rev = rev;
+  // undo read duplicate sets changes
+  for (size_t i = 0; i < readDuplicateSetsBackTrack.size(); ++i) {
+    const auto& [readIdx, duplicates] = readDuplicateSetsBackTrack[i];
+    reads[readIdx].duplicates = std::move(duplicates);
   }
 
   // undo read duplicates changes
-  for (const auto& [readIdx, affectedSeedmerIndex, del] : readDuplicatesBacktrack) {
-    if (del) {
-      reads[readIdx].duplicates.erase(affectedSeedmerIndex);
-    } else {
-      reads[readIdx].duplicates.insert(affectedSeedmerIndex);
+  for (size_t i = 0; i < readDuplicatesBackTrack.size(); ++i) {
+    const auto& [readIdx, changes] = readDuplicatesBackTrack[i];
+    for (const auto& [hash, del] : changes) {
+      if (del) {
+        reads[readIdx].duplicates.erase(hash);
+      } else {
+        reads[readIdx].duplicates.insert(hash);
+      }
     }
   }
 
@@ -3265,7 +3422,6 @@ void seedmersFromFastq(
   // auto& seedmerStatus = readSeedmersIndex.seedmerStatus;
 
   for (int32_t i = 0; i < reads.size(); ++i) {
-    reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false});
     for (const auto& seedmer : reads[i].uniqueSeedmers) {
       seedmerToReads[seedmer.first].push_back(std::make_pair(i, std::move(seedmer.second)));
       // if (seedmerStatus.find(seedmer.first) == seedmerStatus.end()) {
@@ -3454,7 +3610,7 @@ void pmi::place_per_read(
   // A = ref kminmers, B = read kminmers
   // kminmer_binary_coverage = A intersect B / A
   std::unordered_map<std::string, double> kminmer_binary_coverage;
-  std::vector<mgsr::readType> readTypes(reads.size(), mgsr::readType::PASS);
+  std::vector<bool> excludeReads(reads.size(), false);
 
   std::cerr << "start scoring DFS" << std::endl;
   std::cout << "start scoring DFS" << std::endl;
@@ -3470,15 +3626,22 @@ void pmi::place_per_read(
     readSeedmersIndex, identicalPairs, k, s, t, l, openSyncmers, T, T->root, globalCoords, navigator, scalarCoordToBlockId,
     BlocksToSeeds, BlockSizes, blockRanges, dfsIndex, gapMap, inverseBlockIds, maximumGap, minimumCount, minimumScore,
     errorRate, redoReadThreshold, recalculateScore, rescueDuplicates, rescueDuplicatesThreshold, excludeDuplicatesThreshold,
-    readTypes, kminmer_binary_coverage, readScores, totalScores, binary_intersect_kminmer_count, ref_kminmer_count, debugOut
+    excludeReads, kminmer_binary_coverage, readScores, totalScores, binary_intersect_kminmer_count, ref_kminmer_count, debugOut
   );
 
   auto end_time = std::chrono::high_resolution_clock::now();
 
+  std::vector<std::pair<std::string, double>> sortedKminmerBinaryCoverage(kminmer_binary_coverage.begin(), kminmer_binary_coverage.end());
+  std::sort(sortedKminmerBinaryCoverage.begin(), sortedKminmerBinaryCoverage.end(), [](const auto& a, const auto& b) {
+    return a.second > b.second;
+  });
+  for (const auto& [nodeIdentifier, coverage] : sortedKminmerBinaryCoverage) {
+    debugOut << nodeIdentifier << "\t" << coverage << std::endl;
+  }
+
   std::cerr << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
   std::cout << "\nPseudo-chaining score execution time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count() << " milliseconds" << std::endl;
 
-  exit(0);
   std::cout << "finished scoring DFS" << std::endl;
   std::cerr << "finished scoring DFS" << std::endl;
 
@@ -3568,7 +3731,7 @@ void pmi::place_per_read(
   std::cout << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << std::endl;
   std::cerr << "Second round of duplication removal: " << leastRecentIdenticalAncestor.size() << "\n" << std::endl;
 
-
+  exit(0);
   size_t numReads = readSequences.size();
   std::atomic<size_t> numLowScoreReads = 0;
   std::vector<bool> lowScoreReads(reads.size(), false);
@@ -3586,7 +3749,7 @@ void pmi::place_per_read(
 
 
   mgsr::squaremHelper_test_1(
-    T, readScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, readTypes,
+    T, allScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, excludeReads,
     leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder, preEMFilterMBCNum,
     emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "", save_kminmer_binary_coverage, prefix);
   
@@ -3621,7 +3784,7 @@ void pmi::place_per_read(
   std::cout << "Wrote abundance file: " << abundanceOutFile << std::endl;
   std::cerr << "Wrote abundance file: " << abundanceOutFile << std::endl;
 
-  exit(0);
+
   if (callSubconsensus) {
     // calling consensus
     std::cout << "Calling consensus" << std::endl;
