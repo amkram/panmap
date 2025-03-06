@@ -40,15 +40,15 @@ namespace mgsr {
   };
 
   enum SeedmerChangeType : uint8_t {
-    EXIST_UNIQUE_TO_EXIST_UNIQUE,
-    EXIST_UNIQUE_TO_EXIST_DUPLICATE,
-    EXIST_UNIQUE_TO_NOT_EXIST,
-    EXIST_DUPLICATE_TO_EXIST_UNIQUE,
-    EXIST_DUPLICATE_TO_EXIST_DUPLICATE,
-    EXIST_DUPLICATE_TO_NOT_EXIST,
-    NOT_EXIST_TO_EXIST_UNIQUE,
-    NOT_EXIST_TO_EXIST_DUPLICATE,
-    NOT_EXIST_TO_NOT_EXIST
+    EXIST_UNIQUE_TO_EXIST_UNIQUE = 0,
+    EXIST_UNIQUE_TO_EXIST_DUPLICATE = 1,
+    EXIST_UNIQUE_TO_NOT_EXIST = 2,
+    EXIST_DUPLICATE_TO_EXIST_UNIQUE = 3,
+    EXIST_DUPLICATE_TO_EXIST_DUPLICATE = 4,
+    EXIST_DUPLICATE_TO_NOT_EXIST = 5,
+    NOT_EXIST_TO_EXIST_UNIQUE = 6,
+    NOT_EXIST_TO_EXIST_DUPLICATE = 7,
+    NOT_EXIST_TO_NOT_EXIST = 8
   };
 
   struct positionInfo {
@@ -66,7 +66,7 @@ namespace mgsr {
   };
 
   struct readSeedmers {
-    std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<int32_t>>>> seedmerToReads;
+    std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint32_t>>>> seedmerToReads;
 
     std::unordered_map<size_t, SeedmerStatus> seedmerStatus;
 
@@ -155,7 +155,7 @@ namespace mgsr {
     }
 
     template <typename T>
-    std::pair<SeedmerStatus, decltype(positionMap)::iterator> getCurrentSeedmerStatus(const T& hashOrIterator) {
+    std::pair<SeedmerStatus, bool> getCurrentSeedmerStatus(const T& hashOrIterator) {
       decltype(hashToPositionsMap)::iterator hashToPositionIt;
       
       if constexpr (std::is_same_v<T, size_t>) {
@@ -165,11 +165,11 @@ namespace mgsr {
       }
       
       if (hashToPositionIt == hashToPositionsMap.end()) {
-        return std::make_pair(SeedmerStatus::NOT_EXIST, positionMap.end());
+        return std::make_pair(SeedmerStatus::NOT_EXIST, false);
       } else if (hashToPositionIt->second.size() == 1) {
-        return std::make_pair(SeedmerStatus::EXIST_UNIQUE, *(hashToPositionIt->second.begin()));
+        return std::make_pair(SeedmerStatus::EXIST_UNIQUE, (*(hashToPositionIt->second.begin()))->second.rev);
       } else if (hashToPositionIt->second.size() > 1) {
-        return std::make_pair(SeedmerStatus::EXIST_DUPLICATE, positionMap.end());
+        return std::make_pair(SeedmerStatus::EXIST_DUPLICATE, false);
       } else {
         std::cerr << "Error: Invalid seedmer status." << std::endl;
         exit(1);
@@ -189,20 +189,211 @@ namespace mgsr {
   struct SeedmerState {
     bool match;
     bool rev;
+    bool inChain;
   };
+  
+  typedef uint64_t minichain_t;
+
+
+  int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& degapCoordsIndex) {
+    auto coordIt = degapCoordsIndex.upper_bound(globalCoord);
+    if (coordIt == degapCoordsIndex.begin()) {
+        return 0;
+    }
+    return globalCoord - std::prev(coordIt)->second;
+  }
+
+  int64_t regapGlobal(const int64_t& localCoord, const std::map<int64_t, int64_t>& regapCoordsIndex) {
+    auto coordIt = regapCoordsIndex.upper_bound(localCoord);
+    if (coordIt == regapCoordsIndex.begin()) {
+        return 0;
+    }
+    return localCoord + std::prev(coordIt)->second;
+  }
 
   class Read {
     public:
     std::vector<readSeedmer> seedmersList;
     std::vector<SeedmerState> seedmerStates;
-    std::unordered_map<size_t, std::vector<int32_t>> uniqueSeedmers;
+    std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
+    //if (rev) minichain_t |= 1ull;
+    // minichain_t |= static_cast<uint64_t>(beg) << 1;
+    // minichain_t |= static_cast<uint64_t>(end) << 32;
+
+    // if minichain_t & 1 == 1 -> reversed
+    // else -> forward
+    // beg = (minichain_t >> 1) & 0x7FFFFFFF
+    // end = (minichain_t >> 32) & 0x7FFFFFFF
+
+    std::vector<minichain_t> minichains;
     boost::icl::split_interval_map<int32_t, int> matches;
     std::unordered_set<int32_t> duplicates;
     size_t readIndex;
+    int64_t pseudoChainScores;
+    double pseudoChainProb;
+
     // std::vector<bool> duplicates;
     // std::vector<bool> absentees;
     // size_t numDuplicates = 0;
     // size_t numAbsentees = 0;
+
+    size_t nextValidRefSeedmer(std::map<int32_t, mgsr::positionInfo>::iterator& currentPositionIt, mgsr::refSeedmers& seedmersIndex, bool rev) {
+      if (rev) {
+        while (currentPositionIt != seedmersIndex.positionMap.begin()) {
+          --currentPositionIt;
+          if (currentPositionIt->second.fhash != currentPositionIt->second.rhash) {
+            return std::min(currentPositionIt->second.fhash, currentPositionIt->second.rhash);
+          }
+        }
+      } else {
+        ++currentPositionIt;
+        while (currentPositionIt != seedmersIndex.positionMap.end()) {
+          if (currentPositionIt->second.fhash != currentPositionIt->second.rhash) {
+            return std::min(currentPositionIt->second.fhash, currentPositionIt->second.rhash);
+          }
+          ++currentPositionIt;
+        }
+      }
+
+      return std::numeric_limits<size_t>::max();
+    }
+
+    bool isColinearFromSeedmerStates(const std::pair<std::pair<int32_t, int32_t>, bool>& minichain1, const std::pair<std::pair<int32_t, int32_t>, bool>& minichain2, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
+      if (minichain1.second != minichain2.second) {
+        std::cerr << "Error: Invalid direction in isColinearFromSeedmerStates" << std::endl;
+        exit(1);
+      }
+
+      const auto& first1 = seedmersList[minichain1.first.first];
+      const auto& last1 = seedmersList[minichain1.first.second];
+      const auto& first2 = seedmersList[minichain2.first.first];
+      const auto& last2 = seedmersList[minichain2.first.second];
+
+      if (minichain1.second == false) {
+        // forward direction
+        const auto& rglobalbeg1 = seedmersIndex.getBegFromHash(first1.hash);
+        const auto& rglobalend1 = seedmersIndex.getEndFromHash(last1.hash);
+        const auto& rglobalbeg2 = seedmersIndex.getBegFromHash(first2.hash);
+        
+        const auto& qbeg1 = first1.begPos;
+        const auto& qend1 = last1.endPos;
+        const auto& qbeg2 = first2.begPos;
+        const auto& qend2 = last2.endPos;
+
+        auto rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
+        auto rend1 = degapGlobal(rglobalend1, degapCoordIndex);
+        auto rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
+        // auto rend2 = degapGlobal(rglobalend2, degapCoordIndex);
+
+        int32_t qgap = abs(qbeg2 - qend1);
+        int32_t rgap = abs(rbeg2 - rend1);
+        if (rbeg1 < rbeg2 && abs(qgap - rgap) < maximumGap) return true;
+      } else {
+        // reverse direction
+        auto rglobalbeg1 = seedmersIndex.getBegFromHash(last1.hash);
+        auto rglobalbeg2 = seedmersIndex.getBegFromHash(last2.hash);
+        auto rglobalend2 = seedmersIndex.getEndFromHash(first2.hash);
+
+        const auto& qbeg1 = first1.begPos;
+        const auto& qend1 = last1.endPos;
+        const auto& qbeg2 = first2.begPos;
+        const auto& qend2 = last2.endPos;
+
+        auto rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
+        // auto rend1 = degapGlobal(rglobalend1, degapCoordIndex);
+        auto rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
+        auto rend2 = degapGlobal(rglobalend2, degapCoordIndex);
+
+        int32_t qgap = abs(qbeg2 - qend1);
+        int32_t rgap = abs(rbeg1 - rend2);
+        if (rbeg2 < rbeg1 && abs(qgap - rgap) < maximumGap) return true;
+      }
+      return false;
+    }
+
+    int64_t getPseudoChainScoreFromSeedmerStates(const size_t& readIndex, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
+      // std::vector<std::pair<std::pair<beg,end>, rev>>
+      int64_t pseudoChainScore = 0;
+      std::vector<std::pair<std::pair<int32_t, int32_t>, bool>> minichains;
+
+      std::pair<std::pair<int32_t, int32_t>, bool> currentMinichain = std::make_pair(std::make_pair(-1, -1), false);
+      std::map<int32_t, mgsr::positionInfo>::iterator currentPositionIt;
+      for (int32_t i = 0; i < seedmerStates.size(); ++i) {
+        if (seedmerStates[i].match) {
+          if (currentMinichain.first.first == -1) {
+            currentMinichain.first.first = i;
+            currentMinichain.first.second = i;
+            currentMinichain.second = seedmerStates[i].rev;
+            currentPositionIt = *(seedmersIndex.hashToPositionsMap.find(seedmersList[i].hash)->second.begin());
+          } else {
+            // try to extend the minichain
+            if (seedmerStates[i].rev == currentMinichain.second) {
+              size_t nextHash = nextValidRefSeedmer(currentPositionIt, seedmersIndex, currentMinichain.second);
+              if (nextHash == seedmersList[i].hash) {
+                currentMinichain.first.second = i;
+              } else {
+                // close the minichain and start a new one
+                minichains.push_back(std::move(currentMinichain));
+                currentMinichain = std::make_pair(std::make_pair(i, i), seedmerStates[i].rev);
+                currentPositionIt = *(seedmersIndex.hashToPositionsMap.find(seedmersList[i].hash)->second.begin());
+              }
+            } else {
+              // close the minichain and start a new one
+              minichains.push_back(std::move(currentMinichain));
+              currentMinichain = std::make_pair(std::make_pair(i, i), seedmerStates[i].rev);
+              currentPositionIt = *(seedmersIndex.hashToPositionsMap.find(seedmersList[i].hash)->second.begin());
+            }
+          }
+        } else {
+          // close the minichain and start a new one
+          if (currentMinichain.first.first != -1) {
+            minichains.push_back(std::move(currentMinichain));
+            currentMinichain = std::make_pair(std::make_pair(-1, -1), false);
+          }
+        }
+      }
+
+      if (currentMinichain.first.first != -1) {
+        minichains.push_back(std::move(currentMinichain));
+      }
+
+      if (minichains.empty()) {
+        return 0;
+      } else if (minichains.size() == 1) {
+        return minichains[0].first.second - minichains[0].first.first + 1;
+      } else {
+        // find longest minichain
+        int32_t longestMinichainIndex = -1;
+        for (int32_t i = 0; i < minichains.size(); ++i) {
+          if (minichains[i].first.second - minichains[i].first.first + 1 > longestMinichainIndex) {
+            longestMinichainIndex = i;
+          }
+        }
+
+        bool longestMinichainIsReversed = minichains[longestMinichainIndex].second;
+
+        for (int32_t i = 0; i < minichains.size(); ++i) {
+          if (i == longestMinichainIndex) {
+            pseudoChainScore += minichains[i].first.second - minichains[i].first.first + 1;
+          }
+
+          if (minichains[i].second != longestMinichainIsReversed) {
+            continue;
+          }
+
+          if (longestMinichainIndex < i) {
+            if (isColinearFromSeedmerStates(minichains[longestMinichainIndex], minichains[i], seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+              pseudoChainScore += minichains[i].first.second - minichains[i].first.first + 1;
+            }
+          } else if (longestMinichainIndex > i) {
+            if (isColinearFromSeedmerStates(minichains[i], minichains[longestMinichainIndex], seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+              pseudoChainScore += minichains[i].first.second - minichains[i].first.first + 1;
+            }
+          }
+        }
+      }
+      return pseudoChainScore;
+    }
   };
 
   class ReadScores {
@@ -322,22 +513,6 @@ namespace mgsr {
       }
 
   };
-
-  int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& degapCoordsIndex) {
-    auto coordIt = degapCoordsIndex.upper_bound(globalCoord);
-    if (coordIt == degapCoordsIndex.begin()) {
-        return 0;
-    }
-    return globalCoord - std::prev(coordIt)->second;
-  }
-
-  int64_t regapGlobal(const int64_t& localCoord, const std::map<int64_t, int64_t>& regapCoordsIndex) {
-    auto coordIt = regapCoordsIndex.upper_bound(localCoord);
-    if (coordIt == regapCoordsIndex.begin()) {
-        return 0;
-    }
-    return localCoord + std::prev(coordIt)->second;
-  }
 
   template<typename Iterator>
   Iterator safe_next(Iterator it, const Iterator& end, const uint8_t steps) {
@@ -687,10 +862,10 @@ namespace mgsr {
     auto& curSeedmerStates = curRead.seedmerStates;
     for (size_t i = 0; i < curSeedmerList.size(); ++i) {
       auto hashToPositionIt = seedmersIndex.hashToPositionsMap.find(curSeedmerList[i].hash);
-      auto [status, positionIt] = seedmersIndex.getCurrentSeedmerStatus(hashToPositionIt);
+      auto [status, refRev] = seedmersIndex.getCurrentSeedmerStatus(hashToPositionIt);
       if (status == mgsr::SeedmerStatus::EXIST_UNIQUE) {
         curSeedmerStates[i].match = true;
-        curSeedmerStates[i].rev = curSeedmerList[i].rev != positionIt->second.rev;
+        curSeedmerStates[i].rev = curSeedmerList[i].rev != refRev;
       } else if (status == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
         curSeedmerStates[i].match = false;
         curRead.duplicates.insert(i);
@@ -867,8 +1042,8 @@ namespace mgsr {
         std::cerr << "Error: Invalid bounds in getPseudoScore()" << std::endl;
         exit(1);
       }
-      int32_t leftBoundLocal = std::max(static_cast<int64_t>(0), degapGlobal(leftBoundGlobal, degapCoordIndex) - 150);
-      int32_t rightBoundLocal = degapGlobal(rightBoundGlobal, degapCoordIndex) + 150;
+      int32_t leftBoundLocal = std::max(static_cast<int64_t>(0), degapGlobal(leftBoundGlobal, degapCoordIndex) - 120);
+      int32_t rightBoundLocal = degapGlobal(rightBoundGlobal, degapCoordIndex) + 120;
 
       leftBoundGlobal = regapGlobal(leftBoundLocal, regapCoordIndex);
       rightBoundGlobal = regapGlobal(rightBoundLocal, regapCoordIndex);

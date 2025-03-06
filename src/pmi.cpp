@@ -2703,7 +2703,7 @@ void place_per_read_DFS(
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
   std::vector<std::pair<bool, int64_t>> inverseBlockIdsBacktrack;
-  std::vector<std::pair<size_t, std::pair<int32_t, double>>> readScoresBacktrack;
+  std::vector<std::pair<size_t, std::pair<int64_t, double>>> readScoresBacktrack;
   std::vector<std::pair<size_t, mgsr::SeedmerStatus>> seedmerStatusBacktrack;
   double ref_kminmer_count_backtrack = 0.0;
   double binary_intersect_kminmer_count_backtrack = 0.0;
@@ -2750,26 +2750,28 @@ void place_per_read_DFS(
   updateSeedmersIndex(seedChanges, onSeedsHashMap, seedmersIndex, affectedSeedmers, seedK, seedL, backTrackPositionMapChAdd, backTrackPositionMapErase);
 
 
-  std::unordered_map<size_t, std::vector<std::tuple<int32_t, mgsr::SeedmerChangeType, std::map<int32_t, mgsr::positionInfo>::iterator>>> readToAffectedSeedmerIndex;
+  std::unordered_map<size_t, std::vector<uint64_t>> readToAffectedSeedmerIndex;
+  std::vector<std::tuple<size_t, int32_t, mgsr::SeedmerChangeType, std::map<int32_t, mgsr::positionInfo>::iterator>> readToAffectedSeedmerIndexVec;
  
   auto& seedmerToReads = readSeedmersIndex.seedmerToReads;
   auto& oldSeedmerStatus = seedmersIndex.seedmerStatus;
   for (const size_t& hash : affectedSeedmers) {
     mgsr::SeedmerStatus refSeemderOldStatus;
-    mgsr::SeedmerChangeType SeedmerChangeType;
+    mgsr::SeedmerChangeType seedmerChangeType;
     if (oldSeedmerStatus.find(hash) == oldSeedmerStatus.end()) {
       refSeemderOldStatus = mgsr::SeedmerStatus::NOT_EXIST;
     } else {
       refSeemderOldStatus = oldSeedmerStatus.at(hash);
     }
-    const auto& [refSeemderNewStatus, positionIt] = seedmersIndex.getCurrentSeedmerStatus(hash);
+    const auto& [refSeemderNewStatus, refRev] = seedmersIndex.getCurrentSeedmerStatus(hash);
 
     seedmerStatusBacktrack.emplace_back(std::make_pair(hash, refSeemderOldStatus));
 
     // no change -> skip this seedmer
-    if (refSeemderOldStatus == refSeemderNewStatus) continue;
-
     if (refSeemderOldStatus == mgsr::SeedmerStatus::NOT_EXIST) {
+      if (refSeemderNewStatus == mgsr::SeedmerStatus::NOT_EXIST) {
+        continue;
+      }
       // old not exist -> new exist
       ref_kminmer_count += 1.0;
       ref_kminmer_count_backtrack -= 1.0;
@@ -2779,9 +2781,9 @@ void place_per_read_DFS(
       }
 
       if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
-        SeedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE;
+        seedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE;
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
-        SeedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE;
+        seedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE;
       } else {
         std::cout << "Error: invalid seedmer status" << std::endl;
         exit(1);
@@ -2798,12 +2800,14 @@ void place_per_read_DFS(
           binary_intersect_kminmer_count_backtrack += 1.0;
         }
 
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST;
+        seedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST;
 
         oldSeedmerStatus.erase(hash);
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
         // old exist unique -> new exist duplicate
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE;
+        seedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE;
+      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
+        seedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_UNIQUE;
       } else {
         std::cout << "Error: invalid seedmer status" << std::endl;
         exit(1);
@@ -2818,15 +2822,14 @@ void place_per_read_DFS(
           binary_intersect_kminmer_count_backtrack += 1.0;
         }
 
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST;
+        seedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST;
 
         oldSeedmerStatus.erase(hash);
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
         // old exist duplicate -> new exist unique
-        SeedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE;
+        seedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE;
       } else {
-        std::cout << "Error: invalid seedmer status" << std::endl;
-        exit(1);
+        continue;
       }
     } else {
       std::cout << "Error: invalid seedmer status" << std::endl;
@@ -2837,17 +2840,26 @@ void place_per_read_DFS(
     if (affectedSeedmerToReads == seedmerToReads.end()) continue;
     for (const auto& [readIndex, affectedSeedmerIndices] : affectedSeedmerToReads->second) {
       for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
-        readToAffectedSeedmerIndex[readIndex].emplace_back(std::make_tuple(affectedSeedmerIndex, SeedmerChangeType, positionIt));
+        // 0th bit is 1 -> reversed
+        // 1st to 8th bit is the seedmerChangeType
+        // 9th to 40th bit is the affectedSeedmerIndex
+        // Combine the components using bitwise operations
+        uint64_t affectedSeedmerIndexCode = (static_cast<uint64_t>(affectedSeedmerIndex) << 9) | (static_cast<uint64_t>(seedmerChangeType) << 1) | (refRev ? 1ULL : 0ULL);
+        readToAffectedSeedmerIndex[readIndex].push_back(affectedSeedmerIndexCode);
       }
     }
   }
+  
 
   kminmer_binary_coverage[node->identifier] = binary_intersect_kminmer_count / std::min(ref_kminmer_count, static_cast<double>(seedmerToReads.size()));
 
 
   std::vector<std::tuple<size_t, int32_t, bool>> readSeedmerMatchStatesBacktrack;
   std::vector<std::tuple<size_t, int32_t, bool>> readSeedmerRevStatesBacktrack;
+  std::vector<std::tuple<size_t, int32_t, bool>> readSeedmerInChainBacktrack;
+
   std::vector<std::tuple<size_t, int32_t, bool>> readDuplicatesBacktrack;
+  std::vector<std::tuple<size_t, int64_t, double>> readPseudoChainScoreBacktrack;
 
 
   // std::cout << node->identifier << " SCORE: ";
@@ -2858,10 +2870,9 @@ void place_per_read_DFS(
       mgsr::Read& curRead = reads[i];
       initializeSeedmerStates(curRead, seedmersIndex);
 
-      // int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
-      // double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
-      int64_t pseudoScore = dfsIndex;
-      double pseudoProb = 1/(dfsIndex+1);
+      // readSeedmerInChainBacktrack.emplace_back(std::make_tuple(i, curRead.pseudoChainScores, curRead.pseudoChainProb));
+      int64_t pseudoScore = curRead.getPseudoChainScoreFromSeedmerStates(i, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex);
+      double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1-errorRate, pseudoScore);
 
       readScoresBacktrack.emplace_back(std::make_pair(i, readScores.scores[i]));
       readScores.setScore(i, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[i].size());
@@ -2883,32 +2894,43 @@ void place_per_read_DFS(
         }
       }
     } else {
-      for (const auto& [readIndex, affectedSeedmerInfo] : readToAffectedSeedmerIndex) {
+      for (auto& [readIndex, affectedSeedmerInfo] : readToAffectedSeedmerIndex) {
         if (affectedSeedmerInfo.empty()) {
           std::cout << "Error: affectedSeedmerInfo is empty" << std::endl;
           exit(1);
         }
+        std::sort(affectedSeedmerInfo.begin(), affectedSeedmerInfo.end(), [](const auto& a, const auto& b) {
+          return (a >> 9) < (b >> 9);
+        });
 
         mgsr::Read& curRead = reads[readIndex];
         auto& seedmerStates = curRead.seedmerStates;
         auto& seedmerDuplicates = curRead.duplicates;
-
-        for (const auto& [affectedSeedmerIndex, SeedmerChangeType, positionIt] : affectedSeedmerInfo) {
+        bool allUniqueToNonUnique = true;
+        bool updateScore = false;
+        for (const auto& affectedSeedmerIndexCode : affectedSeedmerInfo) {
+          uint32_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
+          mgsr::SeedmerChangeType SeedmerChangeType = static_cast<mgsr::SeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
+          bool refRev = affectedSeedmerIndexCode & 1;
           auto& statesInfo = seedmerStates[affectedSeedmerIndex];
           switch (SeedmerChangeType) {
             case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE:
               readSeedmerMatchStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.match));
               readSeedmerRevStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.rev));
               statesInfo.match = true;
-              statesInfo.rev = curRead.seedmersList[affectedSeedmerIndex].rev != positionIt->second.rev;
+              statesInfo.rev = curRead.seedmersList[affectedSeedmerIndex].rev != refRev;
+              updateScore = true;
+              allUniqueToNonUnique = false;
               break;
             case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE:
               readSeedmerMatchStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.match));
               readSeedmerRevStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.rev));
               readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, false));
               statesInfo.match = true;
-              statesInfo.rev = curRead.seedmersList[affectedSeedmerIndex].rev != positionIt->second.rev;
+              statesInfo.rev = curRead.seedmersList[affectedSeedmerIndex].rev != refRev;
               curRead.duplicates.erase(affectedSeedmerIndex);
+              updateScore = true;
+              allUniqueToNonUnique = false;
               break;
             case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE:
               readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, true));
@@ -2919,26 +2941,36 @@ void place_per_read_DFS(
               readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, true));
               statesInfo.match = false;
               curRead.duplicates.insert(affectedSeedmerIndex);
+              updateScore = true;
               break;
             case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST:
               readSeedmerMatchStatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, statesInfo.match));
               statesInfo.match = false;
+              updateScore = true;
               break;
             case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST:
               readDuplicatesBacktrack.emplace_back(std::make_tuple(readIndex, affectedSeedmerIndex, false));
               curRead.duplicates.erase(affectedSeedmerIndex);
               break;
+            case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_UNIQUE:
+              updateScore = true;
+              break;
+            default:
+              std::cout << "Error: invalid seedmer change type" << std::endl;
+              exit(1);
           }
         }
 
-        // int64_t pseudoScore = getPseudoScore(curRead, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, minimumCount, minimumScore, rescueDuplicates, rescueDuplicatesThreshold, dfsIndex);
-        // double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
-        int64_t pseudoScore = dfsIndex;
-        double pseudoProb = 1/(dfsIndex+1);
-        if (pseudoScore != readScores.scores[readIndex].first) {
-          readScoresBacktrack.emplace_back(std::make_pair(readIndex, readScores.scores[readIndex]));
-          readScores.setScore(readIndex, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[readIndex].size());
-          readScores.addScoreMutation(dfsIndex, readIndex, pseudoScore, pseudoProb);
+        if (updateScore) {
+          int64_t pseudoScore = curRead.getPseudoChainScoreFromSeedmerStates(readIndex, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex);
+          double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
+
+          if (pseudoScore != readScores.scores[readIndex].first) {
+            // readPseudoChainScoreBacktrack.emplace_back(std::make_tuple(readIndex, curRead.pseudoChainScores, curRead.pseudoChainProb));
+            readScoresBacktrack.emplace_back(std::make_pair(readIndex, readScores.scores[readIndex]));
+            readScores.setScore(readIndex, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[readIndex].size());
+            readScores.addScoreMutation(dfsIndex, readIndex, pseudoScore, pseudoProb);
+          }
         }
 
         if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[readIndex] = mgsr::readType::HIGH_DUPLICATES;
@@ -3037,7 +3069,6 @@ void place_per_read_DFS(
   }
 
 
-
   // undo read matches changes
   for (const auto& [readIdx, affectedSeedmerIndex, match] : readSeedmerMatchStatesBacktrack) {
     reads[readIdx].seedmerStates[affectedSeedmerIndex].match = match;
@@ -3046,6 +3077,17 @@ void place_per_read_DFS(
   for (const auto& [readIdx, affectedSeedmerIndex, rev] : readSeedmerRevStatesBacktrack) {
     reads[readIdx].seedmerStates[affectedSeedmerIndex].rev = rev;
   }
+
+  // for (const auto& [readIdx, affectedSeedmerIndex, inChain] : readSeedmerInChainBacktrack) {
+  //   reads[readIdx].seedmerStates[affectedSeedmerIndex].inChain = inChain;
+  // }
+
+  // for (const auto& [readIdx, pseudoScore, pseudoProb] : readPseudoChainScoreBacktrack) {
+  //   reads[readIdx].pseudoChainScores = pseudoScore;
+  //   reads[readIdx].pseudoChainProb = pseudoProb;
+  // }
+
+
 
   // undo read duplicates changes
   for (const auto& [readIdx, affectedSeedmerIndex, del] : readDuplicatesBacktrack) {
@@ -3169,10 +3211,10 @@ void seedmersFromFastq(
           reverseRolledHash = rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-i-1]);
         }
 
-        int32_t iorder = 0;
+        uint32_t iorder = 0;
         if (forwardRolledHash != reverseRolledHash) {
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-          curRead.uniqueSeedmers.emplace(minHash, std::vector<int32_t>{0});
+          curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{0});
           curRead.seedmersList.emplace_back(mgsr::readSeedmer{
             minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
           ++iorder;
@@ -3193,7 +3235,7 @@ void seedmersFromFastq(
             size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
             auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
             if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
-              curRead.uniqueSeedmers.emplace(minHash, std::vector<int32_t>{i});
+              curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
               curRead.seedmersList.emplace_back(mgsr::readSeedmer{
                 minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
               ++iorder;
@@ -3264,8 +3306,8 @@ void seedmersFromFastq(
   auto& seedmerToReads = readSeedmersIndex.seedmerToReads;
   // auto& seedmerStatus = readSeedmersIndex.seedmerStatus;
 
-  for (int32_t i = 0; i < reads.size(); ++i) {
-    reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false});
+  for (uint32_t i = 0; i < reads.size(); ++i) {
+    reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
     for (const auto& seedmer : reads[i].uniqueSeedmers) {
       seedmerToReads[seedmer.first].push_back(std::make_pair(i, std::move(seedmer.second)));
       // if (seedmerStatus.find(seedmer.first) == seedmerStatus.end()) {
@@ -3274,6 +3316,8 @@ void seedmersFromFastq(
     }
     // reads[i].uniqueSeedmers.clear();
   }
+
+
 }
 
 bool identicalReadScores(const tbb::concurrent_vector<std::pair<int32_t, double>>& scores1, const tbb::concurrent_vector<std::pair<int32_t, double>>& scores2) {
