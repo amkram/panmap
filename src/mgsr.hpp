@@ -210,7 +210,12 @@ namespace mgsr {
     }
     return localCoord + std::prev(coordIt)->second;
   }
-
+  bool compareMinichainByBeg(const minichain_t& a, const minichain_t& b) {
+    return ((a >> 1) & 0x7FFFFFFF) < ((b >> 1) & 0x7FFFFFFF);
+  }
+  bool compareMinichainByEnd(const minichain_t& a, const minichain_t& b) {
+    return ((a >> 32) & 0x7FFFFFFF) < ((b >> 32) & 0x7FFFFFFF);
+  }
   class Read {
     public:
     std::vector<readSeedmer> seedmersList;
@@ -237,6 +242,518 @@ namespace mgsr {
     // size_t numDuplicates = 0;
     // size_t numAbsentees = 0;
 
+
+    uint32_t extendMinichain(
+      uint64_t& curEnd, bool rev, std::map<int32_t, mgsr::positionInfo>& positionMap,
+      std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap,
+      int32_t qidx, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt, uint64_t c
+    ) {
+      if (qidx == seedmersList.size() - 1) return c;
+      const auto& [nhash, nqbeg, nqend, nqrev, nqidx] = seedmersList[qidx+1];
+
+      auto nextHashToPositionIt = hashToPositionsMap.find(nhash);
+      if (nextHashToPositionIt != hashToPositionsMap.end()) {
+        if (nextHashToPositionIt->second.size() < 2) {
+          if (nextHashToPositionIt->second.size() != 1) {
+            std::cerr << "Error: hash " << nhash << " has multiple positions" << std::endl;
+            exit(1);
+          }
+
+          auto curRefPositionIt = *nextHashToPositionIt->second.begin();
+          bool nrev = nqrev != curRefPositionIt->second.rev;
+          if (rev == nrev) {
+            if (rev) {
+              auto prevRefPositionIt = std::prev(refPositionIt);
+              while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
+              if (curRefPositionIt->first == prevRefPositionIt->first) {
+                ++c;
+                curEnd = nqidx;
+                return extendMinichain(curEnd, rev, positionMap, hashToPositionsMap, nqidx, curRefPositionIt, c);
+              }
+            } else {
+              auto nextRefPositionIt = std::next(refPositionIt);
+              while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
+              if (curRefPositionIt->first == nextRefPositionIt->first) {
+                ++c;
+                curEnd = nqidx;
+                return extendMinichain(curEnd, rev, positionMap, hashToPositionsMap, nqidx, curRefPositionIt, c);
+              }
+            }
+          }
+        }
+      }
+      return c;
+    }
+
+    void initializeMinichains(std::map<int32_t, mgsr::positionInfo>& positionMap, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap) {
+      uint64_t i = 0;
+      while (i < seedmersList.size()) {
+        const auto& [hash, qbeg, qend, qrev, qidx] = seedmersList[i];
+        uint64_t c = 1;
+        auto hashToPositionIt = hashToPositionsMap.find(hash);
+        if (hashToPositionIt != hashToPositionsMap.end()) {
+          if (hashToPositionIt->second.size() < 2) {
+            if (hashToPositionIt->second.size() != 1) {
+              std::cerr << "Error: hash " << hash << " has multiple positions" << std::endl;
+              exit(1);
+            }
+            auto curRefPositionIt = *(hashToPositionIt->second.begin());
+            uint64_t curEnd = i;
+            bool rev = qrev != curRefPositionIt->second.rev;
+            c = extendMinichain(curEnd, rev, positionMap, hashToPositionsMap, qidx, curRefPositionIt, c);
+            minichain_t minichain = (curEnd << 32) | (i << 1) | (rev ? 1ULL : 0ULL);
+            minichains.push_back(minichain);
+          } else {
+            duplicates.insert(i);
+          }
+        }
+        i += c; 
+      }
+    }
+
+
+    void extendChainRemoval(uint64_t& c, uint64_t& curEnd, const std::vector<uint64_t>& affectedSeedmerIndexCodes) {
+      if (curEnd == seedmersList.size() - 1 || c == affectedSeedmerIndexCodes.size()) return;
+
+      uint32_t nextIndexOnSeedmerList = curEnd + 1;
+      uint32_t nextIndexOnAffectedSeedmerIndexCodes = c;
+
+      const uint64_t affectedSeedmerIndexCode = affectedSeedmerIndexCodes[nextIndexOnAffectedSeedmerIndexCodes];
+      uint32_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
+      mgsr::SeedmerChangeType SeedmerChangeType = static_cast<mgsr::SeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
+
+      if (nextIndexOnSeedmerList != affectedSeedmerIndex) return;
+
+      if (SeedmerChangeType == mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE || 
+        SeedmerChangeType == mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST
+      ) {
+        ++curEnd;
+        ++c;
+        extendChainRemoval(c, curEnd, affectedSeedmerIndexCodes);
+      }
+      return;
+    }
+
+    void extendChainAddition(uint64_t& c, uint64_t& curEnd, const std::vector<uint64_t>& affectedSeedmerIndexCodes, bool chainRev,
+      std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap,
+      std::map<int32_t, mgsr::positionInfo>& positionMap, std::map<int32_t, mgsr::positionInfo>::const_iterator refPositionIt
+    ) {
+      if (curEnd == seedmersList.size() - 1 || c == affectedSeedmerIndexCodes.size()) return;
+      
+      uint32_t nextIndexOnSeedmerList = curEnd + 1;
+      uint32_t nextIndexOnAffectedSeedmerIndexCodes = c;
+
+      const uint64_t affectedSeedmerIndexCode = affectedSeedmerIndexCodes[nextIndexOnAffectedSeedmerIndexCodes];
+      uint32_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
+      mgsr::SeedmerChangeType SeedmerChangeType = static_cast<mgsr::SeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
+      bool refRev = affectedSeedmerIndexCode & 1;
+      if (nextIndexOnSeedmerList != affectedSeedmerIndex) return;
+
+      if (SeedmerChangeType == mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE ||
+        SeedmerChangeType == mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE
+      ) {
+        bool nextRev = refRev != seedmersList[affectedSeedmerIndex].rev;
+        if (nextRev == chainRev) {
+          auto curRefPositionIt = *(hashToPositionsMap.find(seedmersList[affectedSeedmerIndex].hash)->second.begin());
+          if (chainRev) {
+            auto prevRefPositionIt = std::prev(refPositionIt);
+            while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
+            if (curRefPositionIt->first == prevRefPositionIt->first) {
+              ++c;
+              ++curEnd;
+              return extendChainAddition(c, curEnd, affectedSeedmerIndexCodes, chainRev, hashToPositionsMap, positionMap, curRefPositionIt);
+            }
+          } else {
+            auto nextRefPositionIt = std::next(refPositionIt);
+            while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
+            if (curRefPositionIt->first == nextRefPositionIt->first) {
+              ++c;
+              ++curEnd;
+              return extendChainAddition(c, curEnd, affectedSeedmerIndexCodes, chainRev, hashToPositionsMap, positionMap, curRefPositionIt);
+            }
+          }
+        }
+      }
+
+      return;
+    }
+
+
+    void updateMinichains(size_t readIndex, const std::vector<uint64_t>& affectedSeedmerIndexCodes, std::unordered_map<size_t, std::set<std::map<int32_t, positionInfo>::iterator, IteratorComparator>>& hashToPositionsMap, std::map<int32_t, mgsr::positionInfo>& positionMap) {
+      // decode affectedSeedmerIndexCode:
+      // 0th bit is 1 -> reversed
+      // 1st to 8th bit is the seedmerChangeType
+      // 9th to 40th bit is the affectedSeedmerIndex
+      std::vector<std::pair<minichain_t, bool>> updateMinichains;
+      uint32_t i = 0;
+      std::cout << "affectedSeedmerIndexCodes.size(): " << affectedSeedmerIndexCodes.size() << std::endl;
+      while (i < affectedSeedmerIndexCodes.size()) {
+        const uint64_t affectedSeedmerIndexCode = affectedSeedmerIndexCodes[i];
+        uint32_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
+        mgsr::SeedmerChangeType SeedmerChangeType = static_cast<mgsr::SeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
+        bool refRev = affectedSeedmerIndexCode & 1;
+        uint64_t c = i + 1;
+        uint64_t curEnd = affectedSeedmerIndex;
+
+        if (SeedmerChangeType == mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE || SeedmerChangeType == mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST) {
+          // match to no match -> remove from minichains
+          extendChainRemoval(c, curEnd, affectedSeedmerIndexCodes);
+          // encode minichain_t
+          minichain_t minichain = (curEnd << 32) | (affectedSeedmerIndex << 1) | (0ULL);
+          updateMinichains.push_back(std::make_pair(minichain, false));
+        } else if (SeedmerChangeType == mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE || SeedmerChangeType == mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE) {
+          // no match to match -> create minichains
+          bool rev = refRev != seedmersList[affectedSeedmerIndex].rev;
+          auto positionItFromCurrentHash = *(hashToPositionsMap.find(seedmersList[affectedSeedmerIndex].hash)->second.begin());
+          extendChainAddition(c, curEnd, affectedSeedmerIndexCodes, rev, hashToPositionsMap, positionMap, positionItFromCurrentHash);
+          // encode minichain_t
+          minichain_t minichain = (curEnd << 32) | (affectedSeedmerIndex << 1) | (rev ? 1ULL : 0ULL);
+          updateMinichains.push_back(std::make_pair(minichain, true));
+        }
+        i += (curEnd - affectedSeedmerIndex + 1);
+      }
+
+
+      // add/merge/delete minichains
+      for (const auto& [minichain, toAdd] : updateMinichains) {
+        uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
+        uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
+        bool minichainRev = minichain & 1;
+        std::cout << "minichainBeg: " << minichainBeg << ", minichainEnd: " << minichainEnd << ", minichainRev: " << minichainRev << ", toAdd: " << toAdd << std::endl;
+        if (toAdd) {
+          bool addRangeRev = minichain & 1;
+          uint64_t addRangeBeg = (minichain >> 1) & 0x7FFFFFFF;
+          uint64_t addRangeEnd = (minichain >> 32) & 0x7FFFFFFF;
+          if (minichains.size() == 0) {
+            minichains.push_back(minichain);
+          } else if (minichains.size() == 1) {
+            auto& originalMinichain = minichains[0];
+            uint64_t originalMinichainBeg = (originalMinichain >> 1) & 0x7FFFFFFF;
+            uint64_t originalMinichainEnd = (originalMinichain >> 32) & 0x7FFFFFFF;
+            uint64_t originalMinichainRev = originalMinichain & 1;
+
+            if (originalMinichainBeg != 0 && addRangeEnd == originalMinichainBeg - 1) {
+              std::cout << "Attempting to merge to the right" << std::endl;
+              if (addRangeRev == originalMinichainRev) {
+                auto newRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeEnd].hash)->second.begin());
+                auto originalRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[originalMinichainBeg].hash)->second.begin());
+                if (originalMinichainRev) {
+                  auto prevRefPositionIt = std::prev(newRangeEndKminmerPositionIt);
+                  while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
+                  if (prevRefPositionIt->first == originalRangeBegKminmerPositionIt->first) {
+                    // merge
+                    originalMinichain = (originalMinichainEnd << 32) | (addRangeBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+                  } else {
+                    // add without merging 
+                    minichains.insert(minichains.begin(), minichain);
+                  }
+                } else {
+                  auto nextRefPositionIt = std::next(newRangeEndKminmerPositionIt);
+                  while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
+                  if (nextRefPositionIt->first == originalRangeBegKminmerPositionIt->first) {
+                    // merge
+                    originalMinichain = (originalMinichainEnd << 32) | (addRangeBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+                  } else {
+                    // add without merging
+                   minichains.insert(minichains.begin(), minichain);
+                  }
+                }
+              } else {
+                // add without merging
+                std::cout << "Merge failed due to opposite direction" << std::endl;
+                minichains.insert(minichains.begin(), minichain);
+              }
+            } else if (addRangeBeg == originalMinichainEnd + 1) {
+              std::cout << "Attempting to merge to the left" << std::endl;
+              if (addRangeRev == originalMinichainRev) {
+                auto newRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeBeg].hash)->second.begin());
+                auto originalRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[originalMinichainEnd].hash)->second.begin());
+                if (originalMinichainRev) {
+                  auto prevRefPositionIt = std::prev(originalRangeEndKminmerPositionIt);
+                  while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
+                  if (prevRefPositionIt->first == originalRangeEndKminmerPositionIt->first) {
+                    // merge
+                    originalMinichain = (addRangeEnd << 32) | (originalMinichainBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+                  } else {
+                    // add without merging
+                    minichains.push_back(minichain);
+                  }
+                } else {
+                  auto nextRefPositionIt = std::next(originalRangeEndKminmerPositionIt);
+                  while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
+                  if (nextRefPositionIt->first == newRangeBegKminmerPositionIt->first) {
+                    // merge
+                    originalMinichain = (addRangeEnd << 32) | (originalMinichainBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+                  } else {
+                    // add without merging
+                    minichains.push_back(minichain);
+                  }
+                }
+              } else {
+                // add without merging
+                std::cout << "Merge failed due to opposite direction" << std::endl;
+                minichains.push_back(minichain);
+              }
+            } else {
+              // add without merging
+              if (addRangeEnd < originalMinichainBeg) {
+                minichains.insert(minichains.begin(), minichain);
+              } else {
+                minichains.push_back(minichain);
+              }
+            }
+          } else {
+            bool leftMinichainExists = false;
+            bool rightMinichainExists = false;
+            auto rightMinichainIt = std::upper_bound(minichains.begin(), minichains.end(), minichain, compareMinichainByBeg);
+            auto leftMinichainIt = minichains.end();
+            if (rightMinichainIt != minichains.end()) {
+              rightMinichainExists = true;
+            }
+            if (rightMinichainIt != minichains.begin()) {
+              leftMinichainIt = std::prev(rightMinichainIt);
+              leftMinichainExists = true;
+            }
+            std::cout << "leftMinichainExists: " << leftMinichainExists << ", rightMinichainExists: " << rightMinichainExists << std::endl;
+
+            bool mergeLeft = false;
+            bool mergeRight = false;
+            uint64_t leftMinichainBeg;
+            uint64_t leftMinichainEnd;
+            bool leftMinichainRev;
+            uint64_t rightMinichainBeg;
+            uint64_t rightMinichainEnd;
+            bool rightMinichainRev;
+            if (leftMinichainExists) {
+              leftMinichainBeg = (*leftMinichainIt >> 1) & 0x7FFFFFFF;
+              leftMinichainEnd = (*leftMinichainIt >> 32) & 0x7FFFFFFF;
+              leftMinichainRev = *leftMinichainIt & 1;
+              if (addRangeRev == leftMinichainRev) {
+                if (addRangeBeg == leftMinichainEnd + 1) {
+                  auto newRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeBeg].hash)->second.begin());
+                  auto leftRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[leftMinichainEnd].hash)->second.begin());
+                  if (leftMinichainRev) {
+                    auto prevRefPositionIt = std::prev(leftRangeEndKminmerPositionIt);
+                    while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
+                    if (prevRefPositionIt->first == newRangeBegKminmerPositionIt->first) {
+                      // merge
+                      mergeLeft = true;
+                    } else {
+                      // add without merging 
+                      mergeLeft = false;
+                    }
+                  } else {
+                    auto nextRefPositionIt = std::next(newRangeBegKminmerPositionIt);
+                    while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
+                    if (nextRefPositionIt->first == leftRangeEndKminmerPositionIt->first) {
+                      // merge
+                      mergeLeft = true;
+                    } else {
+                      // add without merging
+                      mergeLeft = false;
+                    }
+                  }
+                } else {
+                  // add without merging
+                  mergeLeft = false;
+                }
+              } else {
+                // add without merging
+                mergeLeft = false;
+              }
+            }
+            
+            if (rightMinichainExists) {
+              rightMinichainBeg = (*rightMinichainIt >> 1) & 0x7FFFFFFF;
+              rightMinichainEnd = (*rightMinichainIt >> 32) & 0x7FFFFFFF;
+              rightMinichainRev = *rightMinichainIt & 1;
+              if (addRangeRev == rightMinichainRev) {
+                auto newRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeEnd].hash)->second.begin());
+                auto rightRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[rightMinichainBeg].hash)->second.begin());
+                if (rightMinichainRev) {
+                  auto prevRefPositionIt = std::prev(newRangeEndKminmerPositionIt);
+                  while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
+                  if (prevRefPositionIt->first == rightRangeBegKminmerPositionIt->first) {
+                    // merge
+                    mergeRight = true;
+                  } else {
+                    // add without merging 
+                    mergeRight = false;
+                  }
+                } else {
+                  auto nextRefPositionIt = std::next(newRangeEndKminmerPositionIt);
+                  while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
+                  if (nextRefPositionIt->first == rightRangeBegKminmerPositionIt->first) {
+                    // merge
+                    mergeRight = true;
+                  } else {
+                    // add without merging
+                    mergeRight = false;
+                  }
+                }
+              } else {
+                // add without merging
+                mergeRight = false;
+              }
+            }
+            std::cout << "mergeLeft: " << mergeLeft << ", mergeRight: " << mergeRight << std::endl;
+            if (mergeLeft && mergeRight) {
+              *leftMinichainIt = (rightMinichainEnd << 32) | (leftMinichainBeg << 1) | (addRangeRev ? 1ULL : 0ULL);
+              minichains.erase(rightMinichainIt);
+            } else if (mergeLeft) {
+              *leftMinichainIt = (addRangeEnd << 32) | (leftMinichainBeg << 1) | (addRangeRev ? 1ULL : 0ULL);
+            } else if (mergeRight) {
+              *rightMinichainIt = (rightMinichainEnd << 32) | (addRangeBeg << 1) | (addRangeRev ? 1ULL : 0ULL);
+            } else {
+              if (!leftMinichainExists) {
+                minichains.insert(minichains.begin(), minichain);
+              } else if (!rightMinichainExists) {
+                minichains.push_back(minichain);
+              } else {
+                minichains.insert(leftMinichainIt+1, minichain);
+              }
+            }
+          }
+        } else {
+          uint64_t removeRangeBeg = (minichain >> 1) & 0x7FFFFFFF;
+          uint64_t removeRangeEnd = (minichain >> 32) & 0x7FFFFFFF;
+          if (minichains.size() == 1) {
+            auto& originalMinichain = minichains[0];
+            uint64_t originalMinichainBeg = (originalMinichain >> 1) & 0x7FFFFFFF;
+            uint64_t originalMinichainEnd = (originalMinichain >> 32) & 0x7FFFFFFF;
+            uint64_t originalMinichainRev = originalMinichain & 1;
+            if (originalMinichainBeg == removeRangeBeg) {
+              if (originalMinichainEnd == removeRangeEnd) {
+                // remove the minichain
+                minichains.clear();
+              } else {
+                // edit the beg
+                originalMinichain = (originalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+              }
+            } else if (originalMinichainEnd == removeRangeEnd) {
+              if (originalMinichainBeg == removeRangeBeg) {
+                // remove the minichain
+                minichains.clear();
+              } else {
+                // edit the end
+                originalMinichain = ((removeRangeBeg - 1) << 32) | (originalMinichainBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+              }
+            } else {
+              // need to split a minichain
+              originalMinichain = ((removeRangeBeg - 1) << 32) | (originalMinichainBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+              uint64_t newMinichain = (originalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (originalMinichainRev ? 1ULL : 0ULL);
+              minichains.push_back(newMinichain);
+            }
+          } else {
+            auto currentOriginalMinichainIt = std::upper_bound(minichains.begin(), minichains.end(), minichain, compareMinichainByBeg);
+            --currentOriginalMinichainIt;
+            decltype(currentOriginalMinichainIt) endOfOverlappingOriginalMinichainIt;
+            uint64_t currentOriginalMinichainBeg = (*currentOriginalMinichainIt >> 1) & 0x7FFFFFFF;
+            uint64_t currentOriginalMinichainEnd = (*currentOriginalMinichainIt >> 32) & 0x7FFFFFFF;
+            uint64_t currentOriginalMinichainRev = *currentOriginalMinichainIt & 1;
+            std::cout << "currentOriginalMinichainBeg: " << currentOriginalMinichainBeg << ", currentOriginalMinichainEnd: " << currentOriginalMinichainEnd << ", currentOriginalMinichainRev: " << currentOriginalMinichainRev << ", removeRangeBeg: " << removeRangeBeg << ", removeRangeEnd: " << removeRangeEnd << std::endl;
+
+            std::cout << "Line: " << __LINE__ << std::endl;
+            if (removeRangeEnd > currentOriginalMinichainEnd) {
+              std::cout << "Line: " << __LINE__ << std::endl;
+              uint32_t numToErase = 0;
+              std::cout << "Line: " << __LINE__ << std::endl;
+              auto it = currentOriginalMinichainIt;
+              std::cout << "Line: " << __LINE__ << std::endl;
+              if (currentOriginalMinichainBeg == removeRangeBeg) {
+                std::cout << "Line: " << __LINE__ << std::endl;
+                // remove the minichain
+                ++numToErase;
+                ++currentOriginalMinichainIt;
+              } else {
+                std::cout << "Line: " << __LINE__ << std::endl;
+                // edit the end then step right
+                *currentOriginalMinichainIt = ((removeRangeBeg - 1) << 32) | (currentOriginalMinichainBeg << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
+                std::cout << "Line: " << __LINE__ << std::endl;
+                ++currentOriginalMinichainIt;
+                ++it;
+              }
+
+              std::cout << "Line: " << __LINE__ << std::endl;
+              currentOriginalMinichainEnd = (*currentOriginalMinichainIt >> 32) & 0x7FFFFFFF;
+              std::cout << "Before while loop: " << currentOriginalMinichainEnd << std::endl;
+              std::cout << "Line: " << __LINE__ << std::endl;
+              while (currentOriginalMinichainIt != minichains.end() && currentOriginalMinichainEnd <= removeRangeEnd) {
+                std::cout << "Line: " << __LINE__ << std::endl;
+                ++numToErase;
+                std::cout << "Line: " << __LINE__ << std::endl;
+                ++currentOriginalMinichainIt;
+                currentOriginalMinichainEnd = (*currentOriginalMinichainIt >> 32) & 0x7FFFFFFF;
+              }
+
+              std::cout << "Line: " << __LINE__ << std::endl;
+              currentOriginalMinichainBeg = (*currentOriginalMinichainIt >> 1) & 0x7FFFFFFF;
+              std::cout << "Line: " << __LINE__ << std::endl;
+              if (currentOriginalMinichainIt != minichains.end() && currentOriginalMinichainBeg <= removeRangeEnd) {
+                std::cout << "Line: " << __LINE__ << std::endl;
+                *currentOriginalMinichainIt = (currentOriginalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
+              }
+
+              std::cout << "Line: " << __LINE__ << std::endl;
+              std::cout << "numToErase: " << numToErase << std::endl;
+              for (size_t i = 0; i < numToErase; ++i) {
+                auto curit = it+i;
+                uint64_t curitMinichain = *curit;
+                uint64_t curitMinichainBeg = (curitMinichain >> 1) & 0x7FFFFFFF;
+                uint64_t curitMinichainEnd = (curitMinichain >> 32) & 0x7FFFFFFF;
+                uint64_t curitMinichainRev = curitMinichain & 1;
+                std::cout << "To erase: " << curitMinichainBeg << " " << curitMinichainEnd << " " << curitMinichainRev << std::endl;
+              }
+              minichains.erase(it, it+numToErase);
+
+              // endOfOverlappingOriginalMinichainIt = std::upper_bound(minichains.begin(), minichains.end(), minichain, compareMinichainByEnd);
+              // --endOfOverlappingOriginalMinichainIt;
+              // uint64_t endOfOverlappingOriginalMinichainEnd = (*endOfOverlappingOriginalMinichainIt >> 32) & 0x7FFFFFFF;
+              // std::cout << "endOfOverlappingOriginalMinichainEnd: " << endOfOverlappingOriginalMinichainEnd << std::endl;
+              // if (endOfOverlappingOriginalMinichainEnd == removeRangeEnd) {
+              //   minichains.erase(currentOriginalMinichainIt, endOfOverlappingOriginalMinichainIt+1);
+              // } else {
+              //   uint64_t endOfOverlappingOriginalMinichainBeg = (*endOfOverlappingOriginalMinichainIt >> 1) & 0x7FFFFFFF;
+              //   uint64_t endOfOverlappingOriginalMinichainRev = *endOfOverlappingOriginalMinichainIt & 1;
+              //   *endOfOverlappingOriginalMinichainIt = (endOfOverlappingOriginalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (endOfOverlappingOriginalMinichainRev ? 1ULL : 0ULL);
+              //   minichains.erase(currentOriginalMinichainIt, endOfOverlappingOriginalMinichainIt);
+              // }
+            } else {
+              // same as if there is one minichain but instead of clear, use erase
+              if (currentOriginalMinichainBeg == removeRangeBeg) {
+                if (currentOriginalMinichainEnd == removeRangeEnd) {
+                  // erase the minichain
+                  minichains.erase(currentOriginalMinichainIt);
+                } else {
+                  // edit the beg
+                  *currentOriginalMinichainIt = (currentOriginalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
+                }
+              } else if (currentOriginalMinichainEnd  == removeRangeEnd) {
+                if (currentOriginalMinichainBeg == removeRangeBeg) {
+                  // erase the minichain
+                  minichains.erase(currentOriginalMinichainIt);
+                } else {
+                  // edit the end
+                  *currentOriginalMinichainIt = ((removeRangeBeg - 1) << 32) | (currentOriginalMinichainBeg << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
+                }
+              } else {
+                *currentOriginalMinichainIt = ((removeRangeBeg - 1) << 32) | (currentOriginalMinichainBeg << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
+                uint64_t newMinichain = (currentOriginalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
+                minichains.insert(currentOriginalMinichainIt+1, newMinichain);
+              }
+            }
+          }
+        }
+        for (const auto& minichain : minichains) {
+          uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
+          uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
+          bool minichainIsReversed = minichain & 1;
+          std::cout << "Current read " << readIndex << " Minichain: " << minichainBeg << " " << minichainEnd << " " << minichainIsReversed << std::endl;
+        }
+      }
+
+    }
+
     size_t nextValidRefSeedmer(std::map<int32_t, mgsr::positionInfo>::iterator& currentPositionIt, mgsr::refSeedmers& seedmersIndex, bool rev) {
       if (rev) {
         while (currentPositionIt != seedmersIndex.positionMap.begin()) {
@@ -258,18 +775,13 @@ namespace mgsr {
       return std::numeric_limits<size_t>::max();
     }
 
-    bool isColinearFromSeedmerStates(const std::pair<std::pair<int32_t, int32_t>, bool>& minichain1, const std::pair<std::pair<int32_t, int32_t>, bool>& minichain2, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
-      if (minichain1.second != minichain2.second) {
-        std::cerr << "Error: Invalid direction in isColinearFromSeedmerStates" << std::endl;
-        exit(1);
-      }
+    bool isColinearFromMinichains(const bool& rev, const uint64_t beg1, const uint64_t end1, const uint64_t beg2, const uint64_t end2, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
+      const auto& first1 = seedmersList[beg1];
+      const auto& last1 = seedmersList[end1];
+      const auto& first2 = seedmersList[beg2];
+      const auto& last2 = seedmersList[end2];
 
-      const auto& first1 = seedmersList[minichain1.first.first];
-      const auto& last1 = seedmersList[minichain1.first.second];
-      const auto& first2 = seedmersList[minichain2.first.first];
-      const auto& last2 = seedmersList[minichain2.first.second];
-
-      if (minichain1.second == false) {
+      if (rev) {
         // forward direction
         const auto& rglobalbeg1 = seedmersIndex.getBegFromHash(first1.hash);
         const auto& rglobalend1 = seedmersIndex.getEndFromHash(last1.hash);
@@ -311,83 +823,55 @@ namespace mgsr {
       return false;
     }
 
-    int64_t getPseudoChainScoreFromSeedmerStates(const size_t& readIndex, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
-      // std::vector<std::pair<std::pair<beg,end>, rev>>
+    int64_t getPsuedoChainScoreFromMinichains(const size_t& readIndex, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
       int64_t pseudoChainScore = 0;
-      std::vector<std::pair<std::pair<int32_t, int32_t>, bool>> minichains;
-
-      std::pair<std::pair<int32_t, int32_t>, bool> currentMinichain = std::make_pair(std::make_pair(-1, -1), false);
-      std::map<int32_t, mgsr::positionInfo>::iterator currentPositionIt;
-      for (int32_t i = 0; i < seedmerStates.size(); ++i) {
-        if (seedmerStates[i].match) {
-          if (currentMinichain.first.first == -1) {
-            currentMinichain.first.first = i;
-            currentMinichain.first.second = i;
-            currentMinichain.second = seedmerStates[i].rev;
-            currentPositionIt = *(seedmersIndex.hashToPositionsMap.find(seedmersList[i].hash)->second.begin());
-          } else {
-            // try to extend the minichain
-            if (seedmerStates[i].rev == currentMinichain.second) {
-              size_t nextHash = nextValidRefSeedmer(currentPositionIt, seedmersIndex, currentMinichain.second);
-              if (nextHash == seedmersList[i].hash) {
-                currentMinichain.first.second = i;
-              } else {
-                // close the minichain and start a new one
-                minichains.push_back(std::move(currentMinichain));
-                currentMinichain = std::make_pair(std::make_pair(i, i), seedmerStates[i].rev);
-                currentPositionIt = *(seedmersIndex.hashToPositionsMap.find(seedmersList[i].hash)->second.begin());
-              }
-            } else {
-              // close the minichain and start a new one
-              minichains.push_back(std::move(currentMinichain));
-              currentMinichain = std::make_pair(std::make_pair(i, i), seedmerStates[i].rev);
-              currentPositionIt = *(seedmersIndex.hashToPositionsMap.find(seedmersList[i].hash)->second.begin());
-            }
-          }
-        } else {
-          // close the minichain and start a new one
-          if (currentMinichain.first.first != -1) {
-            minichains.push_back(std::move(currentMinichain));
-            currentMinichain = std::make_pair(std::make_pair(-1, -1), false);
-          }
-        }
-      }
-
-      if (currentMinichain.first.first != -1) {
-        minichains.push_back(std::move(currentMinichain));
-      }
-
       if (minichains.empty()) {
         return 0;
       } else if (minichains.size() == 1) {
-        return minichains[0].first.second - minichains[0].first.first + 1;
+        const uint64_t currentMinichain = minichains[0];
+        uint64_t currentMinichainBeg = (currentMinichain >> 1) & 0x7FFFFFFF;
+        uint64_t currentMinichainEnd = (currentMinichain >> 32) & 0x7FFFFFFF;
+        return currentMinichainEnd - currentMinichainBeg + 1;
       } else {
         // find longest minichain
+        uint64_t longestMinichainLength = 0;
         int32_t longestMinichainIndex = -1;
+        uint64_t longestMinichainCode = 0;
         for (int32_t i = 0; i < minichains.size(); ++i) {
-          if (minichains[i].first.second - minichains[i].first.first + 1 > longestMinichainIndex) {
+          const uint64_t currentMinichain = minichains[i];
+          uint64_t currentMinichainBeg = (currentMinichain >> 1) & 0x7FFFFFFF;
+          uint64_t currentMinichainEnd = (currentMinichain >> 32) & 0x7FFFFFFF;
+          if (currentMinichainEnd - currentMinichainBeg + 1 > longestMinichainLength) {
             longestMinichainIndex = i;
+            longestMinichainCode = currentMinichain;
+            longestMinichainLength = currentMinichainEnd - currentMinichainBeg + 1;
           }
         }
 
-        bool longestMinichainIsReversed = minichains[longestMinichainIndex].second;
+        bool longestMinichainIsReversed = longestMinichainCode & 1;
+        uint64_t longestMinichainBeg = (longestMinichainCode >> 1) & 0x7FFFFFFF;
+        uint64_t longestMinichainEnd = (longestMinichainCode >> 32) & 0x7FFFFFFF;
 
         for (int32_t i = 0; i < minichains.size(); ++i) {
+          const uint64_t currentMinichain = minichains[i];
+          uint64_t currentMinichainBeg = (currentMinichain >> 1) & 0x7FFFFFFF;
+          uint64_t currentMinichainEnd = (currentMinichain >> 32) & 0x7FFFFFFF;
+          bool currentMinichainIsReversed = currentMinichain & 1;
           if (i == longestMinichainIndex) {
-            pseudoChainScore += minichains[i].first.second - minichains[i].first.first + 1;
+            pseudoChainScore += longestMinichainEnd - longestMinichainBeg + 1;
           }
 
-          if (minichains[i].second != longestMinichainIsReversed) {
+          if (currentMinichainIsReversed != longestMinichainIsReversed) {
             continue;
           }
 
           if (longestMinichainIndex < i) {
-            if (isColinearFromSeedmerStates(minichains[longestMinichainIndex], minichains[i], seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
-              pseudoChainScore += minichains[i].first.second - minichains[i].first.first + 1;
+            if (isColinearFromMinichains(longestMinichainIsReversed, longestMinichainBeg, longestMinichainEnd, currentMinichainBeg, currentMinichainEnd, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+              pseudoChainScore += currentMinichainEnd - currentMinichainBeg + 1;
             }
           } else if (longestMinichainIndex > i) {
-            if (isColinearFromSeedmerStates(minichains[i], minichains[longestMinichainIndex], seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
-              pseudoChainScore += minichains[i].first.second - minichains[i].first.first + 1;
+            if (isColinearFromMinichains(longestMinichainIsReversed, currentMinichainBeg, currentMinichainEnd, longestMinichainBeg, longestMinichainEnd, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+              pseudoChainScore += currentMinichainEnd - currentMinichainBeg + 1;
             }
           }
         }
