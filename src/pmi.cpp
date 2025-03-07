@@ -2805,8 +2805,10 @@ void place_per_read_DFS(
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
         // old exist unique -> new exist duplicate
         seedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE;
+        oldSeedmerStatus[hash] = refSeemderNewStatus;
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
         seedmerChangeType = mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_UNIQUE;
+        oldSeedmerStatus[hash] = refSeemderNewStatus;
       } else {
         std::cout << "Error: invalid seedmer status" << std::endl;
         exit(1);
@@ -2826,8 +2828,10 @@ void place_per_read_DFS(
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
         // old exist duplicate -> new exist unique
         seedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE;
+        oldSeedmerStatus[hash] = refSeemderNewStatus;
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
         seedmerChangeType = mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_DUPLICATE;
+        oldSeedmerStatus[hash] = refSeemderNewStatus;
       } else {
         std::cout << "Error: invalid seedmer status" << std::endl;
         exit(1);
@@ -2900,6 +2904,8 @@ void place_per_read_DFS(
   // std::vector<std::tuple<size_t, int32_t, bool>> readDuplicatesBacktrack;
   std::vector<std::pair<size_t, std::vector<mgsr::minichain_t>>> readMinichainsBacktrack;
 
+  // std::cout << node->identifier << " SCORE: ";
+  // std::cout << dfsIndex << " " << node->identifier << std::endl;
   if (node->identifier == T->root->identifier) {
     readScores.assignDfsIndex(node->identifier, dfsIndex);
     readScoresBacktrack.reserve(reads.size());
@@ -2948,57 +2954,72 @@ void place_per_read_DFS(
         auto& seedmerDuplicates = curRead.duplicates;
         // backtrack duplicates -> skip for now
         // backtrack minichains
+        if(false) std::cout << "----------------------------------------" << std::endl;
+        if(false) std::cout << "Read " << readIndex << " minichains size: " << curRead.minichains.size() << " allUniqueToNonUnique: " << allUniqueToNonUnique << " allNonUniqueToUnique: " << allNonUniqueToUnique << std::endl;
 
         for (size_t i = 0; i < curRead.minichains.size(); ++i) {
           uint64_t minichain = curRead.minichains[i];
           uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
           uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
           bool minichainIsReversed = minichain & 1;
+          if(false) std::cout << "Read " << readIndex << " Minichain " << i << ": " << minichainBeg << " " << minichainEnd << " " << minichainIsReversed << std::endl;
         }
-        // for (const auto& affectedSeedmerIndexCode : affectedSeedmerIndexCodes) {
-        //   uint32_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
-        //   mgsr::SeedmerChangeType SeedmerChangeType = static_cast<mgsr::SeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
-        //   bool refRev = affectedSeedmerIndexCode & 1;
-        //   std::string seedmerChangeTypeStr;
-        //   switch (SeedmerChangeType) {
-        //     case mgsr::SeedmerChangeType::NOT_EXIST_TO_NOT_EXIST:
-        //       seedmerChangeTypeStr = "NOT_EXIST_TO_NOT_EXIST";
-        //       break;
-        //     case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE:
-        //       seedmerChangeTypeStr = "NOT_EXIST_TO_EXIST_UNIQUE";
-        //       break;
-        //     case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE:
-        //       seedmerChangeTypeStr = "NOT_EXIST_TO_EXIST_DUPLICATE";
-        //       break;
-        //     case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST:
-        //       seedmerChangeTypeStr = "EXIST_UNIQUE_TO_NOT_EXIST";
-        //       break;
-        //     case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_UNIQUE:
-        //       seedmerChangeTypeStr = "EXIST_UNIQUE_TO_EXIST_UNIQUE";
-        //       break;
-        //     case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE:
-        //       seedmerChangeTypeStr = "EXIST_UNIQUE_TO_EXIST_DUPLICATE";
-        //       break;
-        //     case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST:
-        //       seedmerChangeTypeStr = "EXIST_DUPLICATE_TO_NOT_EXIST";
-        //       break;
-        //     case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE:
-        //       seedmerChangeTypeStr = "EXIST_DUPLICATE_TO_EXIST_UNIQUE";
-        //       break;
-        //     case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_DUPLICATE:
-        //       seedmerChangeTypeStr = "EXIST_DUPLICATE_TO_EXIST_DUPLICATE";
-        //       break;
-        //   }
-        //   std::cout << "Affected Seedmer Index: " << affectedSeedmerIndex << " Seedmer Change Type: " << seedmerChangeTypeStr << " Ref Rev: " << refRev << std::endl;
-        // }
+        if(false) std::cout << std::endl;
+        for (const auto& affectedSeedmerIndexCode : affectedSeedmerIndexCodes) {
+          uint32_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
+          mgsr::SeedmerChangeType SeedmerChangeType = static_cast<mgsr::SeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
+          bool refRev = affectedSeedmerIndexCode & 1;
+          std::string seedmerChangeTypeStr;
+          switch (SeedmerChangeType) {
+            case mgsr::SeedmerChangeType::NOT_EXIST_TO_NOT_EXIST:
+              seedmerChangeTypeStr = "NOT_EXIST_TO_NOT_EXIST";
+              break;
+            case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE:
+              seedmerChangeTypeStr = "NOT_EXIST_TO_EXIST_UNIQUE";
+              break;
+            case mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE:
+              seedmerChangeTypeStr = "NOT_EXIST_TO_EXIST_DUPLICATE";
+              break;
+            case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST:
+              seedmerChangeTypeStr = "EXIST_UNIQUE_TO_NOT_EXIST";
+              break;
+            case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_UNIQUE:
+              seedmerChangeTypeStr = "EXIST_UNIQUE_TO_EXIST_UNIQUE";
+              break;
+            case mgsr::SeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE:
+              seedmerChangeTypeStr = "EXIST_UNIQUE_TO_EXIST_DUPLICATE";
+              break;
+            case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST:
+              seedmerChangeTypeStr = "EXIST_DUPLICATE_TO_NOT_EXIST";
+              break;
+            case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE:
+              seedmerChangeTypeStr = "EXIST_DUPLICATE_TO_EXIST_UNIQUE";
+              break;
+            case mgsr::SeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_DUPLICATE:
+              seedmerChangeTypeStr = "EXIST_DUPLICATE_TO_EXIST_DUPLICATE";
+              break;
+          }
+          if(false) std::cout << "Affected Seedmer Index: " << affectedSeedmerIndex << " Seedmer Change Type: " << seedmerChangeTypeStr << " Ref Rev: " << refRev << std::endl;
+        }
         
         readMinichainsBacktrack.emplace_back(readIndex, curRead.minichains);
         if (allUniqueToNonUnique || allNonUniqueToUnique) {
-          curRead.updateMinichains(readIndex, affectedSeedmerIndexCodes, hashToPositionsMap, positionMap);
+          curRead.updateMinichains(readIndex, affectedSeedmerIndexCodes, hashToPositionsMap, positionMap, dfsIndex);
         } else {
           curRead.minichains.clear();
           curRead.initializeMinichains(positionMap, hashToPositionsMap);
         }
+
+        if(false) std::cout << std::endl;
+        for (size_t i = 0; i < curRead.minichains.size(); ++i) {
+          uint64_t minichain = curRead.minichains[i];
+          uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
+          uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
+          bool minichainIsReversed = minichain & 1;
+          if(false) std::cout << "Read " << readIndex << " Minichain " << i << ": " << minichainBeg << " " << minichainEnd << " " << minichainIsReversed << std::endl;
+        }
+        if(false) std::cout << std::endl;
+
 
         int64_t pseudoScore = curRead.getPsuedoChainScoreFromMinichains(readIndex, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex);
         double  pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
