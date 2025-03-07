@@ -386,7 +386,6 @@ namespace mgsr {
       // 9th to 40th bit is the affectedSeedmerIndex
       std::vector<std::pair<minichain_t, bool>> updateMinichains;
       uint32_t i = 0;
-      std::cout << "affectedSeedmerIndexCodes.size(): " << affectedSeedmerIndexCodes.size() << std::endl;
       while (i < affectedSeedmerIndexCodes.size()) {
         const uint64_t affectedSeedmerIndexCode = affectedSeedmerIndexCodes[i];
         uint32_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
@@ -419,7 +418,6 @@ namespace mgsr {
         uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
         uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
         bool minichainRev = minichain & 1;
-        std::cout << "minichainBeg: " << minichainBeg << ", minichainEnd: " << minichainEnd << ", minichainRev: " << minichainRev << ", toAdd: " << toAdd << std::endl;
         if (toAdd) {
           bool addRangeRev = minichain & 1;
           uint64_t addRangeBeg = (minichain >> 1) & 0x7FFFFFFF;
@@ -433,7 +431,6 @@ namespace mgsr {
             uint64_t originalMinichainRev = originalMinichain & 1;
 
             if (originalMinichainBeg != 0 && addRangeEnd == originalMinichainBeg - 1) {
-              std::cout << "Attempting to merge to the right" << std::endl;
               if (addRangeRev == originalMinichainRev) {
                 auto newRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeEnd].hash)->second.begin());
                 auto originalRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[originalMinichainBeg].hash)->second.begin());
@@ -460,11 +457,9 @@ namespace mgsr {
                 }
               } else {
                 // add without merging
-                std::cout << "Merge failed due to opposite direction" << std::endl;
                 minichains.insert(minichains.begin(), minichain);
               }
             } else if (addRangeBeg == originalMinichainEnd + 1) {
-              std::cout << "Attempting to merge to the left" << std::endl;
               if (addRangeRev == originalMinichainRev) {
                 auto newRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeBeg].hash)->second.begin());
                 auto originalRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[originalMinichainEnd].hash)->second.begin());
@@ -491,7 +486,6 @@ namespace mgsr {
                 }
               } else {
                 // add without merging
-                std::cout << "Merge failed due to opposite direction" << std::endl;
                 minichains.push_back(minichain);
               }
             } else {
@@ -514,7 +508,6 @@ namespace mgsr {
               leftMinichainIt = std::prev(rightMinichainIt);
               leftMinichainExists = true;
             }
-            std::cout << "leftMinichainExists: " << leftMinichainExists << ", rightMinichainExists: " << rightMinichainExists << std::endl;
 
             bool mergeLeft = false;
             bool mergeRight = false;
@@ -596,7 +589,6 @@ namespace mgsr {
                 mergeRight = false;
               }
             }
-            std::cout << "mergeLeft: " << mergeLeft << ", mergeRight: " << mergeRight << std::endl;
             if (mergeLeft && mergeRight) {
               *leftMinichainIt = (rightMinichainEnd << 32) | (leftMinichainBeg << 1) | (addRangeRev ? 1ULL : 0ULL);
               minichains.erase(rightMinichainIt);
@@ -651,73 +643,42 @@ namespace mgsr {
             uint64_t currentOriginalMinichainBeg = (*currentOriginalMinichainIt >> 1) & 0x7FFFFFFF;
             uint64_t currentOriginalMinichainEnd = (*currentOriginalMinichainIt >> 32) & 0x7FFFFFFF;
             uint64_t currentOriginalMinichainRev = *currentOriginalMinichainIt & 1;
-            std::cout << "currentOriginalMinichainBeg: " << currentOriginalMinichainBeg << ", currentOriginalMinichainEnd: " << currentOriginalMinichainEnd << ", currentOriginalMinichainRev: " << currentOriginalMinichainRev << ", removeRangeBeg: " << removeRangeBeg << ", removeRangeEnd: " << removeRangeEnd << std::endl;
 
-            std::cout << "Line: " << __LINE__ << std::endl;
             if (removeRangeEnd > currentOriginalMinichainEnd) {
-              std::cout << "Line: " << __LINE__ << std::endl;
               uint32_t numToErase = 0;
-              std::cout << "Line: " << __LINE__ << std::endl;
               auto it = currentOriginalMinichainIt;
-              std::cout << "Line: " << __LINE__ << std::endl;
               if (currentOriginalMinichainBeg == removeRangeBeg) {
-                std::cout << "Line: " << __LINE__ << std::endl;
                 // remove the minichain
                 ++numToErase;
                 ++currentOriginalMinichainIt;
               } else {
-                std::cout << "Line: " << __LINE__ << std::endl;
                 // edit the end then step right
                 *currentOriginalMinichainIt = ((removeRangeBeg - 1) << 32) | (currentOriginalMinichainBeg << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
-                std::cout << "Line: " << __LINE__ << std::endl;
                 ++currentOriginalMinichainIt;
                 ++it;
               }
 
-              std::cout << "Line: " << __LINE__ << std::endl;
               currentOriginalMinichainEnd = (*currentOriginalMinichainIt >> 32) & 0x7FFFFFFF;
-              std::cout << "Before while loop: " << currentOriginalMinichainEnd << std::endl;
-              std::cout << "Line: " << __LINE__ << std::endl;
               while (currentOriginalMinichainIt != minichains.end() && currentOriginalMinichainEnd <= removeRangeEnd) {
-                std::cout << "Line: " << __LINE__ << std::endl;
                 ++numToErase;
-                std::cout << "Line: " << __LINE__ << std::endl;
                 ++currentOriginalMinichainIt;
                 currentOriginalMinichainEnd = (*currentOriginalMinichainIt >> 32) & 0x7FFFFFFF;
               }
 
-              std::cout << "Line: " << __LINE__ << std::endl;
               currentOriginalMinichainBeg = (*currentOriginalMinichainIt >> 1) & 0x7FFFFFFF;
-              std::cout << "Line: " << __LINE__ << std::endl;
               if (currentOriginalMinichainIt != minichains.end() && currentOriginalMinichainBeg <= removeRangeEnd) {
-                std::cout << "Line: " << __LINE__ << std::endl;
                 *currentOriginalMinichainIt = (currentOriginalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (currentOriginalMinichainRev ? 1ULL : 0ULL);
               }
 
-              std::cout << "Line: " << __LINE__ << std::endl;
-              std::cout << "numToErase: " << numToErase << std::endl;
               for (size_t i = 0; i < numToErase; ++i) {
                 auto curit = it+i;
                 uint64_t curitMinichain = *curit;
                 uint64_t curitMinichainBeg = (curitMinichain >> 1) & 0x7FFFFFFF;
                 uint64_t curitMinichainEnd = (curitMinichain >> 32) & 0x7FFFFFFF;
                 uint64_t curitMinichainRev = curitMinichain & 1;
-                std::cout << "To erase: " << curitMinichainBeg << " " << curitMinichainEnd << " " << curitMinichainRev << std::endl;
               }
               minichains.erase(it, it+numToErase);
 
-              // endOfOverlappingOriginalMinichainIt = std::upper_bound(minichains.begin(), minichains.end(), minichain, compareMinichainByEnd);
-              // --endOfOverlappingOriginalMinichainIt;
-              // uint64_t endOfOverlappingOriginalMinichainEnd = (*endOfOverlappingOriginalMinichainIt >> 32) & 0x7FFFFFFF;
-              // std::cout << "endOfOverlappingOriginalMinichainEnd: " << endOfOverlappingOriginalMinichainEnd << std::endl;
-              // if (endOfOverlappingOriginalMinichainEnd == removeRangeEnd) {
-              //   minichains.erase(currentOriginalMinichainIt, endOfOverlappingOriginalMinichainIt+1);
-              // } else {
-              //   uint64_t endOfOverlappingOriginalMinichainBeg = (*endOfOverlappingOriginalMinichainIt >> 1) & 0x7FFFFFFF;
-              //   uint64_t endOfOverlappingOriginalMinichainRev = *endOfOverlappingOriginalMinichainIt & 1;
-              //   *endOfOverlappingOriginalMinichainIt = (endOfOverlappingOriginalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (endOfOverlappingOriginalMinichainRev ? 1ULL : 0ULL);
-              //   minichains.erase(currentOriginalMinichainIt, endOfOverlappingOriginalMinichainIt);
-              // }
             } else {
               // same as if there is one minichain but instead of clear, use erase
               if (currentOriginalMinichainBeg == removeRangeBeg) {
@@ -748,7 +709,6 @@ namespace mgsr {
           uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
           uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
           bool minichainIsReversed = minichain & 1;
-          std::cout << "Current read " << readIndex << " Minichain: " << minichainBeg << " " << minichainEnd << " " << minichainIsReversed << std::endl;
         }
       }
 
