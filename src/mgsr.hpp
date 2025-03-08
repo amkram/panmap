@@ -66,7 +66,7 @@ namespace mgsr {
   };
 
   struct readSeedmers {
-    std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint32_t>>>> seedmerToReads;
+    std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint64_t>>>> seedmerToReads;
 
     std::unordered_map<size_t, SeedmerStatus> seedmerStatus;
 
@@ -194,7 +194,13 @@ namespace mgsr {
   
   typedef uint64_t minichain_t;
 
-
+  struct hashCoordInfoCache {
+    int32_t rGlobalBeg = -1;
+    int32_t rGlobalEnd = -1;
+    int32_t rLocalBeg = -1;
+    int32_t rLocalEnd = -1;
+  };
+  
   int64_t degapGlobal(const int64_t& globalCoord, const std::map<int64_t, int64_t>& degapCoordsIndex) {
     auto coordIt = degapCoordsIndex.upper_bound(globalCoord);
     if (coordIt == degapCoordsIndex.begin()) {
@@ -220,7 +226,7 @@ namespace mgsr {
     public:
     std::vector<readSeedmer> seedmersList;
     std::vector<SeedmerState> seedmerStates;
-    std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
+    std::unordered_map<size_t, std::vector<uint64_t>> uniqueSeedmers;
     //if (rev) minichain_t |= 1ull;
     // minichain_t |= static_cast<uint64_t>(beg) << 1;
     // minichain_t |= static_cast<uint64_t>(end) << 32;
@@ -427,6 +433,7 @@ namespace mgsr {
           if (minichains.size() == 0) {
             minichains.push_back(minichain);
           } else if (minichains.size() == 1) {
+            if (false) std::cout << "Adding minichain to single minichain" << std::endl;
             auto& originalMinichain = minichains[0];
             uint64_t originalMinichainBeg = (originalMinichain >> 1) & 0x7FFFFFFF;
             uint64_t originalMinichainEnd = (originalMinichain >> 32) & 0x7FFFFFFF;
@@ -438,24 +445,30 @@ namespace mgsr {
                 auto newRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeEnd].hash)->second.begin());
                 auto originalRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[originalMinichainBeg].hash)->second.begin());
                 if (originalMinichainRev) {
+                  if (false) std::cout << "Original minichain is reversed" << std::endl;
                   auto prevRefPositionIt = std::prev(newRangeEndKminmerPositionIt);
                   while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
                   if (prevRefPositionIt->first == originalRangeBegKminmerPositionIt->first) {
                     // merge
+                    if (false) std::cout << "Merging minichains" << std::endl;
                     originalMinichain = (originalMinichainEnd << 32) | (addRangeBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
                   } else {
                     // add without merging 
+                    if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
                     minichains.insert(minichains.begin(), minichain);
                   }
                 } else {
+                  if (false) std::cout << "Original minichain is not reversed" << std::endl;
                   auto nextRefPositionIt = std::next(newRangeEndKminmerPositionIt);
                   while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
                   if (nextRefPositionIt->first == originalRangeBegKminmerPositionIt->first) {
                     // merge
+                    if (false) std::cout << "Merging minichains" << std::endl;
                     originalMinichain = (originalMinichainEnd << 32) | (addRangeBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
                   } else {
                     // add without merging
-                   minichains.insert(minichains.begin(), minichain);
+                    if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
+                    minichains.insert(minichains.begin(), minichain);
                   }
                 }
               } else {
@@ -469,23 +482,29 @@ namespace mgsr {
                 auto newRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeBeg].hash)->second.begin());
                 auto originalRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[originalMinichainEnd].hash)->second.begin());
                 if (originalMinichainRev) {
+                  if (false) std::cout << "Original minichain is reversed" << std::endl;
                   auto prevRefPositionIt = std::prev(originalRangeEndKminmerPositionIt);
                   while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
-                  if (prevRefPositionIt->first == originalRangeEndKminmerPositionIt->first) {
+                  if (prevRefPositionIt->first == newRangeBegKminmerPositionIt->first) {
                     // merge
+                    if (false) std::cout << "Merging minichains" << std::endl;
                     originalMinichain = (addRangeEnd << 32) | (originalMinichainBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
                   } else {
                     // add without merging
+                    if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
                     minichains.push_back(minichain);
                   }
                 } else {
+                  if (false) std::cout << "Original minichain is not reversed" << std::endl;
                   auto nextRefPositionIt = std::next(originalRangeEndKminmerPositionIt);
                   while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
                   if (nextRefPositionIt->first == newRangeBegKminmerPositionIt->first) {
                     // merge
+                    if (false) std::cout << "Merging minichains" << std::endl;
                     originalMinichain = (addRangeEnd << 32) | (originalMinichainBeg << 1) | (originalMinichainRev ? 1ULL : 0ULL);
                   } else {
                     // add without merging
+                    if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
                     minichains.push_back(minichain);
                   }
                 }
@@ -509,10 +528,22 @@ namespace mgsr {
             auto leftMinichainIt = minichains.end();
             if (rightMinichainIt != minichains.end()) {
               rightMinichainExists = true;
+              if (false) {
+                uint64_t rightMinichainBeg = (*rightMinichainIt >> 1) & 0x7FFFFFFF;
+                uint64_t rightMinichainEnd = (*rightMinichainIt >> 32) & 0x7FFFFFFF;
+                bool rightMinichainRev = *rightMinichainIt & 1;
+                std::cout << "rightMinichainBeg: " << rightMinichainBeg << ", rightMinichainEnd: " << rightMinichainEnd << ", rightMinichainRev: " << rightMinichainRev << std::endl;
+              }
             }
             if (rightMinichainIt != minichains.begin()) {
               leftMinichainIt = std::prev(rightMinichainIt);
               leftMinichainExists = true;
+              if (false) {
+                uint64_t leftMinichainBeg = (*leftMinichainIt >> 1) & 0x7FFFFFFF;
+                uint64_t leftMinichainEnd = (*leftMinichainIt >> 32) & 0x7FFFFFFF;
+                bool leftMinichainRev = *leftMinichainIt & 1;
+                std::cout << "leftMinichainBeg: " << leftMinichainBeg << ", leftMinichainEnd: " << leftMinichainEnd << ", leftMinichainRev: " << leftMinichainRev << std::endl;
+              }
             }
             if (false) std::cout << "leftMinichainExists: " << leftMinichainExists << ", rightMinichainExists: " << rightMinichainExists << std::endl;
 
@@ -530,69 +561,92 @@ namespace mgsr {
               leftMinichainRev = *leftMinichainIt & 1;
               if (addRangeRev == leftMinichainRev) {
                 if (addRangeBeg == leftMinichainEnd + 1) {
+                  if (false) std::cout << "Attempting to merge to the left" << std::endl;
                   auto newRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeBeg].hash)->second.begin());
                   auto leftRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[leftMinichainEnd].hash)->second.begin());
                   if (leftMinichainRev) {
+                    if (false) std::cout << "Left minichain is reversed" << std::endl;
                     auto prevRefPositionIt = std::prev(leftRangeEndKminmerPositionIt);
                     while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
                     if (prevRefPositionIt->first == newRangeBegKminmerPositionIt->first) {
                       // merge
+                      if (false) std::cout << "Merging minichains" << std::endl;
                       mergeLeft = true;
                     } else {
                       // add without merging 
+                      if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
                       mergeLeft = false;
                     }
                   } else {
-                    auto nextRefPositionIt = std::next(newRangeBegKminmerPositionIt);
+                    if (false) std::cout << "Left minichain is not reversed" << std::endl;
+                    auto nextRefPositionIt = std::next(leftRangeEndKminmerPositionIt);
                     while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
-                    if (nextRefPositionIt->first == leftRangeEndKminmerPositionIt->first) {
+                    if (nextRefPositionIt->first == newRangeBegKminmerPositionIt->first) {
                       // merge
+                      if (false) std::cout << "Merging minichains" << std::endl;
                       mergeLeft = true;
                     } else {
                       // add without merging
+                      if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
                       mergeLeft = false;
                     }
                   }
                 } else {
                   // add without merging
+                  if (false) std::cout << "Merge failed due to index mismatch" << std::endl;
                   mergeLeft = false;
                 }
               } else {
                 // add without merging
+                if (false) std::cout << "Merge failed due to opposite direction" << std::endl;
                 mergeLeft = false;
               }
             }
             
             if (rightMinichainExists) {
+              if (false) std::cout << "Attempting to merge to the right" << std::endl;
               rightMinichainBeg = (*rightMinichainIt >> 1) & 0x7FFFFFFF;
               rightMinichainEnd = (*rightMinichainIt >> 32) & 0x7FFFFFFF;
               rightMinichainRev = *rightMinichainIt & 1;
               if (addRangeRev == rightMinichainRev) {
-                auto newRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeEnd].hash)->second.begin());
-                auto rightRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[rightMinichainBeg].hash)->second.begin());
-                if (rightMinichainRev) {
-                  auto prevRefPositionIt = std::prev(newRangeEndKminmerPositionIt);
-                  while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
-                  if (prevRefPositionIt->first == rightRangeBegKminmerPositionIt->first) {
-                    // merge
-                    mergeRight = true;
+                if (addRangeEnd + 1 == rightMinichainBeg) {
+                  auto newRangeEndKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[addRangeEnd].hash)->second.begin());
+                  auto rightRangeBegKminmerPositionIt = *(hashToPositionsMap.find(seedmersList[rightMinichainBeg].hash)->second.begin());
+                  if (rightMinichainRev) {
+                    if (false) std::cout << "Right minichain is reversed" << std::endl;
+                    auto prevRefPositionIt = std::prev(newRangeEndKminmerPositionIt);
+                    while (prevRefPositionIt->second.fhash == prevRefPositionIt->second.rhash) --prevRefPositionIt;
+                    if (prevRefPositionIt->first == rightRangeBegKminmerPositionIt->first) {
+                      // merge
+                      if (false) std::cout << "Merging minichains" << std::endl;
+                      mergeRight = true;
+                    } else {
+                      // add without merging 
+                      if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
+                      mergeRight = false;
+                    }
                   } else {
-                    // add without merging 
-                    mergeRight = false;
+                    if (false) std::cout << "Right minichain is not reversed" << std::endl;
+                    auto nextRefPositionIt = std::next(newRangeEndKminmerPositionIt);
+                    while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
+                    if (nextRefPositionIt->first == rightRangeBegKminmerPositionIt->first) {
+                      // merge
+                      if (false) std::cout << "Merging minichains" << std::endl;
+                      mergeRight = true;
+                    } else {
+                      // add without merging
+                      if (false) std::cout << "Merge failed due to positionIt mismatch" << std::endl;
+                      mergeRight = false;
+                    }
                   }
                 } else {
-                  auto nextRefPositionIt = std::next(newRangeEndKminmerPositionIt);
-                  while (nextRefPositionIt->second.fhash == nextRefPositionIt->second.rhash) ++nextRefPositionIt;
-                  if (nextRefPositionIt->first == rightRangeBegKminmerPositionIt->first) {
-                    // merge
-                    mergeRight = true;
-                  } else {
-                    // add without merging
-                    mergeRight = false;
-                  }
+                  // add without merging
+                  if (false) std::cout << "Merge failed due to index mismatch" << std::endl;
+                  mergeRight = false;
                 }
               } else {
                 // add without merging
+                if (false) std::cout << "Merge failed due to opposite direction" << std::endl;
                 mergeRight = false;
               }
             }
@@ -705,19 +759,6 @@ namespace mgsr {
                 if (false) std::cout << "To erase: " << curitMinichainBeg << " " << curitMinichainEnd << " " << curitMinichainRev << std::endl;
               }
               minichains.erase(it, it+numToErase);
-
-              // endOfOverlappingOriginalMinichainIt = std::upper_bound(minichains.begin(), minichains.end(), minichain, compareMinichainByEnd);
-              // --endOfOverlappingOriginalMinichainIt;
-              // uint64_t endOfOverlappingOriginalMinichainEnd = (*endOfOverlappingOriginalMinichainIt >> 32) & 0x7FFFFFFF;
-              // std::cout << "endOfOverlappingOriginalMinichainEnd: " << endOfOverlappingOriginalMinichainEnd << std::endl;
-              // if (endOfOverlappingOriginalMinichainEnd == removeRangeEnd) {
-              //   minichains.erase(currentOriginalMinichainIt, endOfOverlappingOriginalMinichainIt+1);
-              // } else {
-              //   uint64_t endOfOverlappingOriginalMinichainBeg = (*endOfOverlappingOriginalMinichainIt >> 1) & 0x7FFFFFFF;
-              //   uint64_t endOfOverlappingOriginalMinichainRev = *endOfOverlappingOriginalMinichainIt & 1;
-              //   *endOfOverlappingOriginalMinichainIt = (endOfOverlappingOriginalMinichainEnd << 32) | ((removeRangeEnd + 1) << 1) | (endOfOverlappingOriginalMinichainRev ? 1ULL : 0ULL);
-              //   minichains.erase(currentOriginalMinichainIt, endOfOverlappingOriginalMinichainIt);
-              // }
             } else {
               // same as if there is one minichain but instead of clear, use erase
               if (currentOriginalMinichainBeg == removeRangeBeg) {
@@ -744,14 +785,16 @@ namespace mgsr {
             }
           }
         }
-        for (const auto& minichain : minichains) {
-          uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
-          uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
-          bool minichainIsReversed = minichain & 1;
-          if (false) std::cout << "Current read " << readIndex << " Minichain: " << minichainBeg << " " << minichainEnd << " " << minichainIsReversed << std::endl;
+
+        if (false) {
+          for (const auto& minichain : minichains) {
+            uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
+            uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
+            bool minichainIsReversed = minichain & 1;
+            std::cout << "Current read " << readIndex << " Minichain: " << minichainBeg << " " << minichainEnd << " " << minichainIsReversed << std::endl;
+          }
         }
       }
-
     }
 
     size_t nextValidRefSeedmer(std::map<int32_t, mgsr::positionInfo>::iterator& currentPositionIt, mgsr::refSeedmers& seedmersIndex, bool rev) {
@@ -775,7 +818,7 @@ namespace mgsr {
       return std::numeric_limits<size_t>::max();
     }
 
-    bool isColinearFromMinichains(const bool& rev, const uint64_t beg1, const uint64_t end1, const uint64_t beg2, const uint64_t end2, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
+    bool isColinearFromMinichains(const bool& rev, const uint64_t beg1, const uint64_t end1, const uint64_t beg2, const uint64_t end2, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex, std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable) {
       const auto& first1 = seedmersList[beg1];
       const auto& last1 = seedmersList[end1];
       const auto& first2 = seedmersList[beg2];
@@ -783,38 +826,52 @@ namespace mgsr {
 
       if (rev) {
         // forward direction
-        const auto& rglobalbeg1 = seedmersIndex.getBegFromHash(first1.hash);
-        const auto& rglobalend1 = seedmersIndex.getEndFromHash(last1.hash);
-        const auto& rglobalbeg2 = seedmersIndex.getBegFromHash(first2.hash);
+        auto& rglobalbeg1 = hashCoordInfoCacheTable[first1.hash].rGlobalBeg;
+        auto& rglobalend1 = hashCoordInfoCacheTable[last1.hash].rGlobalEnd;
+        auto& rglobalbeg2 = hashCoordInfoCacheTable[first2.hash].rGlobalBeg;
+
+        if (rglobalbeg1 == -1) rglobalbeg1 = seedmersIndex.getBegFromHash(first1.hash);
+        if (rglobalend1 == -1) rglobalend1 = seedmersIndex.getEndFromHash(last1.hash);
+        if (rglobalbeg2 == -1) rglobalbeg2 = seedmersIndex.getBegFromHash(first2.hash);
         
         const auto& qbeg1 = first1.begPos;
         const auto& qend1 = last1.endPos;
         const auto& qbeg2 = first2.begPos;
         const auto& qend2 = last2.endPos;
 
-        auto rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
-        auto rend1 = degapGlobal(rglobalend1, degapCoordIndex);
-        auto rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
-        // auto rend2 = degapGlobal(rglobalend2, degapCoordIndex);
+        auto& rbeg1 = hashCoordInfoCacheTable[first1.hash].rLocalBeg;
+        auto& rend1 = hashCoordInfoCacheTable[last1.hash].rLocalEnd;
+        auto& rbeg2 = hashCoordInfoCacheTable[first2.hash].rLocalBeg;
+
+        if (rbeg1 == -1) rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
+        if (rend1 == -1) rend1 = degapGlobal(rglobalend1, degapCoordIndex);
+        if (rbeg2 == -1) rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
 
         int32_t qgap = abs(qbeg2 - qend1);
         int32_t rgap = abs(rbeg2 - rend1);
         if (rbeg1 < rbeg2 && abs(qgap - rgap) < maximumGap) return true;
       } else {
         // reverse direction
-        auto rglobalbeg1 = seedmersIndex.getBegFromHash(last1.hash);
-        auto rglobalbeg2 = seedmersIndex.getBegFromHash(last2.hash);
-        auto rglobalend2 = seedmersIndex.getEndFromHash(first2.hash);
+        auto& rglobalbeg1 = hashCoordInfoCacheTable[last1.hash].rGlobalBeg;
+        auto& rglobalbeg2 = hashCoordInfoCacheTable[last2.hash].rGlobalBeg;;
+        auto& rglobalend2 = hashCoordInfoCacheTable[first2.hash].rGlobalBeg;;
+
+        if (rglobalbeg1 == -1) rglobalbeg1 = seedmersIndex.getBegFromHash(last1.hash);
+        if (rglobalbeg2 == -1) rglobalbeg2 = seedmersIndex.getBegFromHash(last2.hash);
+        if (rglobalend2 == -1) rglobalend2 = seedmersIndex.getEndFromHash(first2.hash);
 
         const auto& qbeg1 = first1.begPos;
         const auto& qend1 = last1.endPos;
         const auto& qbeg2 = first2.begPos;
         const auto& qend2 = last2.endPos;
 
-        auto rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
-        // auto rend1 = degapGlobal(rglobalend1, degapCoordIndex);
-        auto rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
-        auto rend2 = degapGlobal(rglobalend2, degapCoordIndex);
+        auto& rbeg1 = hashCoordInfoCacheTable[last1.hash].rLocalBeg;
+        auto& rbeg2 = hashCoordInfoCacheTable[last2.hash].rLocalBeg;
+        auto& rend2 = hashCoordInfoCacheTable[first2.hash].rLocalEnd;
+
+        if (rbeg1 == -1) rbeg1 = degapGlobal(rglobalbeg1, degapCoordIndex);
+        if (rbeg2 == -1) rbeg2 = degapGlobal(rglobalbeg2, degapCoordIndex);
+        if (rend2 == -1) rend2 = degapGlobal(rglobalend2, degapCoordIndex);
 
         int32_t qgap = abs(qbeg2 - qend1);
         int32_t rgap = abs(rbeg1 - rend2);
@@ -823,7 +880,7 @@ namespace mgsr {
       return false;
     }
 
-    int64_t getPsuedoChainScoreFromMinichains(const size_t& readIndex, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex) {
+    int64_t getPsuedoChainScoreFromMinichains(const size_t& readIndex, mgsr::refSeedmers& seedmersIndex, const std::map<int64_t, int64_t>& degapCoordIndex, const std::map<int64_t, int64_t>& regapCoordIndex, const int& maximumGap, const int& dfsIndex, std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable) {
       int64_t pseudoChainScore = 0;
       if (minichains.empty()) {
         return 0;
@@ -866,11 +923,11 @@ namespace mgsr {
           }
 
           if (longestMinichainIndex < i) {
-            if (isColinearFromMinichains(longestMinichainIsReversed, longestMinichainBeg, longestMinichainEnd, currentMinichainBeg, currentMinichainEnd, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+            if (isColinearFromMinichains(longestMinichainIsReversed, longestMinichainBeg, longestMinichainEnd, currentMinichainBeg, currentMinichainEnd, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex, hashCoordInfoCacheTable)) {
               pseudoChainScore += currentMinichainEnd - currentMinichainBeg + 1;
             }
           } else if (longestMinichainIndex > i) {
-            if (isColinearFromMinichains(longestMinichainIsReversed, currentMinichainBeg, currentMinichainEnd, longestMinichainBeg, longestMinichainEnd, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex)) {
+            if (isColinearFromMinichains(longestMinichainIsReversed, currentMinichainBeg, currentMinichainEnd, longestMinichainBeg, longestMinichainEnd, seedmersIndex, degapCoordIndex, regapCoordIndex, maximumGap, dfsIndex, hashCoordInfoCacheTable)) {
               pseudoChainScore += currentMinichainEnd - currentMinichainBeg + 1;
             }
           }
@@ -1125,7 +1182,7 @@ namespace mgsr {
     CoordNavigator& navigator,
     const size_t& num_cpus
   ) {
-    if (false) {
+    if (!true) {
       // More than 1 CPU: Use task group to run tasks in parallel
       tbb::task_group tg;
       tg.run([&] {
