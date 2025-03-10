@@ -1888,10 +1888,11 @@ namespace mgsr {
     std::cout << "Excluding " << numExcludedReads << " reads in total" << std::endl;
     std::cerr << "Excluding " << numExcludedReads << " reads in total" << std::endl;
     
-    std::vector<std::pair<std::vector<int32_t>, std::vector<double>>> scoreMatrix(readScores.scores.size() - numExcludedReads);
+    std::vector<std::pair<size_t, std::pair<std::vector<int32_t>, std::vector<double>>>> scoreMatrix(readScores.scores.size() - numExcludedReads);
+    
     for (size_t i = 0; i < scoreMatrix.size(); ++i) {
-      scoreMatrix[i].first.resize(probableNodes.size());
-      scoreMatrix[i].second.resize(probableNodes.size());
+      scoreMatrix[i].second.first.resize(probableNodes.size());
+      scoreMatrix[i].second.second.resize(probableNodes.size());
     }
 
     size_t colIndex = 0;
@@ -1903,8 +1904,9 @@ namespace mgsr {
       size_t rowIndex = 0;
       for (size_t i = 0; i < scores.size(); ++i) {
         if (readTypes[i] != mgsr::readType::PASS) continue;
-        scoreMatrix[rowIndex].first[colIndex] = scores[i].first;
-        scoreMatrix[rowIndex].second[colIndex] = scores[i].second;
+        scoreMatrix[rowIndex].second.first[colIndex] = scores[i].first;
+        scoreMatrix[rowIndex].second.second[colIndex] = scores[i].second;
+        scoreMatrix[rowIndex].first = i;
         ++rowIndex;
       }
       nodes.push_back(node);
@@ -1912,14 +1914,16 @@ namespace mgsr {
     }
 
     std::sort(scoreMatrix.begin(), scoreMatrix.end(), [](const auto& a, const auto& b) {
-      return a.first < b.first;
+      return a.second.first < b.second.first;
     });
+
+
 
     std::vector<std::pair<size_t, std::vector<size_t>>> uniqueIndex{std::make_pair(0, std::vector<size_t>{0})};
     for (size_t i = 1; i < scoreMatrix.size(); ++i) {
       bool identical = true;
-      for (size_t j = scoreMatrix[i].first.size(); j > 0; --j) {
-        if (scoreMatrix[i].first[j - 1] != scoreMatrix[uniqueIndex.back().first].first[j - 1]) {
+      for (size_t j = scoreMatrix[i].second.first.size(); j > 0; --j) {
+        if (scoreMatrix[i].second.first[j - 1] != scoreMatrix[uniqueIndex.back().first].second.first[j - 1]) {
           identical = false;
           break;
         }
@@ -1934,14 +1938,14 @@ namespace mgsr {
     readProbsDuplicatesSize.resize(uniqueIndex.size());
     for (size_t i = 0; i < uniqueIndex.size(); ++i) {
       for (const size_t& index : uniqueIndex[i].second) {
-        readProbsDuplicatesSize[i] += readSeedmersDuplicatesIndex[index].size();
+        readProbsDuplicatesSize[i] += readSeedmersDuplicatesIndex[scoreMatrix[index].first].size();
       }
     }
 
     probs.resize(uniqueIndex.size(), probableNodes.size());
 
     for (size_t i = 0; i < uniqueIndex.size(); ++i) {
-      const auto& curReadProbs = scoreMatrix[uniqueIndex[i].first].second;
+      const auto& curReadProbs = scoreMatrix[uniqueIndex[i].first].second.second;
       for (size_t j = 0; j < probableNodes.size(); ++j) {
         probs(i, j) = curReadProbs[j];
       }
