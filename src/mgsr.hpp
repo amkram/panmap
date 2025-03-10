@@ -1827,6 +1827,7 @@ namespace mgsr {
   void filter_by_mbc(
     std::vector<std::string>& nodes, Eigen::MatrixXd& probs, mgsr::ReadScores& readScores,
     const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
+    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<size_t>& readProbsDuplicatesSize,
     const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, std::vector<mgsr::readType>& readTypes,
     const std::unordered_map<std::string, double>& kminmer_binary_coverage, const int& preEMFilterMBCNum, const bool& save_kminmer_binary_coverage, const std::string& prefix
   ) {
@@ -1880,14 +1881,18 @@ namespace mgsr {
       probableNodeScores.emplace_back(std::make_pair(node, curNodeScores));
     }
 
-    exclude_noninformative_reads(readTypes, probableNodeScores);
+    // exclude_noninformative_reads(readTypes, probableNodeScores);
 
     size_t numExcludedReads = readTypes.size() - std::count(readTypes.begin(), readTypes.end(), mgsr::readType::PASS);
 
     std::cout << "Excluding " << numExcludedReads << " reads in total" << std::endl;
     std::cerr << "Excluding " << numExcludedReads << " reads in total" << std::endl;
     
-    probs.resize(readScores.scores.size() - numExcludedReads, probableNodes.size());
+    std::vector<std::pair<std::vector<int32_t>, std::vector<double>>> scoreMatrix(readScores.scores.size() - numExcludedReads);
+    for (size_t i = 0; i < scoreMatrix.size(); ++i) {
+      scoreMatrix[i].first.resize(probableNodes.size());
+      scoreMatrix[i].second.resize(probableNodes.size());
+    }
 
     size_t colIndex = 0;
     for (const auto& [node, scores] : probableNodeScores) {
@@ -1898,15 +1903,55 @@ namespace mgsr {
       size_t rowIndex = 0;
       for (size_t i = 0; i < scores.size(); ++i) {
         if (readTypes[i] != mgsr::readType::PASS) continue;
-        probs(rowIndex, colIndex) = scores[i].second;
+        scoreMatrix[rowIndex].first[colIndex] = scores[i].first;
+        scoreMatrix[rowIndex].second[colIndex] = scores[i].second;
         ++rowIndex;
       }
       nodes.push_back(node);
       ++colIndex;
     }
 
-    std::cerr << "Finished mbc filter: " << nodes.size() << " nodes" << std::endl;
+    std::sort(scoreMatrix.begin(), scoreMatrix.end(), [](const auto& a, const auto& b) {
+      return a.first < b.first;
+    });
 
+    std::vector<std::pair<size_t, std::vector<size_t>>> uniqueIndex{std::make_pair(0, std::vector<size_t>{0})};
+    for (size_t i = 1; i < scoreMatrix.size(); ++i) {
+      bool identical = true;
+      for (size_t j = scoreMatrix[i].first.size(); j > 0; --j) {
+        if (scoreMatrix[i].first[j - 1] != scoreMatrix[uniqueIndex.back().first].first[j - 1]) {
+          identical = false;
+          break;
+        }
+      }
+
+      if (identical) {
+        uniqueIndex.back().second.push_back(i);
+      } else {
+        uniqueIndex.push_back(std::make_pair(i, std::vector<size_t>{i}));
+      }
+    }
+    readProbsDuplicatesSize.resize(uniqueIndex.size());
+    for (size_t i = 0; i < uniqueIndex.size(); ++i) {
+      for (const size_t& index : uniqueIndex[i].second) {
+        readProbsDuplicatesSize[i] += readSeedmersDuplicatesIndex[index].size();
+      }
+    }
+
+    probs.resize(uniqueIndex.size(), probableNodes.size());
+
+    for (size_t i = 0; i < uniqueIndex.size(); ++i) {
+      const auto& curReadProbs = scoreMatrix[uniqueIndex[i].first].second;
+      for (size_t j = 0; j < probableNodes.size(); ++j) {
+        probs(i, j) = curReadProbs[j];
+      }
+    }
+
+
+    std::cout << "uniqueIndex size: " << uniqueIndex.size() << std::endl;
+
+
+    std::cerr << "Finished mbc filter: " << nodes.size() << " nodes" << std::endl;
   }
 
   //squarem test 1: periodically drop nodes with very low abundance
@@ -1931,12 +1976,13 @@ namespace mgsr {
       std::cout << msg.str();
     }
 
+    std::vector<size_t> readProbsDuplicatesSize;
     std::cout << "pre-EM filter nodes size: " << readScores.nodeToDfsIndex.size() - leastRecentIdenticalAncestors.size() << std::endl;
     std::cerr << "pre-EM filter nodes size: " << readScores.nodeToDfsIndex.size() - leastRecentIdenticalAncestors.size() << "\n" << std::endl;
     if (preEMFilterMethod == "null") {  
       // haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "mbc") {
-      filter_by_mbc(nodes, probs, readScores, leastRecentIdenticalAncestors, identicalSets, lowScoreReads, numLowScoreReads, excludeNode, readTypes, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
+      filter_by_mbc(nodes, probs, readScores, leastRecentIdenticalAncestors, identicalSets, readSeedmersDuplicatesIndex, readProbsDuplicatesSize,lowScoreReads, numLowScoreReads, excludeNode, readTypes, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
     } else {
       std::cerr << "pre-EM filter method not recognized" << std::endl;
       exit(1);
@@ -1961,18 +2007,25 @@ namespace mgsr {
     props = Eigen::VectorXd::Constant(nodes.size(), 1.0 / static_cast<double>(nodes.size()));
     size_t totalNodes = readScores.nodeToDfsIndex.size() - leastRecentIdenticalAncestors.size();
     size_t numExcludedReads = readTypes.size() - std::count(readTypes.begin(), readTypes.end(), mgsr::readType::PASS);
-    Eigen::VectorXd readDuplicates(readScores.scores.size() - numLowScoreReads - numExcludedReads);
-    
+    Eigen::VectorXd readDuplicates(readProbsDuplicatesSize.size());
     size_t indexReadDuplicates = 0;
     size_t numHighScoreReads = 0;
-    for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
-      if (readTypes[i] != mgsr::readType::PASS) continue;
-      if (!lowScoreReads[i]) {
-        readDuplicates(indexReadDuplicates) = readSeedmersDuplicatesIndex[i].size();
-        numHighScoreReads += readSeedmersDuplicatesIndex[i].size();
-        ++indexReadDuplicates;
-      }
+    for (size_t i = 0; i < readProbsDuplicatesSize.size(); ++i) {
+      readDuplicates(indexReadDuplicates) = readProbsDuplicatesSize[i];
+      numHighScoreReads += readProbsDuplicatesSize[i];
+      ++indexReadDuplicates;
     }
+
+    std::cout << "numHighScoreReads: " << numHighScoreReads << std::endl;
+
+    // for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
+    //   if (readTypes[i] != mgsr::readType::PASS) continue;
+    //   if (!lowScoreReads[i]) {
+    //     readDuplicates(indexReadDuplicates) = readSeedmersDuplicatesIndex[i].size();
+    //     numHighScoreReads += readSeedmersDuplicatesIndex[i].size();
+    //     ++indexReadDuplicates;
+    //   }
+    // }
 
     std::cout << "readDuplicates size: " << readDuplicates.size() << std::endl;
     std::cout << "probs size: " << probs.rows() << " x " << probs.cols() << std::endl;
@@ -1991,70 +2044,14 @@ namespace mgsr {
 
 
     int curit = 0;
+
+    std::vector<int> insigCounts(nodes.size());
+    std::cout << "start full EM" << std::endl;
+    std::cerr << "start full EM" << std::endl;
+    llh = getExp(probs, props, readDuplicates);
     bool converged = false;
-    // int32_t filterRoundCount = 0;
-    // size_t prefilterIterations = 5;
-    // std::vector<int> insigCounts(nodes.size());
-    // std::cout << "\npre-filter round for " << prefilterIterations << " iterations" << std::endl;
-    // std::cerr << "\npre-filter round for " << prefilterIterations << " iterations" << std::endl;
-    // llh = getExp(probs, props, readDuplicates);
-    // squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, prefilterIterations, insigCounts, insigProp, totalNodes);
-    // while (true && nodes.size() > std::max(static_cast<int>(totalNodes) / 20, 100)) {
-    //   if (filterRoundCount >= emFilterRound) break;
-    //   std::cout << "\nfilter round " << filterRoundCount + 1 << " out of " << emFilterRound << std::endl;
-    //   std::cerr << "\nfilter round " << filterRoundCount + 1 << " out of " << emFilterRound << std::endl;
-    //   ++filterRoundCount;
-    //   llh = getExp(probs, props, readDuplicates);
-    //   squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, checkFrequency, std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
-    //   if (converged) {
-    //     break;
-    //   }
-    //   std::cout << "\nfiltering round " << filterRoundCount << std::endl;
-    //   std::cerr << "\nfiltering round " << filterRoundCount << std::endl;
-    //   std::vector<size_t> significantIndices;
-    //   std::vector<std::string> sigNodes;
-    //   for (size_t i = 0; i < nodes.size(); ++i) {
-    //     if (insigCounts[i] < removeIteration) {
-    //       significantIndices.push_back(i);
-    //     }
-    //   }
-
-    //   if (significantIndices.size() == nodes.size()) {
-    //     continue;
-    //   }
-
-    //   for (size_t idx : significantIndices) {
-    //     sigNodes.push_back(nodes[idx]);
-    //   }
-
-    //   Eigen::MatrixXd sigProbs(probs.rows(), sigNodes.size());
-    //   Eigen::VectorXd sigProps(sigNodes.size());
-    //   for (size_t i = 0; i < significantIndices.size(); ++i) {
-    //     sigProbs.col(i) = probs.col(significantIndices[i]);
-    //     sigProps(i) = props(i);
-    //   }
-    //   std::cout << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
-    //   std::cerr << "dropped " << nodes.size() - sigNodes.size() << " during EM" << std::endl;
-    //   std::cout << sigNodes.size() << " nodes left" << std::endl;
-    //   std::cerr << sigNodes.size() << " nodes left" << std::endl;
-    //   nodes = sigNodes;
-    //   probs = sigProbs;
-    //   props = sigProps;
-    //   normalize(props);
-    //   insigCounts.assign(nodes.size(), 0);
-    //   if (nodes.size() <= std::max(static_cast<int>(totalNodes) / 20, 100) || filterRoundCount >= emFilterRound) {
-    //     break;
-    //   }
-    // }
-
-    if (!converged) {
-      std::vector<int> insigCounts(nodes.size());
-      std::cout << "start full EM" << std::endl;
-      std::cerr << "start full EM" << std::endl;
-      llh = getExp(probs, props, readDuplicates);
-      squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
-      assert(converged == true);
-    }
+    squarem_test_1(nodes, probs, identicalSets, readDuplicates, numHighScoreReads, props, llh, curit, converged, std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), insigCounts, insigProp, totalNodes);
+    assert(converged);
     
     std::vector<size_t> haplotypeGroupIndices;
     std::vector<double> haplotypeGroupAbundances;
