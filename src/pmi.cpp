@@ -2954,7 +2954,7 @@ void place_per_read_DFS(
         // backtrack minichains
         if (false) {
           std::cout << "----------------------------------------" << std::endl;
-          std::cout << "Read " << readIndex << " minichains size: " << curRead.minichains.size() << " allUniqueToNonUnique: " << allUniqueToNonUnique << " allNonUniqueToUnique: " << allNonUniqueToUnique << std::endl;
+          std::cout << "Read " << readIndex << "SeedmersList size: " << curRead.seedmersList.size() << " minichains size: " << curRead.minichains.size() << " allUniqueToNonUnique: " << allUniqueToNonUnique << " allNonUniqueToUnique: " << allNonUniqueToUnique << std::endl;
 
           for (size_t i = 0; i < curRead.minichains.size(); ++i) {
             uint64_t minichain = curRead.minichains[i];
@@ -3273,7 +3273,7 @@ void seedmersFromFastq(
         uint64_t iorder = 0;
         if (forwardRolledHash != reverseRolledHash) {
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-          curRead.uniqueSeedmers.emplace(minHash, std::vector<uint64_t>{0});
+          curRead.uniqueSeedmers.emplace(minHash, std::vector<uint64_t>{iorder << 9});
           curRead.seedmersList.emplace_back(mgsr::readSeedmer{
             minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
           ++iorder;
@@ -3299,7 +3299,7 @@ void seedmersFromFastq(
                 minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
               ++iorder;
             } else {
-              uniqueSeedmersIt->second.push_back(i << 9);
+              uniqueSeedmersIt->second.push_back(iorder << 9);
               curRead.seedmersList.emplace_back(mgsr::readSeedmer{
                 uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
               ++iorder;
@@ -3532,7 +3532,7 @@ void pmi::place_per_read(
   mgsr::readSeedmers readSeedmersIndex;
 
   auto read_processing_start = std::chrono::high_resolution_clock::now();
-  seedmersFromFastq(reads1Path, reads2Path, reads, readSeedmersIndex, readSeedmersDuplicatesIndex, readSequences, readQuals, readNames, readSeeds, k, s, t, l, openSyncmers);   
+  seedmersFromFastq(reads1Path, reads2Path, reads, readSeedmersIndex, readSeedmersDuplicatesIndex, readSequences, readQuals, readNames, readSeeds, k, s, t, l, openSyncmers);
   auto read_processing_end = std::chrono::high_resolution_clock::now();
   std::cerr << "Read processing time: " << std::chrono::duration_cast<std::chrono::milliseconds>(read_processing_end - read_processing_start).count() << " milliseconds" << std::endl;
 

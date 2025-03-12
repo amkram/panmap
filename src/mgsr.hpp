@@ -1825,35 +1825,38 @@ namespace mgsr {
   }
 
   void filter_by_mbc(
-    std::vector<std::string>& nodes, Eigen::MatrixXd& probs, mgsr::ReadScores& readScores,
+    Tree *T, std::vector<std::string>& nodes, Eigen::MatrixXd& probs, mgsr::ReadScores& readScores,
     const std::unordered_map<std::string, std::string>& leastRecentIdenticalAncestor, const std::unordered_map<std::string, std::unordered_set<std::string>>& identicalSets,
-    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<size_t>& readProbsDuplicatesSize,
+    const std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<size_t>& readProbsDuplicatesSize, const bool& leafNodesOnly,
     const std::vector<bool>& lowScoreReads, const size_t& numLowScoreReads, const std::string& excludeNode, std::vector<mgsr::readType>& readTypes,
     const std::unordered_map<std::string, double>& kminmer_binary_coverage, const int& preEMFilterMBCNum, const bool& save_kminmer_binary_coverage, const std::string& prefix
   ) {
     std::cerr << "Filter method mbc: filter out haplotypes that do not have a unique best read score" << std::endl;
 
-    std::vector<std::pair<std::string, double>> kminmer_binary_coverage_vec;
+    std::vector<std::pair<std::string, std::pair<bool, double>>> kminmer_binary_coverage_vec;
     for (const auto& node : kminmer_binary_coverage) {
       if (leastRecentIdenticalAncestor.find(node.first) != leastRecentIdenticalAncestor.end()) continue;
       double curCoverage = node.second;
+      bool containsLeaf = false;
       if (identicalSets.find(node.first) != identicalSets.end()) {
         for (const auto& identicalNode : identicalSets.at(node.first)) {
           if (kminmer_binary_coverage.at(identicalNode) > curCoverage) {
             curCoverage = kminmer_binary_coverage.at(identicalNode);
           }
+          if (T->allNodes[identicalNode]->children.empty()) containsLeaf = true;
         }
       }
-      kminmer_binary_coverage_vec.emplace_back(std::make_pair(node.first, curCoverage));
+      kminmer_binary_coverage_vec.emplace_back(std::make_pair(node.first, std::make_pair(containsLeaf, curCoverage)));
     }
 
     std::sort(kminmer_binary_coverage_vec.begin(), kminmer_binary_coverage_vec.end(), [](const auto& a, const auto& b) {
-      return a.second > b.second;
+      return a.second.second > b.second.second;
     });
 
     if (save_kminmer_binary_coverage) {
       std::ofstream kminmer_binary_coverage_file(prefix + ".kminmer_binary_coverage.txt");
-      for (const auto& [node, coverage] : kminmer_binary_coverage_vec) {
+      for (const auto& [node, coverageInfo] : kminmer_binary_coverage_vec) {
+        const auto& [containsLeaf, coverage] = coverageInfo;
         kminmer_binary_coverage_file << node;
         if (identicalSets.find(node) != identicalSets.end()) {
           for (const auto& identicalNode : identicalSets.at(node)) {
@@ -1866,7 +1869,9 @@ namespace mgsr {
 
     std::vector<std::string> probableNodes;
     int numProbableNodes = 0;
-    for (const auto& [node, coverage] : kminmer_binary_coverage_vec) {
+    for (const auto& [node, coverageInfo] : kminmer_binary_coverage_vec) {
+      const auto& [containsLeaf, coverage] = coverageInfo;
+      if (leafNodesOnly && !containsLeaf) continue;
       if (coverage == 1.0) {
         probableNodes.push_back(node);
       } else if (numProbableNodes < preEMFilterMBCNum) {
@@ -1986,7 +1991,7 @@ namespace mgsr {
     if (preEMFilterMethod == "null") {  
       // haplotype_filter::noFilter(nodes, probs, allScores, leastRecentIdenticalAncestors, lowScoreReads, numLowScoreReads, excludeNode, excludeReads);
     } else if (preEMFilterMethod == "mbc") {
-      filter_by_mbc(nodes, probs, readScores, leastRecentIdenticalAncestors, identicalSets, readSeedmersDuplicatesIndex, readProbsDuplicatesSize,lowScoreReads, numLowScoreReads, excludeNode, readTypes, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
+      filter_by_mbc(T, nodes, probs, readScores, leastRecentIdenticalAncestors, identicalSets, readSeedmersDuplicatesIndex, readProbsDuplicatesSize,leafNodesOnly, lowScoreReads, numLowScoreReads, excludeNode, readTypes, kminmer_binary_coverage, preEMFilterMBCNum, save_kminmer_binary_coverage, prefix);
     } else {
       std::cerr << "pre-EM filter method not recognized" << std::endl;
       exit(1);
