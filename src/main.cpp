@@ -115,6 +115,7 @@ Placement-per-read options:
                                           'uhs' - Keep haplotypes with at least one highest score read with no ties.
                                           'hsc' - Keep haplotypes with at least one highest score read, allowing ties.
                                           [default: null]
+  --minimum-kminmer-coverage <double>   Minimum kminmer coverage to pass pre-filtering. [default: 0.2]
   --preem-filter-n-order <int>          Order of neighbors to consider when filtering haplotypes with ties in highest score reads. [default: 1]
   --preem-filter-mbc-num <int>          Top <int> nodes to include in the MBC filter not including nodes with 100% coverage. [default: 1000]
   --em-filter-round <int>               Maximum number of rounds to filter low probability haplotypes during EM filtering. [default: 5]
@@ -421,6 +422,7 @@ int main(int argc, const char** argv) {
       bool leafNodesOnly            = args["--leaf-nodes-only"] && args["--leaf-nodes-only"].isBool() ? args["--leaf-nodes-only"].asBool() : false;
       bool callSubconsensus         = args["--call-subconsensus"] && args["--call-subconsensus"].isBool() ? args["--call-subconsensus"].asBool() : false;
       bool save_kminmer_binary_coverage = args["--save-kminmer-binary-coverage"] && args["--save-kminmer-binary-coverage"].isBool() ? args["--save-kminmer-binary-coverage"].asBool() : false;
+      double minimumKminmerCoverage     = args["--minimum-kminmer-coverage"] ? std::stod(args["--minimum-kminmer-coverage"].asString()) : 0.2;
 
       log(prefix, "Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
         "\nminimum-count: " + std::to_string(minimumCount) +
@@ -446,7 +448,7 @@ int main(int argc, const char** argv) {
       pmi::place_per_read(
         T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
         errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
-        rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod,
+        rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod, minimumKminmerCoverage,
         preEMFilterNOrder, preEMFilterMBCNum, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
         removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage);
     } else {

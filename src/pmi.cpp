@@ -2799,19 +2799,24 @@ void place_per_read_DFS(
     if (refSeemderOldStatus == mgsr::SeedmerStatus::NOT_EXIST) {
       if (refSeemderNewStatus == mgsr::SeedmerStatus::NOT_EXIST) {
         seedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_NOT_EXIST;
-      }
-      // old not exist -> new exist
-      ref_kminmer_count += 1.0;
-      ref_kminmer_count_backtrack -= 1.0;
-      if (seedmerToReads.find(hash) != seedmerToReads.end()) {
-        binary_intersect_kminmer_count += 1.0;
-        binary_intersect_kminmer_count_backtrack -= 1.0;
-      }
-
-      if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
+      } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_UNIQUE) {
         seedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE;
+        // old not exist -> new exist
+        ref_kminmer_count += 1.0;
+        ref_kminmer_count_backtrack -= 1.0;
+        if (seedmerToReads.find(hash) != seedmerToReads.end()) {
+          binary_intersect_kminmer_count += 1.0;
+          binary_intersect_kminmer_count_backtrack -= 1.0;
+        }
       } else if (refSeemderNewStatus == mgsr::SeedmerStatus::EXIST_DUPLICATE) {
         seedmerChangeType = mgsr::SeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE;
+        // old not exist -> new exist
+        ref_kminmer_count += 1.0;
+        ref_kminmer_count_backtrack -= 1.0;
+        if (seedmerToReads.find(hash) != seedmerToReads.end()) {
+          binary_intersect_kminmer_count += 1.0;
+          binary_intersect_kminmer_count_backtrack -= 1.0;
+        }
       } else {
         std::cout << "Error: invalid seedmer status" << std::endl;
         exit(1);
@@ -2893,7 +2898,7 @@ void place_per_read_DFS(
   }
   
 
-  kminmer_binary_coverage[node->identifier] = binary_intersect_kminmer_count / std::min(ref_kminmer_count, static_cast<double>(seedmerToReads.size()));
+  kminmer_binary_coverage[node->identifier] = binary_intersect_kminmer_count / ref_kminmer_count;
 
 
 
@@ -2945,7 +2950,7 @@ void place_per_read_DFS(
           exit(1);
         }
         std::sort(affectedSeedmerIndexCodes.begin(), affectedSeedmerIndexCodes.end(), [](const auto& a, const auto& b) {
-          return (a >> 9) < (b >> 9);
+          return a < b;
         });
 
         mgsr::Read& curRead = reads[readIndex];
@@ -3041,19 +3046,19 @@ void place_per_read_DFS(
   }
  
 
-  // debugOut << node->identifier << ": ";
-  // for (size_t i = 0; i < reads.size(); ++i) {
-  //   const auto& minichains = reads[i].minichains;
-  //   debugOut << i << ":";
-  //   for (const auto& minichain : minichains) {
-  //     uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
-  //     uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
-  //     bool minichainIsReversed = minichain & 1;
-  //     debugOut << minichainBeg << "," << minichainEnd << "," << minichainIsReversed << ";";
-  //   }
-  //   debugOut << " ";
-  // }
-  // debugOut << std::endl;
+  debugOut << node->identifier << ": ";
+  for (size_t i = 0; i < reads.size(); ++i) {
+    const auto& minichains = reads[i].minichains;
+    debugOut << i << ":";
+    for (const auto& minichain : minichains) {
+      uint64_t minichainBeg = (minichain >> 1) & 0x7FFFFFFF;
+      uint64_t minichainEnd = (minichain >> 32) & 0x7FFFFFFF;
+      bool minichainIsReversed = minichain & 1;
+      debugOut << minichainBeg << "," << minichainEnd << "," << minichainIsReversed << ";";
+    }
+    debugOut << readScores.scores[i].first << " ";
+  }
+  debugOut << std::endl;
 
   /* Recursive step */
   dfsIndex++;
@@ -3460,7 +3465,7 @@ void pmi::place_per_read(
   const int& maximumGap, const int& minimumCount, const int& minimumScore, const double& errorRate,
   const int& redoReadThreshold, const bool& recalculateScore, const bool& rescueDuplicates,
   const double& rescueDuplicatesThreshold, const double& excludeDuplicatesThreshold,
-  const std::string& preEMFilterMethod, const int& preEMFilterNOrder, const int& preEMFilterMBCNum, const int& emFilterRound,
+  const std::string& preEMFilterMethod, const double& minimumKminmerCoverage, const int& preEMFilterNOrder, const int& preEMFilterMBCNum, const int& emFilterRound,
   const int& checkFrequency, const int& removeIteration, const double& insigPropArg, const int& roundsRemove,
   const double& removeThreshold, const bool& leafNodesOnly, const bool& callSubconsensus, const std::string& prefix, const bool& save_kminmer_binary_coverage
 )
@@ -3689,7 +3694,7 @@ void pmi::place_per_read(
 
   mgsr::squaremHelper_test_1(
     T, readScores, readSeedmersDuplicatesIndex, lowScoreReads, numReads, numLowScoreReads, readTypes,
-    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, preEMFilterNOrder, preEMFilterMBCNum,
+    leastRecentIdenticalAncestor, identicalSets, probs, nodes, props, llh, preEMFilterMethod, minimumKminmerCoverage, preEMFilterNOrder, preEMFilterMBCNum,
     emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove, removeThreshold, leafNodesOnly, kminmer_binary_coverage, "", save_kminmer_binary_coverage, prefix);
   
   auto end = std::chrono::high_resolution_clock::now();
