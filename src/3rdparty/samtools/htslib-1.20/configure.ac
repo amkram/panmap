@@ -23,7 +23,11 @@
 # DEALINGS IN THE SOFTWARE.
 
 dnl Process this file with autoconf to produce a configure script
+<<<<<<< HEAD
 AC_INIT([HTSlib], [1.20],
+=======
+AC_INIT([HTSlib], m4_esyscmd_s([./version.sh 2>/dev/null]),
+>>>>>>> 51c34336c7623184cee291886575243682f7876c
         [samtools-help@lists.sourceforge.net], [], [http://www.htslib.org/])
 AC_PREREQ(2.63)  dnl This version introduced 4-argument AC_CHECK_HEADER
 AC_CONFIG_SRCDIR(hts.c)
