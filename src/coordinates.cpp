@@ -1,15 +1,16 @@
 #include "coordinates.hpp"
 #include "logging.hpp"
 #include "seed_annotated_tree.hpp"
-#include "timing.hpp"
 #include <algorithm>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 
 using namespace logging;
 
 namespace coordinates {
+
+// Define the debug variable
+bool debug = false;
 
 bool CoordinateManager::validateCoordinateState(
     const tupleCoord_t &coord, const sequence_t &sequence) const noexcept {
@@ -21,6 +22,103 @@ bool CoordinateManager::validateCoordinateState(
     return false;
   if (coord.nucGapPos > max_gap_pos)
     return false;
+  return true;
+}
+
+// Add comprehensive validation method
+bool CoordinateManager::validateFullState() const {
+  // Validate all coordinates
+  for (size_t i = 0; i < coords.size(); i++) {
+    if (!validateCoordinate(coords[i])) {
+      err("validateFullState: Coordinate {} failed validation", i);
+      return false;
+    }
+  }
+  
+  // Validate gap map consistency with actual sequence
+  for (const auto& [start, length] : gap_map) {
+    // Check that the gap run is within bounds
+    int64_t end = start + length - 1;
+    if (start < 0 || end >= size()) {
+      err("validateFullState: Gap run [{}, {}] (length {}) exceeds coordinates range [0, {}]", 
+          start, end, length, size() - 1);
+      return false;
+    }
+    
+    // Sample some positions to verify they are gaps (checking all would be too slow)
+    // Check first, last, and some middle positions
+    std::vector<int64_t> positions_to_check = {start, end};
+    if (length > 2) {
+      positions_to_check.push_back(start + length/2); // middle
+    }
+    
+    for (int64_t pos : positions_to_check) {
+      const tupleCoord_t* coord = getTupleCoord(pos);
+      if (!coord) {
+        err("validateFullState: No coordinate at scalar position {}", pos);
+        return false;
+      }
+      
+      // Get character at this position
+      char c;
+      if (coord->nucGapPos == -1) {
+        c = sequence->at(coord->blockId).first[coord->nucPos].first;
+      } else {
+        c = sequence->at(coord->blockId).first[coord->nucPos].second[coord->nucGapPos];
+      }
+      
+      if (c != '-') {
+        err("validateFullState: Position {} in gap run [{},{}] is not a gap ('{}')", 
+            pos, start, end, c);
+        return false;
+      }
+    }
+  }
+  
+  // Validate block ranges
+  for (size_t blockId = 0; blockId < block_ranges.size(); blockId++) {
+    const auto& [start, end] = block_ranges[blockId];
+    if (start < 0 || end < start || end >= coords.size()) {
+      err("validateFullState: Invalid block range for block {}: [{}, {}]", 
+          blockId, start, end);
+      return false;
+    }
+  }
+  
+  // Validate traversal pointers
+  for (size_t i = 0; i < coords.size(); i++) {
+    const tupleCoord_t& coord = coords[i];
+    
+    // Check next pointer
+    if (coord.next) {
+      if (coord.next->prev != &coord) {
+        err("validateFullState: Inconsistent next/prev pointers at position {}", i);
+        return false;
+      }
+      
+      // Check if next pointer points to a valid coordinate
+      if (!validateCoordinate(*coord.next)) {
+        err("validateFullState: Next pointer at position {} points to invalid coordinate", i);
+        return false;
+      }
+    }
+    
+    // Check prev pointer
+    if (coord.prev) {
+      if (coord.prev->next != &coord) {
+        err("validateFullState: Inconsistent prev/next pointers at position {}", i);
+        return false;
+      }
+      
+      // Check if prev pointer points to a valid coordinate
+      if (!validateCoordinate(*coord.prev)) {
+        err("validateFullState: Prev pointer at position {} points to invalid coordinate", i);
+        return false;
+      }
+    }
+  }
+  
+  // All checks passed
   return true;
 }
 
@@ -186,10 +284,6 @@ void CoordinateManager::setupCoordinates() {
     reinitializeBlockCoordinates(blockId);
   }
 
-  // msg("Coordinate validation complete");
-
-  // Optimize the gap map by merging adjacent runs
-  optimizeGapMap();
 }
 
 CoordinateTraverser::CoordinateTraverser(const tupleCoord_t *start,
@@ -259,7 +353,6 @@ const tupleCoord_t *expandUpstream(CoordinateTraverser &traverser,
                                    blockStrand_t &blockStrand,
                                    const tupleCoord_t *stop_coord) {
 
-  TIME_FUNCTION;
   auto &manager = traverser.getCoordManager();
   if (!coord)
     return nullptr;
@@ -274,19 +367,43 @@ const tupleCoord_t *expandUpstream(CoordinateTraverser &traverser,
     traverser.reset(coord);
   }
 
+  // Safety check for boundary conditions
+  if (coord->scalar <= 0 || coord->scalar >= manager.size()) {
+    warn("expandUpstream: coord scalar {} is out of bounds [0,{}]", 
+        coord->scalar, manager.size() - 1);
+    return result;
+  }
+
+  // Check if we're in an inverted block
+  bool isInverted = traverser.isInverted();
+  debug_msg("expandUpstream: Starting at scalar {} in {} block", 
+       coord->scalar, isInverted ? "inverted" : "normal");
+
   // Skip any gaps at the current position using the gap map
   if (manager.isGapPosition(coord->scalar)) {
-    traverser.skipGapsBackward();
+    debug_msg("expandUpstream: Starting position is a gap, skipping gaps");
+    // Use the appropriate gap-skipping method based on block orientation
+    traverser.skipGapsBackward(); // This now handles inversions internally
     if (traverser.isDone()) {
       return result;
     }
     result = traverser.getCurrent();
   }
 
-  while (count < neededNongap && !traverser.isDone()) {
+  // Safety counter to prevent infinite loops
+  int safety_counter = 0;
+  int max_iterations = 10000;
+
+  while (count < neededNongap && !traverser.isDone() && safety_counter < max_iterations) {
     const tupleCoord_t *pos = traverser.getCurrent();
     if (!pos) {
       err("expandUpstream: got null position from traverser");
+      break;
+    }
+
+    safety_counter++;
+    if (safety_counter >= max_iterations) {
+      err("expandUpstream: reached maximum iterations ({})", max_iterations);
       break;
     }
 
@@ -297,8 +414,16 @@ const tupleCoord_t *expandUpstream(CoordinateTraverser &traverser,
       break;
     }
 
+    // Check if current position is out of bounds
+    if (pos->scalar < 0 || pos->scalar >= manager.size()) {
+      err("expandUpstream: scalar {} is out of bounds [0,{}]", 
+          pos->scalar, manager.size() - 1);
+      break;
+    }
+
     // Now safe to check block existence
     if (!blockExists[pos->blockId].first) {
+      debug_msg("expandUpstream: Block {} is off, moving to previous block", pos->blockId);
       // Block is off, move to previous block
       if (pos->blockId == 0) {
         return result;
@@ -308,27 +433,34 @@ const tupleCoord_t *expandUpstream(CoordinateTraverser &traverser,
     }
 
     // Stop if we've reached stop_coord
-    if (stop_coord && pos == stop_coord) {
+    if (stop_coord && pos->scalar == stop_coord->scalar) {
+      debug_msg("expandUpstream: Reached stop coordinate at scalar {}", pos->scalar);
       break;
     }
 
     // Count non-gap positions
     char c = traverser.getChar();
     if (c == 'x') {
+      debug_msg("expandUpstream: Found end marker 'x' at scalar {}", pos->scalar);
       return result;
     }
     if (c != '-') {
       count++;
       result = pos;
+      debug_msg("expandUpstream: Found non-gap character '{}' at scalar {}, count={}/{}", 
+            c, pos->scalar, count, neededNongap);
     } else {
-      // Now we can use skipGapsBackward for more efficient traversal
-      traverser.skipGapsBackward();
+      debug_msg("expandUpstream: Found gap at scalar {}, using skipGapsBackward", pos->scalar);
+      // Use efficient gap skipping that properly handles inversions
+      traverser.skipGapsBackward(); 
       continue;
     }
 
     traverser.prev();
   }
 
+  debug_msg("expandUpstream: Returning result at scalar {}, found {} non-gap positions",
+        result->scalar, count);
   return result;
 }
 
@@ -341,30 +473,73 @@ const tupleCoord_t *expandDownstream(CoordinateTraverser &traverser,
                                      blockStrand_t &blockStrand) {
 
   if (!coord) {
-    throw std::runtime_error("expandDownstream: null coordinate");
+    err("expandDownstream: null coordinate");
+    return nullptr;
   }
 
   auto &manager = traverser.getCoordManager();
+  
+  // Safety check for boundary conditions
+  if (coord->scalar < 0 || coord->scalar >= manager.size()) {
+    warn("expandDownstream: coord scalar {} is out of bounds [0,{}]", 
+        coord->scalar, manager.size() - 1);
+    return coord;
+  }
 
   int count = 0;
   const tupleCoord_t *result = coord;
 
   traverser.reset(coord);
 
+  // Check if we're in an inverted block
+  bool isInverted = traverser.isInverted();
+  debug_msg("expandDownstream: Starting at scalar {} in {} block", 
+       coord->scalar, isInverted ? "inverted" : "normal");
+
   // Skip any gaps at the current position using the gap map
   if (manager.isGapPosition(coord->scalar)) {
-    traverser.skipGaps();
+    debug_msg("expandDownstream: Starting position is a gap, skipping gaps");
+    traverser.skipGaps(); // This now handles inversions internally
     if (traverser.isDone()) {
       return result;
     }
     result = traverser.getCurrent();
   }
 
-  while (count < neededNongap && !traverser.isDone()) {
+  // Safety counter to prevent infinite loops
+  int safety_counter = 0;
+  int max_iterations = 10000;
+
+  while (count < neededNongap && !traverser.isDone() && safety_counter < max_iterations) {
     const tupleCoord_t *pos = traverser.getCurrent();
+    if (!pos) {
+      err("expandDownstream: null position from traverser");
+      break;
+    }
+    
+    safety_counter++;
+    if (safety_counter >= max_iterations) {
+      err("expandDownstream: reached maximum iterations ({})", max_iterations);
+      break;
+    }
+
+    // Check if current position is out of bounds
+    if (pos->scalar < 0 || pos->scalar >= manager.size()) {
+      err("expandDownstream: scalar {} is out of bounds [0,{}]", 
+          pos->scalar, manager.size() - 1);
+      break;
+    }
+
+    // Validate block ID
+    if (pos->blockId < 0 || pos->blockId >= blockExists.size()) {
+      err("expandDownstream: invalid block ID {} (max: {})", pos->blockId,
+          blockExists.size() - 1);
+      break;
+    }
 
     // Handle dead blocks
     if (!blockExists[pos->blockId].first) {
+      debug_msg("expandDownstream: Block {} is off, moving to next block", pos->blockId);
       if (pos->blockId >= traverser.getCoordManager().getNumBlocks() - 1) {
         return result;
       }
@@ -375,13 +550,17 @@ const tupleCoord_t *expandDownstream(CoordinateTraverser &traverser,
     // Count non-gap positions
     char c = traverser.getChar();
     if (c == 'x') {
+      debug_msg("expandDownstream: Found end marker 'x' at scalar {}", pos->scalar);
       return result;
     }
     if (c != '-') {
       count++;
       result = pos;
+      debug_msg("expandDownstream: Found non-gap character '{}' at scalar {}, count={}/{}", 
+            c, pos->scalar, count, neededNongap);
     } else {
-      // Use the skip gaps optimization when going forward
+      debug_msg("expandDownstream: Found gap at scalar {}, using skipGaps", pos->scalar);
+      // Use the skip gaps optimization which now properly handles inversions
       traverser.skipGaps();
       continue;
     }
@@ -389,6 +568,8 @@ const tupleCoord_t *expandDownstream(CoordinateTraverser &traverser,
     traverser.next();
   }
 
+  debug_msg("expandDownstream: Returning result at scalar {}, found {} non-gap positions",
+        result->scalar, count);
   return result;
 }
 
@@ -561,7 +742,7 @@ CoordRange createBlockRange(CoordinateManager *manager, int32_t blockId,
 bool isValidRange(const std::pair<int64_t, int64_t> &range,
                   const std::vector<std::pair<int64_t, int64_t>> &blockRanges) {
 
-  TIME_FUNCTION;
+  
   if (range.first > range.second)
     return false;
 
@@ -721,23 +902,102 @@ void CoordinateTraverser::skipGaps() noexcept {
 
   // Store the current scalar to detect if we're not making progress
   int64_t starting_scalar = current->scalar;
+  int starting_block_id = current->blockId;
+
+  // Check if we're in an inverted block
+  bool in_inverted_block = isInverted();
+  
+  debug_msg("skipGaps: Starting at scalar {} in {} block", 
+       current->scalar, in_inverted_block ? "inverted" : "normal");
 
   // Use the gap map to find the next non-gap position
-  const tupleCoord_t *next_non_gap =
+  const tupleCoord_t *next_non_gap = in_inverted_block ?
+      coordManager->getPreviousNonGapPosition(current->scalar) :
       coordManager->getNextNonGapPosition(current->scalar);
 
   // If we found a valid next position, jump to it
   if (next_non_gap) {
-    // Safety check - make sure we're actually moving forward
-    if (next_non_gap->scalar <= starting_scalar) {
+    // Safety check - make sure the position is valid
+    if (next_non_gap->scalar < 0 || next_non_gap->scalar >= coordManager->size()) {
+      err("skipGaps: next non-gap position {} is out of bounds [0,{}]",
+          next_non_gap->scalar, coordManager->size() - 1);
+      done = true;
+      return;
+    }
+    
+    // Safety check - make sure we're actually moving in the right direction
+    if ((in_inverted_block && next_non_gap->scalar >= starting_scalar) ||
+        (!in_inverted_block && next_non_gap->scalar <= starting_scalar)) {
       err("skipGaps: detected invalid gap map entry - next position ({}) is "
-          "not after current position ({})",
+          "not in correct direction from current position ({})",
           next_non_gap->scalar, starting_scalar);
       done = true;
       return;
     }
 
+    // Check if we're crossing a block boundary
+    if (next_non_gap->blockId != starting_block_id) {
+      debug_msg("skipGaps: Crossing block boundary from {} to {}", 
+           starting_block_id, next_non_gap->blockId);
+            
+      // Check if the target block exists
+      if (!coordManager->getBlockExists().at(next_non_gap->blockId).first) {
+        // Need to skip further to the next live block
+        debug_msg("skipGaps: Target block {} is dead, finding next live block");
+        
+        // Find the next live block in traversal order
+        int nextLiveBlockId = -1;
+        if (in_inverted_block) {
+          // When inverted, we need to go to lower block IDs
+          for (int i = next_non_gap->blockId; i >= 0; --i) {
+            if (coordManager->getBlockExists().at(i).first) {
+              nextLiveBlockId = i;
+              break;
+            }
+          }
+        } else {
+          // When normal, we go to higher block IDs
+          for (int i = next_non_gap->blockId; i < coordManager->getNumBlocks(); ++i) {
+            if (coordManager->getBlockExists().at(i).first) {
+              nextLiveBlockId = i;
+              break;
+            }
+          }
+        }
+        
+        // If we found a live block, get its first/last coordinate based on its orientation
+        if (nextLiveBlockId >= 0) {
+          bool nextBlockInverted = !coordManager->getBlockStrand().at(nextLiveBlockId).first;
+          
+          // Check for traversal direction consistency when changing blocks
+          bool directionChange = in_inverted_block != nextBlockInverted;
+          if (directionChange) {
+            debug_msg("skipGaps: Direction change detected when moving from block {} ({}) to {} ({})",
+                  starting_block_id, in_inverted_block ? "inverted" : "normal",
+                  nextLiveBlockId, nextBlockInverted ? "inverted" : "normal");
+          }
+          
+          next_non_gap = nextBlockInverted ? 
+              coordManager->getLastCoordinateInBlock(nextLiveBlockId) :
+              coordManager->getFirstCoordinateInBlock(nextLiveBlockId);
+              
+          if (!next_non_gap) {
+            err("skipGaps: Failed to get valid coordinate for next live block {}", nextLiveBlockId);
+            done = true;
+            return;
+          }
+        } else {
+          // No more live blocks in traversal direction
+          debug_msg("skipGaps: No more live blocks in traversal direction, marking as done");
+          done = true;
+          return;
+        }
+      }
+    }
+
     current = next_non_gap;
+    debug_msg("skipGaps: Jumped to scalar {} in block {}", 
+         current->scalar, current->blockId);
 
     // Check if we've reached the end coordinate
     if (end && current == end) {
@@ -745,6 +1005,7 @@ void CoordinateTraverser::skipGaps() noexcept {
     }
   } else {
     // If there's no valid next position, we're done
+    debug_msg("skipGaps: No next non-gap position found, traversal complete");
     done = true;
   }
 }
@@ -758,21 +1019,112 @@ void CoordinateTraverser::skipGapsBackward() noexcept {
   if (c != '-')
     return;
 
-  // Use the gap map to find the previous non-gap position
-  const tupleCoord_t *prev_non_gap =
+  // Store the current information to detect issues
+  int64_t starting_scalar = current->scalar;
+  int starting_block_id = current->blockId;
+  
+  // Check if we're in an inverted block
+  bool in_inverted_block = isInverted();
+  
+  debug_msg("skipGapsBackward: Starting at scalar {} in {} block", 
+       current->scalar, in_inverted_block ? "inverted" : "normal");
+  
+  // Use the gap map to find the previous non-gap position - direction is reversed in inverted blocks
+  const tupleCoord_t *prev_non_gap = in_inverted_block ?
+      coordManager->getNextNonGapPosition(current->scalar) :
       coordManager->getPreviousNonGapPosition(current->scalar);
 
   // If we found a valid previous position, jump to it
   if (prev_non_gap) {
-    current = prev_non_gap;
+    // Safety check - make sure the position is valid
+    if (prev_non_gap->scalar < 0 || prev_non_gap->scalar >= coordManager->size()) {
+      err("skipGapsBackward: previous non-gap position {} is out of bounds [0,{}]",
+          prev_non_gap->scalar, coordManager->size() - 1);
+      done = true;
+      return;
+    }
+    
+    // Safety check - make sure we're moving in the expected direction
+    if ((in_inverted_block && prev_non_gap->scalar <= starting_scalar) ||
+        (!in_inverted_block && prev_non_gap->scalar >= starting_scalar)) {
+      err("skipGapsBackward: detected invalid movement - prev position ({}) is "
+          "not in correct direction from current position ({})",
+          prev_non_gap->scalar, starting_scalar);
+      done = true;
+      return;
+    }
 
-    // Check if we've reached the end coordinate (somewhat unlikely in backward
-    // direction)
+    // Check if we're crossing a block boundary
+    if (prev_non_gap->blockId != starting_block_id) {
+      debug_msg("skipGapsBackward: Crossing block boundary from {} to {}", 
+           starting_block_id, prev_non_gap->blockId);
+            
+      // Check if the target block exists
+      if (!coordManager->getBlockExists().at(prev_non_gap->blockId).first) {
+        // Need to skip further to the previous live block
+        debug_msg("skipGapsBackward: Target block {} is dead, finding previous live block");
+        
+        // Find the previous live block in traversal order
+        int prevLiveBlockId = -1;
+        if (in_inverted_block) {
+          // When inverted, going backward means higher block IDs
+          for (int i = prev_non_gap->blockId; i < coordManager->getNumBlocks(); ++i) {
+            if (coordManager->getBlockExists().at(i).first) {
+              prevLiveBlockId = i;
+              break;
+            }
+          }
+        } else {
+          // When normal, going backward means lower block IDs
+          for (int i = prev_non_gap->blockId; i >= 0; --i) {
+            if (coordManager->getBlockExists().at(i).first) {
+              prevLiveBlockId = i;
+              break;
+            }
+          }
+        }
+        
+        // If we found a live block, get its first/last coordinate based on its orientation
+        if (prevLiveBlockId >= 0) {
+          bool prevBlockInverted = !coordManager->getBlockStrand().at(prevLiveBlockId).first;
+          
+          // Check for traversal direction consistency when changing blocks
+          bool directionChange = in_inverted_block != prevBlockInverted;
+          if (directionChange) {
+            debug_msg("skipGapsBackward: Direction change detected when moving from block {} ({}) to {} ({})",
+                  starting_block_id, in_inverted_block ? "inverted" : "normal",
+                  prevLiveBlockId, prevBlockInverted ? "inverted" : "normal");
+          }
+          
+          prev_non_gap = prevBlockInverted ? 
+              coordManager->getFirstCoordinateInBlock(prevLiveBlockId) :
+              coordManager->getLastCoordinateInBlock(prevLiveBlockId);
+              
+          if (!prev_non_gap) {
+            err("skipGapsBackward: Failed to get valid coordinate for previous live block {}", prevLiveBlockId);
+            done = true;
+            return;
+          }
+        } else {
+          // No more live blocks in reverse traversal direction
+          debug_msg("skipGapsBackward: No more live blocks in reverse direction, marking as done");
+          done = true;
+          return;
+        }
+      }
+    }
+
+    current = prev_non_gap;
+    debug_msg("skipGapsBackward: Jumped to scalar {} in block {}", 
+         current->scalar, current->blockId);
+
+    // Check if we've reached the end coordinate
     if (end && current == end) {
       done = true;
     }
   } else {
     // If there's no valid previous position, we're done
+    debug_msg("skipGapsBackward: No previous non-gap position found, traversal complete");
     done = true;
   }
 }
@@ -802,9 +1154,9 @@ bool CoordinateTraverser::skipToNthNonGap(int n, char *buffer) noexcept {
 
     // Move to next position efficiently by skipping gaps
     if (c == '-') {
-      skipGaps(); // Use gap map to efficiently skip runs of gaps
+      skipGaps(); // Use gap map to efficiently skip runs of gaps - already handles inversions now
     } else {
-      next(); // Move to next position
+      next(); // Move to next position in traversal order (handles inversions via pointer structure)
     }
 
     // Check if we're done
@@ -820,32 +1172,48 @@ void CoordinateTraverser::next() noexcept {
 
   const tupleCoord_t *next = current->next;
   if (!next) {
+    debug_msg("next: No next coordinate, traversal complete");
     done = true;
     return;
   }
 
-  // Detect circular reference - if next points back to current or itself
-  if (next == current || next->next == current) {
-    err("Traverser next: detected circular reference in coordinate chain at "
-        "scalar {}",
-        current->scalar);
-    done = true;
-    return;
-  }
+  // Check if we're crossing a block boundary
+  if (next->blockId != current->blockId) {
+    debug_msg("next: Crossing block boundary from {} to {}", current->blockId, next->blockId);
 
-  // Validate next pointer
-  if (!next->isValidBasic()) {
-    err("Traverser next: invalid next coordinate");
-    done = true;
-    return;
-  }
-
-  // Validate scalar is in range
-  if (next->scalar < 0 || next->scalar >= coordManager->size()) {
-    err("Traverser next: next coordinate scalar {} out of range [0,{}]",
-        next->scalar, coordManager->size() - 1);
-    done = true;
-    return;
+    // Check if the next block is off - if so, we can skip it
+    if (!coordManager->getBlockExists()[next->blockId].first) {
+      debug_msg("next: Detected off block {}, will attempt to skip the run");
+      
+      // Save current position
+      const tupleCoord_t *savedCurrent = current;
+      
+      // Try to skip the run of off blocks
+      skipOffBlockRun();
+      
+      // If skipOffBlockRun set done=true or didn't change current, we're done
+      if (done || current == savedCurrent) {
+        return;
+      }
+      
+      // If we get here, we've successfully skipped to the next live block
+      debug_msg("next: Skipped off block run to block {}", current->blockId);
+      return;
+    } else {
+      // Check if we're about to enter a run of blocks with the same orientation
+      bool nextBlockInverted = !coordManager->getBlockStrand().at(next->blockId).first;
+      
+      // Detect potential run of blocks with same orientation
+      auto [runStart, runEnd] = coordManager->findBlockRunWithSameOrientation(next->blockId);
+      
+      if (runStart != -1 && runEnd > runStart && runEnd - runStart > 1) {
+        // We have at least 3 consecutive blocks with same orientation
+        debug_msg("next: Detected a run of {} blocks with same orientation ({})",
+             runEnd - runStart + 1, nextBlockInverted ? "inverted" : "forward");
+             
+        // Continue with normal traversal - to optimize this path, the caller can use traverseOrientationRun
+      }
+    }
   }
 
   // Validate next coordinate is in the manager's vector
@@ -856,11 +1224,212 @@ void CoordinateTraverser::next() noexcept {
     return;
   }
 
-  if (next == end) {
+  // Check if we've reached the end coordinate
+  if (end && next == end) {
+    current = next;
     done = true;
     return;
   }
+  
   current = next;
+  debug_msg("next: Moved to scalar {} in block {}", current->scalar, current->blockId);
+}
+
+// New method to skip over a run of consecutive off blocks
+void CoordinateTraverser::skipOffBlockRun() noexcept {
+  if (done || !current)
+    return;
+    
+  // Must be at the boundary of an off block
+  int32_t currentBlockId = current->blockId;
+  int32_t nextBlockId = -1;
+  
+  if (current->next) {
+    nextBlockId = current->next->blockId;
+  } else {
+    // No next position, can't skip
+    return;
+  }
+  
+  // If next block is not off, nothing to do
+  if (coordManager->getBlockExists().at(nextBlockId).first) {
+    return;
+  }
+  
+  // Find the run of off blocks
+  auto [runStart, runEnd] = coordManager->findOffBlockRun(nextBlockId);
+  
+  if (runStart == -1 || runEnd == -1) {
+    // No valid run found
+    return;
+  }
+  
+  // Find the next live block after the run
+  int32_t nextLiveBlockId = coordManager->findNextLiveBlockInDirection(runEnd, true);
+  
+  if (nextLiveBlockId == -1) {
+    // No more live blocks, we're done
+    done = true;
+    return;
+  }
+  
+  // Get the first/last coordinate of the next live block based on its orientation
+  bool nextBlockInverted = !coordManager->getBlockStrand().at(nextLiveBlockId).first;
+  const tupleCoord_t *next = nextBlockInverted ? 
+      coordManager->getLastCoordinateInBlock(nextLiveBlockId) :
+      coordManager->getFirstCoordinateInBlock(nextLiveBlockId);
+      
+  if (!next) {
+    err("skipOffBlockRun: Failed to get coordinate for next live block {}", nextLiveBlockId);
+    done = true;
+    return;
+  }
+  
+  // Jump to the new position
+  current = next;
+  
+  // Check if we've reached the end
+  if (end && current == end) {
+    done = true;
+  }
+}
+
+// Define the templated implementation for traverseOrientationRun
+template<typename SeedCallback>
+void CoordinateTraverser::traverseOrientationRunImpl(SeedCallback callback, bool extractSeeds) noexcept {
+  if (!current || done) {
+    warn("traverseOrientationRun: Traverser already at end or invalid state");
+    return;
+  }
+
+  // Save current position to restore later if needed
+  const tupleCoord_t* startCoord = current;
+  
+  // Determine if this is an inverted run
+  bool isInverted = !coordManager->getBlockStrand().at(current->blockId).first;
+  
+  // Get the end of the run (where orientation changes or block ends)
+  auto blockRunRange = coordManager->findBlockRunWithSameOrientation(current->blockId);
+  int32_t startBlockId = blockRunRange.first;
+  int32_t endBlockId = blockRunRange.second;
+  
+  // Get scalar range for this run
+  auto scalarRange = coordManager->getBlockRunScalarRange(startBlockId, endBlockId);
+  int64_t startScalar = scalarRange.first;
+  int64_t endScalar = scalarRange.second;
+  
+  if (startScalar < 0 || endScalar < 0 || startScalar > endScalar) {
+    warn("traverseOrientationRun: Invalid scalar range ({}, {})", startScalar, endScalar);
+    return;
+  }
+  
+  // Implementation depends on what we're extracting
+  if (extractSeeds) {
+    // Common traversal logic for both inverted and forward runs
+    const tupleCoord_t *endCoord = coordManager->getTupleCoord(endScalar);
+    debug_msg("traverseOrientationRun: Traversing {} run from scalar {} to {}", 
+          isInverted ? "inverted" : "forward", current->scalar, endScalar);
+    
+    // Buffer for collecting seeds if needed (for batch processing)
+    constexpr size_t MAX_BUFFER_SIZE = 4096;
+    char nucleotideBuffer[MAX_BUFFER_SIZE] = {0};
+    size_t bufferPos = 0;
+    std::vector<const tupleCoord_t*> coordBuffer;
+    coordBuffer.reserve(MAX_BUFFER_SIZE);
+    
+    // Determines if we're in batch mode or callback-per-nucleotide mode
+    bool batchMode = false;
+    
+    // Use a single pass traversal for efficiency
+    while (current && !done) {
+      // Check if we've reached the end of the run
+      if (current->scalar > endScalar) {
+        debug_msg("traverseOrientationRun: Reached end of run at scalar {}", current->scalar);
+        break;
+      }
+      
+      // Extract the nucleotide at this position
+      char c = getChar(true);  // Get character with proper complementation
+      
+      // For seed extraction, we need to check if this is a valid nucleotide
+      if (isValidNucleotide(c)) {
+        if (batchMode) {
+          // Store in buffer for batch processing
+          if (bufferPos < MAX_BUFFER_SIZE - 1) {
+            nucleotideBuffer[bufferPos] = c;
+            coordBuffer.push_back(current);
+            bufferPos++;
+          }
+        } else {
+          // Call the callback function with the character and coordinate
+          debug_msg("traverseOrientationRun: Extracting seed at position {} ({})", current->scalar, c);
+          // Always call with consistent parameters - use a direct match to the callback signature
+          callback(c, current, 1);
+        }
+      }
+      
+      // Move to the next position
+      next();
+      if (done) break;
+    }
+    
+    // If in batch mode, process the buffered data
+    if (batchMode && bufferPos > 0) {
+      // Only call batch-style callback if there's actual data and the callback supports it
+      // This requires checking the callback function signature for compatibility
+      try {
+        // Try to call the callback with the buffer data
+        // This is a simplified approach - we'll need to handle this better later
+        if (bufferPos > 0) {
+          for (size_t i = 0; i < bufferPos; i++) {
+            callback(nucleotideBuffer[i], coordBuffer[i], 1);
+          }
+        }
+      } catch (...) {
+        // If calling the callback fails, we'll just log an error and continue
+        warn("traverseOrientationRun: Failed to call batch callback");
+      }
+    }
+  } else {
+    // Just traversal without extraction - we can optimize by jumping to the end
+    // of the run directly if no processing is needed for each position
+    debug_msg("traverseOrientationRun: Fast traversal to end of run (scalar {})", endScalar);
+    
+    const tupleCoord_t *targetPos = coordManager->getTupleCoord(endScalar);
+    if (targetPos) {
+      current = targetPos;
+      if (end && current == end) {
+        done = true;
+      }
+    } else {
+      // If we can't find the target position, traverse normally
+      while (current && !done && current->scalar <= endScalar) {
+        next();
+      }
+    }
+  }
+}
+
+// Explicit instantiations for common callback types
+// This allows the compiler to generate the template code for these specific types
+// making them available to other compilation units without including the implementation details
+template void CoordinateTraverser::traverseOrientationRunImpl<std::function<void(char, const tupleCoord_t*, size_t)>>(
+    std::function<void(char, const tupleCoord_t*, size_t)> callback, bool extractSeeds) noexcept;
+
+// Add wrapper function template for traverseOrientationRun to use the implementation
+template<typename SeedCallback>
+void CoordinateTraverser::traverseOrientationRun(SeedCallback callback, bool extractSeeds) noexcept {
+  traverseOrientationRunImpl(callback, extractSeeds);
+}
+
+// Explicit instantiations for the wrapper function
+template void CoordinateTraverser::traverseOrientationRun<std::function<void(char, const tupleCoord_t*, size_t)>>(
+    std::function<void(char, const tupleCoord_t*, size_t)> callback, bool extractSeeds) noexcept;
+
+// No-op version for backward compatibility
+void CoordinateTraverser::traverseOrientationRun(bool extractSeeds) noexcept {
+  auto noOpCallback = [](char c, const tupleCoord_t* coord, size_t) {};
+  traverseOrientationRunImpl(noOpCallback, extractSeeds);
 }
 
 void CoordinateTraverser::nextSkipGaps() noexcept {
@@ -885,6 +1454,16 @@ void CoordinateTraverser::prev() noexcept {
 
   const tupleCoord_t *prev = current->prev;
   if (!prev) {
+    debug_msg("prev: No previous coordinate, traversal complete");
+    done = true;
+    return;
+  }
+
+  // Detect circular reference
+  if (prev == current || prev->prev == current) {
+    err("Traverser prev: detected circular reference in coordinate chain at "
+        "scalar {}",
+        current->scalar);
     done = true;
     return;
   }
@@ -904,6 +1483,45 @@ void CoordinateTraverser::prev() noexcept {
     return;
   }
 
+  // Check if we're crossing a block boundary
+  if (prev->blockId != current->blockId) {
+    debug_msg("prev: Crossing block boundary from {} to {}", 
+         current->blockId, prev->blockId);
+         
+    // Check if the previous block is alive
+    if (!coordManager->getBlockExists().at(prev->blockId).first) {
+      debug_msg("prev: Block {} is dead, looking for previous live block");
+      
+      // Find previous live block
+      int prevLiveBlockId = -1;
+      for (int i = prev->blockId; i >= 0; i--) {
+        if (coordManager->getBlockExists().at(i).first) {
+          prevLiveBlockId = i;
+          break;
+        }
+      }
+      
+      if (prevLiveBlockId >= 0) {
+        // Get the last coordinate of the previous live block based on its orientation
+        bool prevBlockInverted = !coordManager->getBlockStrand().at(prevLiveBlockId).first;
+        prev = prevBlockInverted ? 
+            coordManager->getFirstCoordinateInBlock(prevLiveBlockId) : 
+            coordManager->getLastCoordinateInBlock(prevLiveBlockId);
+            
+        if (!prev) {
+          err("prev: Failed to get coordinate for previous live block {}", prevLiveBlockId);
+          done = true;
+          return;
+        }
+      } else {
+        // No more live blocks behind
+        debug_msg("prev: No more live blocks behind, traversal complete");
+        done = true; 
+        return;
+      }
+    }
+  }
+
   // Validate prev coordinate is in the manager's vector
   const tupleCoord_t *stored = coordManager->getTupleCoord(prev->scalar);
   if (!stored || stored != prev) {
@@ -913,28 +1531,25 @@ void CoordinateTraverser::prev() noexcept {
   }
 
   if (prev == end) {
+    current = prev;
     done = true;
     return;
   }
+  
   current = prev;
-}
-
-void CoordinateTraverser::reset(const tupleCoord_t *start,
-                                const tupleCoord_t *end) noexcept {
-  if (!start) {
-    current = nullptr;
-    this->end = nullptr;
-    done = true;
-    return;
-  }
-
-  current = start;
-  this->end = end;
-  done = false;
+  debug_msg("prev: Moved to scalar {} in block {}", current->scalar, current->blockId);
 }
 
 void CoordinateTraverser::reset(const tupleCoord_t *start) noexcept {
-  reset(start, nullptr);
+  current = start;
+  end = nullptr;
+  done = (current == nullptr);
+}
+
+void CoordinateTraverser::reset(const tupleCoord_t *start, const tupleCoord_t *end) noexcept {
+  current = start;
+  this->end = end;
+  done = (current == nullptr);
 }
 
 } // namespace coordinates

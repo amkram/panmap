@@ -1,19 +1,26 @@
-#ifndef GENOTYPING_HPP
-#define GENOTYPING_HPP
-
 #pragma once
+
+#include "htslib/sam.h"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
 #include "conversion.hpp"
-#include "seed_annotated_tree.hpp"
+#include "panman.hpp"
+#include "state.hpp"
 #include <iostream>
 
 namespace genotyping {
-using namespace std;
-using namespace seed_annotated_tree;
+
 
 struct VariationSite {
   VariationSite(size_t sid, char ref, size_t position, int variation_types,
-                const string &nucs, const vector<string> &insertion_seqs,
-                const vector<string> &deletion_seqs, const string &errors,
+                const std::string &nucs, const std::vector<std::string> &insertion_seqs,
+                const std::vector<std::string> &deletion_seqs, const std::string &errors,
                 const mutationMatrices &mutMat);
 
   size_t site_id;
@@ -22,26 +29,85 @@ struct VariationSite {
   char ref_nuc;
 
   // substitution
-  vector<vector<double>> read_errs;
+  std::vector<std::vector<double>> read_errs;
 
   // deletion
-  map<string, vector<double>> deletions;
+  std::map<std::string, std::vector<double>> deletions;
 
   // insertion
-  map<string, vector<double>> insertions;
+  std::map<std::string, std::vector<double>> insertions;
 
   size_t most_probable_idx;
-  vector<double> likelihoods;
-  vector<double> posteriors;
-  vector<size_t> read_depth;
+  std::vector<double> likelihoods;
+  std::vector<double> posteriors;
+  std::vector<size_t> read_depth;
 };
 
-vector<std::vector<double>>
+// Ensure correct usage of std::getline
+  void stringSplit(const std::string& str, char delimiter, std::vector<std::string>& out);
+
+  // Ensure correct initialization of vectors and maps
+  struct mutationMatrices {
+    std::vector<std::vector<double>> submat;
+    std::unordered_map<int64_t, double> insmat;
+    std::unordered_map<int64_t, double> delmat;
+    double maxInsLogProb;
+    double maxDelLogProb;
+    bool filled;
+
+    mutationMatrices() : submat(4, std::vector<double>(4, 0.0)), maxInsLogProb(100.0), maxDelLogProb(100.0), filled(false) {}
+  };
+
+  /**
+   * Fill mutation matrices from a file
+   * 
+   * @param mutMat Mutation matrices to fill
+   * @param inf Input file stream to read from
+   */
+  void fillMutationMatricesFromFile(mutationMatrices &mutMat, std::ifstream &inf);
+
+  /**
+   * Build mutation matrices helper function
+   * 
+   * @param mutMat Mutation matrices to fill
+   * @param tree Tree to process
+   * @param node Current node being processed
+   * @param stateManager StateManager containing sequence data
+   * @param parentBaseCounts Parent base counts
+   * @param totalBaseCounts Total base counts
+   * @param subCount Substitution counts
+   * @param insCount Insertion counts
+   * @param delCount Deletion counts
+   */
+  void buildMutationMatricesHelper(
+      mutationMatrices &mutMat,
+      panmanUtils::Tree *tree,
+      panmanUtils::Node *node,
+      state::StateManager &stateManager,
+      std::vector<int64_t> &parentBaseCounts,
+      std::vector<int64_t> &totalBaseCounts,
+      std::vector<std::vector<int64_t>> &subCount,
+      std::unordered_map<int64_t, int64_t> &insCount,
+      std::unordered_map<int64_t, int64_t> &delCount);
+
+  /**
+   * Fill mutation matrices from a tree
+   * 
+   * @param mutMat Mutation matrices to fill
+   * @param tree Tree to process
+   * @param path File path to save matrices to
+   */
+  void fillMutationMatricesFromTree_test(
+      mutationMatrices &mutMat, 
+      panmanUtils::Tree *tree, 
+      const std::string& path);
+
+std::vector<std::vector<double>>
 scaleMutationSpectrum(const mutationMatrices &mutMat, double mutationRate);
 std::string
 applyMutationSpectrum(const std::string &line,
                       const std::vector<std::vector<double>> &scaled_submat);
-pair<vector<VariationSite>, pair<size_t, size_t>>
+std::pair<std::vector<VariationSite>, std::pair<size_t, size_t>>
 getVariantSites(std::istream &fin, const mutationMatrices &mutMat);
 void printSamplePlacementVCF(std::istream &fin, const mutationMatrices &mutMat,
                              bool variantOnly, size_t maskSize,
@@ -60,7 +126,7 @@ void printSamplePlacementVCF(std::istream &fin, const mutationMatrices &mutMat,
 void genotype(std::string prefix, std::string refFileName,
               std::string bestMatchSequence, std::string bamFileName,
               std::string mpileupFileName, std::string vcfFileName,
-              seed_annotated_tree::mutationMatrices &mutMat);
+              mutationMatrices &mutMat);
 
 } // namespace genotyping
 
@@ -108,7 +174,7 @@ inline void extractRef(const std::string &refFileName,
 
 inline void callVariantsFromSAM(const std::string &samFileName,
                                 const std::string &refFileName,
-                                seed_annotated_tree::mutationMatrices &mutMat,
+                                genotyping::mutationMatrices &mutMat,
                                 const std::string &prefix) {
   std::vector<char *> samAlignments;
   std::string samHeader;
@@ -151,6 +217,4 @@ inline void callVariantsFromSAM(const std::string &samFileName,
 
   createVcfWithMutationMatrices(current_prefix, mpileupFileName, mutMat,
                                 vcfFileName, 0.0011);
-}
-
-#endif
+} // namespace genotyping

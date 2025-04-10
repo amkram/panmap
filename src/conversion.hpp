@@ -1,12 +1,23 @@
-#include "seed_annotated_tree.hpp"
-#include "util.hpp"
+#include "seeding.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 extern "C" {
 #include <htslib/sam.h>
 }
 
+// Forward declarations
+namespace genotyping {
+    struct mutationMatrices;
+}
+
+// Main functions
 void createSam(
-    std::vector<std::vector<seeding::seed>> &readSeeds,
+    std::vector<std::vector<seeding::seed_t>> &readSeeds,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
     std::string &bestMatchSequence,
@@ -32,10 +43,10 @@ void createMplpBcf(std::string &prefix, std::string &refFileName,
                    std::string &mpileupFileName);
 
 void createVcf(char *mplpString,
-               const seed_annotated_tree::mutationMatrices &mutMat,
+               const genotyping::mutationMatrices &mutMat,
                std::string &vcfFileName, bool keep_alts);
 
 void createVcfWithMutationMatrices(
     std::string &prefix, std::string &mpileupFileName,
-    const seed_annotated_tree::mutationMatrices &mutMat,
+    const genotyping::mutationMatrices &mutMat,
     std::string &vcfFileName, double mutationRate);

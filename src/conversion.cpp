@@ -10,13 +10,13 @@ extern "C" {
 
 // samAlignment is sorted at the end
 
-void addSeeds(std::vector<seeding::seed> &fwdmatchingSeeds,
-              std::vector<seeding::seed> &bwdmatchingSeeds,
+void addSeeds(std::vector<seeding::seed_t> &fwdmatchingSeeds,
+              std::vector<seeding::seed_t> &bwdmatchingSeeds,
               const std::vector<uint32_t> &positions,
-              const seeding::seed &curSeed, bool reverseCondition, int k,
+              const seeding::seed_t &curSeed, bool reverseCondition, int k,
               int readlen) {
   for (uint32_t rpos : positions) {
-    seed thisSeed;
+    seeding::seed_t thisSeed;
     thisSeed.reversed = curSeed.reversed == reverseCondition;
     thisSeed.hash = curSeed.hash;
     thisSeed.pos =
@@ -34,7 +34,7 @@ void addSeeds(std::vector<seeding::seed> &fwdmatchingSeeds,
 
 // Elements of samAlignments must be freed
 void createSam(
-    std::vector<std::vector<seeding::seed>> &readSeeds,
+    std::vector<std::vector<seeding::seed_t>> &readSeeds,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
     std::string &bestMatchSequence,
@@ -49,7 +49,7 @@ void createSam(
 
   alignment::getAnchors(
       anchors,
-      const_cast<const std::vector<std::vector<seeding::seed>> &>(readSeeds),
+      const_cast<const std::vector<std::vector<seeding::seed_t>> &>(readSeeds),
       const_cast<const std::vector<std::string> &>(readSequences),
       const_cast<const std::unordered_map<
           size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &>(
@@ -341,7 +341,7 @@ void createMplpBcf(std::string &prefix, std::string &refFileName,
 
 void createVcfWithMutationMatrices(
     std::string &prefix, std::string &mpileupFileName,
-    const seed_annotated_tree::mutationMatrices &mutMat,
+    const genotyping::mutationMatrices &mutMat,
     std::string &vcfFileName, double mutationRate) {
   if (mpileupFileName.size() == 0) {
     mpileupFileName = prefix + ".mpileup";
@@ -379,7 +379,7 @@ void createVcfWithMutationMatrices(
 
 // destroys mplpString
 void createVcf(char *mplpString,
-               const seed_annotated_tree::mutationMatrices &mutMat,
+               const genotyping::mutationMatrices &mutMat,
                std::string &vcfFileName, bool keep_alts) {
   // Convert c string of mpileup to ifstream
   std::istringstream mpileipStream(mplpString);

@@ -1,60 +1,52 @@
-#ifndef __SEEDING_HPP
-#define __SEEDING_HPP
-
 #pragma once
+
+// Include SIMD headers in global namespace
+#include <cstdint>
+#include <immintrin.h> // For SIMD intrinsics
+
+// Other includes
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
+#include <string>
+#include <string_view>
+#include <unistd.h>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 #include <deque>
-#include <fstream>
-#include <iostream>
-#include <minimap2/kseq.h>
-#include <mutex>
-#include <optional>
 #include <stdio.h>
 #include <tuple>
-#include <unordered_map>
-#include <vector>
 #include <zlib.h>
 
+#include <htslib/kseq.h>
 KSEQ_INIT(int, read)
 
 namespace seeding {
 
-struct seed {
-
-  // std::string seq;
-  size_t hash;
-  int32_t pos; // start position in sequence
-  int32_t idx; // index of kmer in vector used in indexing DFS
-  bool reversed;
-  int32_t gappedEnd;
-  uint32_t rpos; // position on reference (only used during alignment)
-
-  bool operator<(const seed &rhs) const { return pos < rhs.pos; };
-  bool operator==(const seed &rhs) const { return pos == rhs.pos; };
+// A syncmer seed, defined within a single sequence
+struct seed_t {
+  // Core properties
+  size_t hash;        // Hash of the k-mer
+  int64_t pos;        // Position in sequence (keep as pos, not startPos)
+  int32_t idx;        // Index in vector (used during indexing)
+  bool reversed;      // Orientation flag
+  uint32_t rpos;      // Position on reference (used during alignment)
+  
+  // Add the end position field
+  int64_t endPos;     // End position with gaps
+  
+  // Comparison operators
+  bool operator<(const seed_t &rhs) const { return pos < rhs.pos; }
+  bool operator==(const seed_t &rhs) const { return pos == rhs.pos; }
 };
 
-struct onSeedsHash {
-  size_t hash;
-  int64_t endPos;
-  bool isReverse;
+// Represents a seed match between self and a reference sequence
+struct anchor_t : seed_t {
+  int64_t referencePos; // position in reference sequence
+  int64_t referenceEndPos; // end position in reference sequence
 };
-
-struct seedmer {
-  int32_t j;
-  int32_t k;
-  std::string seq;                // concatenated string of s kmers
-  std::vector<int32_t> positions; // positions of s kmers
-};
-
-// class KHash
-// {
-// public:
-//     size_t operator()(const seed &t) const
-//     {
-//         const std::hash<std::string> h;
-//         return h(t.seq);
-//     }
-// };
 
 struct read_t {
   std::string seq;                    // read sequence
@@ -91,24 +83,39 @@ static size_t btn(char b) {
     n = 3;
     break;
   default:
-    throw std::invalid_argument("Kmer contains non canonical base");
-    break;
+    // Instead of throwing an exception, return a special value
+    // that will be handled by the calling function
+    return std::numeric_limits<size_t>::max();
   }
   return n;
 }
 
-static size_t hash(const std::string &s) {
+[[maybe_unused]] static size_t hash(const std::string &s) {
   size_t h = 0;
   if (s.empty()) {
     return h;
   } else if (s.size() == 1) {
     h = btn(s[0]);
+    // Check for non-canonical base
+    if (h == std::numeric_limits<size_t>::max()) {
+      return 0; // Return 0 for non-canonical bases
+    }
     return h;
   }
 
   h = btn(s[0]);
+  // Check for non-canonical base in first position
+  if (h == std::numeric_limits<size_t>::max()) {
+    return 0; // Return 0 for non-canonical bases
+  }
+  
   for (size_t i = 1; i < s.size(); ++i) {
-    h = (h << 2) + btn(s[i]);
+    size_t base = btn(s[i]);
+    // Check for non-canonical base
+    if (base == std::numeric_limits<size_t>::max()) {
+      return 0; // Return 0 for non-canonical bases
+    }
+    h = (h << 2) + base;
   }
   return h;
 }
@@ -148,7 +155,7 @@ static char comp(char c) {
   return compC;
 }
 
-static std::string revcomp(const std::string &s) {
+[[maybe_unused]] static std::string revcomp(const std::string &s) {
   std::string cs = "";
   for (int i = s.size() - 1; i > -1; --i) {
     char c = s[i];
@@ -157,20 +164,6 @@ static std::string revcomp(const std::string &s) {
   return cs;
 }
 
-inline std::pair<size_t, bool> getHash(const std::string &s) {
-  try {
-    size_t u = hash(s);
-    size_t v = hash(revcomp(s));
-    if (u < v)
-      return std::make_pair(u, true);
-    else if (v < u)
-      return std::make_pair(v, true);
-    return std::make_pair(0, false);
-  } catch (std::invalid_argument) {
-    return std::make_pair(0, false); // skip strand ambiguous
-  }
-  return std::make_pair(0, false);
-}
 
 inline bool is_syncmer(const std::string &seq, const int s, const bool open) {
   int NsCount = 0;
@@ -179,10 +172,10 @@ inline bool is_syncmer(const std::string &seq, const int s, const bool open) {
       NsCount++;
     }
   }
-  if (NsCount > seq.size() / 2) {
-    return false;
+  if (NsCount > 1) {
+    return false;  
   }
-  if (seq.size() < s) {
+  if (static_cast<size_t>(s) > seq.size()) {
     return false;
   }
   std::string min(s, 'Z');
@@ -219,10 +212,9 @@ inline size_t chash(const char &c) {
   case 'T':
     return 0x295549f54be24456;
   default:
-    // throw std::invalid_argument("Kmer contains non canonical base");
+    // Return 0 for non-canonical bases
     return 0;
   }
-  return 0;
 }
 
 inline size_t rol(const size_t &h, const size_t &r) {
@@ -237,7 +229,8 @@ inline size_t ror(const size_t &h, const size_t &r) {
 inline std::tuple<size_t, bool, bool>
 is_syncmer_rollingHash(const std::string &seq, const int s, const bool open,
                        int t = 0) {
-  if (seq.size() < s)
+  // Cast s to size_t to avoid sign comparison warning
+  if (seq.size() < static_cast<size_t>(s))
     return std::make_tuple(0, false, false);
 
   int k = seq.size();
@@ -323,17 +316,22 @@ is_syncmer_rollingHash(const std::string &seq, const int s, const bool open,
 }
 
 // Overload to support string_view
-inline std::pair<size_t, size_t> hashSeq(std::string_view s) {
+inline std::pair<size_t, size_t> hashSeq(std::string_view s, int32_t k) {
   size_t fHash = 0;
   size_t rHash = 0;
-  int k = s.size();
   for (int i = 0; i < k; i++) {
     if (chash(s[i]) == 0)
-      throw std::invalid_argument("Kmer contains non canonical base");
+      return std::make_pair(0, 0);
     fHash ^= rol(chash(s[i]), k - i - 1);
     rHash ^= rol(chash(comp(s[k - i - 1])), k - i - 1);
   }
   return std::make_pair(fHash, rHash);
+}
+
+// Hash a k-mer and return the canonical hash (minimum of forward and reverse)
+inline size_t hashKmer(const std::string& kmer) {
+  auto [fHash, rHash] = hashSeq(kmer, kmer.length());
+  return std::min(fHash, rHash);
 }
 
 // returns vector of (hash, isReverse, isSyncmer, startPos)
@@ -460,19 +458,8 @@ rollingSyncmers(const std::string_view &seq, int k, int s, bool open, int t = 0,
             syncmers.emplace_back(std::make_tuple(max_size_t, true, false, 0));
         }
       } else {
-        if (curMinSmerHash == curSmerHashes[t] ||
-            curMinSmerHash == curSmerHashes[k - s - t]) {
-          syncmers.emplace_back(
-              std::make_tuple(reverseKmerHash, true, true, 0));
-          if (printKmers) {
-            std::string kmer = std::string(seq.substr(0, k));
-            // std::cout << "SYNCMER: pos=" << 0 << " kmer=" << kmer << " hash="
-            // << reverseKmerHash << " orientation=reverse" << std::endl;
-          }
-        } else {
-          if (returnAll)
-            syncmers.emplace_back(std::make_tuple(max_size_t, true, false, 0));
-        }
+        if (returnAll)
+          syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
       }
     } else {
       if (returnAll)
@@ -522,7 +509,7 @@ rollingSyncmers(const std::string_view &seq, int k, int s, bool open, int t = 0,
       curSmerHashes.push_back(max_size_t);
     }
 
-    if (recentAmbiguousBaseIndex >= 0 && i < recentAmbiguousBaseIndex + k) {
+    if (recentAmbiguousBaseIndex >= 0 && i < static_cast<size_t>(recentAmbiguousBaseIndex + k)) {
       if (returnAll)
         syncmers.emplace_back(
             std::make_tuple(max_size_t, false, false, i - k + 1));
@@ -610,13 +597,13 @@ void seedsFromFastq(
     std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
-    std::vector<std::vector<seed>> &readSeeds, const std::string &fastqPath1,
+    std::vector<std::vector<seed_t>> &readSeeds, const std::string &fastqPath1,
     const std::string &fastqPath2);
 
 inline std::string getNextSyncmer(std::string &seq, const int32_t currPos,
                                   const int32_t k, const int32_t s) {
 
-  for (int32_t i = currPos; i < seq.size() - k + 1; i++) {
+  for (int32_t i = currPos; i < static_cast<int32_t>(seq.size()) - k + 1; i++) {
     std::string kmer = seq.substr(i, k);
     if (is_syncmer(kmer, s, false)) {
       return kmer;
@@ -649,150 +636,9 @@ inline std::string reverseComplement(std::string dna_sequence) {
   std::reverse(complement.begin(), complement.end());
   return complement;
 }
-// inline std::vector<seed> syncmerize(const std::string &seq, const int32_t k,
-// const int32_t s, const bool open, const bool aligned, const int32_t pad)
-// {
-//     std::mutex mtx;
-//     std::vector<seed> ret;
-//     int32_t seqLen = seq.size();
-//     if (seqLen < k)
-//     {
-//         return ret;
-//     }
-//     if (aligned)
-//     {
-//         std::unordered_map<int32_t, int32_t> degap;
-//         int32_t pos = 0;
-//         std::string ungapped = "";
-//         for (int32_t i = 0; i < seqLen; i++)
-//         {
-//             char c = seq[i];
-//             degap[pos] = i;
-//             if (c != '-')
-//             {
-//                 ungapped += c;
-//                 pos++;
-//             }
-//         }
-
-//         if (ungapped.size() < k + 1)
-//         {
-//             return ret;
-//         }
-//         for (int32_t i = 0; i < ungapped.size() - k + 1; i++)
-//         {
-//             std::string kmer = ungapped.substr(i, k);
-//             if (is_syncmer(kmer, s, open))
-//             {
-//                 ret.push_back(seed{kmer, degap[i] + pad, -1, false, degap[i +
-//                 k - 1] + pad});
-//             }
-//         }
-//     }
-//     else
-//     {
-
-//         // Loop through sequence and build up seeds as we go
-//         if (seq.size() >= k)
-//         {
-
-//             // Check first k bp for smers
-//             std::string min_s = seq.substr(0, s);
-//             int first_min_coord = 0;
-//             int last_min_coord = 0;
-//             int Ns = seq[0] == 'N';
-
-//             for (int i = 1; i < k - s + 1; i++)
-//             {
-//                 std::string smer = seq.substr(i, s);
-//                 if (seq[i] == 'N')
-//                     Ns++;
-
-//                 if (smer < min_s)
-//                 {
-//                     min_s = smer;
-//                     first_min_coord = i;
-//                     last_min_coord = i;
-//                 }
-//                 else if (smer == min_s)
-//                 {
-//                     last_min_coord = i;
-//                 }
-//             }
-//             for (int i = k - s + 1; i < k; i++)
-//             {
-//                 if (seq[i] == 'N')
-//                     Ns++;
-//             }
-
-//             // Check the rest for smers and kmer seeds
-//             for (int i = k; i < seq.size() + 1; i++)
-//             {
-
-//                 // Processing kmer starting at i - k in seq
-//                 bool isSeed = (first_min_coord == i - k || last_min_coord ==
-//                 i - s) && Ns <= k / 2;
-
-//                 if (isSeed)
-//                 {
-//                     std::string kmer = seq.substr(i - k, k);
-//                     ret.push_back(seed{kmer, i - k, -1, false, i});
-//                 }
-
-//                 // Updating smers for kmer starting at i - k + 1
-//                 if (i < seq.size())
-//                 {
-//                     if (seq[i] == 'N')
-//                         Ns++;
-//                     if (seq[i - k] == 'N')
-//                         Ns--;
-
-//                     if (first_min_coord == i - k)
-//                     {
-//                         // Were losing the lowest smer, Re search for lowest
-//                         min_s = seq.substr(i - k + 1, s);
-//                         first_min_coord = i - k + 1;
-
-//                         for (int j = 1; j < k - s + 1; j++)
-//                         {
-//                             std::string smer = seq.substr(i - k + 1 + j, s);
-//                             if (smer < min_s)
-//                             {
-//                                 min_s = smer;
-//                                 first_min_coord = i - k + 1 + j;
-//                                 last_min_coord = first_min_coord;
-//                             }
-//                             else if (smer == min_s)
-//                             {
-//                                 last_min_coord = i - k + 1 + j;
-//                             }
-//                         }
-//                     }
-//                     else
-//                     {
-//                         // Test new smer to see if its the lowest
-//                         std::string smer = seq.substr(i - s + 1, s);
-//                         if (smer < min_s)
-//                         {
-//                             min_s = smer;
-//                             first_min_coord = i - s + 1;
-//                             last_min_coord = i - s + 1;
-//                         }
-//                         else if (smer == min_s)
-//                         {
-//                             last_min_coord = i - s + 1;
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     }
-//     return ret;
-// }
 
 // SIMD-accelerated hash calculation for multiple k-mers at once
 #ifdef __AVX2__
-#include <immintrin.h>
 #endif
 
 /**
@@ -803,6 +649,7 @@ inline std::string reverseComplement(std::string dna_sequence) {
  * @param fwdHashes Output array for forward strand hashes
  * @param revHashes Output array for reverse strand hashes
  * @param stride Distance between consecutive k-mers in buffer
+ * @param validResults Optional array for validity flags
  */
 inline void batchHashKmers(
     const char *buffer, // Input: array of k-mers (k*batch_size chars)
@@ -810,7 +657,8 @@ inline void batchHashKmers(
     size_t batch_size,  // Input: number of k-mers to process
     size_t *fwdHashes,  // Output: forward hashes
     size_t *revHashes,  // Output: reverse hashes
-    size_t stride = 0   // Stride between k-mers (default: k)
+    size_t stride = 0,   // Stride between k-mers (default: k)
+    bool *validResults = nullptr // Optional: array to store validity flags
 ) {
   if (stride == 0)
     stride = k;
@@ -818,7 +666,9 @@ inline void batchHashKmers(
   // Process in smaller chunks for better cache behavior
   constexpr size_t CHUNK_SIZE = 16; // Process 16 k-mers at a time
 
+#ifdef _OPENMP
 #pragma omp parallel for
+#endif
   for (size_t chunk = 0; chunk < batch_size; chunk += CHUNK_SIZE) {
     size_t end = std::min(chunk + CHUNK_SIZE, batch_size);
 
@@ -826,6 +676,12 @@ inline void batchHashKmers(
       const char *kmer = buffer + i * stride;
       size_t fHash = 0;
       size_t rHash = 0;
+      bool valid = true;
+      
+      // Initialize result as valid (if array is provided)
+      if (validResults != nullptr) {
+        validResults[i] = true;
+      }
 
       // Prefetch next k-mer
       if (i + 1 < end) {
@@ -837,8 +693,13 @@ inline void batchHashKmers(
       for (size_t j = 0; j < k; j += 4) {
         // Process 4 nucleotides at a time when possible
         if (j + 4 <= k) {
-          // Load 4 bases
+          // Load 4 bases but use directly without storing in variable
+          // Comment out the unused variable declaration
+          // __m128i bases = _mm_loadu_si32(kmer + j); // Load 4 bytes
+          
+          // Or use _mm_loadu_si32 directly where needed:
           __m128i bases = _mm_loadu_si32(kmer + j); // Load 4 bytes
+          (void)bases; // Mark as used to prevent warning
 
           // Process each base
           for (size_t m = 0; m < 4; m++) {
@@ -866,8 +727,14 @@ inline void batchHashKmers(
               cval = 0x295549f54be24456;
               break;
             default:
-              cval = 0;
-              throw std::invalid_argument("Kmer contains non canonical base");
+              // Found an ambiguous nucleotide - update the valid flag if provided
+              if (validResults != nullptr) {
+                validResults[i] = false;
+              }
+              
+              // Skip the rest of this k-mer
+              j = k;
+              break;
             }
 
             fHash ^= rol(cval, k - (j + m) - 1);
@@ -894,7 +761,8 @@ inline void batchHashKmers(
               break;
             default:
               rval = 0;
-              throw std::invalid_argument("Kmer contains non canonical base");
+              valid = false;
+              break;  // Skip this base but try to process others (will be marked invalid)
             }
 
             rHash ^= rol(rval, k - (j + m) - 1);
@@ -922,8 +790,14 @@ inline void batchHashKmers(
               cval = 0x295549f54be24456;
               break;
             default:
-              cval = 0;
-              throw std::invalid_argument("Kmer contains non canonical base");
+              // Found an ambiguous nucleotide - update the valid flag if provided
+              if (validResults != nullptr) {
+                validResults[i] = false;
+              }
+              
+              // Skip the rest of this k-mer
+              j = k;
+              break;
             }
 
             fHash ^= rol(cval, k - (j + m) - 1);
@@ -950,7 +824,8 @@ inline void batchHashKmers(
               break;
             default:
               rval = 0;
-              throw std::invalid_argument("Kmer contains non canonical base");
+              valid = false;
+              break;  // Skip this base but try to process others (will be marked invalid)
             }
 
             rHash ^= rol(rval, k - (j + m) - 1);
@@ -980,8 +855,14 @@ inline void batchHashKmers(
           cval = 0x295549f54be24456;
           break;
         default:
-          cval = 0;
-          throw std::invalid_argument("Kmer contains non canonical base");
+          // Found an ambiguous nucleotide - update the valid flag if provided
+          if (validResults != nullptr) {
+            validResults[i] = false;
+          }
+          
+          // Skip the rest of this k-mer
+          j = k;
+          break;
         }
 
         fHash ^= rol(cval, k - j - 1);
@@ -1008,15 +889,22 @@ inline void batchHashKmers(
           break;
         default:
           rval = 0;
-          throw std::invalid_argument("Kmer contains non canonical base");
+          valid = false;
+          break;  // Skip this base but try to process others (will be marked invalid)
         }
 
         rHash ^= rol(rval, k - j - 1);
       }
 #endif
 
-      fwdHashes[i] = fHash;
-      revHashes[i] = rHash;
+      // Store results
+      fwdHashes[i] = valid ? fHash : 0;
+      revHashes[i] = valid ? rHash : 0;
+      
+      // Update validity flag if array is provided
+      if (validResults != nullptr) {
+        validResults[i] = valid;
+      }
     }
   }
 }
@@ -1028,6 +916,8 @@ inline void batchHashKmers(
  * @param batch_size Number of k-mers to process
  * @param hashes Output buffer for canonical hashes
  * @param orientations Output buffer for orientations (true=reverse)
+ * @param endPositions Output buffer for end positions (optional)
+ * @param startPosition Input start scalar position
  * @param stride Distance between consecutive k-mers
  */
 inline void
@@ -1036,7 +926,10 @@ batchHashAndSelect(const char *buffer, // Input: array of k-mers
                    size_t batch_size,  // Input: number of k-mers to process
                    size_t *hashes,     // Output: canonical hashes
                    bool *orientations, // Output: orientations
-                   size_t stride = 0   // Stride between k-mers
+                   int64_t *endPositions = nullptr, // Output: end positions (optional)
+                   int64_t startPosition = 0,      // Input: start scalar position
+                   size_t stride = 0,   // Stride between k-mers
+                   bool *validResults = nullptr // Output: validity flags (optional)
 ) {
   // Allocate temporary arrays for both hash types
   alignas(64) static thread_local std::vector<size_t> fwdHashes;
@@ -1053,12 +946,49 @@ batchHashAndSelect(const char *buffer, // Input: array of k-mers
 
   // Select canonical hash (minimum of forward and reverse)
   for (size_t i = 0; i < batch_size; i++) {
-    if (fwdHashes[i] <= revHashes[i]) {
-      hashes[i] = fwdHashes[i];
-      orientations[i] = false;
+    // Check if this k-mer is valid by looking for zeros in the hashes
+    // (zeros indicate ambiguous nucleotides)
+    bool isValid = (fwdHashes[i] != 0 && revHashes[i] != 0);
+    
+    if (isValid) {
+      if (fwdHashes[i] <= revHashes[i]) {
+        hashes[i] = fwdHashes[i];
+        orientations[i] = false;
+      } else {
+        hashes[i] = revHashes[i];
+        orientations[i] = true;
+      }
     } else {
-      hashes[i] = revHashes[i];
-      orientations[i] = true;
+      // For invalid k-mers, set hash to 0 and orientation to false
+      hashes[i] = 0;
+      orientations[i] = false;
+    }
+    
+    // If validResults is provided, update it
+    if (validResults != nullptr) {
+      validResults[i] = isValid;
+    }
+  }
+
+  // If endPositions is provided, calculate them
+  if (endPositions != nullptr) {
+    for (size_t b = 0; b < batch_size; b++) {
+      const char* kmer = buffer + b * (stride ? stride : k);
+      
+      // Count how many non-gap characters we see
+      int nonGapCount = 0;
+      int64_t currPos = startPosition;
+      
+      // Iterate through the k-mer
+      for (size_t i = 0; i < k; i++) {
+        if (kmer[i] != '-') {
+          nonGapCount++;
+        }
+        currPos++; // Always increment position
+      }
+      
+      // Store the end position
+      endPositions[b] = currPos - 1; // -1 because we want the position of the last character
     }
   }
 }
@@ -1204,6 +1134,61 @@ inline void batchHashKmersAVX2(const char *kmers,    // Input array of k-mers
 }
 #endif
 
-} // namespace seeding
+// Class to store syncmer seeds and their orientation
+class SyncmerSeeds {
+private:
+    std::vector<size_t> seeds;
+    std::vector<bool> isReverse;
+    
+public:
+    // Default constructor
+    SyncmerSeeds() = default;
+    
+    // Initialize from a sequence using rollingSyncmers
+    void init(const char* seq, size_t length, int k, int s, bool open) {
+        auto syncmers = rollingSyncmers(std::string(seq, length), k, s, open);
+        seeds.clear();
+        isReverse.clear();
+        
+        for (const auto& syncmer : syncmers) {
+            seeds.push_back(std::get<0>(syncmer));
+            isReverse.push_back(std::get<1>(syncmer));
+        }
+    }
+    
+    // Get number of seeds
+    size_t numSeeds() const {
+        return seeds.size();
+    }
+    
+    // Get seed at position i
+    size_t getSeedAt(size_t i) const {
+        return seeds.at(i);
+    }
+    
+    // Get isReverse flag at position i
+    bool getIsReverseAt(size_t i) const {
+        return isReverse.at(i);
+    }
+};
 
-#endif
+// For tracking seed mutations at each node
+struct SeedChange {
+    int64_t pos;       // Starting position of the seed, in scalar global genomic coordinates (includes gaps)
+    seed_t seed;  // Seed hash information including end position and orientation
+    int64_t tritMask;  // Ternary mask for efficient serialization
+    
+    explicit SeedChange(int64_t position = 0, const seed_t& seedHash = {}, int64_t mask = 0)
+        : pos(position), seed(seedHash), tritMask(mask) {}
+    
+    // Convenience accessor for end position
+    int64_t endPos() const { return seed.endPos; }
+    
+    bool operator==(const SeedChange& other) const {
+        return pos == other.pos && 
+               seed == other.seed &&
+               tritMask == other.tritMask;
+    }
+};
+
+} // namespace seeding

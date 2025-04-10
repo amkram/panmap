@@ -1,13 +1,365 @@
 #include "genotyping.hpp"
+#include "conversion.hpp"
+#include <algorithm>
+#include <cassert>
+#include <cctype>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <fstream>
 #include <iomanip>
+#include <ios>
+#include <istream>
+#include <limits>
+#include <map>
 #include <numeric>
+#include <ostream>
 #include <regex>
+#include <sstream>
+#include <stdexcept>
 #include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 using namespace std;
-using namespace seed_annotated_tree;
 using namespace genotyping;
+
+// Function implementations from the header file
+void genotyping::stringSplit(const std::string& str, char delimiter, std::vector<std::string>& out) {
+  out.clear();
+  std::stringstream ss(str);
+  std::string token;
+  while (std::getline(ss, token, delimiter)) {
+    if (!token.empty()) {
+      out.push_back(token);
+    }
+  }
+}
+
+void genotyping::fillMutationMatricesFromFile(mutationMatrices &mutMat, std::ifstream &inf) {
+  std::string line;
+  int idx = 0;
+  while (getline(inf, line)) {
+    std::vector<double> probs;
+    std::vector<std::string> fields;
+    stringSplit(line, ' ', fields);
+    
+    if (fields.empty()) {
+      break;
+    }
+
+    if (idx < 4) {
+      if (fields.size() != 4) {
+        throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
+      }
+
+      for (const auto &f : fields) {
+        probs.push_back(std::stod(f));
+      }
+      mutMat.submat[idx] = std::move(probs);
+    } else if (idx == 4) {
+      if (fields.empty()) {
+        throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
+      }
+
+      for (const auto& f : fields) {
+        std::vector<std::string> subFields;
+        stringSplit(f, ':', subFields);
+        if (subFields.size() != 2) {
+          throw std::invalid_argument("Invalid format in mutation matrix file");
+        }
+        int64_t size = std::stoll(subFields[0]);
+        double prob = std::stod(subFields[1]);
+        mutMat.insmat[size] = prob;
+      }
+    } else if (idx == 5) {
+      if (fields.empty()) {
+        throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
+      }
+
+      for (const auto& f : fields) {
+        std::vector<std::string> subFields;
+        stringSplit(f, ':', subFields);
+        if (subFields.size() != 2) {
+          throw std::invalid_argument("Invalid format in mutation matrix file");
+        }
+        int64_t size = std::stoll(subFields[0]);
+        double prob = std::stod(subFields[1]);
+        mutMat.delmat[size] = prob;
+      }
+    }
+    idx++;
+  }
+
+  if (idx != 6) {
+    throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
+  }
+  
+  // Set maximum log probabilities for insertions and deletions
+  mutMat.maxInsLogProb = 100.0; // Default high penalty
+  mutMat.maxDelLogProb = 100.0; // Default high penalty
+  
+  // Calculate actual maximum values if matrices are not empty
+  if (!mutMat.insmat.empty()) {
+    mutMat.maxInsLogProb = std::max_element(
+      mutMat.insmat.begin(), mutMat.insmat.end(),
+      [](const auto& a, const auto& b) { return a.second < b.second; }
+    )->second;
+  }
+  
+  if (!mutMat.delmat.empty()) {
+    mutMat.maxDelLogProb = std::max_element(
+      mutMat.delmat.begin(), mutMat.delmat.end(),
+      [](const auto& a, const auto& b) { return a.second < b.second; }
+    )->second;
+  }
+  
+  mutMat.filled = true;
+}
+
+void genotyping::buildMutationMatricesHelper(
+    mutationMatrices &mutMat,
+    panmanUtils::Tree *tree,
+    panmanUtils::Node *node,
+    state::StateManager &stateManager,
+    std::vector<int64_t> &parentBaseCounts,
+    std::vector<int64_t> &totalBaseCounts,
+    std::vector<std::vector<int64_t>> &subCount,
+    std::unordered_map<int64_t, int64_t> &insCount,
+    std::unordered_map<int64_t, int64_t> &delCount) {
+    
+  if (!node) return;
+  
+  // Process current node mutations
+  std::vector<int64_t> currentBaseCounts(4, 0);
+  
+  // Get sequence for this node
+  std::string nodeSeq = tree->getStringFromReference(node->identifier, false, true);
+  
+  // Count bases in current node
+  for (char c : nodeSeq) {
+    if (c == 'A' || c == 'a') currentBaseCounts[0]++;
+    else if (c == 'C' || c == 'c') currentBaseCounts[1]++;
+    else if (c == 'G' || c == 'g') currentBaseCounts[2]++;
+    else if (c == 'T' || c == 't') currentBaseCounts[3]++;
+  }
+  
+  // If this is not the root, compare with parent
+  if (node != tree->root && node->parent) {
+    std::string parentSeq = tree->getStringFromReference(node->parent->identifier, false, true);
+    
+    // Simple sequence alignment and mutation counting
+    // In a real implementation, this would need proper sequence alignment
+    size_t i = 0, j = 0;
+    while (i < parentSeq.length() && j < nodeSeq.length()) {
+      char p = parentSeq[i];
+      char n = nodeSeq[j];
+      
+      // Skip non-ACGT characters
+      if ((p != 'A' && p != 'C' && p != 'G' && p != 'T' && 
+           p != 'a' && p != 'c' && p != 'g' && p != 't')) {
+        i++;
+        continue;
+      }
+      
+      if ((n != 'A' && n != 'C' && n != 'G' && n != 'T' && 
+           n != 'a' && n != 'c' && n != 'g' && n != 't')) {
+        j++;
+        continue;
+      }
+      
+      // Convert to upper case for comparison
+      p = std::toupper(p);
+      n = std::toupper(n);
+      
+      // Map nucleotides to indices
+      int pIdx = (p == 'A') ? 0 : ((p == 'C') ? 1 : ((p == 'G') ? 2 : 3));
+      int nIdx = (n == 'A') ? 0 : ((n == 'C') ? 1 : ((n == 'G') ? 2 : 3));
+      
+      // Count substitutions
+      if (p != n) {
+        subCount[pIdx][nIdx]++;
+        totalBaseCounts[pIdx]++;
+      }
+      
+      i++;
+      j++;
+    }
+    
+    // Count insertions
+    if (nodeSeq.length() > parentSeq.length()) {
+      int64_t insSize = nodeSeq.length() - parentSeq.length();
+      insCount[insSize]++;
+    }
+    
+    // Count deletions
+    if (parentSeq.length() > nodeSeq.length()) {
+      int64_t delSize = parentSeq.length() - nodeSeq.length();
+      delCount[delSize]++;
+    }
+  }
+  
+  // Update parent base counts for children
+  parentBaseCounts = currentBaseCounts;
+  
+  // Recursively process all children
+  for (auto* child : node->children) {
+    buildMutationMatricesHelper(mutMat, tree, child, stateManager, parentBaseCounts, 
+                           totalBaseCounts, subCount, insCount, delCount);
+  }
+}
+
+void genotyping::fillMutationMatricesFromTree_test(
+    mutationMatrices &mutMat, 
+    panmanUtils::Tree *tree, 
+    const std::string& path) {
+  
+  if (!tree || !tree->root) {
+    throw std::invalid_argument("Invalid tree or root node");
+  }
+  
+  logging::info("Building mutation matrices from tree...");
+  
+  // Initialize state manager for coordinate access
+  auto stateManager = std::make_unique<state::StateManager>(tree->blocks.size());
+  stateManager->initializeDfsIndices(tree);
+  
+  // Initialize base count vectors and mutation counters
+  std::vector<int64_t> parentBaseCounts(4, 0);
+  std::vector<int64_t> totalBaseCounts(4, 0);
+  std::vector<std::vector<int64_t>> subCount(4, std::vector<int64_t>(4, 0));
+  std::unordered_map<int64_t, int64_t> insCount;
+  std::unordered_map<int64_t, int64_t> delCount;
+  
+  // Process the tree to build mutation statistics
+  // buildMutationMatricesHelper(mutMat, tree, tree->root, *stateManager, 
+  //                        parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
+  
+  // Calculate totals
+  int64_t totalNucCounts = 0;
+  int64_t totalInsCounts = 0;
+  int64_t totalDelCounts = 0;
+  
+  for (const auto& count : totalBaseCounts) totalNucCounts += count;
+  for (const auto& [size, count] : insCount) totalInsCounts += count;
+  for (const auto& [size, count] : delCount) totalDelCounts += count;
+  
+  // Add no-mutation counts
+  insCount[0] = totalNucCounts - totalInsCounts;
+  delCount[0] = totalNucCounts - totalDelCounts;
+  
+  // Initialize substitution matrix with base counts
+  for (int i = 0; i < 4; ++i) {
+    mutMat.submat[i][i] = static_cast<double>(totalBaseCounts[i]);
+  }
+  
+  // Update substitution matrix with counts
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      if (i != j) {
+        mutMat.submat[i][j] = static_cast<double>(subCount[i][j]);
+        mutMat.submat[i][i] -= mutMat.submat[i][j];
+      }
+    }
+  }
+  
+  // Store insertion and deletion counts
+  for (const auto& [size, count] : insCount) {
+    mutMat.insmat[size] = static_cast<double>(count);
+  }
+  
+  for (const auto& [size, count] : delCount) {
+    mutMat.delmat[size] = static_cast<double>(count);
+  }
+  
+  // Convert counts to log probabilities
+  
+  // Insertions
+  for (auto [size, count] : mutMat.insmat) {
+    mutMat.insmat[size] = -10 * log10(count / static_cast<double>(totalNucCounts));
+  }
+  
+  // Deletions
+  for (auto [size, count] : mutMat.delmat) {
+    mutMat.delmat[size] = -10 * log10(count / static_cast<double>(totalNucCounts));
+  }
+  
+  // Calculate maximum log probabilities for insertions and deletions
+  mutMat.maxInsLogProb = 100.0; // Default high penalty
+  mutMat.maxDelLogProb = 100.0; // Default high penalty
+  
+  if (!mutMat.insmat.empty()) {
+    mutMat.maxInsLogProb = std::max_element(
+      mutMat.insmat.begin(), mutMat.insmat.end(),
+      [](const auto& a, const auto& b) { return a.second < b.second; }
+    )->second;
+  }
+  
+  if (!mutMat.delmat.empty()) {
+    mutMat.maxDelLogProb = std::max_element(
+      mutMat.delmat.begin(), mutMat.delmat.end(),
+      [](const auto& a, const auto& b) { return a.second < b.second; }
+    )->second;
+  }
+  
+  // Substitutions
+  for (auto i = 0; i < 4; i++) {
+    for (auto j = 0; j < 4; j++) {
+      if (totalBaseCounts[i] > 0) {
+        mutMat.submat[i][j] = -10 * log10(mutMat.submat[i][j] / static_cast<double>(totalBaseCounts[i]));
+      } else {
+        mutMat.submat[i][j] = 100.0; // High penalty for unseen bases
+      }
+    }
+  }
+  
+  mutMat.filled = true;
+  
+  // Write matrices to file
+  std::ofstream outFile(path);
+  if (!outFile.is_open()) {
+    std::stringstream ss;
+    ss << "Failed to open file for writing mutation matrices: " << path
+       << ". Please check file permissions and path validity.";
+    throw std::runtime_error(ss.str());
+  }
+  
+  // Write substitution matrix
+  for (auto i = 0; i < 4; i++) {
+    for (auto j = 0; j < 4; j++) {
+      outFile << mutMat.submat[i][j] << " ";
+    }
+    outFile << "\n";
+  }
+  
+  // Write insertion matrix
+  std::vector<std::pair<int64_t, double>> insmat_sorted(mutMat.insmat.begin(), mutMat.insmat.end());
+  std::sort(insmat_sorted.begin(), insmat_sorted.end(), 
+            [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+              return a.first < b.first;
+            });
+  
+  for (const auto& [size, logProb] : insmat_sorted) {
+    outFile << size << ":" << logProb << " ";
+  }
+  outFile << "\n";
+  
+  // Write deletion matrix
+  std::vector<std::pair<int64_t, double>> delmat_sorted(mutMat.delmat.begin(), mutMat.delmat.end());
+  std::sort(delmat_sorted.begin(), delmat_sorted.end(), 
+            [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+              return a.first < b.first;
+            });
+  
+  for (const auto& [size, logProb] : delmat_sorted) {
+    outFile << size << ":" << logProb << " ";
+  }
+  outFile << "\n";
+  
+  outFile.close();
+  logging::info("Mutation matrices saved to {}", path);
+}
 
 enum variationType { SNP = 1, INS = 2, DEL = 4 };
 
@@ -845,8 +1197,8 @@ void genotyping::genotype(std::string prefix, std::string refFileName,
                           std::string bestMatchSequence,
                           std::string bamFileName, std::string mpileupFileName,
                           std::string vcfFileName,
-                          seed_annotated_tree::mutationMatrices &mutMat) {
-  TIME_FUNCTION;
+                          mutationMatrices &mutMat) {
+  
   createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName,
                 mpileupFileName);
 

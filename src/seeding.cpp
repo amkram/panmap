@@ -1,6 +1,17 @@
 #include "seeding.hpp"
-#include "seed_annotated_tree.hpp"
+#include "performance.hpp"  // For memory::Buffer and memory::BufferPool
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <iostream>
+#include <ostream>
+#include <stdio.h>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace seeding {
 
@@ -29,7 +40,7 @@ public:
 };
 
 void perfect_shuffle(std::vector<std::string> &v) {
-  TIME_FUNCTION;
+  
   int n = v.size();
 
   std::vector<std::string> canvas(n);
@@ -48,7 +59,7 @@ void seedsFromFastq(
     std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
-    std::vector<std::vector<seed>> &readSeeds, const std::string &fastqPath1,
+    std::vector<std::vector<seeding::seed_t>> &readSeeds, const std::string &fastqPath1,
     const std::string &fastqPath2) {
   FILE *fp;
   kseq_t *seq;
@@ -87,22 +98,31 @@ void seedsFromFastq(
       exit(0);
     }
 
-    // Shuffle reads together, so that pairs are next to eatch other
+    // Shuffle reads together, so that pairs are next to each other
     perfect_shuffle(readSequences);
     perfect_shuffle(readNames);
     perfect_shuffle(readQuals);
   }
 
   for (int i = 0; i < readSequences.size(); i++) {
-    std::vector<seeding::seed> curReadSeeds;
+    std::vector<seeding::seed_t> curReadSeeds;
     for (const auto &[kmerHash, isReverse, isSyncmer, startPos] :
          rollingSyncmers(readSequences[i], k, s, open, t, false)) {
       if (!isSyncmer)
         continue;
-      // curReadSeeds.emplace_back(seed{kmerHash, startPos, -1, isReverse,
-      // startPos + k - 1});
+      
+      // Create seed with correct field order and add endPos
+      // Order: hash, pos, idx, reversed, rpos, endPos
       curReadSeeds.emplace_back(
-          seed{kmerHash, (int32_t)startPos + k - 1, -1, isReverse, 0});
+          seed_t{
+            kmerHash,                       // hash
+            static_cast<int64_t>(startPos), // pos 
+            -1,                             // idx
+            isReverse,                      // reversed
+            0,                              // rpos
+            static_cast<int64_t>(startPos + k - 1) // endPos
+          });
+        
       if (readSeedCounts.find(kmerHash) == readSeedCounts.end())
         readSeedCounts[kmerHash] = std::make_pair(0, 0);
       if (isReverse)
