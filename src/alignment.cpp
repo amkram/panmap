@@ -1,9 +1,34 @@
 #include "alignment.hpp"
+#include "capnp/list.h"
 #include "conversion.hpp"
+#include "htslib/sam.h"
+#include "index.capnp.h"
+#include "panman.hpp"
+#include "seeding.hpp"
+#include <algorithm>
+#include <bits/getopt_core.h>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
-#include <numeric>
+#include <fstream>
+#include <iostream>
+#include <optional>
+#include <ostream>
+#include <stdexcept>
+#include <stdio.h>
+#include <string>
+#include <tuple>
+#include <unistd.h>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
 extern "C" {
-#include <bwa/bwa.h>
+#include "../src/3rdparty/bwa/bwa.h"
 }
 
 using namespace panmanUtils;
@@ -234,17 +259,17 @@ void prepareAndRunBwa(const std::vector<std::string> &idx_args,
 }
 void alignment::getAnchors(
     std::vector<std::tuple<int64_t, int32_t, int>> &anchors,
-    const std::vector<std::vector<seeding::seed>> &readSeeds, // Made const
-    const std::vector<std::string> &readSequences,            // Made const
+    const std::vector<std::vector<seeding::seed_t>> &readSeeds,
+    const std::vector<std::string> &readSequences,
     const std::unordered_map<
         size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>
-        &seedToRefPositions, // Made const
+        &seedToRefPositions,
     int k) {
 
   for (size_t i = 0; i < readSequences.size(); ++i) {
-    const auto &curReadSeeds = readSeeds[i]; // Use const reference
+    const auto &curReadSeeds = readSeeds[i];
 
-    for (const auto &seed : curReadSeeds) { // Use range-based for
+    for (const auto &seed : curReadSeeds) {
       if (seedToRefPositions.find(seed.hash) == seedToRefPositions.end())
         continue;
       auto it = seedToRefPositions.find(seed.hash);
@@ -267,21 +292,22 @@ void alignment::getAnchors(
 }
 
 float alignment::align(
-    std::vector<std::optional<seeding::onSeedsHash>> &bestNodeSeeds,
+    std::vector<std::optional<seeding::seed_t>> &bestNodeSeeds,
     std::unordered_map<size_t,
                        std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>
         &seedToRefPositions,
-    std::string &nodeSequence, Node *node, Tree *T, int32_t k, int32_t s,
-    int32_t t, bool open, int32_t l,
+    std::string &nodeSequence, panmanUtils::Node *node, panmanUtils::Tree *T,
+    int32_t k, int32_t s, int32_t t, bool open, int32_t l,
     ::capnp::List<SeedMutations>::Reader &perNodeSeedMutations_Reader,
     ::capnp::List<GapMutations>::Reader &perNodeGapMutations_Reader,
     const std::string &reads1Path, const std::string &reads2Path,
-    std::vector<std::vector<seed>> &readSeeds,
+    std::vector<std::vector<seeding::seed_t>> &readSeeds,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
     std::string &samFileName, std::string &bamFileName, bool pairedEndReads,
     std::string &refFileName, std::string aligner) {
-  TIME_FUNCTION;
+
+  // Get the full sequence from the reference node
   std::string bestMatchSequence =
       T->getStringFromReference(node->identifier, false, true);
 
@@ -306,7 +332,6 @@ float alignment::align(
   double alignmentScore = 0;
 
   if (aligner == "minimap2") {
-    double time = time_stamp();
 
     // Align reads to node sequence
     std::vector<char *> samAlignments;

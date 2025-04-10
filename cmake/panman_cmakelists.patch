@@ -1,0 +1,57 @@
+cmake_minimum_required (VERSION 3.8) 
+
+project(panmanUtils)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function  -Wno-deprecated-declarations -lboost_filesystem -lboost_system -lboost_program_options -w -mavx512f") 
+set(CMAKE_INCLUDE_CURRENT_DIR ON) 
+
+
+# add google proto
+if(DEFINED Protobuf_PATH) 
+	find_package(Protobuf REQUIRED HINTS ${Protobuf_PATH}) 
+else()
+	find_package(Protobuf REQUIRED) 
+endif()
+if(Protobuf_FOUND)
+	message(STATUS "Using Protocol Buffers ${Protobuf_VERSION}")
+endif()
+include_directories(${Protobuf_INCLUDE_DIRS})
+
+
+# add capn proto
+find_program(CAPNP_EXECUTABLE capnp REQUIRED)
+find_program(CAPNPC_CXX_EXECUTABLE capnpc-c++ REQUIRED)
+find_package(CapnProto REQUIRED)
+
+if(CapnProto_FOUND)
+	message(STATUS "Using Capn Proto ${CapnProto_VERSION}")
+endif()
+include_directories(${CAPNP_INCLUDE_DIRS})
+add_definitions(${CAPNP_DEFINITIONS})
+
+find_package(Boost COMPONENTS program_options iostreams filesystem date_time REQUIRED)
+include_directories(${Boost_INCLUDE_DIRS})
+
+
+# Include JSONCPP
+# include(${CMAKE_TOOLCHAIN_FILE})
+find_package(jsoncpp CONFIG REQUIRED)
+
+
+file(GLOB PANMAT_SRCS "src/panmanUtils.cpp" "src/panman.cpp" "src/panmanUtils.hpp" "src/panman.hpp")
+
+	
+add_executable(panmanUtils
+	${PANMAT_SRCS}
+	${CAPNP_SRCS}
+	${CAPNP_HDRS}
+	${PROTO_SRCS}
+	${PROTO_HDRS}
+	)
+
+
+target_compile_options(panmanUtils PRIVATE -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
+
+target_link_libraries(panmanUtils PRIVATE stdc++ JsonCpp::JsonCpp ${Boost_LIBRARIES} ${TBB_IMPORTED_TARGETS} ${CAPNP_LIBRARIES} ${Protobuf_LIBRARIES})
+
+target_include_directories(panmanUtils PUBLIC "${PROJECT_BINARY_DIR}")

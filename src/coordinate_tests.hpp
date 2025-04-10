@@ -14,59 +14,6 @@ namespace coordinate_tests {
 using namespace coordinates;
 using namespace seed_annotated_tree;
 
-inline sequence_t createTestSequence() {
-  sequence_t seq;
-  // Block 0: "A-GCGT"
-  seq.push_back({{{{'A', {}}, {'C', {'-', 'G'}}, {'G', {}}, {'T', {}}}}, {}});
-  // Block 1: "CA--CAT"
-  seq.push_back(
-      {{{{'-', {'C', 'A'}}, {'C', {'-'}}, {'A', {}}, {'T', {}}}}, {}});
-  // Block 2: "GGGCCTTAA"
-  seq.push_back({{{{'G', {'G'}},
-                   {'G', {}},
-                   {'C', {}},
-                   {'C', {}},
-                   {'T', {}},
-                   {'T', {}},
-                   {'A', {}},
-                   {'A', {}}}},
-                 {}});
-
-  /**  Full sequence:
-   *    A-GCGTCA--CATGGGCCTTAA
-   *
-   *    <scalar>={<block_id>, <nuc_pos>, <nuc_gap_pos>}
-
-   *  [block 0]
-   *    0 = {0, 0, -1} = A
-   *    1 = {0, 1, 0} = -
-   *    2 = {0, 1, 1} = G
-   *    3 = {0, 1, -1} = C
-   *    4 = {0, 2, -1} = G
-   *    5 = {0, 3, -1} = T
-   *
-   *  [block 1]
-   *    6 = {1, 0, 0} = C
-   *    7 = {1, 0, 1} = A
-   *    8 = {1, 0, -1} = -
-   *    9 = {1, 1, 0} = -
-   *    10 = {1, 1, 1} = C
-   *    11 = {1, 1, -1} = A
-   *    12 = {1, 2, -1} = T
-   *
-   *  [block 2]
-   *    13 = {2, 0, 0} = G
-   *    14 = {2, 0, -1} = G
-   *    15 = {2, 1, -1} = G
-   *    16 = {2, 2, -1} = C
-   *    17 = {2, 3, -1} = C
-   *    18 = {2, 4, -1} = T
-   *    19 = {2, 5, -1} = T
-   *    20 = {2, 6, -1} = A
-   *    21 = {2, 7, -1} = A
-   */
-  return seq;
-}
 
 // Test basic coordinate creation and validation
 inline bool testBasicCoordinates() {
@@ -623,8 +570,8 @@ inline bool testRangeOperations() {
 
     assert(ranges.size() == 1); // Should merge into a single range
     assert(ranges[0].isValid());
-    assert(ranges[0].start == start1);
-    assert(ranges[0].stop == end2);
+    assert(ranges[0].start_scalar == start1->scalar);
+    assert(ranges[0].stop_scalar == end2->scalar);
 
     msg("Range operation tests passed");
     return true;

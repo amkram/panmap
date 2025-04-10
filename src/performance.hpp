@@ -1,12 +1,19 @@
 #ifndef PERFORMANCE_HPP
 #define PERFORMANCE_HPP
 
-#include "seed_annotated_tree.hpp"
+#include "panman.hpp"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <queue>
 #include <stack>
+#include <stdlib.h>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 /**
@@ -16,9 +23,9 @@
 namespace threading {
 
 struct GroupInfo {
-  panmanUtils::Node *startNode; // Where this group starts
-  panmanUtils::Node *stopNode;  // Where this group ends
-  std::unordered_set<panmanUtils::Node *>
+  std::shared_ptr<panmanUtils::Node> startNode; // Where this group starts
+  std::shared_ptr<panmanUtils::Node> stopNode;  // Where this group ends
+  std::unordered_set<std::shared_ptr<panmanUtils::Node>>
       groupNodes; // Hash set for O(1) membership testing
 };
 
@@ -27,24 +34,25 @@ struct GroupInfo {
  * @param root The root node to start traversal from
  * @return Vector of nodes in DFS order
  */
-inline std::vector<panmanUtils::Node *>
-computeDFSOrder(panmanUtils::Node *root) {
-  std::vector<panmanUtils::Node *> dfsOrder;
+inline std::vector<std::shared_ptr<panmanUtils::Node>>
+computeDFSOrder(std::shared_ptr<panmanUtils::Node> root) {
+  std::vector<std::shared_ptr<panmanUtils::Node>> dfsOrder;
   if (!root)
     return dfsOrder;
 
-  std::stack<panmanUtils::Node *> stack;
+  std::stack<std::shared_ptr<panmanUtils::Node>> stack;
   stack.push(root);
 
   while (!stack.empty()) {
-    panmanUtils::Node *current = stack.top();
+    auto current = stack.top();
     stack.pop();
     dfsOrder.push_back(current);
 
     // Push children in reverse order to process leftmost child first
     for (auto it = current->children.rbegin(); it != current->children.rend();
          ++it) {
-      stack.push(*it);
+      // Create shared_ptr from raw pointer to maintain ownership semantics
+      stack.push(std::make_shared<panmanUtils::Node>(**it));
     }
   }
 
@@ -58,50 +66,42 @@ computeDFSOrder(panmanUtils::Node *root) {
  * @param numGroups Number of groups to split into
  * @return Vector of GroupInfo containing group boundaries and membership
  */
-inline std::vector<GroupInfo>
-splitDFSIntoGroups(const std::vector<panmanUtils::Node *> &dfsOrder,
-                   int numGroups) {
-
+inline std::vector<GroupInfo> computeBalancedGroups(
+    const std::vector<std::shared_ptr<panmanUtils::Node>> &dfsOrder,
+    size_t numGroups) {
   std::vector<GroupInfo> groups;
-  if (numGroups <= 0 || dfsOrder.empty())
+  if (dfsOrder.empty() || numGroups == 0)
     return groups;
 
-  size_t totalNodes = dfsOrder.size();
-  size_t targetSize = (totalNodes + numGroups - 1) / numGroups;
+  // Ensure we don't create more groups than nodes
+  numGroups = std::min(numGroups, dfsOrder.size());
 
-  // Initialize first group
-  GroupInfo currentGroup;
-  currentGroup.startNode = dfsOrder[0];
-  currentGroup.groupNodes.insert(dfsOrder[0]);
-  size_t currentSize = 1;
-  size_t groupCount = 0;
+  // Calculate approximate group size
+  size_t nodesPerGroup = dfsOrder.size() / numGroups;
+  size_t remainder = dfsOrder.size() % numGroups;
 
-  // Process nodes in DFS order
-  for (size_t i = 1; i < dfsOrder.size(); i++) {
-    panmanUtils::Node *node = dfsOrder[i];
+  groups.reserve(numGroups);
 
-    // Should we start a new group?
-    if (groupCount < numGroups - 1 && currentSize >= targetSize &&
-        node->parent == dfsOrder[i - 1]->parent) {
+  size_t startIdx = 0;
+  for (size_t g = 0; g < numGroups; g++) {
+    GroupInfo group;
 
-      // Set stop node for current group
-      currentGroup.stopNode = node;
-      groups.push_back(currentGroup);
+    // Calculate end index for this group, distributing the remainder
+    size_t groupSize = nodesPerGroup + (g < remainder ? 1 : 0);
+    size_t endIdx = std::min(startIdx + groupSize, dfsOrder.size());
 
-      // Start new group
-      currentGroup = GroupInfo();
-      currentGroup.startNode = node;
-      currentSize = 0;
-      groupCount++;
+    // Set start and stop nodes
+    group.startNode = dfsOrder[startIdx];
+    group.stopNode = dfsOrder[endIdx - 1];
+
+    // Add nodes to the group
+    for (size_t i = startIdx; i < endIdx; i++) {
+      group.groupNodes.insert(dfsOrder[i]);
     }
 
-    currentGroup.groupNodes.insert(node);
-    currentSize++;
+    groups.push_back(std::move(group));
+    startIdx = endIdx;
   }
-
-  // Finalize last group
-  currentGroup.stopNode = nullptr; // Last group runs to end
-  groups.push_back(currentGroup);
 
   return groups;
 }

@@ -1,0 +1,22 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -32,14 +32,14 @@ include_directories(${CAPNP_INCLUDE_DIRS})
+ add_definitions(${CAPNP_DEFINITIONS})
+ 
+ # Include TBB
+-include(${TBB_DIR}/cmake/TBBBuild.cmake)
+-tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS tbb_cpf=1)
+-find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
++# include(${TBB_DIR}/cmake/TBBBuild.cmake)
++# tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS tbb_cpf=1)
++# find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
+ 
+ FIND_PACKAGE(Boost COMPONENTS program_options iostreams filesystem date_time REQUIRED)
+ include_directories(${Boost_INCLUDE_DIRS})
+ 
+ # Include JSONCPP
+-include(${CMAKE_TOOLCHAIN_FILE})
+-find_package(jsoncpp CONFIG REQUIRED)
++# include(${CMAKE_TOOLCHAIN_FILE})
++# find_package(jsoncpp CONFIG REQUIRED)
+ 

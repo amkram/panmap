@@ -3,250 +3,417 @@ cmake_minimum_required(VERSION 3.12)
 project(panmap VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
-
-include(FetchContent)
-
-set(FETCHCONTENT_QUIET OFF)
-# set(BUILD_SHARED_LIBS ON)
-set(POSITION_INDEPENDENT_CODE ON)
-set(ABSL_PROPAGATE_CXX_STD ON)
-
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Project options
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
-option(OPTION_PROFILE "Enable profiling." ON)
+option(OPTION_PROFILE "Enable profiling with Valgrind/Callgrind." ON)
 option(OPTION_ENABLE_FIXED_KMER "Enable optimized k-mer size implementations (8, 16, 32)." ON)
+option(OPTION_ENABLE_LTO "Enable Link Time Optimization" OFF)
+option(OPTION_ENABLE_PGO "Enable Profile-Guided Optimization" OFF)
+option(OPTION_PORTABLE "Build with maximum compatibility across x86-64 systems" ON)
+option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" OFF)
 
-FetchContent_Declare(ftxui
-    GIT_REPOSITORY https://github.com/ArthurSonzogni/ftxui
-    GIT_TAG cdf28903a7781f97ba94d30b79c3a4b0c97ccce7
-)
-FetchContent_MakeAvailable(ftxui)
+# Set consistent compiler flags
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 
-# Fetch and configure spdlog
-FetchContent_Declare(
-    spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.12.0
-)
-FetchContent_MakeAvailable(spdlog)
+include(FetchContent)
 
-# Get spdlog properties and ensure it's available
-FetchContent_GetProperties(spdlog)
-if(NOT spdlog_POPULATED)
-    FetchContent_Populate(spdlog)
-    add_subdirectory(${spdlog_SOURCE_DIR} ${spdlog_BINARY_DIR})
-endif()
+# Optimize FetchContent behavior
+set(FETCHCONTENT_QUIET OFF)
+set(POSITION_INDEPENDENT_CODE ON)
+set(ABSL_PROPAGATE_CXX_STD ON)
+# Cache third-party builds to speed up subsequent builds
+set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/external_cache" CACHE PATH "Cache external dependencies")
 
-# Add include directories for spdlog globally
-include_directories(${spdlog_SOURCE_DIR}/include)
+# Add the custom cmake directories to the module path
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# Add profiling flags if enabled
-if(OPTION_PROFILE)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg")
-endif()
-
-
-
+# Set TBB_DIR to match old build
 set(TBB_DIR ${CMAKE_CURRENT_BINARY_DIR}/oneTBB-2019_U9)
-# set(VCPKG_DIR ${CMAKE_CURRENT_BINARY_DIR}/vcpkg)
-# set(CMAKE_TOOLCHAIN_FILE ${VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake)
 
-# Fetch panman
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
+# Download and configure TBB
+FetchContent_Declare(
+    tbb
+    URL https://github.com/oneapi-src/oneTBB/archive/2019_U9.tar.gz
+)
+FetchContent_MakeAvailable(tbb)
+
+# Set up TBB
+find_library(TBB_LIBRARY NAMES tbb libtbb PATHS /usr/lib/x86_64-linux-gnu)
+if(NOT TBB_LIBRARY)
+    # Fallback to system TBB
+    set(TBB_LIBRARY "/usr/lib/x86_64-linux-gnu/libtbb.so.2")
+  endif()
+
+# Download and configure jsoncpp
+FetchContent_Declare(
+    jsoncpp
+    GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
+    GIT_TAG 1.9.5
+)
+FetchContent_MakeAvailable(jsoncpp)
+
+# Find Protobuf
+find_package(Protobuf REQUIRED)
+if(NOT Protobuf_FOUND)
+    message(FATAL_ERROR "Protobuf not found")
+endif()
+
+# Force the correct protobuf library path
+set(Protobuf_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprotobuf.so")
+set(Protobuf_INCLUDE_DIRS "/usr/include/google/protobuf")
+
+# Include TBB and jsoncpp headers
+include_directories(${tbb_SOURCE_DIR}/include)
+include_directories(${jsoncpp_SOURCE_DIR}/include)
+include_directories(${Protobuf_INCLUDE_DIRS})
+
+# Setup for CapnProto
+# First, let's create a separate minimal build for just the capnp tools
+set(CAPNP_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/capnp_build)
+file(MAKE_DIRECTORY ${CAPNP_BUILD_DIR})
+
+# Add a custom command to build CapnProto
+add_custom_command(
+    OUTPUT ${CAPNP_BUILD_DIR}/bin/capnp ${CAPNP_BUILD_DIR}/bin/capnpc-c++
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/build_capnproto.sh ${CAPNP_BUILD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Building CapnProto tools"
+)
+
+# Create a target for the CapnProto tools
+add_custom_target(capnp_tools ALL
+    DEPENDS ${CAPNP_BUILD_DIR}/bin/capnp ${CAPNP_BUILD_DIR}/bin/capnpc-c++
+)
+
+# Set the correct paths for the executables
+set(CAPNP_EXECUTABLE ${CAPNP_BUILD_DIR}/bin/capnp)
+set(CAPNPC_CXX_EXECUTABLE ${CAPNP_BUILD_DIR}/bin/capnpc-c++)
+
+# Use FetchContent to get CapnProto from source
+# FetchContent_Declare(
+#     capnp
+#     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
+#     GIT_TAG v1.0.2
+# )
+# FetchContent_MakeAvailable(capnp)
+
+# Set up CapnProto include directories
+include_directories(${CAPNP_BUILD_DIR}/include)
+link_directories(${CAPNP_BUILD_DIR}/lib)
+
+# Use the existing CapnProto files instead of generating them
+set(CAPNP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++)
+set(CAPNP_HDRS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h)
+
+# Create a custom target for CapnProto files
+add_custom_target(index_capnp_generator ALL
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++ ${CMAKE_CURRENT_BINARY_DIR}/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h ${CMAKE_CURRENT_BINARY_DIR}/
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++ ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h
+    COMMENT "Copying CapnProto generated files"
+)
+
+# Create a simplified version of the capnp_generate_cpp macro
+function(capnp_generate_cpp SOURCES HEADERS)
+  if(NOT ARGN)
+    message(SEND_ERROR "capnp_generate_cpp: missing schema files")
+    return()
+endif()
+
+  set(output_sources "")
+  set(output_headers "")
+
+  foreach(schema_file ${ARGN})
+    get_filename_component(file_name ${schema_file} NAME_WE)
+    
+    set(schema_cpp "${CMAKE_CURRENT_BINARY_DIR}/${file_name}.capnp.c++")
+    set(schema_h "${CMAKE_CURRENT_BINARY_DIR}/${file_name}.capnp.h")
+    
+    list(APPEND output_sources "${schema_cpp}")
+    list(APPEND output_headers "${schema_h}")
+
+add_custom_command(
+      OUTPUT "${schema_cpp}" "${schema_h}"
+      COMMAND ${CAPNP_EXECUTABLE}
+          compile 
+          -o${CAPNPC_CXX_EXECUTABLE}
+          --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+          ${schema_file}
+      DEPENDS "${schema_file}" capnp_tools
+      COMMENT "Compiling Cap'n Proto schema ${schema_file}"
+      VERBATIM
+    )
+  endforeach()
+  
+  set(${SOURCES} ${output_sources} PARENT_SCOPE)
+  set(${HEADERS} ${output_headers} PARENT_SCOPE)
+endfunction()
+
+# ===== Setup for Panman =====
+# First, create the necessary config files for panman
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/TBBConfig.cmake "
+# TBB Config File
+set(TBB_FOUND TRUE)
+set(TBB_INCLUDE_DIRS \"${TBB_DIR}/include\")
+set(TBB_LIBRARIES \"${TBB_LIBRARY}\")
+set(TBB_LIBRARY_DIRS \"/usr/lib/x86_64-linux-gnu\")
+
+if(NOT TARGET TBB::tbb)
+    add_library(TBB::tbb SHARED IMPORTED)
+    set_target_properties(TBB::tbb PROPERTIES
+        IMPORTED_LOCATION \"${TBB_LIBRARY}\"
+        INTERFACE_INCLUDE_DIRECTORIES \"${TBB_DIR}/include\"
+    )
+endif()
+")
+
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/jsoncppConfig.cmake "
+# JsonCpp Config File
+set(JSONCPP_FOUND TRUE)
+set(JSONCPP_INCLUDE_DIRS \"${CMAKE_CURRENT_BINARY_DIR}/include\")
+set(JSONCPP_LIBRARIES \"jsoncpp\")
+
+if(NOT TARGET jsoncpp_lib)
+    add_library(jsoncpp_lib INTERFACE IMPORTED)
+endif()
+
+if(NOT TARGET JsonCpp::JsonCpp)
+    add_library(JsonCpp::JsonCpp INTERFACE IMPORTED)
+endif()
+")
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake/TBBBuild.cmake "
+function(tbb_build)
+    # Empty implementation
+endfunction()
+")
+
+# Create a dummy JsonCpp library
+add_library(jsoncpp INTERFACE)
+
+# Fetch the panman source code
 FetchContent_Declare(
     panman
     GIT_REPOSITORY https://github.com/TurakhiaLab/panman
-    GIT_TAG c7ca48da772ae8038dfd6e0bc6cc410319c9b9ab
-    PATCH_COMMAND rm -rf ${TBB_DIR} && cd ${CMAKE_CURRENT_BINARY_DIR} && wget https://github.com/oneapi-src/oneTBB/archive/2019_U9.tar.gz && tar -xvzf 2019_U9.tar.gz
+    GIT_TAG main
 )
-FetchContent_MakeAvailable(panman)
 
-include_directories(${TBB_DIR}/include)
+# Force the population of the content
+FetchContent_GetProperties(panman)
+if(NOT panman_POPULATED)
+    FetchContent_Populate(panman)
+    
+    # Get the source directory
+    FetchContent_GetProperties(panman SOURCE_DIR panman_SOURCE_DIR BINARY_DIR panman_BINARY_DIR)
+    
+    # Create a patch file for panman's CMakeLists.txt
+    file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "")
+    file(READ "${panman_SOURCE_DIR}/CMakeLists.txt" PANMAN_CMAKE_CONTENT)
+    file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "${PANMAN_CMAKE_CONTENT}")
+    
+    # Modify the panman CMakeLists.txt
+    file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt" [=[
+cmake_minimum_required (VERSION 3.8)
+project(panmanUtils)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-add_executable(panmap
-    src/main.cpp
-    src/conversion.cpp
-    src/genotyping.cpp
-    src/coordinates.cpp
-    src/gap_map.cpp
-    src/indexing.cpp
-    src/alignment.cpp
-    src/placement.cpp
-    src/seed_annotated_tree.cpp
-    src/seeding.cpp
-    src/mm_align.c
-    src/pileup.c
-    src/fixed_kmer.hpp
-    src/fixed_kmer.cpp
-    src/performance.cpp
+# Protobuf
+find_package(Protobuf REQUIRED)
+if(Protobuf_FOUND)
+    message(STATUS "Using Protocol Buffers ${Protobuf_VERSION}")
+  endif()
+
+# Force the correct protobuf library path
+set(Protobuf_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprotobuf.so")
+set(Protobuf_INCLUDE_DIRS "/usr/include/google/protobuf")
+
+include_directories(${Protobuf_INCLUDE_DIRS})
+include_directories("/usr/include")
+
+# Generate Protocol Buffers
+set(PROTO_FILES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/panman.proto"
+    "${CMAKE_CURRENT_SOURCE_DIR}/usher.proto"
 )
-if(OPTION_BUILD_TESTS)
-    add_executable(tests
-        src/test/main.test.cpp
-        src/test/pmi.test.cpp
-        src/conversion.cpp
-        src/indexing.cpp
-        src/alignment.cpp
-        src/coordinates.cpp
-        src/gap_map.cpp
-        src/placement.cpp
-        src/seed_annotated_tree.cpp
-        src/seeding.cpp
-        src/mm_align.c
-        src/pileup.c
-        src/fixed_kmer.hpp
-        src/fixed_kmer.cpp
-        src/performance.cpp
+
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
+
+# Add proto files to include path
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
+# Boost
+find_package(Boost COMPONENTS program_options iostreams filesystem date_time REQUIRED)
+include_directories(${Boost_INCLUDE_DIRS})
+
+# Define source files
+set(PANMAN_SOURCES
+    src/panman.cpp
+    ${PROTO_SRCS}
+)
+
+# Build both a shared library and an executable
+add_library(panman_lib STATIC ${PANMAN_SOURCES})
+set_target_properties(panman_lib PROPERTIES OUTPUT_NAME "panman")
+target_compile_options(panman_lib PRIVATE -fPIC)
+
+# Define the panmanUtils target with actual sources
+add_executable(panmanUtils
+    src/panmanUtils.cpp
+    ${PROTO_SRCS}
+)
+
+# Generate C++ from panman.capnp
+set(PANMAN_CAPNP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/panman.capnp")
+set(PANMAN_CAPNP_H "${CMAKE_CURRENT_BINARY_DIR}/panman.capnp.h")
+set(PANMAN_CAPNP_CPP "${CMAKE_CURRENT_BINARY_DIR}/panman.capnp.c++")
+
+add_custom_command(
+    OUTPUT "${PANMAN_CAPNP_H}" "${PANMAN_CAPNP_CPP}"
+    COMMAND ${CAPNP_EXECUTABLE} compile -o${CAPNPC_CXX_EXECUTABLE} 
+            --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+            ${PANMAN_CAPNP_SRC}
+            -I${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS "${PANMAN_CAPNP_SRC}"
+    COMMENT "Generating C++ from panman.capnp"
+)
+
+add_custom_target(generate_panman_capnp_extern ALL
+    DEPENDS "${PANMAN_CAPNP_H}" "${PANMAN_CAPNP_CPP}"
+)
+
+# Add the generated files to both targets
+target_sources(panman_lib PRIVATE "${PANMAN_CAPNP_CPP}")
+target_sources(panmanUtils PRIVATE "${PANMAN_CAPNP_CPP}")
+
+add_dependencies(panman_lib generate_panman_capnp_extern)
+add_dependencies(panmanUtils generate_panman_capnp_extern)
+
+# Link dependencies for the library
+target_link_libraries(panman_lib
+    capnp
+    kj
+    jsoncpp_lib
+    ${Protobuf_LIBRARIES}
+    ${Boost_LIBRARIES}
+    ${TBB_LIBRARY}
+    pthread
+)
+
+# Link dependencies for the executable (including the library)
+target_link_libraries(panmanUtils
+    panman_lib
+    capnp
+    kj
+    jsoncpp_lib
+    ${Protobuf_LIBRARIES}
+    ${Boost_LIBRARIES}
+    ${TBB_LIBRARY}
+    pthread
+)
+
+# Install targets
+install(TARGETS panmanUtils panman_lib
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+)
+]=])
+
+    # Add the subdirectory to the build
+    add_subdirectory(${panman_SOURCE_DIR} ${panman_BINARY_DIR})
+    
+    # Add an explicit dependency to ensure the CapnProto tools are built first
+    add_dependencies(generate_panman_capnp_extern capnp_tools)
+    
+    # Set up the include paths
+    target_include_directories(panmanUtils PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+        ${CAPNP_BUILD_DIR}/include
+        ${Boost_INCLUDE_DIRS}
     )
+    
+    # Create a dummy library to link against for our main project
+    add_library(panman INTERFACE)
+    target_include_directories(panman INTERFACE
+        ${panman_SOURCE_DIR}/src
+        ${panman_BINARY_DIR}
+        ${CAPNP_BUILD_DIR}/include
+    )
+    
+    # Create panman_capnp_obj target
+    add_library(panman_capnp_obj OBJECT IMPORTED)
+    
+    message(STATUS "Panman source directory: ${panman_SOURCE_DIR}")
+    message(STATUS "Panman binary directory: ${panman_BINARY_DIR}")
 endif()
 
-FetchContent_GetProperties(ftxui)
-if(NOT ftxui_POPULATED)
-    FetchContent_Populate(ftxui)
-    add_subdirectory(${ftxui_SOURCE_DIR} ${ftxui_BINARY_DIR})
-endif()
+# Add dependency on panman_lib in _deps/panman-build/
+add_dependencies(panman panman_lib)
 
-# Add include directories for spdlog
-target_include_directories(panmap PRIVATE ${spdlog_SOURCE_DIR}/include)
-target_include_directories(panmap PRIVATE ${ftxui_SOURCE_DIR}/include)
-
-target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-build ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src/src ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src)
-
-
-include(cmake/detect-arch.cmake)
-detect_host_arch()
-message("neon: ${HAS_NEON}")
-message("Third party dependencies...")
-
+# Define the Minimap2 build target
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
+    COMMAND cd src/3rdparty/minimap2 && make clean
+    COMMAND make -C src/3rdparty/minimap2
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make $<$<BOOL:${HAS_NEON}>:aarch64=1>
-    COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}/bin/minimap2
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && rm -f *.o
+    COMMAND cp src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
+    COMMAND cp src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}/bin/minimap2
+    COMMAND rm -f src/3rdparty/minimap2/*.o
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
-# FetchContent for bzip2
-FetchContent_Declare(
-    bzip2
-    GIT_REPOSITORY https://github.com/libarchive/bzip2.git
-    GIT_TAG master
-    GIT_SHALLOW TRUE
-)
-FetchContent_Declare(deflate
-    GIT_REPOSITORY https://github.com/ebiggers/libdeflate
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(deflate)
 
-# Define source directory for samtools build to ensure consistency
-set(SAMTOOLS_SOURCE_DIR ${CMAKE_SOURCE_DIR})
-
-# Verify SAMTOOLS_SOURCE_DIR is not empty
-if("${SAMTOOLS_SOURCE_DIR}" STREQUAL "")
-    message(FATAL_ERROR "SAMTOOLS_SOURCE_DIR is empty. This will cause configure scripts to fail.")
-endif()
-
-# Try to find autoreconf in common locations
-find_program(AUTORECONF_PATH autoreconf PATHS /usr/bin /usr/local/bin /opt/local/bin /opt/homebrew/bin)
-if(NOT AUTORECONF_PATH)
-    message(FATAL_ERROR "autoreconf not found! Please install autoconf or specify AUTORECONF_PATH manually.")
-endif()
-
-# Verify CMAKE_CURRENT_BINARY_DIR is not empty
-if("${CMAKE_CURRENT_BINARY_DIR}" STREQUAL "")
-    message(FATAL_ERROR "CMAKE_CURRENT_BINARY_DIR is empty. This will cause configure scripts to fail.")
-endif()
-
-# Define absolute paths for scripts
-set(HTSLIB_CONFIG_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/htslib_config.sh)
-set(SAMTOOLS_CONFIG_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/samtools_config.sh)
-
-# Generate htslib_config.sh at configure time with proper Unix line endings
-file(WRITE ${HTSLIB_CONFIG_SCRIPT} "#!/bin/bash\n")
-file(APPEND ${HTSLIB_CONFIG_SCRIPT} "cd \"${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20\"\n")
-file(APPEND ${HTSLIB_CONFIG_SCRIPT} "autoreconf -i\n")
-file(APPEND ${HTSLIB_CONFIG_SCRIPT} "autoconf\n")
-file(APPEND ${HTSLIB_CONFIG_SCRIPT} "./configure --prefix=\"${CMAKE_CURRENT_BINARY_DIR}\" --disable-lzma --disable-bz2 --disable-libcurl\n")
-
-# Ensure the script is executable
-file(CHMOD ${HTSLIB_CONFIG_SCRIPT} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-
-add_custom_command(
-    OUTPUT ${SAMTOOLS_CONFIG_SCRIPT}
-    COMMAND ${CMAKE_COMMAND} -E echo "#!/bin/bash" > ${SAMTOOLS_CONFIG_SCRIPT}
-    COMMAND ${CMAKE_COMMAND} -E echo "cd ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools" >> ${SAMTOOLS_CONFIG_SCRIPT}
-    COMMAND ${CMAKE_COMMAND} -E echo "autoreconf -i" >> ${SAMTOOLS_CONFIG_SCRIPT}
-    COMMAND ${CMAKE_COMMAND} -E echo "autoconf" >> ${SAMTOOLS_CONFIG_SCRIPT}
-    COMMAND ${CMAKE_COMMAND} -E echo "./configure --with-htslib=${CMAKE_CURRENT_BINARY_DIR} --prefix=${CMAKE_CURRENT_BINARY_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic" >> ${SAMTOOLS_CONFIG_SCRIPT}
-    COMMAND chmod +x ${SAMTOOLS_CONFIG_SCRIPT}
+# Create a minimap2 target that depends on the library build
+add_custom_target(minimap2_target 
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
+    COMMENT "Building minimap2 library from src/3rdparty/minimap2"
 )
 
-# Ensure scripts are generated before running samtools build
-add_custom_target(generate_samtools_scripts DEPENDS ${HTSLIB_CONFIG_SCRIPT} ${SAMTOOLS_CONFIG_SCRIPT})
-
-# Update your existing custom command to depend on these scripts
+# Build samtools and htslib
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
-    DEPENDS generate_samtools_scripts
-    COMMAND echo "[samtools build] Step 1: Checking for tools"
-    COMMAND echo "Autoreconf path: ${AUTORECONF_PATH}"
-    COMMAND echo "Source dir: ${SAMTOOLS_SOURCE_DIR}"
-    COMMAND echo "Current binary dir: ${CMAKE_CURRENT_BINARY_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
-
-    COMMAND echo "[samtools build] Step 2: Running autoreconf"
-    COMMAND cd ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20 && ${AUTORECONF_PATH} -i || echo "Warning: autoreconf failed, configure script may be missing"
-
-    COMMAND echo "[samtools build] Step 3: Configuring htslib"
-    COMMAND bash ${HTSLIB_CONFIG_SCRIPT}
-
-    COMMAND echo "[samtools build] Step 4: Building htslib"
-    COMMAND cd ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20 && make -j
-
-    COMMAND echo "[samtools build] Step 5: Installing htslib"
-    COMMAND cd ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20 && make install
-
-    COMMAND echo "[samtools build] Step 6: Running autoheader for samtools"
-    COMMAND cd ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools && ${AUTORECONF_PATH} -i
-
-    COMMAND echo "[samtools build] Step 7: Running autoconf for samtools"
-    COMMAND cd ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools && ${AUTORECONF_PATH}
-
-    COMMAND echo "[samtools build] Step 8: Configuring samtools"
-    COMMAND bash ${SAMTOOLS_CONFIG_SCRIPT}
-
-    COMMAND echo "[samtools build] Step 9: Building samtools"
-    COMMAND cd ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools && make -j
-
-    COMMAND echo "[samtools build] Step 10: Copying samtools library"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${SAMTOOLS_SOURCE_DIR}/src/3rdparty/samtools/libst.a
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
-    || echo "Error: Could not find samtools library"
-
-    COMMAND echo "[samtools build] Step 11: Completed samtools build"
+    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20 && autoreconf -i -Wno-syntax && ./configure --prefix=${CMAKE_CURRENT_BINARY_DIR} --disable-lzma --disable-bz2 --disable-libcurl && make -j && make install
+    COMMAND cd src/3rdparty/samtools && autoheader && autoconf -Wno-syntax && ./configure --with-htslib=${CMAKE_CURRENT_BINARY_DIR} --prefix=${CMAKE_CURRENT_BINARY_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic && make -j && cp libst.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
-    WORKING_DIRECTORY ${SAMTOOLS_SOURCE_DIR}
-)
-
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/bin/capnp ${CMAKE_CURRENT_BINARY_DIR}/bin/capnpc-c++ ${CMAKE_CURRENT_BINARY_DIR}/lib/libcapnp.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libkj.a ${CMAKE_CURRENT_BINARY_DIR}/include/capnp
-    COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin ${CMAKE_CURRENT_BINARY_DIR}/include
-    # Skip autoconf/autoheader and try using cmake directly for capnproto
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++ && mkdir -p build && cd build && cmake -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR} -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=OFF ..
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/build && make -j
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto/c++/build && make install
-    COMMENT "Compiling capnproto using CMake"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Add a samtools target that depends on the build
+add_custom_target(samtools_target 
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
+    COMMENT "Building samtools and htslib"
+)
+
+# Aggregate all the dependencies into a single target
+add_custom_target(build-deps DEPENDS
+    ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
+    ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
+    ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
+    capnp_tools
+)
+
+# Create imported targets for the dependencies
+# kj and capnp_tools are already provided by FetchContent_MakeAvailable(capnp_tools)
+# There's no need to create imported targets for them
+
+add_library(minimap2 STATIC IMPORTED)
+set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a")
+add_dependencies(minimap2 build-deps)
+
+add_library(samtools STATIC IMPORTED)
+set_target_properties(samtools PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a")
+add_dependencies(samtools build-deps)
+
+add_library(htslib STATIC IMPORTED)
+set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a")
+add_dependencies(htslib build-deps)
+
+# Define BWA sources
 set(BWA_SOURCES
     src/3rdparty/bwa/bwa.c
     src/3rdparty/bwa/run.c
@@ -263,7 +430,6 @@ set(BWA_SOURCES
     src/3rdparty/bwa/bwtsw2_chain.c
     src/3rdparty/bwa/fastmap.c
     src/3rdparty/bwa/bwtsw2_pair.c
-    # src/3rdparty/bwa/main.c
     src/3rdparty/bwa/utils.c
     src/3rdparty/bwa/bwape.c
     src/3rdparty/bwa/kopen.c
@@ -279,7 +445,6 @@ set(BWA_SOURCES
     src/3rdparty/bwa/QSufSort.c
     src/3rdparty/bwa/bwt_gen.c
     src/3rdparty/bwa/rope.c
-    src/3rdparty/bwa/utils.c
     src/3rdparty/bwa/kstring.c
     src/3rdparty/bwa/ksw.c
     src/3rdparty/bwa/bwt.c
@@ -303,150 +468,54 @@ set(BWA_SOURCES
     src/3rdparty/bwa/bwtsw2_chain.c
     src/3rdparty/bwa/bwtsw2_main.c
     src/3rdparty/bwa/bwtsw2_pair.c
-    src/3rdparty/bwa/bwt_gen.c
     src/3rdparty/bwa/bwtgap.c
-    src/3rdparty/bwa/bwtaln.c
-    src/3rdparty/bwa/bwtindex.c
-    src/3rdparty/bwa/is.c
-    src/3rdparty/bwa/bwase.c
-    src/3rdparty/bwa/bwaseqio.c
-    src/3rdparty/bwa/bwashm.c
-    src/3rdparty/bwa/bwt_lite.c
-    src/3rdparty/bwa/bwtsw2_aux.c
-    src/3rdparty/bwa/bwtsw2_chain.c
-    src/3rdparty/bwa/bwtsw2_main.c
-    src/3rdparty/bwa/bwtsw2_pair.c
+    src/mm_align.c
 )
 
 add_library(bwa STATIC ${BWA_SOURCES})
 target_include_directories(bwa PUBLIC src/3rdparty/bwa)
+target_compile_options(bwa PRIVATE -fPIC)
 
 file(GLOB BCFTOOLS_SOURCES src/3rdparty/bcftools/*.c)
 add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
-
 target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
+target_compile_options(bcftools PRIVATE -fPIC)
 
-
-add_custom_target(build-deps DEPENDS
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    ${CMAKE_CURRENT_BINARY_DIR}/bin/capnp
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libcapnp.a
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libkj.a
-    ${CMAKE_CURRENT_BINARY_DIR}/include/capnp
+# Define panmap executable sources using the correct list
+set(PANMAP_SOURCES_MAIN
+    src/main.cpp
+    src/conversion.cpp
+    src/genotyping.cpp
+    src/gap_map.cpp
+    src/indexing.cpp
+    src/alignment.cpp
+    src/placement.cpp
+    src/seeding.cpp
+    src/mm_align.c
+    src/pileup.c
+    src/performance.cpp
+    src/state.cpp
+    src/state_helpers.cpp
 )
 
-add_library(kj STATIC IMPORTED)
-set_target_properties(kj PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libkj.a")
-
-add_library(capnp STATIC IMPORTED)
-set_target_properties(capnp PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libcapnp.a")
-
-add_dependencies(kj build-deps)
-add_dependencies(capnp kj)
-
-add_library(minimap2 STATIC IMPORTED)
-set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a")
-add_dependencies(minimap2 build-deps)
-
-add_library(samtools STATIC IMPORTED)
-set_target_properties(samtools PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a")
-add_dependencies(samtools build-deps)
-
-add_library(htslib STATIC IMPORTED)
-set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a")
-add_dependencies(htslib build-deps)
-
-add_dependencies(panmap build-deps)
-
-
-
-# Find dependencies
-find_package(Boost COMPONENTS system iostreams filesystem unit_test_framework REQUIRED)
+# Find required packages before using them
+find_package(Boost COMPONENTS program_options iostreams filesystem date_time system REQUIRED)
 find_package(ZLIB REQUIRED)
-target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 
-if(OPTION_BUILD_TESTS)
-    target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-    target_include_directories(tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-    target_include_directories(tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
-endif()
+add_executable(panmap ${PANMAP_SOURCES_MAIN})
+add_dependencies(panmap build-deps index_capnp_generator)
 
-if(OPTION_BUILD_SIMULATE)
-    add_executable(simulate
-        src/test/simulate.cpp
-        src/conversion.cpp
-        src/indexing.cpp
-        src/placement.cpp
-        src/alignment.cpp
-        src/coordinates.cpp
-        src/gap_map.cpp
-        src/genotyping.cpp
-        src/seed_annotated_tree.cpp
-        src/seeding.cpp
-        src/mm_align.c
-        src/pileup.c
-        src/fixed_kmer.hpp
-        src/fixed_kmer.cpp
-        src/performance.cpp
-    )
+# Add generated sources to panmap target
+  target_sources(panmap PRIVATE ${CAPNP_SRCS})
 
-    target_link_libraries(simulate PRIVATE
-        bwa
-        bcftools
-        minimap2
-        samtools
-        htslib
-        spdlog::spdlog
-        ftxui::screen
-        ftxui::dom
-        ftxui::component
-        docopt
-        capnp
-        kj
-        Boost::iostreams
-        Boost::filesystem
-        Boost::system
-        ZLIB::ZLIB
-        panman
-        tbb
-        tbbmalloc
-        tbbmalloc_proxy
-        deflate
-        m
-    )
-    target_compile_options(simulate PUBLIC -g -O3)
-    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
-    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-build ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src/src ${CMAKE_CURRENT_BINARY_DIR}/_deps/panman-src)
-    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
-
-endif()
-
-set(CAPNP_SRCS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.c++)
-set(CAPNP_HDRS ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.h)
-
-add_custom_command(
-    OUTPUT ${CAPNP_SRCS} ${CAPNP_HDRS}
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/bin/capnp compile -o ${CMAKE_CURRENT_BINARY_DIR}/bin/capnpc-c++ ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp --src-prefix ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++ ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.c++
-    COMMAND mv ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h ${CMAKE_CURRENT_BINARY_DIR}/index.capnp.h
-    COMMENT "Compiling index.capnp"
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/bin/capnp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-# Add the generated capnp sources to the target
-target_sources(panmap PRIVATE ${CAPNP_SRCS})
-
+# Add include directories
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
+target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
+target_include_directories(panmap PRIVATE ${panman_SOURCE_DIR}/src) # Include real panman headers
 
+# Add other FetchContent dependencies
 FetchContent_Declare(
     docopt
     GIT_REPOSITORY https://github.com/docopt/docopt.cpp
@@ -455,89 +524,66 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(docopt)
 
-target_compile_options(bwa PRIVATE -fPIC)
-target_compile_options(bcftools PRIVATE -fPIC)
+if(TARGET docopt)
+    target_compile_options(docopt PRIVATE -w -m64 -mtune=generic)
+endif()
 
-target_link_libraries(panmap PRIVATE
+FetchContent_Declare(deflate
+    GIT_REPOSITORY https://github.com/ebiggers/libdeflate
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(deflate)
+
+# Link libraries
+target_link_libraries(panmap PRIVATE 
     bwa
     bcftools
-    minimap2
-    samtools
-    htslib
+    minimap2 
+    samtools 
+    htslib 
     docopt
-    capnp
-    spdlog::spdlog
-    ftxui::screen
-    ftxui::dom
-    ftxui::component
-    kj
+    capnp 
+    kj 
+    jsoncpp_lib
+    ${Protobuf_LIBRARIES}
+    Boost::program_options
     Boost::iostreams
     Boost::filesystem
     Boost::system
     ZLIB::ZLIB
     panman
-    tbb
-    tbbmalloc
-    tbbmalloc_proxy
+    panman_lib
     deflate
-    m)
-target_link_options(panmap PRIVATE -lm -lpthread)
-target_compile_options(panmap PRIVATE -Wall)
-target_compile_features(panmap PRIVATE cxx_std_20)
+    ${TBB_LIBRARY}
+    m
+    pthread
+)
 
-
-if(OPTION_BUILD_TESTS)
-    target_sources(tests PUBLIC ${CAPNP_SRCS})
-    target_include_directories(tests PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-    target_link_libraries(tests bwa bcftools minimap2 samtools htslib
-        ${Boost_FILESYSTEM_LIBRARY}
-        ${Boost_SYSTEM_LIBRARY}
-        ${Boost_UNIT_TEST_FRAMEWORK_LIBRARY}
-        ${Boost_IOSTREAMS_LIBRARY}
-        ZLIB::ZLIB
-        docopt
-        capnp
-        kj
-        panman
-        tbb_static tbbmalloc_static tbbmalloc_proxy_static
-        deflate
-        m
-    )
-
-    target_compile_options(tests PUBLIC -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-    target_link_options(tests PUBLIC -lm -lpthread)
-    target_compile_options(tests PUBLIC -g -O3 -ggdb)
-endif()
-
-
-if(OPTION_DEBUG)
+# Set compiler options based on build type
+    if(OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
+    elseif(OPTION_PROFILE)
+    # Add -pg flag for gprof profiling
+    target_compile_options(panmap PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
+    target_link_options(panmap PUBLIC -pg -fno-omit-frame-pointer)
+    
+    # Also enable profiling for panman_lib
+    if(TARGET panman_lib)
+        target_compile_options(panman_lib PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
+        target_link_options(panman_lib PUBLIC -pg -fno-omit-frame-pointer)
+        endif()
 else()
-    # Use higher optimization levels and native CPU features for better k-mer performance
-    target_compile_options(panmap PUBLIC -g -pg -O3 -march=native -mtune=native)
-endif()
-
-# If tests are enabled, add optimization flags
-if(OPTION_BUILD_TESTS)
-    target_compile_options(tests PUBLIC -DTBB_SUPPRESS_DEPRECATED_MESSAGES)
-    target_link_options(tests PUBLIC -lm -lpthread)
-
-    if(OPTION_DEBUG)
-        target_compile_options(tests PUBLIC -g -O0 -ggdb)
-    else()
-        # Use higher optimization levels and native CPU features for better k-mer performance
-        target_compile_options(tests PUBLIC -g -O3 -ggdb -march=native -mtune=native)
+    target_compile_options(panmap PUBLIC -g -O3)
+    
+    # Enable Link Time Optimization if requested
+    if(OPTION_ENABLE_LTO)
+        target_compile_options(panmap PUBLIC -flto)
+        target_link_options(panmap PUBLIC -flto)
+        message(STATUS "Link Time Optimization (LTO): Enabled")
     endif()
-endif()
-
-# If simulate is enabled, add optimization flags
-if(OPTION_BUILD_SIMULATE)
-    if(OPTION_DEBUG)
-        target_compile_options(simulate PUBLIC -g -O0 -ggdb)
-    else()
-        # Use higher optimization levels and native CPU features for better k-mer performance
-        target_compile_options(simulate PUBLIC -g -O3 -march=native -mtune=native)
-    endif()
+    
+    # Enable vectorization explicitly
+    target_compile_options(panmap PUBLIC -ftree-vectorize)
 endif()
 
 # Unit testing data
@@ -547,11 +593,19 @@ configure_file(src/test/data/test.json test.json COPYONLY)
 configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
 
-
 install(TARGETS panmap RUNTIME DESTINATION /usr/local/bin)
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/ DESTINATION /usr/local/lib FILES_MATCHING PATTERN "*.a" PATTERN "*.so" PATTERN "*.dylib" PATTERN "*.la" PATTERN "*.so.*")
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin/ DESTINATION /usr/local/bin FILES_MATCHING PATTERN "*")
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/ DESTINATION /usr/local/include)
+
+# Create a compile_commands.json symlink for clangd
+add_custom_command(
+    TARGET panmap POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E create_symlink
+        ${CMAKE_BINARY_DIR}/compile_commands.json
+        ${CMAKE_SOURCE_DIR}/compile_commands.json
+    COMMENT "Creating compile_commands.json symlink for clangd"
+)
 
 # Print build configuration summary
 message(STATUS "")
@@ -564,20 +618,10 @@ message(STATUS "Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "")
 message(STATUS "Optimizations:")
 message(STATUS "  Fixed k-mer optimization: ${OPTION_ENABLE_FIXED_KMER}")
-if(OPTION_ENABLE_FIXED_KMER)
-    message(STATUS "  TBB memory allocator: Enabled")
-    message(STATUS "  TBB memory pool size: 1GB")
-    message(STATUS "  TBB thread cache size: 16MB")
-else()
-    message(STATUS "  TBB memory allocator: Default")
-endif()
-if(DEFINED ARCH_SIMD_FLAGS)
-    message(STATUS "  SIMD flags: ${ARCH_SIMD_FLAGS}")
-else()
-    message(STATUS "  SIMD flags: None")
-endif()
 message(STATUS "  Debug mode: ${OPTION_DEBUG}")
 message(STATUS "  Profiling: ${OPTION_PROFILE}")
+message(STATUS "  Link Time Optimization: ${OPTION_ENABLE_LTO}")
+message(STATUS "  Profile-Guided Optimization: ${OPTION_ENABLE_PGO}")
 message(STATUS "")
 message(STATUS "Components:")
 message(STATUS "  Build tests: ${OPTION_BUILD_TESTS}")
@@ -585,65 +629,11 @@ message(STATUS "  Build simulate: ${OPTION_BUILD_SIMULATE}")
 message(STATUS "----------------------------")
 message(STATUS "")
 
-# Configure compiler flags for SIMD support and k-mer optimizations
-include(CheckCXXCompilerFlag)
+# Create imported targets for CapnProto
+add_library(capnp STATIC IMPORTED)
+set_target_properties(capnp PROPERTIES IMPORTED_LOCATION "${CAPNP_BUILD_DIR}/lib/libcapnp.a")
+add_dependencies(capnp capnp_tools)
 
-# Detect architecture
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)")
-    set(IS_ARM TRUE)
-    message(STATUS "Detected ARM architecture: ${CMAKE_SYSTEM_PROCESSOR}")
-else()
-    set(IS_ARM FALSE)
-    message(STATUS "Detected x86 architecture: ${CMAKE_SYSTEM_PROCESSOR}")
-endif()
-
-# Check for various SIMD instruction sets across different architectures
-if(IS_ARM)
-    # ARM-specific optimizations
-    check_cxx_compiler_flag("-mcpu=apple-m1" COMPILER_SUPPORTS_APPLE_M1)
-    check_cxx_compiler_flag("-mcpu=apple-m2" COMPILER_SUPPORTS_APPLE_M2)
-    check_cxx_compiler_flag("-mfpu=neon" COMPILER_SUPPORTS_NEON)
-
-    if(COMPILER_SUPPORTS_APPLE_M1)
-        message(STATUS "Compiler supports Apple M1 - enabling optimized ARM processing")
-        set(ARCH_SIMD_FLAGS "${ARCH_SIMD_FLAGS} -mcpu=apple-m1")
-    elseif(COMPILER_SUPPORTS_APPLE_M2)
-        message(STATUS "Compiler supports Apple M2 - enabling optimized ARM processing")
-        set(ARCH_SIMD_FLAGS "${ARCH_SIMD_FLAGS} -mcpu=apple-m2")
-    elseif(COMPILER_SUPPORTS_NEON)
-        message(STATUS "Compiler supports NEON - enabling ARM-specific optimizations")
-        set(ARCH_SIMD_FLAGS "${ARCH_SIMD_FLAGS} -mfpu=neon")
-    endif()
-else()
-    # x86 optimizations
-    check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
-    check_cxx_compiler_flag("-msse4.1" COMPILER_SUPPORTS_SSE4_1)
-
-    if(COMPILER_SUPPORTS_AVX2)
-        message(STATUS "Compiler supports AVX2 - enabling optimized k-mer processing")
-        set(ARCH_SIMD_FLAGS "${ARCH_SIMD_FLAGS} -mavx2")
-    elseif(COMPILER_SUPPORTS_SSE4_1)
-        message(STATUS "Compiler supports SSE4.1 - enabling optimized k-mer processing")
-        set(ARCH_SIMD_FLAGS "${ARCH_SIMD_FLAGS} -msse4.1")
-    endif()
-endif()
-
-# Add SIMD flags to the compilation if supported
-if(DEFINED ARCH_SIMD_FLAGS)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARCH_SIMD_FLAGS}")
-endif()
-
-# Add fixed k-mer optimization definition if enabled
-if(OPTION_ENABLE_FIXED_KMER)
-    message(STATUS "Enabling optimized fixed k-mer implementations (8, 16, 32)")
-    add_compile_definitions(ENABLE_FIXED_KMER_OPTIMIZATION)
-
-    # Enable tbbmalloc as the global memory allocator for better performance
-    add_compile_definitions(TBB_USE_THREADING_TOOLS=1)
-    add_compile_definitions(USE_TBBMALLOC=1)
-
-    # Configure TBB memory pools for optimized k-mer processing
-    add_compile_definitions(TBB_MALLOC_USE_HUGE_PAGES=1) # Use huge pages where available
-    add_compile_definitions(TBB_MALLOC_SET_THREAD_CACHE_SIZE=16384) # Larger thread cache (16MB)
-    add_compile_definitions(TBB_MALLOC_POOL_SIZE=1073741824) # 1GB memory pool for better performance
-endif()
+add_library(kj STATIC IMPORTED)
+set_target_properties(kj PROPERTIES IMPORTED_LOCATION "${CAPNP_BUILD_DIR}/lib/libkj.a")
+add_dependencies(kj capnp_tools)

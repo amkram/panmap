@@ -42,3 +42,7 @@ _deps
 *.exe
 *.out
 *.app
+
+# pixi environments
+.pixi
+*.egg-info

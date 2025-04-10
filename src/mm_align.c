@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,7 +7,6 @@
 #include "3rdparty/minimap2/kalloc.h"
 #include "3rdparty/minimap2/khash.h"
 #include "3rdparty/minimap2/kseq.h"
-#include "3rdparty/minimap2/kvec.h"
 #include "3rdparty/minimap2/minimap.h"
 #include "3rdparty/minimap2/mmpriv.h"
 
