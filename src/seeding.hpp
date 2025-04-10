@@ -1,3 +1,6 @@
+#ifndef __SEEDING_HPP
+#define __SEEDING_HPP
+
 #pragma once
 
 // Include SIMD headers in global namespace
@@ -23,7 +26,8 @@
 #include <htslib/kseq.h>
 KSEQ_INIT(int, read)
 
-namespace seeding {
+namespace seeding
+{
 
 // A syncmer seed, defined within a single sequence
 struct seed_t {
