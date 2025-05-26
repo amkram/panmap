@@ -10,18 +10,275 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <optional> // Needed for kmer_utils
+#include <string_view> // Needed for kmer_utils
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 #include <functional>
 #include <memory>
+#include <limits> // Needed for kmer_utils implementation
 #include "placement.hpp"
+#include "logging.hpp" // Needed for kmer_utils implementation
+#include <absl/container/flat_hash_map.h>
+
+/**
+ * @brief Macro for simplified error handling with consistent logging
+ * 
+ * @param operation The operation to perform
+ * @param errorMsg The error message to display if an exception occurs
+ * @param returnVal The value to return if an exception occurs
+ */
+#define SAFE_OPERATION(operation, errorMsg, returnVal) \
+    try { \
+        operation; \
+    } catch (const std::exception& e) { \
+        std::cerr << errorMsg << e.what() << std::endl; \
+        return returnVal; \
+    }
+
+/**
+ * @brief Macro for consistent logging format
+ * 
+ * @param level The log level (INFO, WARN, ERROR, DEBUG)
+ * @param format The format string (must use {} for placeholders)
+ * @param ... Additional arguments to be formatted into the message
+ */
+#define LOG(level, format, ...) \
+    logging::level(format, __VA_ARGS__)
 
 // Forward declarations
 namespace placement {
 class PlacementEngine;
 struct PlacementResult;
 }
+
+// ---> START kmer_utils namespace declarations <---
+/**
+ * @namespace kmer_utils
+ * @brief Utilities for k-mer extraction, dictionary lookup, and processing
+ */
+namespace kmer_utils {
+
+/**
+ * @brief Lookup a k-mer in the dictionary and return its ID and end offset
+ * 
+ * @param kmerSeq The k-mer sequence to look up
+ * @param pos The starting position of the k-mer
+ * @param endPos The end position of the k-mer
+ * @param dictionary The k-mer dictionary mapping sequences to IDs
+ * @return Optional pair of dictionary ID and end position offset
+ */
+std::optional<std::pair<uint32_t, uint16_t>> lookupKmerInDictionary(
+    const std::string& kmerSeq,
+    int64_t pos,
+    int64_t endPos,
+    const absl::flat_hash_map<std::string, uint32_t>& dictionary);
+
+/**
+ * @brief Safely extract a k-mer from a position in a node
+ *
+ * @param stateManager StateManager pointer for sequence extraction
+ * @param nodeId ID of the node to extract from
+ * @param pos Starting position to extract from
+ * @param k K-mer length
+ * @return Optional k-mer sequence if extraction succeeds
+ */
+std::optional<std::string> extractKmer(
+    const state::StateManager &stateManager, std::string_view nodeId, int64_t pos, int k);
+
+/**
+ * @brief More efficient version using string_view to avoid copies.
+ * 
+ * @param stateManager StateManager reference.
+ * @param nodeId Node ID.
+ * @param pos Starting position.
+ * @param k K-mer length.
+ * @param buffer Buffer provided by caller to store extracted k-mer.
+ * @return Optional string_view of the k-mer in the buffer.
+ */
+std::optional<std::string_view> extractKmerView(
+    const state::StateManager& stateManager,
+    const std::string& nodeId,
+    int64_t pos,
+    int k,
+    std::string& buffer);
+
+/**
+ * @brief Calculate end position offset between start and end positions
+ * 
+ * @param startPos Starting position
+ * @param endPos Ending position
+ * @return End position offset, or k-1 if invalid
+ */
+uint16_t calculateEndOffset(int64_t startPos, int64_t endPos, int k);
+
+/**
+ * @brief Get existing seed at a position if available
+ * 
+ * @param stateManager StateManager pointer for seed access
+ * @param pos Position to check for seed
+ * @return Optional seed information
+ */
+std::optional<seeding::seed_t> getSeedAtPosition(
+    state::StateManager& stateManager,
+    int64_t pos);
+
+/**
+ * @brief Get existing seed at a position for a specific node if available
+ * 
+ * @param stateManager StateManager pointer for seed access
+ * @param nodeId ID of the node to check
+ * @param pos Position to check for seed
+ * @return Optional seed information
+ */
+std::optional<seeding::seed_t> getSeedAtPosition(
+    state::StateManager& stateManager,
+    const std::string& nodeId,
+    int64_t pos);
+
+} // namespace kmer_utils
+// ---> END kmer_utils namespace declarations <---
+
+
+// ---> START kmer_utils implementations <---
+inline std::optional<std::pair<uint32_t, uint16_t>> kmer_utils::lookupKmerInDictionary(
+    const std::string& kmerSeq,
+    int64_t pos,
+    int64_t endPos,
+    const absl::flat_hash_map<std::string, uint32_t>& dictionary) {
+    
+    // Validate input parameters
+    if (kmerSeq.empty() || pos < 0 || endPos < pos) {
+        return std::nullopt;
+    }
+    
+    // Look up in dictionary
+    auto it = dictionary.find(kmerSeq);
+    if (it == dictionary.end()) {
+        return std::nullopt;
+    }
+    
+    // Calculate end offset
+    uint16_t endOffset = static_cast<uint16_t>(endPos - pos);
+    
+    // Return dictionary ID and end offset wrapped in optional
+    // Ensure make_pair and make_optional are available (requires <utility> and <optional>)
+    return std::make_optional(std::make_pair(it->second, endOffset)); 
+}
+
+inline std::optional<std::string> kmer_utils::extractKmer(
+    const state::StateManager &stateManager, std::string_view nodeId, int64_t pos, int k) {
+
+    try {
+        auto result = stateManager.extractKmer(nodeId, pos, k);
+        
+        if (result.first.empty()) {
+            return std::nullopt;
+        }
+        
+        // No need to strip gaps anymore - the StateManager now returns an ungapped k-mer
+        return result.first;
+    } catch (const std::exception& e) {
+        logging::warn("Error in kmer_utils::extractKmer: {}", e.what());
+        return std::nullopt;
+    }
+}
+
+inline std::optional<std::string_view> kmer_utils::extractKmerView(
+    const state::StateManager& stateManager,
+    const std::string& nodeId,
+    int64_t pos,
+    int k,
+    std::string& buffer) {  // Buffer provided by caller to avoid allocation
+    
+    // Handle the case where k is invalid
+    if (k <= 0) {
+        logging::err("Invalid k value: {}", k);
+        return std::nullopt;
+    }
+
+    try {
+        // Extract sequence into the provided buffer
+        // The extractKmer method now handles node-specific caching internally
+        // and returns ungapped k-mers
+        auto result = stateManager.extractKmer(nodeId, pos, k);
+        
+        if (result.first.empty()) {
+            return std::nullopt;
+        }
+        
+        // Move result into buffer and create view
+        buffer = std::move(result.first);
+        std::string_view view(buffer.data(), std::min(k, static_cast<int>(buffer.length())));
+        
+        // Return the view wrapped in optional using std::in_place
+        return std::optional<std::string_view>(std::in_place, view);
+    } catch (const std::exception& e) {
+        logging::err("Error extracting k-mer view at position {}: {}", pos, e.what());
+        return std::nullopt;
+    }
+}
+
+inline uint16_t kmer_utils::calculateEndOffset(int64_t startPos, int64_t endPos, int k) {
+    // Validate positions
+    if (endPos < startPos) {
+        // Default to k-1 if positions are invalid
+        return static_cast<uint16_t>(k - 1);
+    }
+    
+    // Calculate offset (ensuring we don't exceed uint16_t range)
+    int64_t offset = endPos - startPos;
+    if (offset > std::numeric_limits<uint16_t>::max()) {
+        return std::numeric_limits<uint16_t>::max();
+    }
+    
+    return static_cast<uint16_t>(offset);
+}
+
+inline std::optional<seeding::seed_t> kmer_utils::getSeedAtPosition(
+    state::StateManager& stateManager,
+    int64_t pos) {
+    
+    if (pos < 0) {
+        // It's generally better practice to throw exceptions for truly invalid arguments
+        // rather than returning nullopt silently, especially if a negative position is never expected.
+        // Logging could also be added here.
+        throw std::invalid_argument("Invalid position " + std::to_string(pos) + 
+                                  " in getSeedAtPosition");
+    }
+    
+    // Find the root node ID
+    std::string rootNodeId;
+    for (const auto& [nodeId, hierarchy] : stateManager.getNodeHierarchy()) {
+        if (hierarchy.parentId.empty()) {
+            rootNodeId = nodeId;
+            break;
+        }
+    }
+    
+    if (rootNodeId.empty()) {
+        logging::warn("No root node found for getSeedAtPosition({})", pos);
+        return std::nullopt;
+    }
+    
+    // Delegate to node-specific StateManager method with the root node ID
+    return stateManager.getSeedAtPosition(rootNodeId, pos);
+}
+
+inline std::optional<seeding::seed_t> kmer_utils::getSeedAtPosition(
+    state::StateManager& stateManager,
+    const std::string& nodeId,
+    int64_t pos) {
+    
+    if (pos < 0) {
+        throw std::invalid_argument("Invalid position " + std::to_string(pos) + 
+                                  " in getSeedAtPosition");
+    }
+    // Delegate to node-specific StateManager method
+    return stateManager.getSeedAtPosition(nodeId, pos);
+}
+
 
 namespace indexing {
 
@@ -30,9 +287,9 @@ namespace indexing {
  * @brief Parameters for the indexing process
  */
 struct PanmapParams {
-    int k = 31; // k-mer length (must be 0 < k <= 2048)
+    int k = 32; // k-mer length (must be 0 < k <= 2048)
     int s = 8; // s-mer length for syncmer (must be 0 < s <= k)
-    bool open = true; // Use open syncmers (true) or closed syncmers (false)
+    bool open = false; // Use open syncmers (true) or closed syncmers (false)
     bool debugOutput = true; // Enable debug file output (default: true)
     
     bool validate() const {
@@ -91,6 +348,8 @@ void indexingTraversal(
  * @param index Cap'n Proto builder for the index
  * @param k Length of syncmer seeds
  * @param s Syncmer s parameter
+ * @param message Cap'n Proto message builder for serialization
+ * @param indexPath Path to write the index file
  * @throw std::invalid_argument If tree is null or k,s parameters are invalid
  */
 void index(panmanUtils::Tree *tree, Index::Builder &index, int k, int s,
@@ -169,15 +428,20 @@ void storeSeedChangesInIndex(
  * from either common ancestor or root node
  * 
  * @param stateManager StateManager to apply mutations to
+ * @param tree Pointer to the tree
  * @param node Node to process mutations for
  * @param commonAncestor Common ancestor node (can be nullptr if none)
  * @param nodePaths Map of paths from root to each node
+ * @param ab_before_output_str Pointer to store AB_BEFORE logging
  */
 void processMutationsForNode(
-    state::StateManager& stateManager,
-    panmanUtils::Node* node,
-    panmanUtils::Node* commonAncestor,
-    const std::unordered_map<std::string, std::vector<panmanUtils::Node*>>& nodePaths);
+    state::StateManager &stateManager, 
+    panmanUtils::Tree *tree,
+    panmanUtils::Node *node,
+    panmanUtils::Node *commonAncestor,
+    const std::unordered_map<std::string, std::vector<panmanUtils::Node *>> &nodePaths,
+    std::string* ab_before_output_str
+    );
 
 
 /**
@@ -287,12 +551,11 @@ void createRecompDumpFile(
  * @param bitMasks Output vector of quaternary-encoded bit masks
  */
 void processSeedChanges(
-    const std::vector<std::tuple<int64_t, bool, bool, 
-                               std::optional<size_t>, std::optional<size_t>,
-                               std::optional<bool>, std::optional<bool>, 
-                               std::optional<int64_t>, std::optional<int64_t>>>& seedChanges,
-    std::vector<int64_t>& basePositions,
-    std::vector<uint64_t>& bitMasks);
+    const std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>,
+                                 std::optional<size_t>, std::optional<bool>,
+                                 std::optional<bool>, std::optional<int64_t>,
+                                 std::optional<int64_t>>> &seedChanges,
+    std::vector<int64_t> &basePositions, std::vector<uint64_t> &bitMasks);
 
 /**
  * @brief Decode quaternary-encoded seed changes back to original form
@@ -304,9 +567,9 @@ void processSeedChanges(
  * @param bitMasks Vector of quaternary-encoded bit masks
  * @return Vector of (pos, wasOn, isOn) tuples
  */
-std::vector<std::tuple<int64_t, bool, bool>> 
-decodeSeedChanges(const std::vector<int64_t>& basePositions, 
-                 const std::vector<uint64_t>& bitMasks);
+std::vector<std::tuple<int64_t, bool, bool>>
+decodeSeedChanges(const std::vector<int64_t> &basePositions,
+                  const std::vector<uint64_t> &tritMasks);
 
 /**
  * @brief Recompute seeds for a node and optionally write to Cap'n Proto format
@@ -325,11 +588,17 @@ decodeSeedChanges(const std::vector<int64_t>& basePositions,
  * @param k K-mer size
  * @param s S-mer size
  * @param perNodeSeedMutations Optional Cap'n Proto builder for direct writing
+ * @param kmerDictionary Optional pointer to k-mer dictionary for direct writing
+ * @param uniqueKmersCollector Collector for unique k-mers
  */
-void recomputeSeeds(state::StateManager &stateManager, 
-                   placement::PlacementEngine &engine,
-                   panmanUtils::Node *node, int k, int s,
-                   ::capnp::List<SeedMutations>::Builder* perNodeSeedMutations = nullptr);
+void recomputeSeeds(
+    state::StateManager &stateManager, 
+    placement::PlacementEngine &engine,
+    panmanUtils::Node *node, int k, int s,
+    ::capnp::List<SeedMutations>::Builder* perNodeSeedMutations,
+    const std::unordered_map<std::string, uint32_t>* kmerDictionary,
+    std::unordered_set<std::string>& uniqueKmersCollector,
+    std::ofstream& debugSeedFile);
 
 /**
  * Initialize block sequences in the state manager.
@@ -340,8 +609,8 @@ void recomputeSeeds(state::StateManager &stateManager,
  */
 void initializeBlockSequences(
     state::StateManager &stateManager,
-    const std::unordered_map<int32_t, std::string> &blockSequences,
-    const std::unordered_map<int32_t, coordinates::CoordRange> &blockRanges);
+    const absl::flat_hash_map<int32_t, std::string> &blockSequences,
+    const absl::flat_hash_map<int32_t, coordinates::CoordRange> &blockRanges);
 
 /**
  * Process nodes at a given level using the provided function.
@@ -371,16 +640,27 @@ void fillNodesDepthFirst(panmanUtils::Node* node, std::vector<panmanUtils::Node*
  * @param k K-mer size
  * @param s S-mer size
  * @param threads Number of threads to use
+ * @param perNodeSeedMutations Cap'n Proto builder for seed mutations
+ * @param outMessage Cap'n Proto message builder for output
+ * @param indexPath Path to write the index file
  */
-void parallelIndexPan(panmanUtils::Tree *tree, state::StateManager *stateManager, 
-                     panmanUtils::Node *commonAncestor,
-                     bool seeding, int k, int s, int threads);
+void parallelIndexPan(
+    panmanUtils::Tree *tree, state::StateManager *stateManager, 
+    panmanUtils::Node *commonAncestor,
+    bool seeding, int k, int s, int threads,
+    ::capnp::List<SeedMutations>::Builder *perNodeSeedMutations,
+    ::capnp::MallocMessageBuilder *outMessage,
+    const std::string &indexPath);
 
-// Forward declaration of the periodicallyFlushCapnp function from main.cpp
-void periodicallyFlushCapnp(::capnp::MallocMessageBuilder &message,
-                            const std::string &path,
-                            bool forceFlush = false,
-                            size_t opCount = 0,
-                            size_t flushInterval = 1000);
+// Forward declaration of the writeCapnp function from main.cpp
+extern void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path);
+
+void logNodeDetailsToFile(
+    const panmanUtils::Tree* tree,
+    const panmanUtils::Node* node,
+    const state::StateManager& stateManager,
+    const std::string& phase,
+    size_t nodeIndex,
+    const std::string& dumpFilename = "panmap_debug");
 
 } // namespace indexing

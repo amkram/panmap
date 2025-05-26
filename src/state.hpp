@@ -24,6 +24,10 @@
 #include <vector>
 #include <cctype>
 #include <boost/pool/object_pool.hpp>
+#include <atomic>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
+#include <boost/functional/hash.hpp>
 
 /**
  * @file state.hpp
@@ -53,83 +57,9 @@ struct SharedBlockData;
 struct NodeDelta;
 struct Mutation;
 class LazySequenceView;
-struct GapListKey;
 
 // Define position_key_t 
 using position_key_t = std::tuple<int, int, int>;
-
-/**
- * @struct SequenceWithGaps
- * @brief Represents a sequence with gap information
- *
- * This structure stores a sequence and its associated gap map for efficient
- * sequence manipulation that accounts for insertions and deletions.
- */
-struct SequenceWithGaps {
-  /** @brief The actual sequence data */
-  std::string sequence;
-  
-  /** @brief Gap map associated with this sequence */
-  std::shared_ptr<gap_map::GapMap> gapMap;
-  
-  /** @brief Default constructor */
-  SequenceWithGaps() : gapMap(std::make_shared<gap_map::GapMap>()) {}
-  
-  /** @brief Constructor with sequence */
-  SequenceWithGaps(const std::string& seq) 
-    : sequence(seq), gapMap(std::make_shared<gap_map::GapMap>()) {}
-  
-  /** @brief Constructor with sequence and gap map */
-  SequenceWithGaps(const std::string& seq, std::shared_ptr<gap_map::GapMap> gaps)
-    : sequence(seq), gapMap(gaps) {}
-    
-  /**
-   * @brief Remove a gap at the specified position
-   * 
-   * @param position Position where the gap starts
-   * @param length Length of the gap to remove
-   * @return true if successful, false otherwise
-   */
-  bool removeGap(int64_t position, int64_t length) {
-    if (position < 0 || length <= 0) {
-      return false;
-    }
-
-    if (!gapMap) {
-      gapMap = std::make_shared<gap_map::GapMap>();
-    }
-    
-    // Create and apply a gap removal update
-    gap_map::GapUpdate update(true, std::make_pair(position, length));
-    gap_map::applyGapUpdate(*gapMap, update);
-    return true;
-  }
-
-  /**
-   * @brief Insert a gap at the specified position
-   * 
-   * @param position Position where the gap should be inserted
-   * @param length Length of the gap to insert
-   * @return true if successful, false otherwise
-   */
-  bool insertGap(int64_t position, int64_t length) {
-    if (position < 0 || length <= 0) {
-      return false;
-    }
-    
-    if (!gapMap) {
-      gapMap = std::make_shared<gap_map::GapMap>();
-    }
-    
-    // Create and apply a gap insertion update
-    gap_map::GapUpdate update(false, std::make_pair(position, length));
-    gap_map::applyGapUpdate(*gapMap, update);
-    return true;
-  }
-};
-
-
-// Removed PackedPositionKey forward declaration
 
 /**
  * @struct PositionKey
@@ -162,44 +92,12 @@ struct PositionKey {
    */
   struct Hash {
     std::size_t operator()(const PositionKey &k) const {
-      // Use standard C++ hashing approach
-      std::size_t h1 = std::hash<int32_t>{}(k.blockId);
-      std::size_t h2 = std::hash<int32_t>{}(k.nucPos);
-      std::size_t h3 = std::hash<int32_t>{}(k.gapPos);
-      return h1 ^ (h2 << 1) ^ (h3 << 2);
-    }
-  };
-};
-
-
-/**
- * @struct GapListKey
- * @brief Simplified 2D coordinate for gap list position lookup
- * Maps directly to the blockId and nucPos components of the 3D coordinate system
- */
-struct GapListKey {
-  int32_t blockId;
-  int32_t nucPos;
-
-  // Factory method to create a GapListKey
-  static GapListKey create(int32_t blockId, int32_t nucPos) {
-    GapListKey key;
-    key.blockId = blockId;
-    key.nucPos = nucPos;
-    return key;
-  }
-  
-  // Equality comparison for hash table usage
-  bool operator==(const GapListKey &other) const {
-    return blockId == other.blockId && nucPos == other.nucPos;
-  }
-
-  // Efficient hash implementation
-  struct Hash {
-    std::size_t operator()(const GapListKey &k) const {
-      // Standard hash combination technique using XOR and bit shift
-      return std::hash<int32_t>()(k.blockId) ^ 
-             (std::hash<int32_t>()(k.nucPos) << 1);
+      // Use Boost's hash_combine for better distribution
+      std::size_t seed = 0;
+      boost::hash_combine(seed, k.blockId);
+      boost::hash_combine(seed, k.nucPos);
+      boost::hash_combine(seed, k.gapPos);
+      return seed;
     }
   };
 };
@@ -624,7 +522,7 @@ private:
   std::weak_ptr<HierarchicalStore<T>> parent;
   
   /** @brief Local values that override parent values */
-  std::unordered_map<int64_t, T> localValues;
+  absl::flat_hash_map<int64_t, T> localValues;
   
   /** @brief Mutex for thread-safe access */
   mutable std::mutex storeMutex;
@@ -636,7 +534,9 @@ public:
   /**
    * @brief Constructor for root store
    */
-  HierarchicalStore() {}
+  HierarchicalStore() {
+    logging::debug("HIER_STORE: Created new root HierarchicalStore");
+  }
 
   /**
    * @brief Constructor for child stores
@@ -644,9 +544,151 @@ public:
    */
   HierarchicalStore(std::shared_ptr<HierarchicalStore<T>> parentStore)
       : parent(parentStore) {
-    if (!parentStore) {
-      logging::warn("HierarchicalStore created with null parent");
+    logging::debug("HIER_STORE: Created new child HierarchicalStore with parent");
+  }
+
+  /**
+   * @brief Get a value from the store or its ancestors
+   * @param key The key to look up
+   * @return The value if found, or nullopt if not found
+   */
+  std::optional<T> get(int64_t key) const {
+    std::lock_guard<std::mutex> lock(storeMutex);
+
+    // Check local values first
+    auto it = localValues.find(key);
+    if (it != localValues.end()) {
+      logging::debug("HIER_GET: Found local value for key {}", key);
+      return it->second;
     }
+
+    // If not found locally, check the parent
+    auto parentPtr = parent.lock();
+    if (parentPtr) {
+      logging::debug("HIER_GET: Key {} not found locally, checking parent", key);
+      return parentPtr->get(key);
+    }
+
+    // Not found anywhere
+    logging::debug("HIER_GET: Key {} not found in hierarchy", key);
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Set a value in the store
+   * @param key The key to set
+   * @param value The value to set
+   */
+  void set(int64_t key, const T& value) {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    localValues[key] = value;
+    modified = true;
+    logging::debug("HIER_SET: Set key {} in local store", key);
+  }
+
+  /**
+   * @brief Remove a value from the store
+   * @param key The key to remove
+   */
+  void remove(int64_t key) {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    logging::debug("HIER_REMOVE: Removing key {} from local store", key);
+    
+    // Add an entry but with a nullopt value
+    localValues.erase(key);
+    modified = true;
+  }
+
+  /**
+   * @brief Check if the store has been modified
+   * @return True if the store has been modified
+   */
+  bool isModified() const {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    return modified;
+  }
+
+  /**
+   * @brief Get all local values
+   * @return A copy of the local values map
+   */
+  absl::flat_hash_map<int64_t, T> getLocalValues() const {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    return localValues;
+  }
+};
+
+// Define HierarchicalCharacterStore as an alias for HierarchicalStore<char>
+// This will fix type compatibility issues between the two types
+using HierarchicalCharacterStore = HierarchicalStore<char>;
+
+// Define type alias for hierarchical seed store
+using HierarchicalSeedStore = HierarchicalStore<seeding::seed_t>;
+
+/**
+ * @struct NodePositionKey
+ * @brief Combines Node ID and PositionKey for caching
+ */
+struct NodePositionKey {
+    std::string nodeId;
+    PositionKey posKey;
+
+    bool operator==(const NodePositionKey& other) const {
+        return nodeId == other.nodeId && posKey == other.posKey;
+    }
+
+    struct Hash {
+        std::size_t operator()(const NodePositionKey& k) const {
+            std::size_t h1 = std::hash<std::string>{}(k.nodeId);
+            std::size_t h2 = PositionKey::Hash{}(k.posKey);
+            // Combine hashes - simple XOR for now, consider better mixing if collisions occur
+            return h1 ^ (h2 << 1);
+        }
+    };
+};
+
+/**
+ * @class HierarchicalCharacterStore
+ * @brief Specialized version of HierarchicalStore for characters with PositionKey
+ * 
+ * This specialized version allows using PositionKey instead of int64_t as keys
+ */
+template<>
+class HierarchicalStore<char> {
+private:
+  /** @brief Parent store (weak_ptr to avoid circular references) */
+  std::weak_ptr<HierarchicalStore<char>> parent;
+  
+  /** @brief Local values that override parent values - USE absl::flat_hash_map */
+  absl::flat_hash_map<PositionKey, char, PositionKey::Hash> localValues;
+  
+  /** @brief Mutex for thread-safe access */
+  mutable std::mutex storeMutex;
+  
+  /** @brief Flag indicating if this store has been modified */
+  bool modified = false;
+
+  // Define the cache type for this specialization
+  using CacheType = absl::flat_hash_map<NodePositionKey, char, NodePositionKey::Hash>;
+  // Declare the thread-local cache (definition in .cpp file)
+  static thread_local CacheType tlsCache;
+
+public:
+  /**
+   * @brief Constructor for root store
+   */
+  HierarchicalStore() {}
+
+  /**
+   * @brief Constructor for child stores
+   * @param parentStore Parent store to inherit from
+   */
+  HierarchicalStore(std::shared_ptr<HierarchicalStore<char>> parentStore)
+      : parent(parentStore) {
+    // Remove this warning - root node intentionally has null parent
+    // if (!parentStore) {
+    //   logging::warn("HierarchicalStore created with null parent");
+    // }
   }
 
   /**
@@ -655,24 +697,20 @@ public:
    * @param key The key to look up
    * @return The value if found, std::nullopt otherwise
    */
-  std::optional<T> get(int64_t key) const {
-    if (key < 0) {
-      logging::warn("Negative key {} passed to HierarchicalStore::get", key);
-      return std::nullopt;
-    }
-    
+  std::optional<char> get(const PositionKey& key) const {
     // First check local values
     {
       std::lock_guard<std::mutex> lock(storeMutex);
       auto it = localValues.find(key);
       if (it != localValues.end()) {
-        return it->second;
+        return std::optional<char>(it->second);
       }
     }
 
     // Then check parent
     if (auto parentPtr = parent.lock()) {
-      return parentPtr->get(key);
+      auto result = parentPtr->get(key);
+      return result;
     } else if (!parent.expired()) {
       logging::debug("Parent store is being deleted during get operation");
     }
@@ -687,12 +725,7 @@ public:
    * @param value The value to store
    * @return true if successful, false otherwise
    */
-  bool set(int64_t key, const T &value) {
-    if (key < 0) {
-      logging::warn("Negative key {} passed to HierarchicalStore::set", key);
-      return false;
-    }
-    
+  bool set(const PositionKey& key, const char& value) {
     std::lock_guard<std::mutex> lock(storeMutex);
     localValues[key] = value;
     modified = true;
@@ -712,39 +745,9 @@ public:
    * @brief Get all local values
    * @return Map of all locally stored key-value pairs
    */
-  std::unordered_map<int64_t, T> getLocalValues() const {
+  absl::flat_hash_map<PositionKey, char, PositionKey::Hash> getLocalValues() const {
     std::lock_guard<std::mutex> lock(storeMutex);
     return localValues;
-  }
-
-  /**
-   * @brief Apply multiple updates efficiently
-   * 
-   * @param updates Vector of key-value pairs to update
-   * @return Number of successfully applied updates
-   */
-  size_t batchUpdate(const std::vector<std::pair<int64_t, T>> &updates) {
-    if (updates.empty())
-      return 0;
-
-    std::lock_guard<std::mutex> lock(storeMutex);
-    
-    size_t successCount = 0;
-    for (const auto &[key, value] : updates) {
-      if (key < 0) {
-        logging::warn("Skipping negative key {} in batchUpdate", key);
-        continue;
-      }
-      
-      localValues[key] = value;
-      successCount++;
-    }
-    
-    if (successCount > 0) {
-    modified = true;
-  }
-
-    return successCount;
   }
 
   /**
@@ -762,12 +765,7 @@ public:
    * @param key The key to check for
    * @return true if the key exists, false otherwise
    */
-  bool contains(int64_t key) const {
-    if (key < 0) {
-      logging::warn("Negative key {} passed to HierarchicalStore::contains", key);
-      return false;
-    }
-    
+  bool contains(const PositionKey& key) const {
     // Check local values first
     {
       std::lock_guard<std::mutex> lock(storeMutex);
@@ -792,6 +790,67 @@ public:
   size_t localSize() const {
     std::lock_guard<std::mutex> lock(storeMutex);
     return localValues.size();
+  }
+
+  /**
+   * @brief Get only the value stored locally at this node
+   * 
+   * @param key The key to look up in the local map
+   * @return The value if found locally, std::nullopt otherwise
+   */
+  std::optional<char> getLocal(const PositionKey& key) const {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    auto it = localValues.find(key);
+    if (it != localValues.end()) {
+        return std::optional<char>(it->second);
+    }
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Get a character using NodePositionKey, utilizing thread-local cache.
+   * Checks the cache first. If not found, calls the original get(PositionKey)
+   * and caches the result if found.
+   * @param key NodePositionKey identifying the node and position.
+   * @return std::optional<char> containing the character if found, std::nullopt otherwise.
+   */
+  std::optional<char> get(const NodePositionKey& key) const {
+    // First check local values
+    {
+      std::lock_guard<std::mutex> lock(storeMutex);
+      auto it = localValues.find(key.posKey);
+      if (it != localValues.end()) {
+        return std::optional<char>(it->second);
+      }
+    }
+
+    // Then check parent
+    if (auto parentPtr = parent.lock()) {
+      auto result = parentPtr->get(key.posKey);
+      return result;
+    } else if (!parent.expired()) {
+      logging::debug("Parent store is being deleted during get operation");
+    }
+
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Set a character using NodePositionKey, updating local store and cache.
+   * Calls the original set(PositionKey, char) and then updates the thread-local cache.
+   * @param key NodePositionKey identifying the node and position.
+   * @param value The character value to set.
+   */
+  void set(const NodePositionKey& key, const char& value) {
+    std::lock_guard<std::mutex> lock(storeMutex);
+    localValues[key.posKey] = value;
+  }
+
+  /**
+   * @brief Clears the thread-local cache for the current thread.
+   */
+  static void clearThreadCache() {
+    tlsCache.clear();
   }
 };
 
@@ -844,9 +903,11 @@ struct NodeState {
   // Parent reference for hierarchical delta lookup
   std::string parentId;
 
-  std::unordered_set<int32_t> activeBlocks;
-  std::unordered_map<int32_t, bool>
-      blockStrands; // true = forward, false = inverted
+  absl::flat_hash_set<int32_t> activeBlocks;
+  // std::unordered_map<int32_t, bool> blockStrands; // OLD: true = forward, false = inverted
+  // Use optional<bool> to represent orientation: nullopt=OFF, true=ON_FORWARD, false=ON_INVERTED
+  absl::flat_hash_map<int32_t, std::optional<bool>> blockOrientation;
+
   std::vector<std::tuple<int32_t, int32_t, int32_t, char, char>>
       nucleotideChanges;
   std::vector<coordinates::CoordRange> recompRanges;
@@ -858,45 +919,23 @@ struct NodeState {
   // Recorded mutations for debugging
   std::vector<std::pair<int64_t, uint8_t>> recordedMutations;
 
-  // Use efficient key structs instead of string keys
-  std::unordered_map<state::PositionKey, char, state::PositionKey::Hash> characterData;
-  std::unordered_map<int32_t, bool> blockOnStatus;
-
   // Fields for gap map updates
   std::vector<coordinates::GapUpdate> gapMapUpdates;
 
-  // Mutation index for direct position lookup
-  // Maps position keys to the node ID that last mutated this position
-  std::unordered_map<PositionKey, std::string, PositionKey::Hash> mutationIndex;
-  
   // Node-specific hierarchical gap map
   std::shared_ptr<HierarchicalGapMap> gapMap;
 
-  // Integrated sequence and gap representation for better cache locality
-  std::unordered_map<int32_t, state::SequenceWithGaps> blockSequences;
-  mutable std::shared_mutex
-      blockSequencesMutex; // For thread-safe access with concurrent reads
+  // Node-specific hierarchical character store
+  std::shared_ptr<HierarchicalCharacterStore> characterStore;
 
   // Compressed gap runs for this node
   std::vector<gap_map::CompressedGapRun> compressedGapRuns;
 
-  // Delta-based storage
-  std::shared_ptr<state::NodeDelta> delta; // Delta from parent to this node
-
-  // Shared immutable block data
-  std::unordered_map<int32_t, std::shared_ptr<SharedBlockData>> sharedBlockData;
-
-  // Cache for extracted sequences to avoid redundant computation
-  mutable std::unordered_map<int64_t, std::string> extractedKmers;
-  mutable std::mutex kmerCacheMutex;
-
-  // Record the last 100 position lookups for cache locality
-  static constexpr size_t RECENT_LOOKUPS_SIZE = 100;
-  static thread_local std::vector<PositionKey> recentLookups;
-  
   // Quaternary-encoded seed changes (for efficient storage and transmission)
   std::vector<int64_t> seedChangeBasePositions;  // Base positions for seed changes
   std::vector<uint64_t> seedChangeBitMasks;      // Quaternary-encoded masks
+  
+  absl::flat_hash_map<int32_t, bool> explicitBlockStates;
   
   /**
    * @brief Add seed changes in quaternary-encoded format
@@ -906,7 +945,6 @@ struct NodeState {
    */
   void addSeedChanges(const std::vector<int64_t>& basePositions, 
                      const std::vector<uint64_t>& bitMasks) {
-    // Store the base positions and bit masks                 
     seedChangeBasePositions = basePositions;
     seedChangeBitMasks = bitMasks;
   }
@@ -959,28 +997,71 @@ struct NodeState {
     return decodedChanges;
   }
   
-  // Helper methods for block status
+  // Helper method for LOCAL block status only (doesn't implement inheritance)
+  // The StateManager::isBlockOn_unsafe method handles true inheritance by checking parent nodes
   bool isBlockOn(int32_t blockId) const {
-    auto it = blockOnStatus.find(blockId);
-    return it != blockOnStatus.end() && it->second;
+    // First check if we have an explicit setting for this block
+    if (hasExplicitBlockState(blockId)) {
+      return isBlockExplicitlyOn(blockId);
+    }
+    
+    // Fallback: When no explicit state is set, rely ONLY on activeBlocks (without inheritance)
+    // This should generally not be used for inheritance-sensitive code
+    return activeBlocks.contains(blockId);
   }
-
-  bool isBlockInverted(int32_t blockId) const {
-    auto it = blockStrands.find(blockId);
-    return it == blockStrands.end() || !it->second;
-  }
-
-  void setBlockOn(int32_t blockId, bool on) {
-    if (on) {
+  
+  // Method to "capture" an inherited state by setting it explicitly in this node
+  void captureInheritedBlockState(int32_t blockId, bool isOn) {
+    // Set the explicit state to match what was inherited
+    explicitBlockStates[blockId] = isOn;
+    
+    // Keep activeBlocks in sync
+    if (isOn) {
       activeBlocks.insert(blockId);
     } else {
       activeBlocks.erase(blockId);
     }
-    blockOnStatus[blockId] = on;
+  }
+
+  // Helper method for LOCAL block inversion status (doesn't implement inheritance)
+  // The StateManager::isBlockInverted_unsafe method handles true inheritance
+  bool isBlockInverted(int32_t blockId) const {
+    // Keep using blockOrientation map for inversion status, but only if block is active locally
+    if (!isBlockOn(blockId)) {
+      return false; // Not meaningful if block isn't active
+    }
+    
+    auto it = blockOrientation.find(blockId);
+    // Block is INVERTED if it exists and the optional value is present and false
+    return it != blockOrientation.end() && it->second.has_value() && !it->second.value();
+  }
+
+  void setBlockOn(int32_t blockId, bool on) {
+    if (on) {
+        activeBlocks.insert(blockId); 
+        blockOrientation.try_emplace(blockId, true); // Default to ON-FORWARD if not already specifically set
+    } else {
+        activeBlocks.erase(blockId);            
+        blockOrientation[blockId] = std::nullopt; // Explicitly mark as OFF at this node level
+    }
   }
 
   void setBlockForward(int32_t blockId, bool forward) {
-    blockStrands[blockId] = forward;
+    // Only set orientation if the block is effectively ON at this node level.
+    // An explicit entry in blockOrientation (even if nullopt for OFF) means this node has a say.
+    // If not in blockOrientation, but in activeBlocks, it's ON (e.g. inherited/root).
+    auto it = blockOrientation.find(blockId);
+    if (it != blockOrientation.end()) {
+        if (it->second.has_value()) { // It's explicitly ON (true or false value)
+            it->second = forward;
+        }
+        // If it was std::nullopt (explicitly OFF), do nothing - orientation is irrelevant.
+    } else if (activeBlocks.count(blockId)) {
+        // It's in activeBlocks (so considered ON), but no specific orientation override yet.
+        blockOrientation[blockId] = forward;
+    }
+    // If not in blockOrientation and not in activeBlocks, it's OFF from this node's perspective.
+    // Do not activate it here; applyBlockMutation should use setBlockOn first.
   }
 
   // Convert updates to compressed gap runs for storage efficiency
@@ -1001,97 +1082,37 @@ struct NodeState {
     gapMapUpdates.push_back(update);
   }
 
-  // Apply pending gap updates directly to hierarchical gap map
-  void applyGapUpdates() {
-    if (!gapMap || gapMapUpdates.empty())
-      return;
-
-    std::vector<gap_map::GapUpdate> updates;
-    updates.reserve(gapMapUpdates.size());
-
-    for (const auto &update : gapMapUpdates) {
-      // For gap_map, true means deletion, false means addition
-      bool isRemoval = !update.isGapAddition;
-      int64_t start = update.pos;
-      int64_t end = update.pos + update.length - 1;
-
-      gap_map::GapRange range = {start, end};
-      updates.emplace_back(isRemoval, range);
-
-      // Also update the integrated SequenceWithGaps structures
-      // Find which block this gap belongs to
-      for (auto &[blockId, seqWithGaps] : blockSequences) {
-        // Get the block range
-        // This is just a placeholder - in the real implementation,
-        // you would need to access the actual block range information
-        auto blockRange = sharedBlockData.find(blockId);
-        if (blockRange != sharedBlockData.end()) {
-          int64_t blockStart = blockRange->second->globalStartPos;
-          int64_t blockEnd = blockStart + blockRange->second->length - 1;
-
-          // Check if this gap is within this block
-          if (start >= blockStart && start <= blockEnd) {
-            // Convert to block-local position
-            int64_t localStart = start - blockStart;
-            int64_t length = update.length;
-
-            // Update the SequenceWithGaps
-            if (isRemoval) {
-              seqWithGaps.removeGap(localStart, length);
-            } else {
-              seqWithGaps.insertGap(localStart, length);
-            }
-          }
-        }
-      }
-    }
-
-    // Apply all updates at once
-    gapMap->applyUpdates(updates);
-
-    // Clear the updates now that they're applied
-    gapMapUpdates.clear();
-  }
-
   // Custom move constructor
   NodeState(NodeState &&other) noexcept
       : activeBlocks(std::move(other.activeBlocks)),
-        blockStrands(std::move(other.blockStrands)),
+        blockOrientation(std::move(other.blockOrientation)),
         nucleotideChanges(std::move(other.nucleotideChanges)),
         recompRanges(std::move(other.recompRanges)),
-        characterData(std::move(other.characterData)),
-        blockOnStatus(std::move(other.blockOnStatus)),
         gapMapUpdates(std::move(other.gapMapUpdates)),
         gapMap(std::move(other.gapMap)),
-        blockSequences(std::move(other.blockSequences)),
+        characterStore(std::move(other.characterStore)),
         compressedGapRuns(std::move(other.compressedGapRuns)),
-        delta(std::move(other.delta)),
-        sharedBlockData(std::move(other.sharedBlockData)),
-        extractedKmers(std::move(other.extractedKmers)),
         seedChangeBasePositions(std::move(other.seedChangeBasePositions)),
-        seedChangeBitMasks(std::move(other.seedChangeBitMasks)) {
-    // Do not move blockSequencesMutex and kmerCacheMutex
+        seedChangeBitMasks(std::move(other.seedChangeBitMasks)),
+        explicitBlockStates(std::move(other.explicitBlockStates)) {
+    // No mutexes to worry about anymore
   }
 
   // Custom move assignment operator
   NodeState &operator=(NodeState &&other) noexcept {
     if (this != &other) {
       activeBlocks = std::move(other.activeBlocks);
-      blockStrands = std::move(other.blockStrands);
+      blockOrientation = std::move(other.blockOrientation);
       nucleotideChanges = std::move(other.nucleotideChanges);
       recompRanges = std::move(other.recompRanges);
-      characterData = std::move(other.characterData);
-      blockOnStatus = std::move(other.blockOnStatus);
       gapMapUpdates = std::move(other.gapMapUpdates);
       gapMap = std::move(other.gapMap);
-      blockSequences = std::move(other.blockSequences);
+      characterStore = std::move(other.characterStore);
       compressedGapRuns = std::move(other.compressedGapRuns);
-      delta = std::move(other.delta);
-      sharedBlockData = std::move(other.sharedBlockData);
-      extractedKmers = std::move(other.extractedKmers);
       seedChangeBasePositions = std::move(other.seedChangeBasePositions);
       seedChangeBitMasks = std::move(other.seedChangeBitMasks);
-      // Do not move blockSequencesMutex and kmerCacheMutex
+      explicitBlockStates = std::move(other.explicitBlockStates);
+      // No mutexes to worry about anymore
     }
     return *this;
   }
@@ -1105,40 +1126,70 @@ struct NodeState {
 
     // Copy all the data (but not the mutexes)
     newState.activeBlocks = activeBlocks;
-    newState.blockStrands = blockStrands;
+    newState.blockOrientation = blockOrientation;
     newState.nucleotideChanges = nucleotideChanges;
     newState.recompRanges = recompRanges;
-    newState.characterData = characterData;
-    newState.blockOnStatus = blockOnStatus;
     newState.gapMapUpdates = gapMapUpdates;
     newState.gapMap = gapMap;
-    newState.blockSequences = blockSequences;
+    newState.characterStore = characterStore;
     newState.compressedGapRuns = compressedGapRuns;
-    newState.delta = delta;
-    newState.sharedBlockData = sharedBlockData;
-    newState.extractedKmers = extractedKmers;
     newState.seedChangeBasePositions = seedChangeBasePositions;
     newState.seedChangeBitMasks = seedChangeBitMasks;
+    newState.explicitBlockStates = explicitBlockStates;
 
     return newState;
+  }
+
+  // Check if block has an explicit setting at this node
+  bool hasExplicitBlockState(int32_t blockId) const {
+    return explicitBlockStates.contains(blockId);
+  }
+  
+  // Check if block is explicitly ON at this node
+  bool isBlockExplicitlyOn(int32_t blockId) const {
+    auto it = explicitBlockStates.find(blockId);
+    return it != explicitBlockStates.end() && it->second;
+  }
+  
+  // Set explicit block state for inheritance-based approach
+  void setExplicitBlockState(int32_t blockId, bool on) {
+    // Always set an explicit state in the explicitBlockStates map
+    explicitBlockStates[blockId] = on;
+    
+    // Sync activeBlocks with the explicit state for backward compatibility
+    if (on) {
+      activeBlocks.insert(blockId);
+    } else {
+      activeBlocks.erase(blockId);
+    }
+    
+    // Important: If turning off, clear any orientation data since it's irrelevant
+    if (!on) {
+      auto it = blockOrientation.find(blockId);
+      if (it != blockOrientation.end()) {
+        it->second = std::nullopt; // Mark as explicitly OFF
+      }
+    }
   }
 };
 
 class StateManager {
 private:
-  // Node states for each processed node
-  std::unordered_map<std::string, NodeState> nodeStates;
-  
-  // Mutex for thread-safe access to nodeStates
+  // Basic State
+  size_t numCoords;  // Total number of coordinates in the system
+  size_t numBlocks;  // Total number of blocks
+  // Thread-safe access
   mutable std::mutex nodeStatesMutex;
-  
-  // Mutex for thread-safe access to mutation index
-  mutable std::mutex mutationIndexMutex;
 
-  // Add mutationIndex here to match where it was originally declared
-  // Mutation index for direct position lookup
-  // Maps position keys to the node ID that last mutated this position
-  std::unordered_map<PositionKey, std::string, PositionKey::Hash> mutationIndex;
+  // Shared mutex for thread safety in node state access
+  mutable std::shared_mutex nodeMutex;
+  
+  // k-mer size for recomputation range calculations
+  int16_t kmerSize;
+  int16_t smerSize;  // s-mer size for seeding
+
+  // Mapping from node ID to node state
+  mutable absl::flat_hash_map<std::string, NodeState> nodeStates;
 
   // Streamlined hierarchical node structure for efficient traversal
   struct NodeHierarchy {
@@ -1148,177 +1199,113 @@ private:
     
     // Essential data stores for the 3D coordinate system
     std::shared_ptr<HierarchicalGapMap> gapMap;         // Critical for gap position handling
-    std::shared_ptr<HierarchicalStore<char>> characterStore; // For nucleotide data
+    std::shared_ptr<HierarchicalCharacterStore> characterStore; // For nucleotide data
     
     // Seed storage for optimized lookups
-    std::shared_ptr<HierarchicalStore<seeding::seed_t>> seedStore;
+    std::shared_ptr<HierarchicalSeedStore> seedStore;
     int64_t dfsIndex = -1; // DFS index for ancestor/descendant checks
     int64_t subtreeSize = 0; // Size of the subtree rooted at this node
   };
 
   // Hierarchy management
-  std::unordered_map<std::string, NodeHierarchy> nodeHierarchy;
+  absl::flat_hash_map<std::string, NodeHierarchy> nodeHierarchy;
 
   // Reference block sequences
-  std::unordered_map<int32_t, std::string> blockSequences;
+  absl::flat_hash_map<int32_t, std::string> blockSequences;
 
-  // Block ranges
-  std::unordered_map<int32_t, coordinates::CoordRange> blockRanges;
+  // Block ranges and sequences are global properties (not node-specific)
+  // All nodes reference the same blocks, they just have different active sets
+  absl::flat_hash_map<int32_t, coordinates::CoordRange> blockRanges;
   
-  // Replace hash table with a 2D array for faster lookups
-  std::unordered_map<GapListKey, size_t, GapListKey::Hash> globalGapListLengths;
-  
-  // New efficient data structure for gap list lengths
+  // 2D array for fast gap list length lookup
   std::vector<std::vector<size_t>> gapListLengthArray;
   
-  // Cache for frequently accessed gap list lengths
-  struct GapListLengthCache {
-    static constexpr const size_t CACHE_SIZE = 1024 * 5;
-    struct CacheEntry {
-      int32_t blockId;
-      int32_t nucPos;
-      size_t length;
-      uint64_t timestamp;
-    };
-    
-    CacheEntry entries[CACHE_SIZE];
-    uint64_t currentTimestamp = 0;
-    
-    GapListLengthCache() {
-      for (size_t i = 0; i < CACHE_SIZE; i++) {
-        entries[i].blockId = -1; // Invalid blockId
-      }
-    }
-    
-    void put(int32_t blockId, int32_t nucPos, size_t length) {
-      size_t index = (static_cast<size_t>(blockId) * 31 + static_cast<size_t>(nucPos)) % CACHE_SIZE;
-      entries[index].blockId = blockId;
-      entries[index].nucPos = nucPos;
-      entries[index].length = length;
-      entries[index].timestamp = currentTimestamp++;
-    }
-    
-    size_t get(int32_t blockId, int32_t nucPos, bool& found) {
-      size_t index = (static_cast<size_t>(blockId) * 31 + static_cast<size_t>(nucPos)) % CACHE_SIZE;
-      if (entries[index].blockId == blockId && entries[index].nucPos == nucPos) {
-        entries[index].timestamp = currentTimestamp++; // Update timestamp on access
-        found = true;
-        return entries[index].length;
-      }
-      found = false;
-      return 0;
-    }
-  };
-  
-  // Thread-local cache for gap list lengths
-  mutable tbb::enumerable_thread_specific<GapListLengthCache> gapListLengthCaches;
+  // Mapping from block ID to sorted list of gap positions
+  absl::flat_hash_map<int32_t, std::vector<int64_t>> blockIdToGapList;
   
   // Global gap map
   gap_map::GapMap globalGapMap;
   std::vector<gap_map::GapUpdate> gapMapBacktrack;
   mutable std::shared_mutex globalGapMapMutex;
 
-  // Thread-local gap maps for efficient batch processing
-  tbb::enumerable_thread_specific<gap_map::GapMap> threadLocalGapMaps;
-
-  // Cache for sorted active blocks
-  std::unordered_map<std::string,
-                     std::vector<std::pair<int32_t, coordinates::CoordRange>>>
-      nodeBlockRangeCache;
-
-  // Number of blocks and coordinates
-  size_t numBlocks = 0;
-  size_t numCoords = 0;
-
   // Flag indicating if cache is initialized
   bool globalPosCacheInitialized = false;
 
   // Global position cache for fast mapping
   struct GlobalPosCache {
-    std::vector<int32_t> posToBlockId;      // Maps global position to block ID
+    // std::vector<int32_t> posToBlockId;      // Maps global position to block ID - REPLACED
     std::vector<int64_t> blockStartOffsets; // Starting offset of each block
     int64_t maxPosition = 0;                // Maximum global position
 
+    // NEW: Direct mapping from global position to 3D coordinates
+    std::vector<std::optional<std::tuple<int32_t, int32_t, int32_t>>> posToCoords; 
+
     void clear() {
-      posToBlockId.clear();
+      // posToBlockId.clear(); // REPLACED
+      posToCoords.clear();
       blockStartOffsets.clear();
       maxPosition = 0;
     }
 
     bool isValid(int64_t pos) const { return pos >= 0 && pos < maxPosition; }
 
-    int32_t getBlockId(int64_t pos) const {
-      if (!isValid(pos) || static_cast<size_t>(pos) >= posToBlockId.size()) {
-        return -1;
+    // Replaced getBlockId with getCoords
+    std::optional<std::tuple<int32_t, int32_t, int32_t>> getCoords(int64_t pos) const {
+      if (!isValid(pos) || static_cast<size_t>(pos) >= posToCoords.size()) {
+        return std::nullopt;
       }
-      return posToBlockId[pos];
+      return posToCoords[pos];
     }
+
+    // Optional: Keep a way to get block ID if needed elsewhere, derived from coords
+    int32_t getBlockId(int64_t pos) const {
+      auto coordsOpt = getCoords(pos);
+      if (coordsOpt.has_value()) {
+          return std::get<0>(coordsOpt.value());
+      }
+      return -1; 
+    }
+
   } globalPosCache;
-
-  // Node DFS indices for ancestral nodes discovery
-  std::unordered_map<std::string, int64_t> nodeDfsIndices;
-
-  // Syncmer k-mer size
-  int16_t kmerSize = 0;
-
-  // Syncmer s-mer size
-  int smerSize = 0; // Default s-mer size
-
-  // Sequence cache for expensive operations
-  static constexpr size_t MAX_SEQUENCE_CACHE_SIZE =
-      100000; // Maximum number of cached sequences
-  mutable std::shared_mutex
-      sequenceCacheMutex; // Mutex for thread-safe cache access
 
   // Seed at each position (if any)
   std::vector<std::optional<seeding::seed_t>> positionSeeds;
 
   // Mapping from blocks to seed positions
-  std::unordered_map<int32_t, std::unordered_set<int64_t>> blockToSeeds;
-
-  // Cache for extracted sequences
-  std::unordered_map<std::string, std::pair<std::string, std::vector<int64_t>>>
-      sequenceCache;
+  absl::flat_hash_map<int32_t, absl::flat_hash_set<int64_t>> blockToSeeds;
 
   // Thread-local character buffers
   tbb::enumerable_thread_specific<CharacterBuffer> charBuffers;
 
   // 7. Shared Immutable Block Data
-  std::unordered_map<int32_t, std::shared_ptr<SharedBlockData>>
+  absl::flat_hash_map<int32_t, std::shared_ptr<SharedBlockData>>
       sharedBlockDataMap;
 
   // Root gap map (shared by all nodes)
   std::shared_ptr<HierarchicalGapMap> rootGapMap;
 
-  // Node relationship tracking for gap map inheritance
-  std::unordered_map<std::string, std::string> nodeParents;
-
   // Transaction management
-  std::unordered_map<std::string,
+  absl::flat_hash_map<std::string,
                      std::shared_ptr<UpdateBatch<coordinates::GapUpdate>>> activeTransactions;
   std::mutex transactionMutex;
-
-  // We use the hierarchical gap map for efficient sequence traversal
 
   // Gap statistics for adaptive optimization
   gap_map::GapStatistics gapStats;
   
+  // Cached root node ID for faster lookups
+  mutable std::string cachedRootNodeId;
+  
   // Coordinate mapping between 3D coordinates and scalar global positions
-  std::unordered_map<PositionKey, int64_t, PositionKey::Hash> blockCoordToGlobalPos;
+  absl::flat_hash_map<PositionKey, int64_t, PositionKey::Hash> blockCoordToGlobalPos;
   // Maps blockId, nucPos, gapPos to string index in sequences
-  std::unordered_map<PositionKey, int32_t, PositionKey::Hash> blockCoordToStringIndex;
+  absl::flat_hash_map<PositionKey, int32_t, PositionKey::Hash> blockCoordToStringIndex;
   
   // Method to update block coordinate mappings using block ranges as the source of truth
   void updateBlockCoordMapping();
 
-  // Helper method to get a sorted list of active blocks
-  std::vector<std::pair<int32_t, coordinates::CoordRange>>
-  getSortedActiveBlocks(std::string_view nodeId) const;
-
   // Helper method to merge overlapping ranges
   std::vector<coordinates::CoordRange>
   mergeRanges(std::vector<coordinates::CoordRange> &ranges);
-
 
   // Helper for DFS index computation
   void computeDfsIndices(const std::string &nodeId, int64_t &index);
@@ -1352,13 +1339,73 @@ private:
       const std::function<void(int64_t startPos, int64_t endPos, std::optional<seeding::seed_t> &seed, std::string_view kmerView)>
           &processFn);
 
+  // Precomputed mapping from global position ranges to block IDs
+  struct BlockRangeMapping {
+    int64_t startPos;
+    int64_t endPos;
+    int32_t blockId;
+  };
+  std::vector<BlockRangeMapping> blockRangeMappings;
+  bool blockRangeMappingsInitialized = false;
+  
+  // Initialize block range mappings
+  void initializeBlockRangeMappings();
+
+  // Helper to get block ID from a global position
+  int32_t getBlockIdFromPosition(int64_t pos) const;
+  
+  // Helper to initialize gap lists from the PanMAN tree structure
+  void initializeGapLists(panmanUtils::Tree* tree);
+
+  // Helper for batch processing gap updates
+  void batchProcessGapUpdates(const std::string &nodeId);
+
+  // Initialize mutation index data structure
+  void initializeGapListLengthArray(size_t numBlocks, size_t maxNucPos);
+  
+  // Helper to check if a character is a non-gap character
+  bool isNonGapChar(char c) const;
+
+  // Helper methods for block usage tracking
+  void trackBlockUsage(int32_t blockId, const std::string &nodeId);
+
+  // Helper methods for gap position tracking
+  bool isGapAt(int32_t blockId, int64_t blockPos) const;
+  void addGap(int32_t blockId, int64_t blockPos);
+  void removeGap(int32_t blockId, int64_t blockPos);
+  
+  // Memory optimization for gap list arrays
+  void optimizeGapListMemory();
+
+  // Helper to get active block ranges (inherently ordered) - Renamed
+  std::vector<std::pair<int32_t, coordinates::CoordRange>>
+  getActiveBlockRangesImpl(std::string_view nodeId) const;
+
+  // Helper to build a topologically sorted list of nodes (parents before children)
+  std::vector<std::string> buildTopologicalOrder(panmanUtils::Tree *tree);
+  
+  // Helper to load reference sequences into the root node's character store
+  void loadReferenceSequencesToRoot();
+
 public:
   // Constructor
   StateManager();
   StateManager(size_t numCoordinates);
   
+  // Helper method to get a sorted list of active block ranges
+  std::vector<std::pair<int32_t, coordinates::CoordRange>>
+  getActiveBlockRanges(std::string_view nodeId);
+  
+  // Const version declaration
+  std::vector<std::pair<int32_t, coordinates::CoordRange>>
+  getActiveBlockRanges(std::string_view nodeId) const;
+
+  // Public access for DFS index information needed by indexing pass 2
+  absl::flat_hash_map<std::string, int64_t> nodeDfsIndices;
+  std::vector<std::string> nodeIdsByDfsIndex; // Map index back to ID
+
   // Initialize the state manager with a tree
-  void initialize(panmanUtils::Tree *tree);
+  void initialize(panmanUtils::Tree *tree, size_t maxNucPosHint);
 
   // Initialize node hierarchy tree structure
   void initializeNodeHierarchy(panmanUtils::Tree *tree,
@@ -1377,7 +1424,7 @@ public:
                         int32_t nucPos, int32_t gapPos) const;
 
   // Get active blocks for a node
-  const std::unordered_set<int32_t> &
+  const absl::flat_hash_set<int32_t> &
   getActiveBlocks(std::string_view nodeId) const;
 
   // Set character at position, returns true if successful
@@ -1433,6 +1480,14 @@ public:
   extractSequence(std::string_view nodeId, const coordinates::CoordRange &range,
                   bool skipGaps = true);
 
+  // Overload for direct sequence extraction without position tracking
+  std::string extractSequence(const std::string& nodeId, int64_t start,
+                              int64_t end, bool skipGaps = true, bool needLock = true) const;
+
+  // Extract a k-mer starting from a specific position (scanning until finding k non-gap chars)
+  std::pair<std::string, std::vector<int64_t>> extractKmer(
+      std::string_view nodeId, int64_t startPos, int k) const;
+
   // Helper method to find common ancestor
   std::string findLowestCommonAncestor(const std::string &nodeA,
                                        const std::string &nodeB);
@@ -1440,9 +1495,6 @@ public:
   // Helper method to find path to node
   std::vector<std::string> findPathToNode(const std::string &fromNode,
                                           const std::string &toNode);
-
-  // Helper method to propagate state
-  void propagateState(const std::string &fromNode, const std::string &toNode);
 
   // Fast lookup from global position to (blockId, nucPos, gapPos)
   // Note: This method does NOT handle inversions - caller must adjust nucPos if
@@ -1488,13 +1540,15 @@ public:
   // Set the number of blocks
   void setNumBlocks(size_t blockCount);
 
-  // Seed management methods
-  std::optional<seeding::seed_t> getSeedAtPosition(int64_t pos) const;
-  void setSeedAtPosition(int64_t pos, const seeding::seed_t &seed);
-  void clearSeedAtPosition(int64_t pos);
+  // Optimized seed management using hierarchical storage
+  std::optional<seeding::seed_t> getSeedAtPosition(std::string_view nodeId, int64_t pos) const;
+  void setSeedAtPosition(std::string_view nodeId, int64_t pos, const seeding::seed_t& seed);
+  void clearSeedAtPosition(std::string_view nodeId, int64_t pos);
+  
+  // Other seed management methods
   void addSeedToBlock(int32_t blockId, int64_t pos);
   void removeSeedFromBlock(int32_t blockId, int64_t pos);
-  const std::unordered_set<int64_t> &getBlockSeeds(int32_t blockId) const;
+  const absl::flat_hash_set<int64_t> &getBlockSeeds(int32_t blockId) const;
   const std::vector<std::optional<seeding::seed_t>> &getAllSeeds() const;
 
   // Updated gap map methods
@@ -1523,12 +1577,6 @@ public:
   void printGapCacheStats() const;
   void printNodeMutations(const std::string &nodeId) const;
 
-  // 1. Lazy Sequence View - returns a view instead of materializing the full
-  // sequence
-  LazySequenceView getLazySequenceView(std::string_view nodeId,
-                                       const coordinates::CoordRange &range,
-                                       bool skipGaps = true) const;
-
   // 4. Region-Based Mutation Application
   void applyMutationsForRange(const std::string &nodeId,
                               const coordinates::CoordRange &range,
@@ -1536,11 +1584,6 @@ public:
 
   // 5. On-Demand Block Activation
   bool ensureBlockLoaded(const std::string &nodeId, int32_t blockId);
-
-  // 6. Streaming K-mer Generation
-  void streamKmers(
-      const std::string &nodeId, const coordinates::CoordRange &range, int k,
-      std::function<void(size_t hash, bool isReverse, int64_t pos)> processor);
 
   // 7. Range Batching
   std::vector<coordinates::CoordRange>
@@ -1550,12 +1593,6 @@ public:
   // 7. Shared Immutable Block Data
   std::shared_ptr<SharedBlockData> getSharedBlockData(int32_t blockId);
   void createSharedBlockData(int32_t blockId, const std::string &nodeId);
-
-  // 8. Delta-Based Node Representation
-  void propagateWithDelta(const std::string &fromNode,
-                          const std::string &toNode);
-
-  void clearAllSeeds(); // New method for placement
 
   // Optimized mapping from global position to block coordinates
   // This method handles block inversions and returns the inverted flag
@@ -1574,17 +1611,14 @@ public:
   expandRecompRanges(std::string_view nodeId,
                      const std::vector<coordinates::CoordRange> &ranges, int k);
 
-  // Reset node cache
-  void resetNodeCache(std::string_view nodeId);
+  // Reset cache for a specific node
+  void resetNodeCache(std::basic_string_view<char, std::char_traits<char>> nodeId);
 
   // Clear caches
   void clearCaches();
 
   // Helper method to clear caches for a specific node
   void clearCacheForNode(const std::string& nodeId);
-
-  // Helper method to track block usage
-  void trackBlockUsage(int32_t blockId, const std::string &nodeId);
 
   // Helper method to merge ranges
   std::vector<coordinates::CoordRange>
@@ -1596,45 +1630,30 @@ public:
                      int32_t len, bool isBlockMutation = false,
                      bool isBlockDeactivation = false);
 
-  // Helper to merge ranges
+  // Helper to merge a new range with existing ranges
   void mergeRangeWithExisting(std::vector<coordinates::CoordRange> &ranges,
-                              const coordinates::CoordRange &newRange);
+                             const coordinates::CoordRange &newRange);
 
-  // Helper to check if a character is a non-gap character
-  bool isNonGapChar(char c) const;
-  
-  // Helper to consolidate gap map updates across nodes
-  void consolidatedGapUpdate(const std::string& nodeId,
-                            const std::vector<coordinates::GapUpdate>& updates);
+  // Centralized gap map update function that handles all types of updates
+  void batchUpdateGapMap(const std::string& nodeId,
+                       const std::vector<coordinates::GapUpdate>& updates);
 
-  // Helper to initialize gap lists from the PanMAN tree structure
-  void initializeGapLists(panmanUtils::Tree* tree);
-
-  // Helper to set gap list length - update both legacy hash table and new array
-  void setGapListLength(int32_t blockId, int32_t nucPos, size_t length);
-
-  // Helper for batch processing gap updates
-  void batchProcessGapUpdates(const std::string &nodeId);
-
-  // Batch gap map operations
-  void batchUpdateGapMap(const std::vector<coordinates::GapUpdate>& updates,
-                        const std::string& nodeId);
-
-  // Initialize the mutation index from existing character data
-  void initializeMutationIndex();
+  // Alias for batchUpdateGapMap for backward compatibility
+  inline void consolidatedGapUpdate(const std::string& nodeId,
+                              const std::vector<coordinates::GapUpdate>& updates) {
+    // Simply call the implementation with the other name
+    batchUpdateGapMap(nodeId, updates);
+  }
 
   // Helper to get node gap map
   std::shared_ptr<HierarchicalGapMap>
   getNodeGapMap(std::string_view nodeId) const;
 
-  // Update mutation index directly for a specific position and node
-  void updateMutationIndex(const PositionKey& key, const std::string& nodeId);
-
   // Set sequence for a specific block
   void setBlockSequence(int32_t blockId, const std::string &sequence);
   
   // Access block sequences for debugging
-  const std::unordered_map<int32_t, std::string>& getBlockSequences() const {
+  const absl::flat_hash_map<int32_t, std::string>& getBlockSequences() const {
     return blockSequences;
   }
 
@@ -1660,156 +1679,55 @@ public:
   // Extract and dump actual sequence data and coordinates for critical blocks
   void dumpExtractedSequences() const;
 
-  // Initialize gap list length array
-  void initializeGapListLengthArray(size_t numBlocks, size_t maxNucPos);
+  // Getters/setters
+  size_t getNumCoords() const { return numCoords; }
+
+  // Method to control verbose logging
+  void setVerboseLogging(bool verbose);
+
+  // Add declaration for propagateState
+  void propagateState(const std::string &fromNode, const std::string &toNode);
+
+  // Helper to set gap list length - update both legacy hash table and new array
+  void setGapListLength(int32_t blockId, int32_t nucPos, size_t length);
+
+  // Initialize optimized seed management using hierarchical storage
+  void initializeSeedStorage();
+
+  // Print Cache Statistics (NEW)
+  void printCacheStats() const;
+
+  // Method to get the node hierarchy map
+  const absl::flat_hash_map<std::string, NodeHierarchy>& getNodeHierarchy() const {
+    return nodeHierarchy;
+  }
+
+  // Initialize the global position cache - NEW METHOD
+  void initializeGlobalCache();
+
+  // Add these data structures to the StateManager class for temporary k-mer storage
+  std::unordered_map<std::string, std::unordered_map<int64_t, std::string>> nodeKmerSequences;
+  std::unordered_map<std::string, std::unordered_map<int64_t, uint16_t>> nodeKmerEndOffsets;
+
+  // Make blockRootCharFlatIndices public for now to allow initializeStateManager to populate it.
+  // A better long-term solution might be a friend declaration or a dedicated public setter method.
+  std::unordered_map<int32_t, std::unordered_map<PositionKey, int64_t, PositionKey::Hash>> blockRootCharFlatIndices;
+
+private:
+  // Helper methods for logging control
+  static bool& getInitLoggingRef();
+  static bool& getPropLoggingRef();
+
+  NodeState& getNodeState_requires_lock(const std::string& nodeId); // Example if you had one
+  const NodeState& getNodeState_requires_lock(const std::string& nodeId) const; // Example
+
+  // ADD THESE:
+  bool isBlockOn_unsafe(std::string_view nodeId, int32_t blockId) const;
+  bool isBlockInverted_unsafe(std::string_view nodeId, int32_t blockId) const;
 };
 
 // 1. Lazy Sequence View - avoids materializing entire sequences
-class LazySequenceView {
-private:
-  std::string_view nodeId;
-  coordinates::CoordRange range;
-  const StateManager &stateManager;
-  bool skipGaps;
-
-  // Cached position mapping for faster access
-  mutable std::vector<std::tuple<int32_t, int32_t, int32_t, bool>>
-      positionMapping;
-  mutable bool positionsMapped = false;
-
-public:
-  LazySequenceView(std::string_view nodeId,
-                   const coordinates::CoordRange &range,
-                   const StateManager &stateManager, bool skipGaps = true);
-
-  // Size is unknown until traversed
-  size_t size() const;
-
-  // Get character at index (relative to view start)
-  char operator[](size_t index) const;
-
-  // Get global position for index
-  int64_t globalPosition(size_t index) const;
-
-  // Get all position mappings - builds cache
-  const std::vector<std::tuple<int32_t, int32_t, int32_t, bool>> &
-  getPositionMappings() const;
-
-  // Create a materialized string from this view
-  std::string toString() const;
-
-  // Get a pair of sequence string and positions (compatible with current API)
-  std::pair<std::string, std::vector<int64_t>> toSequenceAndPositions() const;
-
-  // Iterator support
-  class iterator {
-  private:
-    const LazySequenceView *view;
-    size_t index;
-
-  public:
-    using iterator_category = std::forward_iterator_tag;
-    using value_type = char;
-    using difference_type = std::ptrdiff_t;
-    using pointer = const char *;
-    using reference = const char &;
-
-    iterator(const LazySequenceView *view, size_t index)
-        : view(view), index(index) {}
-
-    char operator*() const { return (*view)[index]; }
-    iterator &operator++() {
-      ++index;
-      return *this;
-    }
-    iterator operator++(int) {
-      iterator tmp = *this;
-      ++index;
-      return tmp;
-    }
-    bool operator==(const iterator &other) const {
-      return index == other.index && view == other.view;
-    }
-    bool operator!=(const iterator &other) const { return !(*this == other); }
-  };
-
-  iterator begin() const { return iterator(this, 0); }
-  iterator end() const { return iterator(this, size()); }
-};
-
-// 2. Circular Buffer for streaming k-mer generation
-template <typename T> class CircularBuffer {
-private:
-  std::vector<T> buffer;
-  size_t capacity;
-  size_t head = 0;
-  size_t count = 0;
-
-public:
-  CircularBuffer(size_t capacity) : capacity(capacity), buffer(capacity) {}
-
-  void push(const T &item) {
-    size_t insertPos = (head + count) % capacity;
-    if (count == capacity) {
-      head = (head + 1) % capacity;
-    } else {
-      count++;
-    }
-    buffer[insertPos] = item;
-  }
-
-  T &operator[](size_t index) { return buffer[(head + index) % capacity]; }
-
-  const T &operator[](size_t index) const {
-    return buffer[(head + index) % capacity];
-  }
-
-  bool isFull() const { return count == capacity; }
-
-  bool isValid() const {
-    // For genomic data, check if any position is a gap
-    for (size_t i = 0; i < count; ++i) {
-      if (buffer[(head + i) % capacity] == '-') {
-        return false;
-      }
-    }
-    return isFull();
-  }
-
-  void clear() {
-    head = 0;
-    count = 0;
-  }
-
-  size_t size() const { return count; }
-};
-
-// 3. Delta-based Node Representation
-struct NodeDelta {
-  // Parent node ID
-  std::string parentNodeId;
-
-  // Block mutations (blockId, isOn, isInverted)
-  std::vector<std::tuple<int32_t, bool, bool>> blockMutations;
-
-  // Character mutations
-  std::unordered_map<PositionKey, char, PositionKey::Hash> characterMutations;
-
-  // Gap list mutations (blockId, nucPos, length)
-  std::vector<std::tuple<int32_t, int32_t, size_t>> gapListMutations;
-
-  // Recomputation ranges
-  std::vector<coordinates::CoordRange> recompRanges;
-
-  // Methods to apply delta to a state
-  void applyToNodeState(NodeState &state,
-                        const StateManager &stateManager) const;
-
-  // Create delta from difference between two node states
-  static NodeDelta createDelta(const std::string &parentNodeId,
-                               const NodeState &parentState,
-                               const NodeState &childState);
-};
+// class LazySequenceView { ... };
 
 // Mutation type for region-based mutation application
 struct Mutation {

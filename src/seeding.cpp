@@ -9,9 +9,13 @@
 #include <ostream>
 #include <stdio.h>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <algorithm>
+#include <cctype>
+#include <absl/container/flat_hash_map.h>
 
 namespace seeding {
 
@@ -56,10 +60,12 @@ void perfect_shuffle(std::vector<std::string> &v) {
 void seedsFromFastq(
     const int32_t &k, const int32_t &s, const int32_t &t, const bool &open,
     const int32_t &l,
-    std::unordered_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
+    absl::flat_hash_map<size_t, std::pair<size_t, size_t>> &readSeedCounts,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
-    std::vector<std::vector<seeding::seed_t>> &readSeeds, const std::string &fastqPath1,
+    std::vector<std::vector<seeding::seed_t>> &readSeeds,
+    std::vector<std::vector<std::string>> &readSeedSeqs,
+    const std::string &fastqPath1,
     const std::string &fastqPath2) {
   FILE *fp;
   kseq_t *seq;
@@ -106,11 +112,13 @@ void seedsFromFastq(
 
   for (int i = 0; i < readSequences.size(); i++) {
     std::vector<seeding::seed_t> curReadSeeds;
+    std::vector<std::string> curReadSeedSeqs;
+    std::string readSeq = readSequences[i];
     for (const auto &[kmerHash, isReverse, isSyncmer, startPos] :
-         rollingSyncmers(readSequences[i], k, s, open, t, false)) {
+         rollingSyncmers(readSeq, k, s, false, t, false)) {
       if (!isSyncmer)
         continue;
-      
+      std::string kmer = readSeq.substr(startPos, k);
       // Create seed with correct field order and add endPos
       // Order: hash, pos, idx, reversed, rpos, endPos
       curReadSeeds.emplace_back(
@@ -122,7 +130,7 @@ void seedsFromFastq(
             0,                              // rpos
             static_cast<int64_t>(startPos + k - 1) // endPos
           });
-        
+      curReadSeedSeqs.push_back(kmer);
       if (readSeedCounts.find(kmerHash) == readSeedCounts.end())
         readSeedCounts[kmerHash] = std::make_pair(0, 0);
       if (isReverse)
@@ -131,6 +139,7 @@ void seedsFromFastq(
         ++readSeedCounts[kmerHash].first;
     }
     readSeeds.push_back(std::move(curReadSeeds));
+    readSeedSeqs.push_back(std::move(curReadSeedSeqs));
   }
 }
 } // namespace seeding

@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.12)
 
 project(panmap VERSION 0.1.0)
 
+# Export compile_commands.json for clangd
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -20,6 +23,8 @@ option(USE_SYSTEM_LIBS "Use system libraries when available instead of building 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 
 include(FetchContent)
+include(ExternalProject)
+include(GNUInstallDirs)
 
 # Optimize FetchContent behavior
 set(FETCHCONTENT_QUIET OFF)
@@ -41,12 +46,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tbb)
 
-# Set up TBB
-find_library(TBB_LIBRARY NAMES tbb libtbb PATHS /usr/lib/x86_64-linux-gnu)
-if(NOT TBB_LIBRARY)
-    # Fallback to system TBB
-    set(TBB_LIBRARY "/usr/lib/x86_64-linux-gnu/libtbb.so.2")
-  endif()
+# Build TBB from source
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so
+    COMMAND cd ${tbb_SOURCE_DIR} && make -j
+    COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib
+    COMMAND cp ${tbb_SOURCE_DIR}/build/*_release/libtbb.so* ${CMAKE_CURRENT_BINARY_DIR}/lib/
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_custom_target(tbb_build DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so)
+
+# Set up TBB library path
+set(TBB_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so")
+# Set up TBB include directories
+include_directories(${tbb_SOURCE_DIR}/include)
 
 # Download and configure jsoncpp
 FetchContent_Declare(
@@ -55,6 +69,22 @@ FetchContent_Declare(
     GIT_TAG 1.9.5
 )
 FetchContent_MakeAvailable(jsoncpp)
+
+# Pull in spdlog so its target is available before we define panmap
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.11.0
+)
+FetchContent_MakeAvailable(spdlog)
+
+# Pull in Abseil for flat_hash_map
+FetchContent_Declare(
+    absl
+    GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+    GIT_TAG 20230802.1 # Use a specific tag for stability
+)
+FetchContent_MakeAvailable(absl)
 
 # Find Protobuf
 find_package(Protobuf REQUIRED)
@@ -71,49 +101,48 @@ include_directories(${tbb_SOURCE_DIR}/include)
 include_directories(${jsoncpp_SOURCE_DIR}/include)
 include_directories(${Protobuf_INCLUDE_DIRS})
 
-# Setup for CapnProto
-# First, let's create a separate minimal build for just the capnp tools
-set(CAPNP_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/capnp_build)
-file(MAKE_DIRECTORY ${CAPNP_BUILD_DIR})
+# Setup for CapnProto using system-installed tools
+find_program(CAPNP_EXECUTABLE NAMES capnp)
+find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++)
 
-# Add a custom command to build CapnProto
-add_custom_command(
-    OUTPUT ${CAPNP_BUILD_DIR}/bin/capnp ${CAPNP_BUILD_DIR}/bin/capnpc-c++
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/build_capnproto.sh ${CAPNP_BUILD_DIR} ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Building CapnProto tools"
-)
+if(NOT CAPNP_EXECUTABLE OR NOT CAPNPC_CXX_EXECUTABLE)
+    message(FATAL_ERROR "CapnProto executables not found. Please install CapnProto.")
+endif()
 
-# Create a target for the CapnProto tools
-add_custom_target(capnp_tools ALL
-    DEPENDS ${CAPNP_BUILD_DIR}/bin/capnp ${CAPNP_BUILD_DIR}/bin/capnpc-c++
-)
+message(STATUS "Using CapnProto tools: ${CAPNP_EXECUTABLE}, ${CAPNPC_CXX_EXECUTABLE}")
 
-# Set the correct paths for the executables
-set(CAPNP_EXECUTABLE ${CAPNP_BUILD_DIR}/bin/capnp)
-set(CAPNPC_CXX_EXECUTABLE ${CAPNP_BUILD_DIR}/bin/capnpc-c++)
-
-# Use FetchContent to get CapnProto from source
-# FetchContent_Declare(
-#     capnp
-#     GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-#     GIT_TAG v1.0.2
-# )
-# FetchContent_MakeAvailable(capnp)
+# Create a dummy target for consistency with the rest of the build
+add_custom_target(capnp_tools ALL)
 
 # Set up CapnProto include directories
-include_directories(${CAPNP_BUILD_DIR}/include)
-link_directories(${CAPNP_BUILD_DIR}/lib)
+include_directories(/usr/local/include)
 
-# Use the existing CapnProto files instead of generating them
-set(CAPNP_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++)
-set(CAPNP_HDRS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h)
+# Generate CapnProto files from index.capnp
+set(CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/index.capnp")
+set(CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+set(CAPNP_GEN_CPP "${CAPNP_GEN_DIR}/index.capnp.c++")
+set(CAPNP_GEN_H "${CAPNP_GEN_DIR}/index.capnp.h")
 
-# Create a custom target for CapnProto files
+# Custom command to generate CapnProto files
+add_custom_command(
+    OUTPUT ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
+    COMMAND ${CAPNP_EXECUTABLE}
+        compile
+        -o${CAPNPC_CXX_EXECUTABLE}
+        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+        ${CAPNP_SRC_FILE}
+    DEPENDS ${CAPNP_SRC_FILE} capnp_tools
+    COMMENT "Generating C++ files from index.capnp"
+    VERBATIM
+)
+
+# Set variables to point to the generated files
+set(CAPNP_SRCS ${CAPNP_GEN_CPP})
+set(CAPNP_HDRS ${CAPNP_GEN_H})
+
+# Create a target that depends on the generated files
 add_custom_target(index_capnp_generator ALL
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++ ${CMAKE_CURRENT_BINARY_DIR}/
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h ${CMAKE_CURRENT_BINARY_DIR}/
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.c++ ${CMAKE_CURRENT_SOURCE_DIR}/index.capnp.h
-    COMMENT "Copying CapnProto generated files"
+    DEPENDS ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
 )
 
 # Create a simplified version of the capnp_generate_cpp macro
@@ -169,6 +198,7 @@ if(NOT TARGET TBB::tbb)
         INTERFACE_INCLUDE_DIRECTORIES \"${TBB_DIR}/include\"
     )
 endif()
+
 ")
 
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/jsoncppConfig.cmake "
@@ -184,6 +214,7 @@ endif()
 if(NOT TARGET JsonCpp::JsonCpp)
     add_library(JsonCpp::JsonCpp INTERFACE IMPORTED)
 endif()
+
 ")
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake)
@@ -196,11 +227,13 @@ endfunction()
 # Create a dummy JsonCpp library
 add_library(jsoncpp INTERFACE)
 
-# Fetch the panman source code
+# Fetch the panman source code (clone only, disable update)
 FetchContent_Declare(
     panman
     GIT_REPOSITORY https://github.com/TurakhiaLab/panman
     GIT_TAG main
+    GIT_SHALLOW TRUE
+    UPDATE_COMMAND ""
 )
 
 # Force the population of the content
@@ -359,12 +392,11 @@ add_dependencies(panman panman_lib)
 # Define the Minimap2 build target
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND cd src/3rdparty/minimap2 && make clean
-    COMMAND make -C src/3rdparty/minimap2
+    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
-    COMMAND cp src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND cp src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}/bin/minimap2
-    COMMAND rm -f src/3rdparty/minimap2/*.o
+    COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
+    COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}/bin/minimap2
+    COMMAND rm -f ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/*.o
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -374,44 +406,44 @@ add_custom_target(minimap2_target
     COMMENT "Building minimap2 library from src/3rdparty/minimap2"
 )
 
-# Build samtools and htslib
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20 && autoreconf -i -Wno-syntax && ./configure --prefix=${CMAKE_CURRENT_BINARY_DIR} --disable-lzma --disable-bz2 --disable-libcurl && make -j && make install
-    COMMAND cd src/3rdparty/samtools && autoheader && autoconf -Wno-syntax && ./configure --with-htslib=${CMAKE_CURRENT_BINARY_DIR} --prefix=${CMAKE_CURRENT_BINARY_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic && make -j && cp libst.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
-    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+# Build htslib using ExternalProject
+set(HTSLIB_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/htslib_install)
+ExternalProject_Add(htslib_ext
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20
+    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl
+    BUILD_COMMAND make -j
+    INSTALL_COMMAND make install
+    BUILD_IN_SOURCE 1 # htslib needs to be built in source
+    UPDATE_COMMAND "" # Don't try to update the source
 )
-
-# Add a samtools target that depends on the build
-add_custom_target(samtools_target 
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
-    COMMENT "Building samtools and htslib"
+# Create an imported target for htslib
+add_library(htslib STATIC IMPORTED GLOBAL)
+set_target_properties(htslib PROPERTIES
+    IMPORTED_LOCATION ${HTSLIB_INSTALL_DIR}/lib/libhts.a
 )
+add_dependencies(htslib htslib_ext)
 
-# Aggregate all the dependencies into a single target
-add_custom_target(build-deps DEPENDS
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a
-    ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    capnp_tools
+# Build samtools using ExternalProject
+set(SAMTOOLS_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/samtools_install)
+ExternalProject_Add(samtools_ext
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools
+    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${SAMTOOLS_INSTALL_DIR} --with-htslib=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic
+    # Explicitly build only the libst.a target
+    BUILD_COMMAND     ${CMAKE_COMMAND} -E env SHELL=/bin/bash make libst.a
+    # Explicitly set INSTALL_COMMAND to nothing to prevent default make install
+    INSTALL_COMMAND   ""
+    BUILD_IN_SOURCE 1 # samtools needs to be built in source
+    UPDATE_COMMAND "" # Don't try to update the source
+    DEPENDS htslib_ext # Ensure htslib is built first
 )
-
-# Create imported targets for the dependencies
-# kj and capnp_tools are already provided by FetchContent_MakeAvailable(capnp_tools)
-# There's no need to create imported targets for them
-
-add_library(minimap2 STATIC IMPORTED)
-set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a")
-add_dependencies(minimap2 build-deps)
-
-add_library(samtools STATIC IMPORTED)
-set_target_properties(samtools PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libst.a")
-add_dependencies(samtools build-deps)
-
-add_library(htslib STATIC IMPORTED)
-set_target_properties(htslib PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libhts.a")
-add_dependencies(htslib build-deps)
+# Create an imported target for samtools
+add_library(samtools STATIC IMPORTED GLOBAL)
+# Build directory structure for in-source builds with ExternalProject
+set(SAMTOOLS_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/libst.a") 
+set_target_properties(samtools PROPERTIES
+    IMPORTED_LOCATION ${SAMTOOLS_LIB_PATH}
+)
+add_dependencies(samtools samtools_ext)
 
 # Define BWA sources
 set(BWA_SOURCES
@@ -472,6 +504,23 @@ set(BWA_SOURCES
     src/mm_align.c
 )
 
+# Aggregate all the dependencies into a single target
+add_custom_target(build-deps DEPENDS
+    htslib_ext
+    samtools_ext
+    minimap2_target
+    capnp_tools
+    tbb_build
+)
+
+# Create imported targets for the dependencies
+# kj and capnp_tools are already provided by FetchContent_MakeAvailable(capnp_tools)
+# There's no need to create imported targets for them
+
+add_library(minimap2 STATIC IMPORTED)
+set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a")
+add_dependencies(minimap2 minimap2_target)
+
 add_library(bwa STATIC ${BWA_SOURCES})
 target_include_directories(bwa PUBLIC src/3rdparty/bwa)
 target_compile_options(bwa PRIVATE -fPIC)
@@ -503,7 +552,7 @@ find_package(Boost COMPONENTS program_options iostreams filesystem date_time sys
 find_package(ZLIB REQUIRED)
 
 add_executable(panmap ${PANMAP_SOURCES_MAIN})
-add_dependencies(panmap build-deps index_capnp_generator)
+add_dependencies(panmap build-deps index_capnp_generator tbb_build)
 
 # Add generated sources to panmap target
   target_sources(panmap PRIVATE ${CAPNP_SRCS})
@@ -512,8 +561,10 @@ add_dependencies(panmap build-deps index_capnp_generator)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
-target_include_directories(panmap PRIVATE ${panman_SOURCE_DIR}/src) # Include real panman headers
+target_include_directories(panmap PUBLIC ${HTSLIB_INSTALL_DIR}/include)
+
+# Link spdlog (provides its own includes)
+target_link_libraries(panmap PRIVATE spdlog::spdlog)
 
 # Add other FetchContent dependencies
 FetchContent_Declare(
@@ -521,13 +572,12 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/docopt/docopt.cpp
     GIT_TAG master
 )
-
 FetchContent_MakeAvailable(docopt)
-
 if(TARGET docopt)
     target_compile_options(docopt PRIVATE -w -m64 -mtune=generic)
 endif()
 
+# Pull in libdeflate
 FetchContent_Declare(deflate
     GIT_REPOSITORY https://github.com/ebiggers/libdeflate
     GIT_SHALLOW TRUE
@@ -536,14 +586,16 @@ FetchContent_MakeAvailable(deflate)
 
 # Link libraries
 target_link_libraries(panmap PRIVATE 
+    panman
     bwa
     bcftools
     minimap2 
     samtools 
     htslib 
     docopt
-    capnp 
-    kj 
+    # Link system capnp libs directly
+    /usr/local/lib/libcapnp.a 
+    /usr/local/lib/libkj.a 
     jsoncpp_lib
     ${Protobuf_LIBRARIES}
     Boost::program_options
@@ -551,18 +603,22 @@ target_link_libraries(panmap PRIVATE
     Boost::filesystem
     Boost::system
     ZLIB::ZLIB
-    panman
-    panman_lib
-    deflate
     ${TBB_LIBRARY}
+    spdlog::spdlog  # Add spdlog
+    # Link panman_lib directly to access the implementation of panmanUtils functions
+    panman_lib
+    # Fix libdeflate linking
+    libdeflate_shared
+    # Link Abseil components
+    absl::flat_hash_map
     m
     pthread
 )
 
 # Set compiler options based on build type
-    if(OPTION_DEBUG)
+if(OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
-    elseif(OPTION_PROFILE)
+elseif(OPTION_PROFILE)
     # Add -pg flag for gprof profiling
     target_compile_options(panmap PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
     target_link_options(panmap PUBLIC -pg -fno-omit-frame-pointer)
@@ -571,7 +627,7 @@ target_link_libraries(panmap PRIVATE
     if(TARGET panman_lib)
         target_compile_options(panman_lib PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
         target_link_options(panman_lib PUBLIC -pg -fno-omit-frame-pointer)
-        endif()
+    endif()
 else()
     target_compile_options(panmap PUBLIC -g -O3)
     
@@ -593,10 +649,10 @@ configure_file(src/test/data/test.json test.json COPYONLY)
 configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
 
-install(TARGETS panmap RUNTIME DESTINATION /usr/local/bin)
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/ DESTINATION /usr/local/lib FILES_MATCHING PATTERN "*.a" PATTERN "*.so" PATTERN "*.dylib" PATTERN "*.la" PATTERN "*.so.*")
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin/ DESTINATION /usr/local/bin FILES_MATCHING PATTERN "*")
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/ DESTINATION /usr/local/include)
+install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/ DESTINATION ${CMAKE_INSTALL_LIBDIR} FILES_MATCHING PATTERN "*.a" PATTERN "*.so" PATTERN "*.dylib" PATTERN "*.la" PATTERN "*.so.*")
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin/ DESTINATION ${CMAKE_INSTALL_BINDIR} FILES_MATCHING PATTERN "*")
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Create a compile_commands.json symlink for clangd
 add_custom_command(
@@ -628,12 +684,3 @@ message(STATUS "  Build tests: ${OPTION_BUILD_TESTS}")
 message(STATUS "  Build simulate: ${OPTION_BUILD_SIMULATE}")
 message(STATUS "----------------------------")
 message(STATUS "")
-
-# Create imported targets for CapnProto
-add_library(capnp STATIC IMPORTED)
-set_target_properties(capnp PROPERTIES IMPORTED_LOCATION "${CAPNP_BUILD_DIR}/lib/libcapnp.a")
-add_dependencies(capnp capnp_tools)
-
-add_library(kj STATIC IMPORTED)
-set_target_properties(kj PROPERTIES IMPORTED_LOCATION "${CAPNP_BUILD_DIR}/lib/libkj.a")
-add_dependencies(kj capnp_tools)
