@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <vector>
 #include <unordered_set>
+#include <absl/container/flat_hash_map.h> // Add include
+#include <absl/container/flat_hash_set.h> // Add include
 
 using namespace seeding;
 using namespace panmanUtils;
@@ -23,8 +25,8 @@ class CoordinateManager;
 class CoordinateTraverser;
 struct tupleCoord_t;
 struct CoordRange;
+struct GapUpdate; // Forward declare GapUpdate as well
 using GapRange = std::pair<int64_t, int64_t>;
-using GapUpdate = std::pair<bool, GapRange>;
 using GapMap = std::map<int64_t, int64_t>;
 using sequence_t = std::vector<
     std::pair<std::vector<std::pair<char, std::vector<char>>>,
@@ -37,7 +39,7 @@ using blockStrand_t = std::vector<std::pair<bool, std::vector<bool>>>;
 using coordinates::CoordRange;
 using coordinates::GapMap;
 using coordinates::GapRange;
-using coordinates::GapUpdate;
+using coordinates::GapUpdate; // Keep this line
 using coordinates::sequence_t;
 using coordinates::tupleCoord_t;
 
@@ -84,7 +86,7 @@ int getValidNucleotidesEfficiently(coordinates::CoordinateManager &manager,
 
 inline void
 fillDfsIndexes(panmanUtils::Tree *T, panmanUtils::Node *node, int64_t &dfsIndex,
-               std::unordered_map<std::string, int64_t> &dfsIndexes) {
+               absl::flat_hash_map<std::string, int64_t> &dfsIndexes) {
 
   dfsIndexes[node->identifier] = dfsIndex;
   dfsIndex++;
@@ -122,9 +124,9 @@ struct SeedChangeComparator { // for set of seed changes, ordered by scalar
 
 // Common state tracking for both indexing and placement
 struct CommonTraversalState {
-  std::vector<std::optional<seeding::onSeedsHash>> onSeedsHash;
+  std::vector<std::optional<seeding::seed_t>> onSeedsHash;
   std::vector<std::unordered_set<int64_t>> BlocksToSeeds;
-  std::unordered_map<std::string, int64_t> dfsIndexes;
+  absl::flat_hash_map<std::string, int64_t> dfsIndexes;
   std::unordered_set<int> inverseBlockIds;
 
   CommonTraversalState(panmanUtils::Tree *T, size_t numBlocks,
@@ -187,12 +189,12 @@ public:
   bool isDirty = false;
   
   // Container for tie-breaking information
-  std::unique_ptr<std::unordered_map<std::string, double>> tieBreakingInfo;
+  std::unique_ptr<absl::flat_hash_map<std::string, double>> tieBreakingInfo;
 
   PlacementNodeState(int num_blocks, int64_t num_scalars) 
     : TraversalNodeState(num_blocks, num_scalars) {
     seedChanges.clear();
-    tieBreakingInfo = std::make_unique<std::unordered_map<std::string, double>>();
+    tieBreakingInfo = std::make_unique<absl::flat_hash_map<std::string, double>>();
   }
 
   PlacementNodeState() : TraversalNodeState() {}
@@ -202,7 +204,7 @@ public:
       : TraversalNodeState(other) {
     isDirty = other.isDirty;
     if (other.tieBreakingInfo) {
-      tieBreakingInfo = std::make_unique<std::unordered_map<std::string, double>>(*other.tieBreakingInfo);
+      tieBreakingInfo = std::make_unique<absl::flat_hash_map<std::string, double>>(*other.tieBreakingInfo);
     }
   }
 
@@ -225,7 +227,7 @@ struct TraversalGlobalState : public CommonTraversalState {
 class PlacementGlobalState : public TraversalGlobalState {
 public:
   // Collections for seed tracking during placement
-  std::unordered_map<size_t, std::pair<size_t, size_t>> perNodeReadSeedCounts;
+  absl::flat_hash_map<size_t, std::pair<size_t, size_t>> perNodeReadSeedCounts;
   std::unordered_map<size_t, int64_t> perNodeGenomeSeedCounts;
   size_t totalReadSeedCount = 0;
   
@@ -299,7 +301,7 @@ void setupIndexing(sequence_t &sequence, blockExists_t &blockExists,
                    blockStrand_t &blockStrand, const Tree *T);
 
 void setupPlacement(
-    std::vector<std::optional<seeding::onSeedsHash>> &onSeedsHash,
+    std::vector<std::optional<seeding::seed_t>> &onSeedsHash,
     sequence_t &sequence, blockExists_t &blockExists,
     blockStrand_t &blockStrand, const Tree *T);
 
@@ -313,7 +315,7 @@ bool getSeedAt(coordinates::CoordinateTraverser &traverser,
  * @param traverser Coordinate traverser
  * @param manager Coordinate manager
  * @param positions Array of positions to process
- * @param positionCount Number of positions in the array
+ * @param positionCount Number of positions
  * @param k K-mer length
  * @param resultHashes Output hashes
  * @param resultIsReverse Output orientation flags

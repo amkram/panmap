@@ -22,6 +22,7 @@ struct SeedMutations {
     perPosMasks @1 :List(UInt64);
     kmerDictionaryIds @2 :List(UInt32);  # IDs into the global dictionary
     kmerPositions @3 :List(Int64);       # Positions these dictionary entries correspond to
+    kmerEndOffsets @4 :List(UInt16);     # Offsets from start to end positions (actual lengths)
 }
 
 struct NodePathInfo {

@@ -1,0 +1,16 @@
+--- a/src/panman.cpp
++++ b/src/panman.cpp
+@@ -6934,7 +6934,10 @@
+ panmanUtils::TreeGroup::TreeGroup(std::istream& fin, bool isOld) {
+     if (!isOld) {
+         kj::std::StdInputStream kjInputStream(fin);
+-        capnp::InputStreamMessageReader messageReader(kjInputStream);
++        capnp::ReaderOptions readerOptions;
++        readerOptions.traversalLimitInWords = std::numeric_limits<uint64_t>::max();
++        readerOptions.nestingLimit = 1024; // Increase nesting limit
++        capnp::InputStreamMessageReader messageReader(kjInputStream, readerOptions);
+
+         NodeList::Reader nodes = messageReader.getRoot<NodeList>();
+
+
+</rewritten_file> 

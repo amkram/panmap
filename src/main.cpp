@@ -23,13 +23,11 @@
 #include <unistd.h>
 #include <vector>
 #include <stack>
+#include <sys/stat.h>
 
 #include "capnp/message.h"
 #include "capnp/serialize-packed.h"
 
-#include "docopt.h"
-
-#include "docopt_value.h"
 #include "genotyping.hpp"
 #include "index.capnp.h"
 #include "indexing.hpp"
@@ -49,93 +47,14 @@
 #include <panmanUtils.hpp>
 #include <cxxabi.h>
 #include <execinfo.h>
-
-static const char USAGE[] =
-    R"(panmap -- v0.0 ⟗ ⟗
-
-Pangenome phylogenetic placement, alignment, genotyping, and assembly of reads
-
-Usage:
-  panmap [options] <guide.panman> [<reads1.fastq>] [<reads2.fastq>]
-
-<guide.panman>  Path to pangenome reference (PanMAN file).
-<reads1.fastq>  [Optional] Path to first FASTQ file.
-<reads2.fastq>  [Optional] Path to second FASTQ file (for paired-end reads).
-
-Input/output options:
-  -b --batch <tsv>          Path to tsv file with reads to process (one per line or two per line for paired-end reads).
-  -p --prefix <prefix>      Prefix for output files. [default: panmap]
-  -o <outputs>              List of outputs to generate.
-                              Accepted values:
-                                  placement / p:  Save phylogenetic placement results to <prefix>.placement.tsv (or <prefix>.placements.tsv in batch mode)
-                                  assembly / a:   Save consensus assembly to <prefix>.assembly.fa
-                                  reference / r:  Save panmap's selected reference to <prefix>.reference.fa
-                                  spectrum / c:   Save mutation spectrum matrix to <prefix>.mm
-                                  sam / s:        Save aligned reads to <prefix>.sam
-                                  bam / b:        Save aligned reads to <prefix>.bam
-                                  mpileup / m:    Save read pileup to <prefix>.mpileup
-                                  vcf / v:        Save variant calls and likelihoods to <prefix>.vcf
-                                  all / A:        Save all possible outputs, each to <prefix>.<ext>
-                              [default: bam,vcf,assembly]
-
-  -i --index <path>         Provide a precomputed panmap index. If not specified, index
-                                is loaded from <guide.pmat>.pmi, if it exists, otherwise
-                                it is built with parameters <k> and <s> (see below). [default: ]
-
-  -q --quiet                Run in quiet mode (show only critical messages, errors, and warnings).
-  -v --verbose              Run in verbose mode (show detailed logs for debugging).
-
-Seeding/alignment options:
-  -k <k>                             Length of k-mer seeds. [default: 32]
-  -s <s>                             Length of s-mers for seed (syncmer) selection. [default: 8]
-  -a --aligner <method>              The alignment algorithm to use ('minimap2' or 'bwa-aln').
-                                     For very short or damaged reads, use bwa-aln. [default: minimap2]
-  -r --ref <node_id>                 Provide a reference node to align reads to (skip placement) [default: ].
-  -P --prior                         Compute and use a mutation spectrum prior for genotyping.
-  -f --reindex                       Don't load index from disk, build it from scratch.
-
-Other options:
-  -c --cpus <num>            Number of CPUs to use. [default: 1]
-  -x --stop-after <stage>    Stop after the specified stage. Accepted values:
-                                    indexing / i:   Stop after seed indexing
-                                    placement / p:  Stop after placement
-                                    mapping / m:    Stop after read mapping
-                                    genotyping / g: Stop after computing genotype likelihoods
-                                    assembly / a:   Stop after consensus assembly
-                                 [default: ]
-  -Q <seed>                 Integer seed for random number generation. [default: 42]
-  -V --version              Show version.
-  --time                    Show time taken at each step
-  -h --help                 Show this screen.
-  -D --dump                 Dump all seeds to file.
-  -X --dump-real            Dump true seeds to file.
-  --test                    Run coordinate system tests.
-
-Developer options:
-  --genotype-from-sam                   Generate VCF from SAM file using mutation spectrum as prior.
-  --sam-file <path>                     Path to SAM file to generate VCF from.
-  --ref-file <path>                     Path to reference FASTA file to generate VCF from.
-  --save-jaccard                        Save jaccard index between reads and haplotypes to <prefix>.jaccard.txt
-  --save-kminmer-binary-coverage        Save kminmer binary coverage to <prefix>.kminmer_binary_coverage.txt
-  --parallel-tester                     Run parallel tester.
-  --eval <path>                         Evaluate accuracy of placement. <path> is a tsv file.
-  --dump-sequence <nodeID>              Dump sequence for a specified node ID to <panmanfile>.<nodeID>.fa
-  --dump-random-node                    Dump sequence for a random node to <panmanfile>.random.<nodeID>.fa
-
-Placement options:
-  --candidate-threshold <proportion>    Initial seed matching retains the top <proportion> of all nodes as candidates, whose scores are refined by seed extension. [default: 0.01]
-  --max-candidates <count>              Maximum number of candidate nodes to consider [default: 16]
-)";
+#include "spdlog/spdlog.h"
+#include "spdlog/async.h" // For spdlog::shutdown() if using async logger
 
 using namespace logging;
+namespace po = boost::program_options;
 
 // Namespace aliases
 namespace fs = boost::filesystem;
-
-// using namespace coordinates;
-// using namespace seed_annotated_tree;
-// using namespace placement;
-// using namespace genotyping;
 
 // Global constants
 static constexpr int DEFAULT_K = 32;
@@ -145,31 +64,309 @@ static constexpr int DEFAULT_S = 8;
 std::mutex outputMutex, indexMutex, placementMutex;
 std::atomic<bool> shouldStop{false};
 
-void writeCapnp(::capnp::MallocMessageBuilder &message,
-                const std::string &path) {
-  std::lock_guard<std::mutex> lock(indexMutex);
-  
-  // Use the indexing namespace version with forceFlush=true
-  indexing::periodicallyFlushCapnp(message, path, true, 0, 1000);
-}
+// Forward declarations
+std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path);
+void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path);
 
-std::unique_ptr<::capnp::PackedFdMessageReader>
-readCapnp(const std::string &path) {
-  std::lock_guard<std::mutex> lock(indexMutex);
-  int fd = open(path.c_str(), O_RDONLY);
-  if (fd < 0) {
-    throw std::runtime_error("Failed to open file: " + path);
+// Create a custom wrapper to hold ownership of fd and reader
+struct IndexReaderWrapper : public ::capnp::MessageReader {
+    int fd_;
+    std::unique_ptr<::capnp::PackedFdMessageReader> reader;
+    
+    IndexReaderWrapper(int fd, const ::capnp::ReaderOptions& opts)
+        : ::capnp::MessageReader(opts), fd_(fd), reader(std::make_unique<::capnp::PackedFdMessageReader>(fd, opts)) {}
+    
+    ~IndexReaderWrapper() {
+        // First destroy the reader (which might use the fd)
+        reader.reset();
+        // Then close the fd
+        if (fd_ >= 0) {
+            close(fd_);
+            fd_ = -1;
+        }
+    }
+    
+    // Implement required MessageReader methods by delegating to the inner reader
+    ::kj::ArrayPtr<const ::capnp::word> getSegment(uint id) override {
+        return reader->getSegment(id);
+    }
+    
+    // Return root object from the reader
+    template <typename T>
+    typename T::Reader getRoot() {
+        return reader->getRoot<T>();
+    }
+};
+
+void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path) {
+  // Normalize path to ensure consistent resolution
+  boost::filesystem::path normalizedPath = boost::filesystem::absolute(path);
+  std::string resolvedPath = normalizedPath.string();
+  boost::filesystem::path parentDir = normalizedPath.parent_path();
+  
+  // Create a temporary file path in the same directory
+  std::string tempPath = resolvedPath + ".tmp";
+  logging::debug("Writing Cap'n Proto message to temporary file: {}", tempPath);
+
+  // Create directory if it doesn't exist
+  if (!parentDir.empty() && !boost::filesystem::exists(parentDir)) {
+    logging::debug("Creating parent directory: {}", parentDir.string());
+    if (!boost::filesystem::create_directories(parentDir)) {
+      std::string error = "Failed to create directory: " + parentDir.string();
+      logging::err("{}", error);
+      throw std::runtime_error(error);
+    }
   }
 
-  ::capnp::ReaderOptions opts;
-  opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max();
-  opts.nestingLimit = 1024;
+  // ---- CRITICAL: Validate message integrity before writing ----
+  // Check key fields of the index to ensure they're not corrupted
+  auto indexRoot = message.getRoot<Index>();
+  uint32_t k = indexRoot.getK();
+  uint32_t s = indexRoot.getS();
+  size_t seedMutations = indexRoot.getPerNodeSeedMutations().size();
+  size_t dictSize = 0;
+  if (indexRoot.hasKmerDictionary()) {
+    dictSize = indexRoot.getKmerDictionary().size();
+  }
 
-  // Create the reader that manages the file descriptor
-  // NOTE: Don't close the file descriptor here - PackedFdMessageReader owns it
-  // and will close it when it's destroyed
-  return std::unique_ptr<::capnp::PackedFdMessageReader>(
-      new ::capnp::PackedFdMessageReader(fd, opts));
+  // Keep the original k and s values for later reference
+  const uint32_t original_k = k;
+  const uint32_t original_s = s;
+  
+  // Check for potential corruption
+  bool needsRepair = false;
+  if (k == 0 || s == 0) {
+    logging::critical("CRITICAL ERROR: Corrupt values detected before writing: k={}, s={}", k, s);
+    needsRepair = true;
+    
+    // Try to guess what k and s should be
+    k = k == 0 ? 32 : k; // Default to 32 if k is zero
+    s = s == 0 ? 8 : s;  // Default to 8 if s is zero
+    
+    // Attempt to repair the message
+    logging::warn("ATTEMPTING REPAIR: Setting k={}, s={}", k, s);
+    indexRoot.setK(k);
+    indexRoot.setS(s);
+    
+    // Re-read the values to verify repair
+    auto indexAfterRepair = message.getRoot<Index>();
+    uint32_t k_after_repair = indexAfterRepair.getK();
+    uint32_t s_after_repair = indexAfterRepair.getS();
+    
+    logging::info("After repair: k={}, s={}", k_after_repair, s_after_repair);
+    if (k_after_repair == 0 || s_after_repair == 0) {
+      logging::critical("REPAIR FAILED: Unable to set non-zero values in Cap'n Proto message");
+      // Continue anyway as a last resort
+    }
+  }
+  
+  // CRITICAL: If seedMutations or dictionary count is corrupted, we should abort and not write the file
+  if (seedMutations == 0 && dictSize == 0) {
+    logging::critical("CRITICAL ERROR: Message data is corrupted (empty seedMutations and dictionary)");
+    throw std::runtime_error("Cannot write corrupted index with empty data");
+  }
+  
+  logging::debug("Integrity check: k={}, s={}, seedMutations={}, dictionary={}", 
+                indexRoot.getK(), indexRoot.getS(), seedMutations, dictSize);
+  // ---- End integrity check ----
+
+  // Write to temporary file first
+  int fd = open(tempPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd == -1) {
+    std::string error = "Failed to open file for writing: " + tempPath + 
+                       " (errno=" + std::to_string(errno) + ": " + 
+                       std::strerror(errno) + ")";
+    logging::err("{}", error);
+    throw std::runtime_error(error);
+  }
+
+  try {
+    // Write the message directly - no copying
+    auto rootBeforeWrite = message.getRoot<Index>();
+    uint32_t k_before_write = rootBeforeWrite.getK();
+    uint32_t s_before_write = rootBeforeWrite.getS();
+    size_t seedMutations_before_write = rootBeforeWrite.getPerNodeSeedMutations().size();
+    size_t dictionary_before_write = rootBeforeWrite.getKmerDictionary().size();
+    
+    // Double check critical values one more time
+    if (seedMutations_before_write == 0 && seedMutations > 0) {
+      logging::critical("CRITICAL ERROR: seedMutations count was corrupted from {} to 0", seedMutations);
+      throw std::runtime_error("Cannot write index with corrupted seedMutations count");
+    }
+    
+    // Log key parameters to verify correct data is being written
+    logging::info("Writing message: k={}, s={}, seedMutations={}, dictionary={}",
+                 k_before_write, s_before_write, 
+                 seedMutations_before_write, dictionary_before_write);
+    
+    // One last check - if values are still zero despite repair attempts, log and proceed
+    if (k_before_write == 0 || s_before_write == 0) {
+      logging::critical("CRITICAL ERROR: Zero values detected at write time, even after repair attempts. Will try to write anyway.");
+    }
+    
+    // Use packed writing for efficiency
+    ::capnp::writePackedMessageToFd(fd, message);
+    
+    // Explicitly sync to ensure data is written to disk
+    if (fsync(fd) != 0) {
+      std::string error = "Failed to fsync file: " + tempPath + 
+                         " (errno=" + std::to_string(errno) + ": " + 
+                         std::strerror(errno) + ")";
+      logging::err("{}", error);
+    close(fd);
+      throw std::runtime_error(error);
+    }
+    
+    // Close the file descriptor
+    if (close(fd) != 0) {
+      std::string error = "Failed to close file: " + tempPath + 
+                         " (errno=" + std::to_string(errno) + ": " + 
+                         std::strerror(errno) + ")";
+      logging::err("{}", error);
+      throw std::runtime_error(error);
+    }
+    
+    // Verify written file by reading it back
+    if (boost::filesystem::exists(tempPath) && 
+        boost::filesystem::file_size(tempPath) > 0) {
+        
+      // Skip full validation in production to avoid performance impact
+      // But we could add a flag to enable it
+      
+      logging::debug("Wrote {} bytes to temporary file", boost::filesystem::file_size(tempPath));
+    } else {
+      logging::warn("Temporary file is empty or doesn't exist after writing!");
+    }
+    
+    // Sync the directory to ensure the file entry is updated
+    int dirFd = open(parentDir.c_str(), O_RDONLY);
+    if (dirFd != -1) {
+      fsync(dirFd);
+      close(dirFd);
+    }
+    
+    // Atomically rename the temporary file to the target file
+    if (std::rename(tempPath.c_str(), resolvedPath.c_str()) != 0) {
+      std::string error = "Failed to rename file: " + tempPath + " -> " + 
+                         resolvedPath + " (errno=" + std::to_string(errno) + 
+                         ": " + std::strerror(errno) + ")";
+      logging::err("{}", error);
+      throw std::runtime_error(error);
+    }
+    
+    // Final directory sync after rename
+    dirFd = open(parentDir.c_str(), O_RDONLY);
+    if (dirFd != -1) {
+      fsync(dirFd);
+      close(dirFd);
+    }
+    
+    logging::info("Successfully wrote Cap'n Proto message to: {}", resolvedPath);
+  } catch (const std::exception& e) {
+    // Clean up temporary file on error
+    if (fd != -1) {
+    close(fd);
+    }
+    if (boost::filesystem::exists(tempPath)) {
+      boost::filesystem::remove(tempPath);
+    }
+    std::string error = "Error writing Cap'n Proto message: " + std::string(e.what());
+    logging::err("{}", error);
+    throw std::runtime_error(error);
+  }
+}
+
+std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path) {
+  // Normalize path to ensure consistent resolution
+  boost::filesystem::path normalizedPath = boost::filesystem::absolute(path);
+  std::string resolvedPath = normalizedPath.string();
+  logging::debug("Reading Cap'n Proto message from: {}", resolvedPath);
+  
+  try {
+    // Check if file exists and is not empty
+    if (!fs::exists(resolvedPath)) {
+      throw std::runtime_error("Index file not found: " + resolvedPath);
+    }
+    
+    uintmax_t fileSize = fs::file_size(resolvedPath);
+    if (fileSize == 0) {
+      throw std::runtime_error("Index file is empty: " + resolvedPath);
+    }
+    logging::debug("Index file exists with size {} bytes", fileSize);
+    
+    // Check file permissions
+    bool isReadable = access(resolvedPath.c_str(), R_OK) == 0;
+    if (!isReadable) {
+      int errnum = errno;
+      throw std::runtime_error("Index file is not readable: " + resolvedPath + 
+                             " (errno: " + std::to_string(errnum) + ", " + 
+                             strerror(errnum) + ")");
+    }
+    
+    // Open the file
+    int fd = open(resolvedPath.c_str(), O_RDONLY);
+    if (fd < 0) {
+      int errnum = errno;
+      throw std::runtime_error("Failed to open index file: " + resolvedPath + 
+                            " (errno: " + std::to_string(errnum) + ", " + 
+                            strerror(errnum) + ")");
+    }
+    
+    try {
+    // Configure reader options for large messages
+    ::capnp::ReaderOptions opts;
+    opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max();
+    opts.nestingLimit = 1024;
+    
+      // FIXED: Create wrapper that properly manages reader and fd lifetimes
+      auto wrapper = std::make_unique<IndexReaderWrapper>(fd, opts);
+      
+      // Validate the root structure
+      auto root = wrapper->getRoot<Index>();
+      
+      // Validate essential fields
+      uint32_t k = root.getK();
+      uint32_t s = root.getS();
+      size_t nodeCount = root.getPerNodeSeedMutations().size();
+        
+      if (k == 0 || s == 0 || nodeCount == 0) {
+        // Don't close fd here - will be closed by wrapper destructor
+        throw std::runtime_error("Invalid index data: k=" + std::to_string(k) + 
+                              ", s=" + std::to_string(s) + 
+              ", nodes=" + std::to_string(nodeCount));
+        }
+        
+      // Log additional validation checks
+      logging::debug("Validated index structure: k={}, s={}, nodes={}, gapMutations={}, dictionary={}",
+                    k, s, nodeCount, root.getPerNodeGapMutations().size(), root.getKmerDictionary().size());
+      
+      // Check optional fields if they're expected to be set
+      if (root.hasNodePathInfo() && root.getNodePathInfo().size() == 0) {
+        logging::warn("Index has empty nodePathInfo list");
+      }
+      
+      if (root.hasBlockInfo() && root.getBlockInfo().size() == 0) {
+        logging::warn("Index has empty blockInfo list");
+      }
+      
+      logging::info("Successfully read and validated index from {}", resolvedPath);
+      
+      // Return the wrapper as a MessageReader (it will be upcast)
+      return std::unique_ptr<::capnp::MessageReader>(wrapper.release());
+    } catch (const ::kj::Exception& e) {
+      // Clean up fd on exception
+      close(fd);
+      throw std::runtime_error("Cap'n Proto parsing error: " + 
+                             std::string(e.getDescription().cStr()));
+    } catch (const std::exception& e) {
+      // Clean up fd on exception
+      close(fd);
+      throw; // Re-throw other exceptions
+      }
+  } catch (const std::exception &e) {
+    logging::err("Failed to read Cap'n Proto message: {}", e.what());
+    throw;
+  }
 }
 
 /**
@@ -231,7 +428,6 @@ void printStackTrace(int skip = 1) {
  * @param signum The signal number
  */
 void signalHandler(int signum) {
-    // Get the signal name
     const char* sigName = "UNKNOWN";
     switch (signum) {
         case SIGINT:  sigName = "SIGINT (Interrupt/Ctrl+C)"; break;
@@ -239,29 +435,43 @@ void signalHandler(int signum) {
         case SIGSEGV: sigName = "SIGSEGV (Segmentation fault)"; break;
         case SIGABRT: sigName = "SIGABRT (Abort)"; break;
     }
-    
-    std::cerr << "\n\n*** Program interrupted by signal: " << sigName << " ***" << std::endl;
-    
-    // Print the current stack trace
-    printStackTrace(2);  // Skip signalHandler and signal handler dispatcher frames
-    
-    std::cerr << "\nGracefully shutting down..." << std::endl;
-    shouldStop = true;
-    
-    // Attempt to trigger atexit handlers (like gprof's) for non-fatal signals
+
     if (signum == SIGINT || signum == SIGTERM) {
+        std::cerr << "\n\n*** Program interrupted by signal: " << sigName << " ***" << std::endl;
+        std::cerr << "Attempting to shut down spdlog and disable further logging." << std::endl;
+        try {
+            // 1. Set level to off to stop new messages from being processed by most checks.
+            spdlog::set_level(spdlog::level::off);
+
+            // 2. Attempt to flush and shut down spdlog to release resources.
+            // This is more forceful than just setting the level.
+            spdlog::shutdown(); // This drops all registered loggers and shuts down the thread pool for async.
+            std::cerr << "spdlog shutdown attempted." << std::endl;
+
+        } catch (const std::exception& e) {
+            std::cerr << "Exception while trying to shutdown/disable spdlog: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown exception while trying to shutdown/disable spdlog." << std::endl;
+        }
+
+        printStackTrace(2);  // Skip signalHandler and signal handler dispatcher frames
+        std::cerr << "\nGracefully shutting down..." << std::endl;
         std::cerr << "Attempting graceful exit to finalize profiling data (gmon.out)..." << std::endl;
-        // Exit with a non-zero status to indicate termination by signal
-        // This should allow atexit handlers to run.
-        exit(128 + signum); 
+        shouldStop = true; // Set your global flag    
+        exit(128 + signum); // Proceed with exit
+
     } else if (signum == SIGSEGV || signum == SIGABRT) {
-        // For fatal errors, exit immediately after printing trace.
-        // gmon.out is unlikely to be useful or complete here anyway.
-        std::cerr << "Fatal error, exiting immediately." << std::endl;
-        exit(128 + signum);
+        fprintf(stderr, "\n\n*** Program interrupted by signal: %s ***\n", sigName); // Use fprintf for basic safety
+        printStackTrace(2);  // Skip signalHandler and signal handler dispatcher frames
+        fprintf(stderr, "\nGracefully shutting down...\nFatal error, exiting immediately.\n");
+        _exit(128 + signum); // Use _exit for immediate termination without further cleanup
+    } else {
+        // Handle other signals if any are registered for this handler
+        fprintf(stderr, "\n\n*** Program interrupted by signal: %s ***\n", sigName);
+        printStackTrace(2); // Skip signalHandler and signal handler dispatcher frames
+        shouldStop = true;
+        _exit(128 + signum); // Use _exit for immediate termination
     }
-    // If it's another signal, we just set shouldStop and let the program potentially handle it,
-    // though this handler isn't registered for other signals currently.
 }
 
 bool isFileReadable(const std::string &path) {
@@ -395,6 +605,62 @@ panmanUtils::TreeGroup *loadPanMAN(const std::string &filename) {
   }
 }
 
+// Function to save a node's constructed sequence to a FASTA file
+bool saveNodeConstructedSequence(state::StateManager &stateManager, panmanUtils::Tree *tree, 
+                               panmanUtils::Node *node, const std::string &outputFileName) {
+  if (!tree || !node) {
+    return false;
+  }
+
+  std::string nodeId = node->identifier;
+  logging::info("Extracting constructed sequence for node {}", nodeId);
+  
+  try {
+    // First ensure the node's blocks are properly activated
+    auto activeBlocks = stateManager.getActiveBlocks(nodeId);
+    if (activeBlocks.empty()) {
+      logging::warn("Node {} has no active blocks. Sequence will be empty!", nodeId);
+    } else {
+      logging::info("Node {} has {} active blocks", nodeId, activeBlocks.size());
+    }
+    
+    // Get the sequence using StateManager (this shows what's actually in memory)
+    int64_t startPos = std::numeric_limits<int64_t>::max();
+    int64_t endPos = std::numeric_limits<int64_t>::min();
+    
+    // Find the span of all active blocks
+    for (int32_t blockId : activeBlocks) {
+        auto blockRange = stateManager.getBlockRange(blockId);
+        startPos = std::min(startPos, blockRange.start);
+        endPos = std::max(endPos, blockRange.end);
+    }
+    
+    // If no blocks are active, use a reasonable default
+    if (startPos > endPos) {
+        startPos = 0;
+        endPos = 0;
+    }
+    
+    coordinates::CoordRange fullRange = {startPos, endPos};
+    auto [sequence, _] = stateManager.extractSequence(nodeId, fullRange);
+    
+    logging::info("Extracted sequence of length {} for node {}", sequence.length(), nodeId);
+    std::ofstream outFile(outputFileName);
+
+    if (outFile.is_open()) {
+      outFile << ">" << nodeId << "_constructed_sequence\n";
+      outFile << sequence << "\n";
+      outFile.close();
+      return true;
+    }
+  } catch (const std::exception &e) {
+    logging::err("Error extracting sequence for node {}: {}", nodeId, e.what());
+  }
+
+  return false;
+}
+
+
 // Main program entry point
 int main(int argc, char *argv[]) {
     // Register signal handlers for various signals
@@ -405,63 +671,171 @@ int main(int argc, char *argv[]) {
     
     auto main_start = std::chrono::high_resolution_clock::now();
     
-    std::map<std::string, docopt::value> args =
-        docopt::docopt(USAGE, {argv + 1, argv + argc}, true, "panmap 0.0");
+    // --- Boost.Program_options Setup ---
+    po::options_description generic_opts("Generic options");
+    generic_opts.add_options()
+        ("help,h", "Show help message")
+        ("version,V", "Show version")
+        ("quiet,q", "Run in quiet mode")
+        ("verbose,v", "Run in verbose mode")
+        ("log-level", po::value<std::string>()->default_value("info"), 
+         "Set logging level (trace, debug, info, warn, error, critical, off)")
+        ("time", "Show time taken at each step")
+        ("cpus,c", po::value<int>()->default_value(1), "Number of CPUs to use")
+        ("stop-after,x", po::value<std::string>()->default_value(""), 
+         "Stop after stage (indexing/i, placement/p, mapping/m, genotyping/g, assembly/a)")
+        ("seed,Q", po::value<int>()->default_value(42), "Seed for random number generation")
+        ("test", "Run coordinate system tests")
+        ("test-nucleotide-mutations", "Run targeted test for nucleotide mutations in node_2")
+    ;
+
+    po::options_description input_opts("Input/output options");
+    input_opts.add_options()
+        ("batch,b", po::value<std::string>(), "Path to batch TSV file")
+        ("prefix,p", po::value<std::string>()->default_value("panmap"), "Prefix for output files")
+        ("outputs,o", po::value<std::string>()->default_value("bam,vcf,assembly"), 
+         "Outputs (placement/p, assembly/a, reference/r, spectrum/c, sam/s, bam/b, mpileup/m, vcf/v, all/A)")
+        ("index,i", po::value<std::string>()->default_value(""), "Path to precomputed index")
+    ;
+    
+    po::options_description seeding_opts("Seeding/alignment options");
+    seeding_opts.add_options()
+        ("k,k", po::value<int>()->default_value(DEFAULT_K), "Length of k-mer seeds") // Use DEFAULT_K defined later
+        ("s,s", po::value<int>()->default_value(DEFAULT_S), "Length of s-mers for syncmers") // Use DEFAULT_S defined later
+        ("aligner,a", po::value<std::string>()->default_value("minimap2"), "Aligner (minimap2 or bwa-aln)")
+        ("ref,r", po::value<std::string>()->default_value(""), "Reference node ID to align to (skip placement)")
+        ("prior,P", "Use mutation spectrum prior for genotyping")
+        ("reindex,f", "Force index rebuild")
+    ;
+
+    po::options_description dev_opts("Developer options");
+    dev_opts.add_options()
+        ("dump,D", "Dump all seeds to file")
+        ("dump-real,X", "Dump true seeds to file")
+        ("genotype-from-sam", "Generate VCF from SAM file")
+        ("sam-file", po::value<std::string>(), "Path to SAM file for VCF generation")
+        ("ref-file", po::value<std::string>(), "Path to reference FASTA for VCF generation")
+        ("save-jaccard", "Save Jaccard index to <prefix>.jaccard.txt")
+        ("save-kminmer-binary-coverage", "Save kminmer binary coverage")
+        ("parallel-tester", "Run parallel tester")
+        ("eval", po::value<std::string>(), "Evaluate placement accuracy (path to TSV)")
+        ("dump-sequence", po::value<std::string>(), "Dump sequence for a specific node ID")
+        ("dump-random-node", "Dump sequence for a random node")
+        ("debug-node-id", po::value<std::string>()->default_value(""), "Log detailed placement debug info for this specific node ID")
+        ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
+        ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
+    ;
+
+    // Hidden options for positional arguments
+    po::options_description hidden_opts("Hidden options");
+    hidden_opts.add_options()
+        ("guide-panman", po::value<std::string>(), "Pangenome reference file")
+        ("reads1", po::value<std::string>(), "Reads file 1")
+        ("reads2", po::value<std::string>(), "Reads file 2")
+    ;
+
+    po::options_description cmdline_options;
+    cmdline_options.add(generic_opts).add(input_opts).add(seeding_opts).add(dev_opts).add(hidden_opts);
+
+    po::options_description visible_options("panmap -- v0.0 \u27d7 \u27d7\nPangenome phylogenetic placement, alignment, genotyping, and assembly of reads\n\nUsage: panmap [options] <guide.panman> [<reads1.fastq>] [<reads2.fastq>]\n\nAllowed options");
+    visible_options.add(generic_opts).add(input_opts).add(seeding_opts).add(dev_opts);
+
+    po::positional_options_description p;
+    p.add("guide-panman", 1).add("reads1", 1).add("reads2", 1);
+
+    po::variables_map vm;
+    try {
+        po::store(po::command_line_parser(argc, argv).options(cmdline_options).positional(p).run(), vm);
+        po::notify(vm);
+    } catch (const po::error& e) {
+        std::cerr << "Error parsing command line: " << e.what() << std::endl;
+        std::cerr << visible_options << std::endl;
+        return 1;
+    }
+
+    // Handle --help
+    if (vm.count("help")) {
+        std::cout << visible_options << std::endl;
+        return 0;
+    }
+
+    // Handle --version
+    if (vm.count("version")) {
+        std::cout << "panmap 0.0" << std::endl;
+        return 0;
+    }
+
+    // --- End Boost.Program_options Setup ---
 
     // Set up parallel processing
     tbb::global_control c(tbb::global_control::max_allowed_parallelism,
-                          std::stoi(args["--cpus"].asString()));
+                          vm["cpus"].as<int>());
 
     // Set logging verbosity level
-    bool quiet_mode = false;
-    bool verbose_mode = false;
+    bool quiet_mode = vm.count("quiet") > 0;
+    bool verbose_mode = vm.count("verbose") > 0;
+    std::string levelStr = vm["log-level"].as<std::string>(); // Default handled by boost
 
-    // Check if the quiet and verbose flags exist in the args map
-    quiet_mode = args["--quiet"] && args["--quiet"].isBool()
-                ? args["--quiet"].asBool()
-                : false;
-
-    verbose_mode = args["--verbose"] && args["--verbose"].isBool()
-                  ? args["--verbose"].asBool()
-                  : false;
-
-    // Set logging level based on flags
+    // Determine effective log level
     if (quiet_mode) {
-      logging::setLoggingLevel(logging::LogLevel::QUIET);
-      // Only critical messages will be shown
+        logging::loggingLevel = logging::LogLevel::CRITICAL; 
+        levelStr = "critical"; // Update levelStr for logging message
     } else if (verbose_mode) {
-      logging::setLoggingLevel(logging::LogLevel::VERBOSE);
-      // Initialize node tracking for detailed logging
-      logging::initNodeTracking();
+        logging::loggingLevel = logging::LogLevel::TRACE;    
+        levelStr = "trace"; // Update levelStr for logging message
     } else {
-      // Default is NORMAL level
-      logging::setLoggingLevel(logging::LogLevel::INFO);
+        // Map string from --log-level to enum
+        std::string lowerLevelStr = levelStr;
+        std::transform(lowerLevelStr.begin(), lowerLevelStr.end(), lowerLevelStr.begin(), ::tolower);
+        
+        if (lowerLevelStr == "trace") logging::loggingLevel = logging::LogLevel::TRACE;
+        else if (lowerLevelStr == "debug") logging::loggingLevel = logging::LogLevel::DEBUG;
+        else if (lowerLevelStr == "info") logging::loggingLevel = logging::LogLevel::INFO;
+        else if (lowerLevelStr == "warn") logging::loggingLevel = logging::LogLevel::WARN;
+        else if (lowerLevelStr == "error") logging::loggingLevel = logging::LogLevel::ERROR;
+        else if (lowerLevelStr == "critical") logging::loggingLevel = logging::LogLevel::CRITICAL;
+        else if (lowerLevelStr == "off") logging::loggingLevel = logging::LogLevel::OFF;
+        else { 
+            logging::loggingLevel = logging::LogLevel::WARN; // Default to WARN (quieter)
+            levelStr = "warn"; // Ensure levelStr is consistent
+            std::cerr << "Warning: Invalid log level '" << vm["log-level"].as<std::string>() << "' provided. Using default 'warn'." << std::endl;
+        }
     }
 
-    // Display startup message based on verbosity
+    // Initialize spdlog (uses the static logging::loggingLevel variable)
+    logging::initSpdlog(); 
+    
+    // Initialize node tracking only if verbose
+    if (logging::loggingLevel <= logging::LogLevel::DEBUG) { 
+        logging::initNodeTracking();
+    }
+    // Log the final effective level
+    // Use levelStr which reflects quiet/verbose overrides
+    logging::critical("Effective log level set to: {}", levelStr); 
+
     logging::critical("Starting panmap with verbosity level: {}",
                       quiet_mode ? "quiet"
                                  : (verbose_mode ? "verbose" : "normal"));
 
     // Get basic parameters
-    if (!args["<guide.panman>"] || !args["<guide.panman>"].isString()) {
-      err("Missing required pangenome file argument");
+    // Check for mandatory positional argument
+    if (!vm.count("guide-panman")) {
+      err("Missing required pangenome file argument <guide.panman>");
+      std::cerr << visible_options << std::endl; // Show help on error
       return 1;
     }
-    std::string guide = args["<guide.panman>"].asString();
-    std::string reads1 =
-        args["<reads1.fastq>"] ? args["<reads1.fastq>"].asString() : "";
-    std::string reads2 =
-        args["<reads2.fastq>"] ? args["<reads2.fastq>"].asString() : "";
-    std::string prefix =
-        args["--prefix"] ? args["--prefix"].asString() : "panmap";
-    std::string outputs = args["-o"] && args["-o"].isString()
-                              ? args["-o"].asString()
-                              : "bam,vcf,assembly";
-    std::string aligner =
-        args["--aligner"].asString() == "bwa-aln" ? "bwa-aln" : "minimap2";
-    std::string refNode = args["--ref"] ? args["--ref"].asString() : "";
-    std::string eval = args["--eval"] ? args["--eval"].asString() : "";
+    std::string guide = vm["guide-panman"].as<std::string>();
+    
+    // Optional positional arguments
+    std::string reads1 = vm.count("reads1") ? vm["reads1"].as<std::string>() : "";
+    std::string reads2 = vm.count("reads2") ? vm["reads2"].as<std::string>() : "";
+    
+    // Get other parameters from vm (using defaults where applicable)
+    std::string prefix = vm["prefix"].as<std::string>();
+    std::string outputs = vm["outputs"].as<std::string>();
+    std::string aligner = vm["aligner"].as<std::string>(); // Default handled by boost
+    std::string refNode = vm["ref"].as<std::string>();     // Default handled by boost
+    std::string eval = vm.count("eval") ? vm["eval"].as<std::string>() : ""; // Optional
 
     // Validate input file exists
     if (!fs::exists(guide)) {
@@ -530,32 +904,16 @@ int main(int argc, char *argv[]) {
     }
 
     // Get remaining parameters
-    bool reindex = args["--reindex"] && args["--reindex"].isBool()
-                       ? args["--reindex"].asBool()
-                       : false;
-    bool prior = args["--prior"] && args["--prior"].isBool()
-                     ? args["--prior"].asBool()
-                     : false;
+    bool reindex = vm.count("reindex") > 0;
+    bool prior = vm.count("prior") > 0;
+    bool genotype_from_sam = vm.count("genotype-from-sam") > 0;
+    bool save_jaccard = vm.count("save-jaccard") > 0;
+    bool show_time = vm.count("time") > 0;
+    bool dump_random_node = vm.count("dump-random-node") > 0;
 
-    bool genotype_from_sam =
-        args["--genotype-from-sam"] && args["--genotype-from-sam"].isBool()
-            ? args["--genotype-from-sam"].asBool()
-            : false;
-    bool save_jaccard = args["--save-jaccard"] && args["--save-jaccard"].isBool()
-                            ? args["--save-jaccard"].asBool()
-                            : false;
-    bool show_time = args["--time"] && args["--time"].isBool()
-                         ? args["--time"].asBool()
-                         : false;
-    bool dump_random_node =
-        args["--dump-random-node"] && args["--dump-random-node"].isBool()
-            ? args["--dump-random-node"].asBool()
-            : false;
-
-    // Use DEFAULT_K and DEFAULT_S if not specified in command line args
-    int k = args["-k"] ? std::stoi(args["-k"].asString()) : DEFAULT_K;
-    int s = args["-s"] ? std::stoi(args["-s"].asString()) : DEFAULT_S;
-    std::string index_path = args["--index"] ? args["--index"].asString() : "";
+    int k = vm["k"].as<int>(); // Default handled by boost
+    int s = vm["s"].as<int>(); // Default handled by boost
+    std::string index_path = vm["index"].as<std::string>(); // Default handled by boost
 
     std::random_device rd;
     std::mt19937 rng(rd());
@@ -565,7 +923,6 @@ int main(int argc, char *argv[]) {
 
     std::unique_ptr<panmanUtils::TreeGroup> TG;
 
-    logging::setLoggingLevel(logging::LogLevel::VERBOSE);
     try {
       TG = std::unique_ptr<panmanUtils::TreeGroup>(loadPanMAN(guide));
 
@@ -628,8 +985,8 @@ int main(int argc, char *argv[]) {
     }
 
     // Handle --dump-sequence parameter if provided
-    if (args["--dump-sequence"] && args["--dump-sequence"].isString()) {
-      std::string nodeID = args["--dump-sequence"].asString();
+    if (vm.count("dump-sequence")) {
+      std::string nodeID = vm["dump-sequence"].as<std::string>();
       if (T.allNodes.find(nodeID) == T.allNodes.end()) {
         err("Node ID {} not found in the tree", nodeID);
         return 1;
@@ -657,44 +1014,105 @@ int main(int argc, char *argv[]) {
         (reads1.empty() ? "<none>"
                         : reads1 + (reads2.empty() ? "" : " + " + reads2)));
     msg("Reference PanMAN: {} ({} nodes)", guide, T.allNodes.size());
-    msg("Using {} threads", args["--cpus"].asString());
+    msg("Using {} threads", vm["cpus"].as<int>());
     msg("k={}, s={}", k, s);
 
     // Handle indexing
     bool build = true;
     ::capnp::MallocMessageBuilder outMessage;
-    std::unique_ptr<::capnp::PackedFdMessageReader> inMessage;
-    std::string default_index_path = guide + ".pmi";
+    std::unique_ptr<::capnp::MessageReader> inMessage;
+    
+    // Ensure paths are consistent by normalizing to absolute paths
+    boost::filesystem::path guidePath = boost::filesystem::absolute(guide);
+    std::string default_index_path = guidePath.string() + ".pmi";
+    
+    // If an explicit index path was provided, also normalize it
+    std::string normalized_index_path = "";
+    if (!index_path.empty()) {
+      boost::filesystem::path explicitIndexPath = boost::filesystem::absolute(index_path);
+      normalized_index_path = explicitIndexPath.string();
+    }
+    
+    // Use the normalized paths for all operations
+    std::string effective_index_path = normalized_index_path.empty() ? default_index_path : normalized_index_path;
+    
+    logging::debug("DEBUG-INDEX: Default index path: {}", default_index_path);
+    logging::debug("DEBUG-INDEX: Explicit index path: {}", normalized_index_path);
+    logging::debug("DEBUG-INDEX: Effective index path: {}", effective_index_path);
+    logging::debug("DEBUG-INDEX: Reindex flag: {}", reindex ? "true" : "false");
 
-    if (!index_path.empty() && !reindex) {
-      msg("Using provided index: {}", index_path);
-    } else if (!reindex && fs::exists(default_index_path)) {
-      msg("Loading existing index from: {}", default_index_path);
-      inMessage = readCapnp(default_index_path);
-      build = false;
-    } else {
+    // CRITICAL FIX: Add checkpoint to check for and remove corrupted index
+    if (fs::exists(effective_index_path) && !reindex) {
+      msg("Checking if existing index {} is valid...", effective_index_path);
+      // Try to read the index file to validate it
+      try {
+        logging::debug("DEBUG-INDEX: Attempting to load existing index from effective path");
+        inMessage = readCapnp(effective_index_path);
+        
+        // If we get here, the index loaded successfully
+        build = false;
+        msg("Successfully loaded existing index from: {}", effective_index_path);
+        logging::debug("DEBUG-INDEX: Successfully loaded index from effective path");
+      } catch (const std::exception &e) {
+        err("Existing index appears to be corrupted: {}", e.what());
+        logging::debug("DEBUG-INDEX: Failed to load existing index: {}", e.what());
+        msg("Will rebuild the index. Use -f/--reindex to skip this check.");
+        logging::debug("DEBUG-INDEX: Removing corrupted index file: {}", effective_index_path);
+        fs::remove(effective_index_path);
+        build = true;
+      }
+    } 
+    else {
       msg(reindex ? "Will re-build index (-f)"
                   : "No index found, will build new index");
+      logging::debug("DEBUG-INDEX: Will build new index. Reason: {}", 
+                  reindex ? "Reindex flag set" : "No existing index found");
     }
 
     // Build index if needed
     if (build) {
-
+      logging::debug("DEBUG-INDEX: Starting index build process");
       try {
         Index::Builder index = outMessage.initRoot<Index>();
+        logging::debug("DEBUG-INDEX: Initialized root for new index");
+        
         if (k <= 0 || s <= 0 || s >= k) {
+          logging::err("DEBUG-INDEX: Invalid k-mer or s-mer parameters: k={}, s={}", k, s);
           throw std::runtime_error("Invalid k-mer or s-mer parameters");
         }
-
-        auto start = std::chrono::high_resolution_clock::now();
-        indexing::index(&T, index, k, s, outMessage, default_index_path);
+        
+        logging::debug("DEBUG-INDEX: Building index with k={}, s={}", k, s);
+        auto start_indexing = std::chrono::high_resolution_clock::now(); // Renamed variable
+        // This function now only builds the index in outMessage, it does not write it.
+        indexing::index(&T, index, k, s, outMessage, effective_index_path); 
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now() - start);
+            std::chrono::high_resolution_clock::now() - start_indexing); // Use renamed variable
+        
+        logging::debug("DEBUG-INDEX: Index built in memory in {}ms", duration.count());
 
-        writeCapnp(outMessage, default_index_path);
-        msg("Index written to: {}", default_index_path);
+        // The index function now writes the index file directly when given a path
+        // No need to call writeCapnp here anymore
+        msg("Index written to: {}", effective_index_path);
+        
+        // Try to immediately read back the index to confirm it's valid
+        logging::debug("DEBUG-INDEX: Verifying newly written index");
+        try {
+          // Add a small delay to ensure file system operations complete
+          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+          inMessage = readCapnp(effective_index_path);
+          if (inMessage) {
+            auto root = inMessage->getRoot<Index>();
+            bool indexValid = (root.getK() == k && root.getS() == s);
+            logging::debug("DEBUG-INDEX: Verification result: index is {}valid", indexValid ? "" : "in");
+          }
+        } catch (const std::exception &e) {
+          err("WARNING: Failed to verify newly written index: {}", e.what());
+          logging::debug("DEBUG-INDEX: Verification failed: {}", e.what());
+        }
+       
       } catch (const std::exception &e) {
-        err("ERROR during indexing: {}", e.what());
+        err("ERROR during indexing or writing: {}", e.what());
+        logging::debug("DEBUG-INDEX: Exception during index build/write: {}", e.what());
         return 1;
       }
     }
@@ -702,7 +1120,9 @@ int main(int argc, char *argv[]) {
     // Load mutation matrices
     msg("=== Loading Mutation Matrices ===");
     genotyping::mutationMatrices mutMat;
-    std::string mutmat_path = args["--mutmat"] ? args["--mutmat"].asString() : "";
+    // Assuming --mutmat isn't needed with boost (wasn't in original docopt?)
+    // If needed, add: ("mutmat", po::value<std::string>(), "Path to mutation matrix") to input_opts
+    std::string mutmat_path = ""; // Replace with vm access if --mutmat option is added
     std::string default_mutmat_path = guide + ".mm";
 
     if (!mutmat_path.empty()) {
@@ -731,63 +1151,189 @@ int main(int argc, char *argv[]) {
     try {
       // Ensure index is loaded
       msg("Reading index...");
-      if (!inMessage) {
-        inMessage = readCapnp(default_index_path);
-      }
-      Index::Reader index_input = inMessage->getRoot<Index>();
+      logging::debug("DEBUG-PLACE: inMessage is {}", inMessage ? "valid" : "nullptr");
       
-      if (genotype_from_sam) {
-        msg("Genotyping from SAM file");
-        if (samFileName.empty() || refFileName.empty()) {
-          throw std::runtime_error(
-              "SAM file and reference file are required for genotyping from SAM");
-        }
-        genotyping::genotype(prefix, refFileName, "", bamFileName,
-                             mpileupFileName, vcfFileName, mutMat);
-      } else {
-        if (!refNode.empty()) {
-          msg("Using reference node: {}", refNode);
-          if (T.allNodes.find(refNode) == T.allNodes.end()) {
-            throw std::runtime_error("Reference node not found in pangenome");
+      if (!inMessage) {
+        try {
+          logging::warn("Index was not successfully loaded, attempting to use existing index...");
+          logging::debug("DEBUG-PLACE: Looking for index at {}", effective_index_path);
+          // Only try to load from the default index path
+          if (fs::exists(effective_index_path)) {
+            logging::info("Trying to load index from: {}", effective_index_path);
+            logging::debug("DEBUG-PLACE: Default index exists with size: {} bytes", fs::file_size(effective_index_path));
+            
+            // Check file permissions
+            bool isReadable = access(effective_index_path.c_str(), R_OK) == 0;
+            uintmax_t fileSize = fs::file_size(effective_index_path);
+            if (!isReadable) {
+              logging::err("DEBUG-PLACE: Index file exists but cannot be read (permission denied): {}", effective_index_path);
+              throw std::runtime_error("Index file permission denied: " + effective_index_path);
+            }
+            
+            if (fileSize == 0) {
+              logging::err("DEBUG-PLACE: Index file exists but is empty: {}", effective_index_path);
+              throw std::runtime_error("Empty index file: " + effective_index_path);
+            }
+            
+            // Print detailed file info
+            logging::debug("DEBUG-PLACE: Index file size: {} bytes", fileSize);
+            
+            // Try to load the index with detailed error reporting
+            try {
+              logging::debug("DEBUG-PLACE: Calling readCapnp on default index path");
+              inMessage = readCapnp(effective_index_path);
+              logging::debug("DEBUG-PLACE: Successfully loaded index from default path");
+              logging::info("Successfully loaded index from: {}", effective_index_path);
+            } catch (const std::exception& e) {
+              logging::err("DEBUG-PLACE: Error loading index: {}", e.what());
+              throw;
+            }
           }
-        }
-
-        // Check if batch mode is enabled
-        std::string batchFilePath =
-            args["--batch"] ? args["--batch"].asString() : "";
-        if (!batchFilePath.empty()) {
-          msg("Running in batch mode with file: {}", batchFilePath);
-
-          // Validate batch file exists
-          if (!fs::exists(batchFilePath)) {
-            throw std::runtime_error("Batch file not found: " + batchFilePath);
+          // If index still not loaded and reindex isn't set, error out
+          else if (!vm.count("reindex")) {
+            logging::debug("DEBUG-PLACE: Default index path doesn't exist and reindex not set");
+            throw std::runtime_error("Failed to load index from " + effective_index_path + 
+                                   " and reindex option not specified");
+          } else {
+            logging::debug("DEBUG-PLACE: Default index doesn't exist but reindex flag set - will rebuild");
           }
-
-          // Process batch file - keep inMessage alive during the whole process
-          placement::placeBatch(&T, index_input, batchFilePath, prefix,
-                                refFileName, samFileName, bamFileName,
-                                mpileupFileName, vcfFileName, aligner, refNode,
-                                save_jaccard, show_time, 0.01f, 16);
-
-          msg("Batch processing completed");
+        } catch (const std::exception& e) {
+          err("ERROR loading index: {}. Run with -f/--reindex to rebuild the index or specify a working index with -i.", e.what());
+          logging::debug("DEBUG-PLACE: Index loading failed: {}", e.what());
+          return 1;
+        }
+      }
+      
+      // CRITICAL FIX: We must ensure inMessage is valid throughout the index_input usage
+      // Get a reference to the inMessage as it's needed for index_input to stay valid
+      if (!inMessage) {
+        logging::err("DEBUG-PLACE: inMessage is still null after loading attempts");
+        throw std::runtime_error("Critical error: Index message is null after loading");
+      }
+      
+      logging::debug("DEBUG-PLACE: inMessage is valid, proceeding to extract root");
+      
+      // Scope to ensure inMessage stays alive as long as index_input is used
+      {
+        // Extract the root from the message - this reader depends on inMessage staying alive!
+        Index::Reader index_input = inMessage->getRoot<Index>();
+        logging::debug("DEBUG-PLACE: Successfully extracted root from inMessage");
+        
+        // Let's check for critical fields
+        uint32_t k = index_input.getK();
+        size_t nodeCount = index_input.getPerNodeSeedMutations().size();
+        logging::debug("DEBUG-PLACE: Index contains k={}, nodes={}", k, nodeCount);
+        
+        if (genotype_from_sam) {
+          msg("Genotyping from SAM file");
+          // Get required args for this mode
+          if (!vm.count("sam-file") || !vm.count("ref-file")) {
+              throw std::runtime_error(
+                "--sam-file and --ref-file are required for --genotype-from-sam");
+          }
+          samFileName = vm["sam-file"].as<std::string>();
+          refFileName = vm["ref-file"].as<std::string>();
+          // Note: bamFileName, mpileupFileName, vcfFileName might need prefix logic here
+          // depending on whether --prefix applies to this mode.
+          // Assuming the existing output logic handles prefixing correctly.
+          genotyping::genotype(prefix, refFileName, "", bamFileName,
+                              mpileupFileName, vcfFileName, mutMat);
         } else {
-          // Process single sample mode
+          if (!refNode.empty()) {
+            msg("Using reference node: {}", refNode);
+            if (T.allNodes.find(refNode) == T.allNodes.end()) {
+              throw std::runtime_error("Reference node not found in pangenome");
+            }
+          }
+          std::string debug_specific_node_id = "";
+          try {
+            debug_specific_node_id = vm["debug-node-id"].as<std::string>();
+          } catch (const std::exception &e) {
+            debug_specific_node_id = "";
+          }
+
+          // Handle batch file if provided
+          if (vm.count("batch")) {
+            std::string batchFilePath = vm["batch"].as<std::string>();
+            try {
+              msg("=== Starting Batch Placement ===");
+              // Process batch file - keep inMessage alive during the whole process
+              placement::placeBatch(&T, index_input, batchFilePath, prefix,
+                                    refFileName, samFileName, bamFileName,
+                                    mpileupFileName, vcfFileName, aligner, refNode,
+                                    vm.count("save-jaccard") > 0, vm.count("time") > 0,
+                                    vm["candidate-threshold"].as<float>(), 
+                                    vm["max-candidates"].as<int>(),      
+                                    effective_index_path, 
+                                    debug_specific_node_id);
+              msg("Batch placement completed.");
+            } catch (const std::exception &e) {
+              err("ERROR during batch processing: {}", e.what());
+            }
+            return 0;
+          }
+
           // Initialize placement variables
           placement::PlacementResult result;
 
           std::string placementFileName = prefix + ".placement.tsv";
           // Perform placement - keep inMessage alive during the whole process
           placement::place(result, &T, index_input, reads1, reads2,
-                           placementFileName);
+                         placementFileName, effective_index_path, debug_specific_node_id);
 
-          // Get placement results from result struct
-          panmanUtils::Node *maxHitsNode = result.maxHitsNode;
-          int64_t maxHitsInAnyGenome = result.maxHitsInAnyGenome;
+          // ---> Add call to dump placement summary <--- 
+          std::string placementSummaryFileName = prefix + ".placement.summary.md";
+          placement::dumpPlacementSummary(result, placementSummaryFileName);
+          // ---> End summary dump call <--- 
 
-          msg("Placed sample at {} ({} seed matches)",
-              maxHitsNode ? maxHitsNode->identifier : "none", maxHitsInAnyGenome);
+          // Get placement results for raw seed matches
+          panmanUtils::Node *bestRawMatchNode = result.bestRawSeedMatchNode;
+          int64_t bestRawMatchScore = result.bestRawSeedMatchScore;
+
+          msg("Best raw seed match: node {} with score {} (sum of read frequencies for matched seeds)",
+              bestRawMatchNode ? bestRawMatchNode->identifier : "none", bestRawMatchScore);
+
+          // Log all other best scores to console
+          msg("Best Jaccard (Presence/Absence): node {} with score {:.4f}",
+              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", result.bestJaccardPresenceScore);
+          msg("Best Weighted Jaccard: node {} with score {:.4f}",
+              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore); // bestJaccardScore is Weighted Jaccard
+          msg("Best Cosine Similarity: node {} with score {:.4f}",
+              result.bestCosineNode ? result.bestCosineNode->identifier : "none", result.bestCosineScore);
+          msg("Overall Best Weighted Score (Jaccard*scale + Cosine*(1-scale)): node {} with score {:.4f}",
+              result.bestWeightedNode ? result.bestWeightedNode->identifier : "none", result.bestWeightedScore);
         }
-      }
+        
+        // Validate the loaded index
+        try {
+          if (!inMessage) {
+            throw std::runtime_error("Index could not be loaded");
+          }
+          
+          // Try to access the index root to verify it's valid
+          auto indexRoot = inMessage->getRoot<Index>();
+          uint32_t k = indexRoot.getK();
+          size_t nodeCount = indexRoot.getPerNodeSeedMutations().size();
+          
+          if (k == 0 || nodeCount == 0) {
+            throw std::runtime_error("Invalid index: k=" + std::to_string(k) + 
+                ", nodes=" + std::to_string(nodeCount) + 
+                ". Index appears to be corrupted or incomplete.");
+          }
+          
+          logging::info("Successfully validated index with {} nodes, k={}, s={}",
+                      nodeCount, k, indexRoot.getS());
+        } catch (const std::exception& e) {
+          err("ERROR validating index: {}", e.what());
+          if (vm.count("reindex")) {
+            msg("Attempting to rebuild index due to --reindex flag being set...");
+          } else {
+            err("Index validation failed. Run with -f/--reindex to rebuild the index.");
+            return 1;
+          }
+        }
+      } // End of scope - index_input is no longer used after this point
+      
     } catch (const std::exception &e) {
       err("ERROR during placement: {}", e.what());
       return 1;
@@ -806,10 +1352,86 @@ int main(int argc, char *argv[]) {
       timing::Timer::report();
     }
 
-    // Final cleanup 
     
     // Flush any remaining log entries for node_1 and node_2
     logging::flushNodeTracking();
+    
+    // Add test for nucleotide mutations in node_2 for blocks 617 and 941
+    if (vm.count("test-nucleotide-mutations")) {
+        msg("=== Running targeted test for nucleotide mutations in node_2 ===");
+        
+        // Create output file for debug logs
+        std::ofstream debugLog("problem_blocks.log");
+        if (debugLog) {
+            debugLog << "=== Debugging problem blocks for node_2 ===" << std::endl;
+            
+            // Initialize state manager
+            state::StateManager stateManager;
+            
+            // Load state for node_2
+            if (T.allNodes.find("node_2") != T.allNodes.end()) {
+                auto& node2 = T.allNodes["node_2"];
+                
+                // Setup node_2 in state manager using initializeNodeHierarchy
+                stateManager.initialize(&T, 0);  // Initialize with the tree
+                stateManager.initializeNodeHierarchy(&T, T.root); // Initialize hierarchy with root node
+                
+                // Debug block 617 with char mismatch at position 13
+                debugLog << "\n[BLOCK 617]" << std::endl;
+                try {
+                    // Get current character
+                    char c = stateManager.getCharAtPosition("node_2", 617, 13, -1);
+                    debugLog << "Character at pos 13: '" << c << "'" << std::endl;
+                    
+                    // Try to set the character to 'C' and verify it's saved correctly
+                    debugLog << "Setting character to 'C'" << std::endl;
+                    stateManager.setCharAtPosition("node_2", 617, 13, -1, 'C');
+                    
+                    // Check that it was saved
+                    c = stateManager.getCharAtPosition("node_2", 617, 13, -1);
+                    debugLog << "After setting, character at pos 13: '" << c << "'" << std::endl;
+                    
+                    // Try to check the full sequence
+                    coordinates::CoordRange blockRange = stateManager.getBlockRange(617);
+                    auto [sequence, positions] = stateManager.extractSequence("node_2", blockRange, false);
+                    debugLog << "Block 617 extracted sequence: " << sequence << std::endl;
+                    
+                } catch (const std::exception& e) {
+                    debugLog << "Error with block 617: " << e.what() << std::endl;
+                }
+                
+                // Debug block 941 length mismatch
+                debugLog << "\n[BLOCK 941]" << std::endl;
+                try {
+                    // Get full sequence of block 941
+                    coordinates::CoordRange blockRange = stateManager.getBlockRange(941);
+                    debugLog << "Block 941 range: [" << blockRange.start << ", " << blockRange.end << ")" << std::endl;
+                    
+                    auto [sequence, positions] = stateManager.extractSequence("node_2", blockRange, false);
+                    debugLog << "Extracted sequence length: " << sequence.length() << std::endl;
+                    debugLog << "Full sequence: " << sequence << std::endl;
+                    
+                    // Compare the end of the sequence
+                    if (sequence.length() > 185) {
+                        debugLog << "End of sequence (last 10 chars): " << sequence.substr(sequence.length() - 10) << std::endl;
+                    }
+                } catch (const std::exception& e) {
+                    debugLog << "Error with block 941: " << e.what() << std::endl;
+                }
+                
+                msg("Debug info written to problem_blocks.log");
+            } else {
+                debugLog << "Error: node_2 not found in the tree" << std::endl;
+                err("Error: node_2 not found in the tree");
+            }
+            
+            debugLog.close();
+        } else {
+            err("Could not open debug log file");
+        }
+        
+        return 0;
+    }
     
     return 0;
 }

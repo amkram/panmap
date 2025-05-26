@@ -1,55 +1,80 @@
 #pragma once
 
-// Try to include spdlog if available
-#ifdef __has_include
-  #if __has_include(<spdlog/spdlog.h>)
-    #include <spdlog/spdlog.h>
-    #include <spdlog/fmt/bundled/format.h>
-    #define SPDLOG_AVAILABLE 1
-  #else
-    #define SPDLOG_AVAILABLE 0
-  #endif
-#else
-  // Older compilers without __has_include
-  #define SPDLOG_AVAILABLE 0
-#endif
+// Force-enable spdlog since we've added it as a dependency
+#include <spdlog/spdlog.h>
+#include <spdlog/fmt/fmt.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#define SPDLOG_AVAILABLE 1
 
 #include <chrono>
 #include <iostream>
 #include <string>
-// utility header removed - not directly used
-#include <sstream>
 #include <fstream>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
+#include <sstream>
 
 namespace logging {
 
 // Logging verbosity levels
 enum class LogLevel {
   TRACE,
-  DEBUG,     // Debug level explicitly called out
+  DEBUG,
   INFO,
   WARN,
   ERROR,
   CRITICAL,
   OFF,
-  QUIET,     // Show only critical messages
-  NORMAL,    // Default level, show important logs but not per-node details
-  VERBOSE    // Show all logs, including detailed per-node processing
+  QUIET,     // Restored
+  NORMAL,    // Restored
+  VERBOSE    // Restored
 };
 
 // Global verbosity level
-static LogLevel loggingLevel = LogLevel::NORMAL;
+static LogLevel loggingLevel = LogLevel::INFO;
+static bool spdlogInitialized = false;
 
 // Node tracking file for node_1 and node_2
 static std::ofstream nodeTrackingFile;
 static std::mutex nodeTrackingMutex;
 static bool nodeTrackingInitialized = false;
 
-// Buffers for consolidating related log entries - removed in favor of immediate logging
-// static std::unordered_map<std::string, std::string> consolidatedLogs;
+// --- Update helper to map LogLevel to spdlog::level::level_enum ---
+inline spdlog::level::level_enum toSpdlogLevel(LogLevel customLevel) {
+    switch (customLevel) {
+        case LogLevel::TRACE:   return spdlog::level::trace;
+        case LogLevel::DEBUG:   return spdlog::level::debug;
+        case LogLevel::INFO:    return spdlog::level::info;
+        case LogLevel::WARN:    return spdlog::level::warn;
+        case LogLevel::ERROR:   return spdlog::level::err;
+        case LogLevel::CRITICAL:return spdlog::level::critical;
+        case LogLevel::OFF:     return spdlog::level::off;
+        // Handle QUIET, NORMAL, VERBOSE 
+        case LogLevel::QUIET:   return spdlog::level::critical; // Map QUIET to critical
+        case LogLevel::NORMAL:  return spdlog::level::info;     // Map NORMAL to info
+        case LogLevel::VERBOSE: return spdlog::level::trace;    // Map VERBOSE to trace
+        default:                return spdlog::level::info; // Default safety
+    }
+}
+// --- End helper --- 
+
+// Initialize spdlog
+inline void initSpdlog() {
+    if (!spdlogInitialized) {
+        // Set pattern with timestamps, level, and message
+        spdlog::set_pattern("%Y-%m-%d %H:%M:%S.%e [%^%l%$] %v");
+        
+        // Create default logger if none exists
+        if (!spdlog::default_logger()) {
+            auto logger = spdlog::stdout_color_mt("console");
+            spdlog::set_default_logger(logger);
+        }
+        
+        // ---> Set spdlog's level based on our variable <--- 
+        spdlog::set_level(toSpdlogLevel(loggingLevel));
+        spdlogInitialized = true;
+    }
+}
 
 // Initialize node tracking log file
 inline void initNodeTracking() {
@@ -66,10 +91,6 @@ inline void initNodeTracking() {
         }
     }
 }
-
-// Forward declaration of flushNodeTracking
-inline void flushNodeTracking();
-
 
 // Flush all logs
 inline void flushNodeTracking() {
@@ -150,44 +171,29 @@ inline void dumpNodeSequenceAndMappings(const std::string& nodeId, const std::st
     }
 }
 
-// Function to set logging verbosity
-inline void setLoggingLevel(LogLevel level) {
-  loggingLevel = level;
-}
-
 // Get current logging level
 inline LogLevel getLoggingLevel() {
   return loggingLevel;
 }
 
-// Helper to check if a certain type of message should be logged
-inline bool shouldLog(LogLevel messageLevel) {
-  return static_cast<int>(messageLevel) >= static_cast<int>(loggingLevel);
-}
-
 // Simple timer with concise output
 class Timer {
 public:
-  explicit Timer(const std::string &name, LogLevel level = LogLevel::NORMAL)
+  // Update default level to INFO
+  explicit Timer(const std::string &name, LogLevel level = LogLevel::INFO) 
       : name_(name), level_(level), start_(std::chrono::high_resolution_clock::now()) {}
 
   ~Timer() {
-    if (!shouldLog(level_)) return;
-    
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         end - start_);
-    
-    #if SPDLOG_AVAILABLE
-    spdlog::info("{}: {} ms", name_, duration.count());
-    #else
-    std::cout << name_ << ": " << duration.count() << " ms" << std::endl;
-    #endif
+    // Use spdlog::info directly, level check is handled by spdlog
+    spdlog::info(FMT_STRING("{}: {} ms"), name_, duration.count());
   }
 
 private:
   std::string name_;
-  LogLevel level_;
+  LogLevel level_; // Keep level if needed for other logic, but not for spdlog filtering
   std::chrono::time_point<std::chrono::high_resolution_clock> start_;
 };
 
@@ -195,263 +201,74 @@ private:
 #define TIME_OPERATION(name) \
   logging::Timer _timer_##__LINE__ { name }
 
-// Logging helper functions that wrap spdlog or fall back to cout
-
-// Regular info message (NORMAL level by default)
-template <typename FormatString, typename... Args>
-inline void msg(const FormatString& fmt, Args&&... args) {
-  if (!shouldLog(LogLevel::NORMAL)) return;
-  
-  #if SPDLOG_AVAILABLE
-  spdlog::info(fmt::runtime(fmt), std::forward<Args>(args)...);
-  #else
-  // Simple fallback implementation
-  std::cout << "INFO: ";
-  std::cout << fmt;
-  ((std::cout << " " << args), ...);
-  std::cout << std::endl;
-  std::cout.flush();
-  #endif
-}
-
-// Verbose logging for detailed operations (VERBOSE level)
-template <typename FormatString, typename... Args>
-inline void verbose(const FormatString& fmt, Args&&... args) {
-  if (!shouldLog(LogLevel::VERBOSE)) return;
-  
-  #if SPDLOG_AVAILABLE
-  spdlog::info(fmt::runtime(fmt), std::forward<Args>(args)...);
-  #else
-  // Simple fallback implementation
-  std::cout << "VERBOSE: " << fmt << std::endl;
-  std::cout.flush();
-  #endif
-}
-
-// Critical info message (always shown)
-template <typename FormatString, typename... Args>
-inline void critical(const FormatString& fmt, Args&&... args) {
-  // Critical messages show in all modes
-  #if SPDLOG_AVAILABLE
-  spdlog::info(fmt::runtime(fmt), std::forward<Args>(args)...);
-  #else
-  // Simple fallback implementation
-  std::cout << "CRITICAL: ";
-  std::cout << fmt;
-  ((std::cout << " " << args), ...);
-  std::cout << std::endl;
-  std::cout.flush();
-  #endif
-}
-
-// Warning message (shown in NORMAL and VERBOSE)
-template <typename FormatString, typename... Args>
-inline void warn(const FormatString& fmt, Args&&... args) {
-  if (!shouldLog(LogLevel::NORMAL)) return;
-  
-  #if SPDLOG_AVAILABLE
-  spdlog::warn(fmt::runtime(fmt), std::forward<Args>(args)...);
-  #else
-  // Simple fallback implementation
-  std::cerr << "WARN: " << fmt << std::endl;
-  #endif
-}
-
-// Error message (always shown)
-template <typename FormatString, typename... Args>
-inline void err(const FormatString& fmt, Args&&... args) {
-  // Error messages show in all modes
-  #if SPDLOG_AVAILABLE
-  spdlog::error(fmt::runtime(fmt), std::forward<Args>(args)...);
-  #else
-  // Simple fallback implementation
-  std::cerr << "ERROR: ";
-  std::cerr << fmt;
-  ((std::cerr << " " << args), ...);
-  std::cerr << std::endl;
-  std::cerr.flush();
-  #endif
-}
-
-// Debug function (VERBOSE level only)
-template <typename FormatString, typename... Args>
-inline void debug(const FormatString& fmt, Args&&... args) {
-  if (!shouldLog(LogLevel::VERBOSE)) return;
-  
-  #if SPDLOG_AVAILABLE
-  spdlog::debug(fmt::runtime(fmt), std::forward<Args>(args)...);
-  #else
-  // Simple fallback implementation
-  // std::cout << "DEBUG: " << fmt << std::endl;
-  #endif
-}
-
-// Forward declarations for all logging functions
+// Debug log messages
 template <typename... Args>
-void trace(const std::string& fmt, Args&&... args);
+inline void debug(fmt::format_string<Args...> fmt, Args&&... args) {
+  spdlog::debug(fmt, std::forward<Args>(args)...);
+}
 
+inline void debug(const std::string& msg) {
+  spdlog::debug(msg);
+}
+
+// Info log messages
 template <typename... Args>
-void info(const std::string& fmt, Args&&... args);
+inline void info(fmt::format_string<Args...> fmt, Args&&... args) {
+  spdlog::info(fmt, std::forward<Args>(args)...);
+}
 
-// Implementation for all logging functions
+inline void info(const std::string& msg) {
+  spdlog::info(msg);
+}
+
+// Warning log messages
 template <typename... Args>
-void trace(const std::string& fmt, Args&&... args) {
-    // Implementation will use spdlog in the cpp file
+inline void warn(fmt::format_string<Args...> fmt, Args&&... args) {
+  spdlog::warn(fmt, std::forward<Args>(args)...);
 }
 
+inline void warn(const std::string& msg) {
+  spdlog::warn(msg);
+}
+
+// Error log messages
 template <typename... Args>
-void info(const std::string& fmt, Args&&... args) {
-    // Implementation will use spdlog in the cpp file
+inline void err(fmt::format_string<Args...> fmt, Args&&... args) {
+  spdlog::error(fmt, std::forward<Args>(args)...);
 }
 
-// Simple logging functions that don't depend on fmt
-inline void debug(const std::string& message) {
-    std::cout << "[DEBUG] " << message << std::endl;
-    std::cout.flush();
+inline void err(const std::string& msg) {
+  spdlog::error(msg);
 }
 
-inline void info(const std::string& message) {
-    std::cout << "[INFO] " << message << std::endl;
-    std::cout.flush();
+// Critical log messages
+template <typename... Args>
+inline void critical(fmt::format_string<Args...> fmt, Args&&... args) {
+  spdlog::critical(fmt, std::forward<Args>(args)...);
 }
 
-inline void warn(const std::string& message) {
-    std::cout << "[WARN] " << message << std::endl;
-    std::cout.flush();
+inline void critical(const std::string& msg) {
+  spdlog::critical(msg);
 }
 
-inline void err(const std::string& message) {
-    std::cerr << "[ERROR] " << message << std::endl;
-    std::cerr.flush();
+// Regular messages (normal level)
+template <typename... Args>
+inline void msg(fmt::format_string<Args...> fmt, Args&&... args) {
+  spdlog::info(fmt, std::forward<Args>(args)...);
+}
+
+inline void msg(const std::string& message) {
+  spdlog::info(message);
+}
+
+// Verbose messages
+template <typename... Args>
+inline void verbose(fmt::format_string<Args...> fmt, Args&&... args) {
+  spdlog::trace(fmt, std::forward<Args>(args)...);
 }
 
 inline void verbose(const std::string& message) {
-    std::cout << "[VERBOSE] " << message << std::endl;
-    std::cout.flush();
-}
-
-// Template versions for formatting with one argument
-template <typename T>
-void debug(const std::string& fmt, const T& arg) {
-    std::ostringstream oss;
-    size_t pos = fmt.find("{}");
-    if (pos != std::string::npos) {
-        oss << fmt.substr(0, pos) << arg << fmt.substr(pos + 2);
-    } else {
-        oss << fmt;
-    }
-    debug(oss.str());
-}
-
-template <typename T>
-void info(const std::string& fmt, const T& arg) {
-    std::ostringstream oss;
-    size_t pos = fmt.find("{}");
-    if (pos != std::string::npos) {
-        oss << fmt.substr(0, pos) << arg << fmt.substr(pos + 2);
-    } else {
-        oss << fmt;
-    }
-    info(oss.str());
-}
-
-template <typename T>
-void warn(const std::string& fmt, const T& arg) {
-    std::ostringstream oss;
-    size_t pos = fmt.find("{}");
-    if (pos != std::string::npos) {
-        oss << fmt.substr(0, pos) << arg << fmt.substr(pos + 2);
-    } else {
-        oss << fmt;
-    }
-    warn(oss.str());
-}
-
-template <typename T>
-void err(const std::string& fmt, const T& arg) {
-    std::ostringstream oss;
-    size_t pos = fmt.find("{}");
-    if (pos != std::string::npos) {
-        oss << fmt.substr(0, pos) << arg << fmt.substr(pos + 2);
-    } else {
-        oss << fmt;
-    }
-    err(oss.str());
-}
-
-template <typename T>
-void verbose(const std::string& fmt, const T& arg) {
-    std::ostringstream oss;
-    size_t pos = fmt.find("{}");
-    if (pos != std::string::npos) {
-        oss << fmt.substr(0, pos) << arg << fmt.substr(pos + 2);
-    } else {
-        oss << fmt;
-    }
-    verbose(oss.str());
-}
-
-// Template version for two arguments
-template <typename T1, typename T2>
-void debug(const std::string& fmt, const T1& arg1, const T2& arg2) {
-    std::ostringstream oss;
-    size_t pos1 = fmt.find("{}");
-    if (pos1 != std::string::npos) {
-        size_t pos2 = fmt.find("{}", pos1 + 2);
-        if (pos2 != std::string::npos) {
-            oss << fmt.substr(0, pos1) << arg1 << fmt.substr(pos1 + 2, pos2 - pos1 - 2) << arg2 << fmt.substr(pos2 + 2);
-        } else {
-            oss << fmt.substr(0, pos1) << arg1 << fmt.substr(pos1 + 2);
-        }
-    } else {
-        oss << fmt;
-    }
-    debug(oss.str());
-}
-
-template <typename T1, typename T2>
-void info(const std::string& fmt, const T1& arg1, const T2& arg2) {
-    std::ostringstream oss;
-    size_t pos1 = fmt.find("{}");
-    if (pos1 != std::string::npos) {
-        size_t pos2 = fmt.find("{}", pos1 + 2);
-        if (pos2 != std::string::npos) {
-            oss << fmt.substr(0, pos1) << arg1 << fmt.substr(pos1 + 2, pos2 - pos1 - 2) << arg2 << fmt.substr(pos2 + 2);
-        } else {
-            oss << fmt.substr(0, pos1) << arg1 << fmt.substr(pos1 + 2);
-        }
-    } else {
-        oss << fmt;
-    }
-    info(oss.str());
-}
-
-// Template version for three arguments
-template <typename T1, typename T2, typename T3>
-void info(const std::string& fmt, const T1& arg1, const T2& arg2, const T3& arg3) {
-    std::ostringstream oss;
-    size_t pos1 = fmt.find("{}");
-    if (pos1 != std::string::npos) {
-        size_t pos2 = fmt.find("{}", pos1 + 2);
-        if (pos2 != std::string::npos) {
-            size_t pos3 = fmt.find("{}", pos2 + 2);
-            if (pos3 != std::string::npos) {
-                oss << fmt.substr(0, pos1) << arg1
-                    << fmt.substr(pos1 + 2, pos2 - pos1 - 2) << arg2
-                    << fmt.substr(pos2 + 2, pos3 - pos2 - 2) << arg3
-                    << fmt.substr(pos3 + 2);
-            } else {
-                oss << fmt.substr(0, pos1) << arg1
-                    << fmt.substr(pos1 + 2, pos2 - pos1 - 2) << arg2
-                    << fmt.substr(pos2 + 2);
-            }
-        } else {
-            oss << fmt.substr(0, pos1) << arg1 << fmt.substr(pos1 + 2);
-        }
-    } else {
-        oss << fmt;
-    }
-    info(oss.str());
+  spdlog::trace(message);
 }
 
 } // namespace logging
