@@ -390,28 +390,30 @@ bool StateManager::isBlockOn(std::string_view nodeId, int32_t blockId) const {
 
 // Implementation of isBlockOn_unsafe with inheritance-based approach 
 // (assumes caller holds appropriate lock on nodeMutex)
+// FIXED: Use iterative traversal to prevent recursive deadlocks
 bool StateManager::isBlockOn_unsafe(std::string_view nodeId, int32_t blockId) const {
-    std::string strNodeId(nodeId); // Convert once
-
-    auto it = nodeStates.find(strNodeId);
-    if (it != nodeStates.end()) {
-        // Check if this node has an explicit setting for this block
-        if (it->second.hasExplicitBlockState(blockId)) {
-            return it->second.isBlockExplicitlyOn(blockId);
+    std::string currentNodeId(nodeId);
+    
+    // Iteratively traverse up the hierarchy to avoid recursive deadlocks
+    while (!currentNodeId.empty()) {
+        auto it = nodeStates.find(currentNodeId);
+        if (it != nodeStates.end()) {
+            // Check if this node has an explicit setting for this block
+            if (it->second.hasExplicitBlockState(blockId)) {
+                return it->second.isBlockExplicitlyOn(blockId);
+            }
         }
         
-        // With true inheritance, we should not check activeBlocks at all
-        // since it could be out of sync with parent's state
+        // Move to parent node
+        auto hierIt = nodeHierarchy.find(currentNodeId);
+        if (hierIt != nodeHierarchy.end() && !hierIt->second.parentId.empty()) {
+            currentNodeId = hierIt->second.parentId;
+        } else {
+            break; // No more parents
+        }
     }
     
-    // If no explicit setting here, check parent
-    auto hierIt = nodeHierarchy.find(strNodeId);
-    if (hierIt != nodeHierarchy.end() && !hierIt->second.parentId.empty()) {
-        // Recursive call to the _unsafe version, as we are still under the initial lock
-        return isBlockOn_unsafe(hierIt->second.parentId, blockId);
-    }
-    
-    return false;
+    return false; // Default to off if no explicit setting found in hierarchy
 }
 
 bool StateManager::isBlockInverted(std::string_view nodeId, int32_t blockId) const {
@@ -421,28 +423,33 @@ bool StateManager::isBlockInverted(std::string_view nodeId, int32_t blockId) con
 
 // Implementation of isBlockInverted_unsafe with inheritance-based approach
 // (assumes caller holds appropriate lock on nodeMutex)
+// FIXED: Use iterative traversal to prevent recursive deadlocks
 bool StateManager::isBlockInverted_unsafe(std::string_view nodeId, int32_t blockId) const {
-    std::string strNodeId(nodeId); // Convert once
+    std::string currentNodeId(nodeId);
 
     // First check if the block is active via inheritance-based approach
     if (!isBlockOn_unsafe(nodeId, blockId)) {
         return false; // Not meaningful to ask for inversion if block is not active
     }
 
-    auto it = nodeStates.find(strNodeId);
-    if (it != nodeStates.end()) {
-        // Check for explicit inversion setting at this node level
-        auto orientIt = it->second.blockOrientation.find(blockId);
-        if (orientIt != it->second.blockOrientation.end() && orientIt->second.has_value()) {
-            return !orientIt->second.value(); // false in map means inverted
+    // Iteratively traverse up the hierarchy to find orientation setting
+    while (!currentNodeId.empty()) {
+        auto it = nodeStates.find(currentNodeId);
+        if (it != nodeStates.end()) {
+            // Check for explicit inversion setting at this node level
+            auto orientIt = it->second.blockOrientation.find(blockId);
+            if (orientIt != it->second.blockOrientation.end() && orientIt->second.has_value()) {
+                return !orientIt->second.value(); // false in map means inverted
+            }
         }
-    }
-    
-    // No explicit orientation at this node level, check parent for inheritance
-    auto hierIt = nodeHierarchy.find(strNodeId);
-    if (hierIt != nodeHierarchy.end() && !hierIt->second.parentId.empty()) {
-        // Recursive call to the _unsafe version
-        return isBlockInverted_unsafe(hierIt->second.parentId, blockId);
+        
+        // Move to parent node
+        auto hierIt = nodeHierarchy.find(currentNodeId);
+        if (hierIt != nodeHierarchy.end() && !hierIt->second.parentId.empty()) {
+            currentNodeId = hierIt->second.parentId;
+        } else {
+            break; // No more parents
+        }
     }
     
     // Default to forward orientation if no setting found anywhere
@@ -1879,7 +1886,7 @@ void StateManager::processSeedsInRange(
     const std::function<void(int64_t startPos, int64_t endPos, std::optional<seeding::seed_t> &seed, std::string_view kmerView)> &processFn) {
 
   // Extract the entire range at once instead of character by character
-  auto [sequence, positions] = extractSequence(nodeId, range, true);
+  auto [sequence, positions, gaps, endPositions] = extractSequence(nodeId, range, true);
   
   if (sequence.length() < k || positions.size() < k) {
     return; // Not enough characters for a k-mer
@@ -2812,7 +2819,7 @@ coordinates::BlockCoordinate StateManager::mapGlobalToBlockCoords(
 }
 
 // Extract a sequence from a range of positions
-std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
+std::tuple<std::string, std::vector<int64_t>, std::vector<bool>, std::vector<int64_t>> StateManager::extractSequence(
     std::string_view nodeId_sv, 
     const coordinates::CoordRange& range, 
     bool skipGaps) {
@@ -2822,17 +2829,13 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
     // Add specific debug logging for problem blocks
     bool debug_problem_blocks = (nodeId == "node_2");
     std::ofstream debug_extract;
-    if (debug_problem_blocks) {
-        debug_extract.open("debug_extract_node_2.txt", std::ios_base::app);
-        debug_extract << "EXTRACT: node_2 range=[" << range.start << "," << range.end << ") skipGaps=" << skipGaps << std::endl;
-    }
+    
     
     CharacterBuffer& charBuffer = charBuffers.local(); 
     charBuffer.clear();
     
     std::vector<std::pair<int32_t, coordinates::CoordRange>> active_blocks_in_node;
     std::shared_ptr<HierarchicalGapMap> nodeGapMap;
-    // const NodeState* nodeStatePtr = nullptr; // Not strictly needed if nodeGapMap is fetched correctly
 
     try {
         std::shared_lock<std::shared_mutex> lock(nodeMutex); // Lock for reading nodeStates 
@@ -2843,7 +2846,7 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
                 debug_extract << "  -> ERROR: Node state not found, returning empty" << std::endl;
                 debug_extract.close();
             }
-            return {"", {}};
+            return {"", {}, {}, {}};
         }
         // nodeStatePtr = &nodeStateIt->second; // Assign if needed later, but gapMap is key here
         if (!nodeStateIt->second.gapMap) { // Check directly from iterator
@@ -2852,14 +2855,14 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
                 debug_extract << "  -> ERROR: GapMap is null, returning empty" << std::endl;
                 debug_extract.close();
              }
-             return {"", {}};
+             return {"", {}, {}, {}};
         }
         nodeGapMap = nodeStateIt->second.gapMap;
         // Active blocks can be fetched outside the lock if getActiveBlockRanges is thread-safe or re-locks
         // However, to ensure consistency of state used (gapMap + activeBlocks from same logical point for nodeId)
         // it might be better to fetch active_blocks_in_node here too if it doesn't cause deadlocks.
         // For now, assuming getActiveBlockRanges handles its own locking or is safe after this read lock.
-        lock.unlock(); 
+        lock.unlock();
         
         active_blocks_in_node = getActiveBlockRanges(nodeId); 
     } catch (const std::exception& e) {
@@ -2868,28 +2871,12 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
             debug_extract << "  -> EXCEPTION getting active blocks/gap map: " << e.what() << std::endl;
             debug_extract.close();
         }
-        return {"", {}};
+        return {"", {}, {}, {}};
     }
     
     if (active_blocks_in_node.empty()) {
       logging::debug("extractSequence: No active blocks found for node '{}' to process for range [{}, {})", nodeId, range.start, range.end);
-      if (debug_problem_blocks && debug_extract.is_open()) {
-        debug_extract << "  -> No active blocks found" << std::endl;
-        debug_extract.close();
-      }
-      return {"", {}};
-    }
-    
-    if (debug_problem_blocks && debug_extract.is_open()) {
-        debug_extract << "  -> Found " << active_blocks_in_node.size() << " active blocks" << std::endl;
-        // List first few blocks for debugging
-        for (size_t i = 0; i < std::min(active_blocks_in_node.size(), size_t(5)); i++) {
-            const auto& [blockId, blockRange] = active_blocks_in_node[i];
-            debug_extract << "     Block " << blockId << " range=[" << blockRange.start << "," << blockRange.end << ")" << std::endl;
-        }
-        if (active_blocks_in_node.size() > 5) {
-            debug_extract << "     ... and " << (active_blocks_in_node.size() - 5) << " more blocks" << std::endl;
-        }
+      return {"", {}, {}, {}};
     }
     
     int totalCharsProcessed_debug = 0;
@@ -2907,17 +2894,10 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
         
         // Special debug for problem blocks 617 and 941
         bool is_problem_block = (debug_problem_blocks && (blockId == 617 || blockId == 941));
-        if (is_problem_block && debug_extract.is_open()) {
-            debug_extract << "  -> Processing PROBLEM BLOCK " << blockId 
-                         << " range=[" << processing_range_for_this_block.start << "," 
-                         << processing_range_for_this_block.end << ")" << std::endl;
-        }
+        
 
         bool blockIsInverted = isBlockInverted(nodeId, blockId); // Uses isBlockInverted_unsafe via public wrapper
         
-        if (is_problem_block && debug_extract.is_open()) {
-            debug_extract << "     Block " << blockId << " is " << (blockIsInverted ? "INVERTED" : "FORWARD") << std::endl;
-        }
 
         int32_t max_nuc_pos_for_block = -1; 
         auto flat_indices_map_it = blockRootCharFlatIndices.find(blockId);
@@ -2927,12 +2907,11 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
             }
         }
         
-        if (is_problem_block && debug_extract.is_open()) {
-            debug_extract << "     Block " << blockId << " max_nuc_pos=" << max_nuc_pos_for_block << std::endl;
-        }
+        
 
         std::vector<char> temp_chars_for_this_block;
         std::vector<int64_t> temp_positions_for_this_block;
+        std::vector<bool> temp_gaps_for_this_block;
 
         for (int32_t nuc_p = 0; nuc_p <= max_nuc_pos_for_block; ++nuc_p) {
             size_t gap_list_len = getGapListLength(blockId, nuc_p);
@@ -2962,6 +2941,7 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
                     if (!(skipGaps && (char_to_add == '-' || char_to_add == 'x'))) {
                         temp_chars_for_this_block.push_back(char_to_add);
                         temp_positions_for_this_block.push_back(global_pos_gap_char);
+                        temp_gaps_for_this_block.push_back(char_to_add == '-' || char_to_add == 'x');
                         if (isNonGapChar(char_to_add)) nonGapCharsFound_debug++;
                     }
                 }
@@ -2986,6 +2966,7 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
                 if (!(skipGaps && (char_to_add == '-' || char_to_add == 'x'))) {
                     temp_chars_for_this_block.push_back(char_to_add);
                     temp_positions_for_this_block.push_back(global_pos_main_nuc);
+                    temp_gaps_for_this_block.push_back(char_to_add == '-' || char_to_add == 'x');
                     if (isNonGapChar(char_to_add)) nonGapCharsFound_debug++;
                 }
             }
@@ -2997,6 +2978,7 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
             }
             std::reverse(temp_chars_for_this_block.begin(), temp_chars_for_this_block.end());
             std::reverse(temp_positions_for_this_block.begin(), temp_positions_for_this_block.end());
+            std::reverse(temp_gaps_for_this_block.begin(), temp_gaps_for_this_block.end());
         }
         
         if (is_problem_block && debug_extract.is_open()) {
@@ -3007,10 +2989,44 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
         
         charBuffer.buffer.insert(charBuffer.buffer.end(), temp_chars_for_this_block.begin(), temp_chars_for_this_block.end());
         charBuffer.positions.insert(charBuffer.positions.end(), temp_positions_for_this_block.begin(), temp_positions_for_this_block.end());
+        charBuffer.gaps.insert(charBuffer.gaps.end(), temp_gaps_for_this_block.begin(), temp_gaps_for_this_block.end());
     }
     
     std::string result_str(charBuffer.buffer.begin(), charBuffer.buffer.end());
     std::vector<int64_t> result_pos = charBuffer.positions;
+    std::vector<bool> result_gaps = charBuffer.gaps;
+    
+    // Calculate end positions for each potential k-mer starting position
+    std::vector<int64_t> result_end_positions;
+    result_end_positions.reserve(result_pos.size());
+    
+    // Get k value from StateManager
+    int k = getKmerSize();
+    
+    for (size_t i = 0; i < result_pos.size(); i++) {
+        int64_t endPos = -1; // Default end position if no k-mer found
+        
+        // Only calculate end position for non-gap starting positions
+        if (i < result_gaps.size() && !result_gaps[i]) {
+            size_t nonGapCount = 0;
+            size_t currentIdx = i;
+            
+            // Count k non-gap bases starting from position i
+            while (currentIdx < result_gaps.size() && nonGapCount < k) {
+                if (!result_gaps[currentIdx]) {
+                    nonGapCount++;
+                }
+                // If we've found k non-gap bases, the end position is the position after this character
+                if (nonGapCount == k && currentIdx < result_pos.size()) {
+                    endPos = result_pos[currentIdx] + 1; // Position after the k-th character
+                    break;
+                }
+                currentIdx++;
+            }
+        }
+        
+        result_end_positions.push_back(endPos);
+    }
     
     if (result_str.empty() && range.start < range.end && !active_blocks_in_node.empty()) {
       logging::warn("extractSequence: Failed to extract any characters for node '{}' from range [{}:{}) using structural iteration, though active blocks overlap.",
@@ -3029,7 +3045,7 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractSequence(
     logging::debug("extractSequence (structural): Extracted {} chars ({} non-gap) for node '{}' from range [{}:{}), total processed from blocks: {}",
                  result_str.size(), nonGapCharsFound_debug, nodeId, range.start, range.end, totalCharsProcessed_debug);
     
-    return {result_str, result_pos};
+    return {result_str, result_pos, result_gaps, result_end_positions};
 }
 
 // Helper method to get block ID from a global position
@@ -3835,63 +3851,101 @@ void StateManager::setSeedAtPosition(std::string_view nodeId_sv, int64_t pos, co
     
     std::string strNodeId(nodeId_sv);
     
-    // IMPORTANT: For placement, we do node initialization outside any locks
-    // This prevents deadlocks when multiple threads try to initialize the same nodes
-    try {
-        // First check if node needs initialization (without holding a lock)
-        bool needsInit = false;
-        {
-            std::shared_lock<std::shared_mutex> readLock(nodeMutex);
-            needsInit = (nodeHierarchy.find(strNodeId) == nodeHierarchy.end());
-        }
-        
-        // Initialize outside of any locks if needed
-        if (needsInit) {
-            try {
-                initializeNode(strNodeId);
-                logging::debug("Initialized node {} during setSeedAtPosition", strNodeId);
-            } catch (const std::exception& e) {
-                // Some other thread may have initialized it first - that's ok
-                logging::debug("Note: Initialization of node {} during setSeedAtPosition: {}", 
-                              strNodeId, e.what());
+    // THREAD SAFETY FIX: Use atomic node initialization with proper synchronization
+    // This ensures only one thread initializes a node and prevents race conditions
+    
+    // Use a static mutex specifically for node initialization to avoid deadlocks
+    static std::mutex initMutex;
+    
+    // Check if node exists (with proper locking)
+    {
+        std::shared_lock<std::shared_mutex> readLock(nodeMutex);
+        auto hierIt = nodeHierarchy.find(strNodeId);
+        if (hierIt != nodeHierarchy.end()) {
+            // Node exists - fast path, set seed directly
+            if (hierIt->second.seedStore) {
+                hierIt->second.seedStore->set(pos, seed);
+                logging::debug("Set seed at pos={} in existing node {}", pos, strNodeId);
+                return;
             }
         }
-    } catch (const std::exception& e) {
-        // Non-critical error, we'll still try to set the seed
-        logging::debug("Error checking node initialization status: {}", e.what());
     }
     
-    // Now, with a clean lock state, try to set the seed
-    std::unique_lock<std::shared_mutex> writeLock(nodeMutex);
+    // Node doesn't exist or needs initialization - use init mutex to serialize this
+    {
+        std::lock_guard<std::mutex> initLock(initMutex);
+        
+        // Double-check pattern: verify node still needs initialization
+        {
+            std::shared_lock<std::shared_mutex> readLock(nodeMutex);
+            auto hierIt = nodeHierarchy.find(strNodeId);
+            if (hierIt != nodeHierarchy.end() && hierIt->second.seedStore) {
+                // Another thread initialized it - set seed and return
+                hierIt->second.seedStore->set(pos, seed);
+                logging::debug("Set seed at pos={} in node {} (initialized by another thread)", pos, strNodeId);
+                return;
+            }
+        }
+        
+        // Safe to initialize node
+        try {
+            initializeNode(strNodeId);
+            logging::debug("Initialized node {} during setSeedAtPosition", strNodeId);
+        } catch (const std::exception& e) {
+            logging::warn("Failed to initialize node {} during setSeedAtPosition: {}", strNodeId, e.what());
+            return;
+        }
+    }
+    
+    // Now set the seed with proper write lock
+    std::shared_lock<std::shared_mutex> readLock(nodeMutex);
     
     // Get the node's hierarchical seed store
     auto hierIt = nodeHierarchy.find(strNodeId);
     if (hierIt == nodeHierarchy.end()) {
-        logging::info("Node {} still not in hierarchy after initialization attempt", strNodeId);
+        logging::warn("Node {} not found in hierarchy after initialization", strNodeId);
         return;
     }
     
-    // Make sure a seed store exists - create one if it doesn't
+    // Ensure seed store exists - this should be safe now that initialization is atomic
     if (!hierIt->second.seedStore) {
-        // Create new seed store, inheriting from parent if possible
-        std::string parentId = hierIt->second.parentId;
-        if (!parentId.empty()) {
-            auto parentIt = nodeHierarchy.find(parentId);
-            if (parentIt != nodeHierarchy.end() && parentIt->second.seedStore) {
-                hierIt->second.seedStore = std::make_shared<HierarchicalSeedStore>(parentIt->second.seedStore);
-                logging::debug("Created seed store for node {} using parent {}", strNodeId, parentId);
+        // Need to upgrade to write lock to create seed store
+        readLock.unlock();
+        std::unique_lock<std::shared_mutex> writeLock(nodeMutex);
+        
+        // Double-check pattern again
+        hierIt = nodeHierarchy.find(strNodeId);
+        if (hierIt == nodeHierarchy.end()) {
+            logging::warn("Node {} disappeared during seed store creation", strNodeId);
+            return;
+        }
+        
+        if (!hierIt->second.seedStore) {
+            // Create new seed store, inheriting from parent if possible
+            std::string parentId = hierIt->second.parentId;
+            if (!parentId.empty()) {
+                auto parentIt = nodeHierarchy.find(parentId);
+                if (parentIt != nodeHierarchy.end() && parentIt->second.seedStore) {
+                    hierIt->second.seedStore = std::make_shared<HierarchicalSeedStore>(parentIt->second.seedStore);
+                    logging::debug("Created seed store for node {} using parent {}", strNodeId, parentId);
+                } else {
+                    hierIt->second.seedStore = std::make_shared<HierarchicalSeedStore>();
+                    logging::debug("Created root-level seed store for node {}", strNodeId);
+                }
             } else {
                 hierIt->second.seedStore = std::make_shared<HierarchicalSeedStore>();
                 logging::debug("Created root-level seed store for node {}", strNodeId);
             }
-        } else {
-            hierIt->second.seedStore = std::make_shared<HierarchicalSeedStore>();
-            logging::debug("Created root-level seed store for node {}", strNodeId);
         }
+        
+        // Downgrade to read lock for setting the seed
+        writeLock.unlock();
+        readLock.lock();
+        hierIt = nodeHierarchy.find(strNodeId);
     }
     
     // Now set the seed in the node's store
-    if (hierIt->second.seedStore) {
+    if (hierIt != nodeHierarchy.end() && hierIt->second.seedStore) {
         hierIt->second.seedStore->set(pos, seed);
         logging::debug("Set seed at pos={} in node {}", pos, strNodeId);
     } else {

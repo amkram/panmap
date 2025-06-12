@@ -137,6 +137,10 @@ private:
   static thread_local bool *orientation_buffer;
   static thread_local int64_t *position_buffer;
   static thread_local size_t buffer_size;
+  
+  // Initialization protection
+  static thread_local bool is_initialized;
+  static inline std::mutex initialization_mutex;
 
 public:
   /**
@@ -145,6 +149,12 @@ public:
    * @param batch_size Number of k-mers to process in a batch
    */
   static void initialize(size_t k, size_t batch_size = 1024) {
+    // Protect against race conditions during initialization
+    if (is_initialized) return;
+    
+    std::lock_guard<std::mutex> lock(initialization_mutex);
+    if (is_initialized) return; // Double-check after acquiring lock
+    
     // Align buffers to cache lines for optimal SIMD
     size_t aligned_k =
         ((k + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
@@ -164,6 +174,8 @@ public:
       __builtin_prefetch(&hash_buffer[i], 1, 3);
       __builtin_prefetch(&position_buffer[i], 1, 3);
     }
+    
+    is_initialized = true;
   }
 
   /**
@@ -203,6 +215,7 @@ public:
       free(position_buffer);
       position_buffer = nullptr;
     }
+    is_initialized = false;
   }
 
   /**

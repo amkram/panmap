@@ -299,8 +299,9 @@ namespace RangeOperations {
     if (isBlockMutation) {
       if (isBlockDeactivation) {
         // On->Off block mutation (deactivation)
-        // Only include k positions at block boundaries
-        // Start boundary
+        // Include k positions at both block boundaries
+        // For now, return the start boundary range
+        // Note: The caller should call this function twice for both boundaries
         result.start = blockRange.start;
         result.end = std::min(blockRange.start + static_cast<int64_t>(kmerSize), blockRange.end);
         
@@ -317,6 +318,7 @@ namespace RangeOperations {
       int64_t mutationPos;
       if (isInverted) {
         // For inverted blocks, the position is mirrored
+        // Note: This calculation should account for gaps in the sequence
         int32_t blockLength = blockRange.end - blockRange.start;
         mutationPos = blockRange.start + (blockLength - 1 - pos);
       } else {
@@ -326,7 +328,7 @@ namespace RangeOperations {
       
       // Add k positions in each direction, constrained by block boundaries
       result.start = std::max(blockRange.start, mutationPos - static_cast<int64_t>(kmerSize));
-      result.end = std::min(blockRange.end, mutationPos + len + static_cast<int64_t>(kmerSize));
+      result.end = std::min(blockRange.end, mutationPos + len + static_cast<int64_t>(kmerSize) - 1);
     }
     
     // Ensure result is within valid bounds
