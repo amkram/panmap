@@ -115,16 +115,26 @@ struct CharacterBuffer {
   
   /** @brief Corresponding positions for each character */
   std::vector<int64_t> positions;
+  
+  /** @brief Indicates if each position contains a gap character */
+  std::vector<bool> gaps;
+  
+  /** @brief Pre-calculated end positions for k-mer seeds starting at each position */
+  std::vector<int64_t> endPositions;
 
   CharacterBuffer() {
     // Preallocate with reasonable size
     buffer.reserve(4096);
     positions.reserve(4096);
+    gaps.reserve(4096);
+    endPositions.reserve(4096);
   }
 
   void clear() {
     buffer.clear();
     positions.clear();
+    gaps.clear();
+    endPositions.clear();
   }
 };
 
@@ -206,33 +216,51 @@ private:
    * @return Shared pointer to a materialized gap map
    */
   GapMapPtr materializeMap() const {
+    // THREAD SAFETY FIX: Use safer lock management to prevent deadlocks
+    // First, try to get cached result if available
+    {
+      std::lock_guard<std::mutex> lock(mapMutex);
+      if (materializedMapCacheValid && materializedMapCache) {
+        return materializedMapCache;
+      }
+    }
+    
+    // Start with our local map (make copy outside lock to reduce contention)
+    auto result = std::make_shared<gap_map::GapMap>();
+    GapMapPtr parentMap = nullptr;
+    
+    // Get parent map WITHOUT holding our own lock to prevent deadlock
+    if (auto parentPtr = parent.lock()) {
+      try {
+        // Recursive call with no locks held - safe for hierarchy traversal
+        parentMap = parentPtr->materializeMap();
+      } catch (const std::exception& e) {
+        logging::warn("Failed to materialize parent gap map: {}", e.what());
+        // Continue with local map only
+      }
+    }
+    
+    // Now acquire our lock once to do all the work atomically
     std::lock_guard<std::mutex> lock(mapMutex);
     
-    // Check if we have a valid cached materialized map
+    // Double-check cache after acquiring lock (another thread might have updated it)
     if (materializedMapCacheValid && materializedMapCache) {
       return materializedMapCache;
     }
     
-    // Start with our local map
-    auto result = std::make_shared<gap_map::GapMap>(*localMap);
+    // Copy our local map
+    *result = *localMap;
 
-    // If we have a parent, merge with their map
-    if (auto parentPtr = parent.lock()) {
-      // Get materialized parent map
-      auto parentMap = parentPtr->materializeMap();
-
-      // Merge parent entries that don't conflict with our local entries
+    // Merge parent entries that don't conflict with our local entries
+    if (parentMap) {
       for (const auto &entry : *parentMap) {
         if (result->find(entry.first) == result->end()) {
           (*result)[entry.first] = entry.second;
         }
       }
-    } else if (!parent.expired()) {
-      // Parent pointer exists but cannot be locked (being deleted)
-      logging::debug("Parent gap map is being deleted during materialization");
     }
     
-    // Cache the result
+    // Cache the result atomically
     materializedMapCache = result;
     materializedMapCacheValid = true;
 
@@ -935,6 +963,12 @@ struct NodeState {
   std::vector<int64_t> seedChangeBasePositions;  // Base positions for seed changes
   std::vector<uint64_t> seedChangeBitMasks;      // Quaternary-encoded masks
   
+  // Efficient seed count tracking to avoid recomputation
+  int64_t totalSeedCount = 0;        // Total seeds at this node
+  int64_t seedDeletions = 0;         // Seeds deleted from parent
+  int64_t seedInsertions = 0;        // Seeds added at this node
+  int64_t seedModifications = 0;     // Seeds modified from parent
+  
   absl::flat_hash_map<int32_t, bool> explicitBlockStates;
   
   /**
@@ -995,6 +1029,41 @@ struct NodeState {
               });
               
     return decodedChanges;
+  }
+  
+  /**
+   * @brief Update seed counts incrementally
+   * 
+   * @param deletedCount Number of seeds deleted
+   * @param addedCount Number of seeds added  
+   * @param modifiedCount Number of seeds modified
+   */
+  void updateSeedCounts(int64_t deletedCount, int64_t addedCount, int64_t modifiedCount) {
+    seedDeletions += deletedCount;
+    seedInsertions += addedCount;
+    seedModifications += modifiedCount;
+    
+    // Update total: start with parent count, subtract deletions, add insertions
+    totalSeedCount = totalSeedCount - deletedCount + addedCount;
+  }
+  
+  /**
+   * @brief Initialize seed count from parent
+   * 
+   * @param parentTotalSeeds Total seed count from parent node
+   */
+  void initializeSeedCountFromParent(int64_t parentTotalSeeds) {
+    totalSeedCount = parentTotalSeeds;
+    seedDeletions = 0;
+    seedInsertions = 0;
+    seedModifications = 0;
+  }
+  
+  /**
+   * @brief Get current total seed count
+   */
+  int64_t getTotalSeedCount() const {
+    return totalSeedCount;
   }
   
   // Helper method for LOCAL block status only (doesn't implement inheritance)
@@ -1476,7 +1545,7 @@ public:
   size_t getGapListLength(int32_t blockId, int32_t nucPos) const;
 
   // Extract sequence from a node
-  std::pair<std::string, std::vector<int64_t>>
+  std::tuple<std::string, std::vector<int64_t>, std::vector<bool>, std::vector<int64_t>>
   extractSequence(std::string_view nodeId, const coordinates::CoordRange &range,
                   bool skipGaps = true);
 
@@ -1707,7 +1776,7 @@ public:
 
   // Add these data structures to the StateManager class for temporary k-mer storage
   std::unordered_map<std::string, std::unordered_map<int64_t, std::string>> nodeKmerSequences;
-  std::unordered_map<std::string, std::unordered_map<int64_t, uint16_t>> nodeKmerEndOffsets;
+  std::unordered_map<std::string, std::unordered_map<int64_t, uint32_t>> nodeKmerEndOffsets;
 
   // Make blockRootCharFlatIndices public for now to allow initializeStateManager to populate it.
   // A better long-term solution might be a friend declaration or a dedicated public setter method.

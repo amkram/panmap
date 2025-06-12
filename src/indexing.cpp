@@ -229,30 +229,7 @@ void processMutationsForNode(
                                   strNodeId.find("KU950624") != std::string::npos || 
                                   strNodeId == "node_1" || 
                                   strNodeId == "node_2");
-                                  
-  if (should_create_debug_file) {
-    debug_file_ourcode_pmfn.open(debug_filename_pmfn, std::ios_base::app);
-    if (debug_file_ourcode_pmfn.is_open()) {
-        debug_file_ourcode_pmfn << "===== PROCESSING MUTATIONS FOR NODE: " << strNodeId << " =====" << std::endl;
-    } else {
-        std::cerr << "[ERROR] PMFN: Could not open debug file: " << debug_filename_pmfn << std::endl;
-    }
-  }
-
-  // DIAGNOSTIC LOG FOR LEAF NODE ID
-  if (strNodeId == "KU950624.1") {
-    std::cerr << "[LEAF_DEBUG_CHECK] processMutationsForNode: EXACT MATCH for node '" << strNodeId << "'" << std::endl;
-  } else if (strNodeId.find("KU950624") != std::string::npos) {
-    std::cerr << "[LEAF_DEBUG_CHECK] processMutationsForNode: SUBSTRING MATCH for 'KU950624' in node '" << strNodeId << "'" << std::endl;
-  }
-  // END DIAGNOSTIC LOG
-
-  // Determine if this is the leaf node for targeted logging
-  // bool is_leaf_for_debug = (strNodeId == "MZ515684.1"); // Target Leaf Node - This flag is not needed here anymore for GAP_LOG
-  // bool log_this_node_mutations_to_file = is_leaf_for_debug; // This flag is not needed here anymore for GAP_LOG
-
   
-
   // STEP 3: Apply this node's OWN mutations (Block and Nucleotide)
   // The recompRanges will be added to nodeState.recompRanges.
   // All block/nuc mutation logic below uses the single 'nodeState' declared at STEP 0.
@@ -263,39 +240,31 @@ void processMutationsForNode(
 
 
   // Process Block Mutations for strNodeId
+
+  std::vector<int32_t> blocksToDeactivate;
+  int32_t k_val = stateManager.getKmerSize() > 0 ? stateManager.getKmerSize() : 32; // Use a local k_val
+
   for (const auto &block_mutation : node->blockMutation) {
     int32_t blockId = block_mutation.primaryBlockId;
-    bool isInsertion = (block_mutation.blockMutInfo == 1); // This is PanMAF's "type" (1=insertion, 0=deletion/inversion)
-    bool isMutationInversionFlag = block_mutation.inversion; // This is PanMAF's "inversion" flag
-
-    // Always log block mutations if file is open
-    if (debug_file_ourcode_pmfn.is_open()) {
-        debug_file_ourcode_pmfn << "BLOCK_MUT: blockId=" << blockId
-                           << ", isInsertion=" << isInsertion
-                           << ", isMutationInversion=" << isMutationInversionFlag
-                           << ", secondaryBlockId=" << block_mutation.secondaryBlockId
-                           << std::endl;
-    }
-
+    bool isInsertion = (block_mutation.blockMutInfo == 1); // This is PanMAN's "type" (1=insertion, 0=deletion/inversion)
+    bool isMutationInversionFlag = block_mutation.inversion; // This is PanMAN's "inversion" flag
 
     
     bool wasOn = stateManager.isBlockOn(strNodeId, blockId);
     bool wasInverted = wasOn && stateManager.isBlockInverted(strNodeId, blockId);
     bool isDeactivation = !isInsertion && wasOn;
-    bool activationChanged = isInsertion && !wasOn;
+    bool activationChanged = isInsertion || isDeactivation;
     bool inversionChanged = false;
     if (isInsertion) {
       inversionChanged = (wasInverted != isMutationInversionFlag);
     } else if (isMutationInversionFlag) { 
       inversionChanged = true;
     }
-
+    
     try {
         auto blockRange = stateManager.getBlockRange(blockId);
-        int k_val = stateManager.getKmerSize() > 0 ? stateManager.getKmerSize() : 32; // Use a local k_val
-
         
-        if (activationChanged || inversionChanged) {
+        if (isInsertion || inversionChanged) {
             coordinates::CoordRange range = {blockRange.start, blockRange.end};
             if (range.start < range.end) blockMutationInducedRanges.push_back(range);
             
@@ -307,28 +276,31 @@ void processMutationsForNode(
                     stateManager.mergeRangeWithExisting(nodeState.recompRanges, recompRange);
                 }
             } catch (const std::exception &e) {
-                std::cerr << "[ERROR] DEBUG_MUTATION: Error merging block recomp range for block " << blockId << " in node " << strNodeId << ": " << e.what() << std::endl;
+              throw std::runtime_error(
+                  "Error merging recomp range for block " + std::to_string(blockId) + 
+                  " in node " + strNodeId + ": " + e.what());
             }
         } else if (isDeactivation) {
-            coordinates::CoordRange startBoundary = {blockRange.start, std::min(blockRange.start + k_val, blockRange.end)};
-            if (startBoundary.start < startBoundary.end) blockMutationInducedRanges.push_back(startBoundary);
-            coordinates::CoordRange endBoundary = {std::max(blockRange.end - k_val, blockRange.start), blockRange.end};
-            if (endBoundary.start < endBoundary.end) blockMutationInducedRanges.push_back(endBoundary);
+          blocksToDeactivate.push_back(blockId);
+
+            // coordinates::CoordRange nextBoundary = {nextBlockRange.start, nextBlockRange.start + k_val};
             
             
-            try {
-                if (startBoundary.start < startBoundary.end) {
-                    stateManager.mergeRangeWithExisting(nodeState.recompRanges, startBoundary);
-                }
-                if (endBoundary.start < endBoundary.end) {
-                    stateManager.mergeRangeWithExisting(nodeState.recompRanges, endBoundary);
-                }
-            } catch (const std::exception &e) {
-                std::cerr << "[ERROR] DEBUG_MUTATION: Error merging block boundary recomp ranges for block " << blockId << " in node " << strNodeId << ": " << e.what() << std::endl;
-            }
+            // try {
+            //     if (startBoundary.start < startBoundary.end) {
+            //         stateManager.mergeRangeWithExisting(nodeState.recompRanges, startBoundary);
+            //     }
+            //     if (endBoundary.start < endBoundary.end) {
+            //         stateManager.mergeRangeWithExisting(nodeState.recompRanges, endBoundary);
+            //     }
+            // } catch (const std::exception &e) {
+            //     std::cerr << "[ERROR] DEBUG_MUTATION: Error merging block boundary recomp ranges for block " << blockId << " in node " << strNodeId << ": " << e.what() << std::endl;
+            // }
         }
     } catch (const std::exception& e) {
-        std::cerr << "[WARN] DEBUG_MUTATION: Error calculating/merging range for block mut " << blockId << " in node " << strNodeId << ": " << e.what() << std::endl;
+      throw std::runtime_error(
+          "Error getting block range for block " + std::to_string(blockId) + 
+          " in node " + strNodeId + ": " + e.what());
     }
     
 
@@ -376,22 +348,32 @@ void processMutationsForNode(
         }
       }
       
-      // Existing logging for activation/inversion changes
-      if (wasOn != isNowOn) {
-        std::cerr << "[DEBUG] DEBUG_MUTATION: Block " << blockId << " activation changed: " << (wasOn ? "ON" : "OFF") << " -> " << (isNowOn ? "ON" : "OFF") << std::endl;
-      }
       bool isNowInverted = isNowOn && stateManager.isBlockInverted(strNodeId, blockId); // Recalculate for logging if needed
 
-      if (strNodeId == "DJ068250.1" || strNodeId == "KU950649.1") {
-        // print the block status (on/inverted) for the block
-        std::cerr << " [doobug] Block " << blockId << " status for node " << strNodeId << ": " << (isNowOn ? "ON" : "OFF") << ", inv=" << (isNowInverted ? "YES" : "NO") << std::endl;
-      }
     } catch (const std::exception &e) {
-      // std::cerr << "[ERROR] DEBUG_MUTATION: ERROR processing block mutation for block " << blockId << " in node " << strNodeId << ": " << e.what() << std::endl;
       throw;
     }
   } 
   
+  for (const auto &blockId : blocksToDeactivate) {
+                // find previous ON block 
+            int32_t blockIdPrev = blockId;
+            while (blockIdPrev > 0 && !stateManager.isBlockOn(strNodeId, blockIdPrev)) {
+                --blockIdPrev;
+            }
+            int32_t blockIdNext = blockId;
+            while (blockIdNext < stateManager.getNumBlocks() && !stateManager.isBlockOn(strNodeId, blockIdNext)) {
+                ++blockIdNext;
+            }
+
+            auto prevBlockRange = stateManager.getBlockRange(blockIdPrev);         
+
+            coordinates::CoordRange prevBoundary = {prevBlockRange.end - k_val, prevBlockRange.end};
+
+            stateManager.mergeRangeWithExisting(nodeState.recompRanges, prevBoundary);
+
+        
+  }
  
 
   // std::vector<coordinates::GapUpdate> derivedGapUpdates; // DECLARATION MOVED EARLIER
@@ -691,10 +673,7 @@ void processMutationsForNode(
     for (size_t i = 0; i < std::min(nodeState.recompRanges.size(), size_t(5)); i++) {
       auto& range = nodeState.recompRanges[i];
     }
-  } else {
-    logging::warn("DEBUG_MUTATION: Node {} has NO recomputation ranges after mutation processing", strNodeId);
   }
-
   
   std::stringstream ssBlockRanges, ssNucRanges;
   auto formatRanges = [](std::stringstream& ss, const std::vector<coordinates::CoordRange>& ranges) {
@@ -771,12 +750,12 @@ void processMutationsForNode(
                                 << " Orientation: " << (is_inverted ? "REVERSE" : "FORWARD") << std::endl;
 
                       // Extract and print GAPPY sequence
-                      std::pair<std::string, std::vector<int64_t>> gappy_seq_pair = stateManager.extractSequence(strNodeId, block_range, false);
-                      debug_log_file << "    Gappy Sequence (len " << gappy_seq_pair.first.length() << "): " << gappy_seq_pair.first << std::endl;
+                      auto [gappy_seq, gappy_positions, gappy_gaps, gappy_endPositions] = stateManager.extractSequence(strNodeId, block_range, false);
+                      debug_log_file << "    Gappy Sequence (len " << gappy_seq.length() << "): " << gappy_seq << std::endl;
 
                       // Extract and print UNGAPPED sequence
-                      std::pair<std::string, std::vector<int64_t>> ungapped_seq_pair = stateManager.extractSequence(strNodeId, block_range, true);
-                      debug_log_file << "    Ungapped Sequence (len " << ungapped_seq_pair.first.length() << "): " << ungapped_seq_pair.first << std::endl;
+                      auto [ungapped_seq, ungapped_positions, ungapped_gaps, ungapped_endPositions] = stateManager.extractSequence(strNodeId, block_range, true);
+                      debug_log_file << "    Ungapped Sequence (len " << ungapped_seq.length() << "): " << ungapped_seq << std::endl;
                   }
               } else {
                   debug_log_file << "[DEBUG_INDEXING_PMFN] Node: " << strNodeId << " - No active blocks after mutation to dump sequences from." << std::endl;
@@ -902,7 +881,7 @@ void writeSeedChangesToCapnp(
 }
 
 
-void recomputeSeeds(
+std::pair<int, int> recomputeSeeds(
     state::StateManager &stateManager,
     placement::PlacementEngine &engine,
     panmanUtils::Node *node, int k, int s,
@@ -914,21 +893,36 @@ void recomputeSeeds(
   
   thread_local std::string kmerBuffer;
 
-  if (!node) {
-    logging::warn("DEBUG_RECOMP: Null node passed to recomputeSeeds");
-    return;
-  }
-  // debugSeedFile << "-> recomputeSeeds for node " << node->identifier << std::endl; // Commented out
   std::string nodeId = node->identifier;
   
+  // Initialize efficient seed counting for this node
+  auto &nodeState = stateManager.getNodeState(nodeId);
+  if (node->parent) {
+    try {
+      const auto &parentState = stateManager.getNodeState(node->parent->identifier);
+      nodeState.initializeSeedCountFromParent(parentState.getTotalSeedCount());
+    } catch (const std::exception& e) {
+      // If parent state not available, we'll track changes from 0
+      logging::debug("Could not inherit parent seed count for node {}: {}", nodeId, e.what());
+      nodeState.initializeSeedCountFromParent(0);
+    }
+  } else {
+    // Root node starts with 0 seeds
+    nodeState.initializeSeedCountFromParent(0);
+  }
   
-  std::vector<uint32_t> dictionaryIds; 
+   std::vector<uint32_t> dictionaryIds;
   std::vector<int64_t> dictionaryPositions; 
-  std::vector<uint16_t> dictionaryEndOffsets; 
+  std::vector<uint32_t> dictionaryEndOffsets;
   
   int seedsInherited = 0; // This will likely remain 0 or be removed after change
   int seedsCleared = 0;
   int seedsAdded = 0;
+  int seedsChanged = 0;
+  
+  // Block mutation counters for debug TSV output
+  int blockDeletions = 0;
+  int blockInsertions = 0;
 
   
   std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>,
@@ -936,131 +930,47 @@ void recomputeSeeds(
                          std::optional<bool>, std::optional<int64_t>,
                          std::optional<int64_t>>> seedChanges;
 
+  // STEP 1: Clear seeds across newly turned off blocks
+  for (const auto &block_mutation : node->blockMutation) {
+    // TODO: can treat inversions more smartly
+    // TODO: Expand to k upstream
+    bool shouldClear = block_mutation.blockMutInfo == 0; // (0 = deletion/inversion, 1 = insertion)
+    
+    // Count block mutations for debug TSV output
+    if (block_mutation.blockMutInfo == 0) {
+      blockDeletions++; // Deletion or inversion
+    } else if (block_mutation.blockMutInfo == 1) {
+      blockInsertions++; // Insertion
+    }
+    
+    if (shouldClear) {
+      int64_t start = stateManager.getBlockRange(block_mutation.primaryBlockId).start;
+      int64_t end = stateManager.getBlockRange(block_mutation.primaryBlockId).end;
+      for (int64_t pos = start; pos < end; pos++) {
+        auto seedOpt = kmer_utils::getSeedAtPosition(stateManager, node->parent->identifier, pos);
+        if (seedOpt.has_value()) {
+          seeding::seed_t seed = seedOpt.value();
+          stateManager.clearSeedAtPosition(nodeId, pos);
+                                
+          seedChanges.emplace_back(
+              std::make_tuple(pos, true, false, seed.hash, std::nullopt,
+                              seed.reversed, std::nullopt, seed.endPos, std::nullopt));
+          seedsCleared++;
+        }
+      }
+    }
+  }
+
   // STEP 2: Clear any seeds at gap or invalid positions
   auto activeBlocksAndRanges = stateManager.getActiveBlockRanges(nodeId); // Get all active blocks with ranges
   
   
-  for (const auto& blockInfoPair : activeBlocksAndRanges) {
-    int32_t blockId = blockInfoPair.first;
-    // We can use blockInfoPair.second directly for blockRange if needed, 
-    // but the original code re-fetches it. Sticking to minimal change for now.
-    try {
-      
-      auto blockRange = stateManager.getBlockRange(blockId); // Original code re-fetches.
-      
-      
-      for (int64_t pos = blockRange.start; pos < blockRange.end; pos++) {
-        auto seedOpt = kmer_utils::getSeedAtPosition(stateManager, nodeId, pos);
-        if (!seedOpt.has_value()) {
-          continue;
-        } 
-        
-        
-        auto coordOpt = stateManager.fastMapGlobalToLocal(pos);
-        if (!coordOpt) {
-          // Invalid coordinate - clear the seed
-          stateManager.clearSeedAtPosition(nodeId, pos);
-          seedsCleared++;
-          
-          
-          seedChanges.emplace_back(
-              std::make_tuple(pos, true, false, seedOpt->hash, std::nullopt,
-                             seedOpt->reversed, std::nullopt,
-                             seedOpt->endPos, std::nullopt));
-          continue;
-        }
-        
-        auto [mappedBlockId, nucPos, gapPos] = *coordOpt;
-        
-        
-        if (!stateManager.isBlockOn(nodeId, mappedBlockId)) {
-          
-          stateManager.clearSeedAtPosition(nodeId, pos);
-          seedsCleared++;
-          
-          
-          seedChanges.emplace_back(
-              std::make_tuple(pos, true, false, seedOpt->hash, std::nullopt,
-                             seedOpt->reversed, std::nullopt,
-                             seedOpt->endPos, std::nullopt));
-          continue;
-        }
-        
-        if (node->parent) {
-          bool parentInverted = stateManager.isBlockInverted(node->parent->identifier, mappedBlockId);
-          bool childInverted = stateManager.isBlockInverted(nodeId, mappedBlockId);
-          
-          if (parentInverted != childInverted) {
-            
-            stateManager.clearSeedAtPosition(nodeId, pos);
-            seedsCleared++;
-            
-            seedChanges.emplace_back(
-                std::make_tuple(pos, true, false, seedOpt->hash, std::nullopt,
-                               seedOpt->reversed, std::nullopt,
-                               seedOpt->endPos, std::nullopt));
-            continue;
-          }
-        }
-        
-        
-        char c;
-        try {
-          // ADD THIS: Get the node's gap map
-          auto nodeGapMap = stateManager.getNodeGapMap(nodeId); // Assuming getNodeGapMap is available and efficient
-
-          if (nodeGapMap && nodeGapMap->isGap(pos)) { // Check gap map first
-            c = '-';
-          } else {
-            c = stateManager.getCharAtPosition(nodeId, mappedBlockId, nucPos, gapPos);
-          }
-        } catch (const std::exception& e) {
-          
-          stateManager.clearSeedAtPosition(nodeId, pos);
-          seedsCleared++;
-          
-          
-          seedChanges.emplace_back(
-              std::make_tuple(pos, true, false, seedOpt->hash, std::nullopt,
-                             seedOpt->reversed, std::nullopt,
-                             seedOpt->endPos, std::nullopt));
-          continue;
-        }
-        
-        
-        bool isUnseededChar = (c == '-' || c == 'N' || c == 'x');
-        if (isUnseededChar) {
-          
-          stateManager.clearSeedAtPosition(nodeId, pos);
-          seedsCleared++;
-          
-          
-          seedChanges.emplace_back(
-              std::make_tuple(pos, true, false, seedOpt->hash, std::nullopt,
-                             seedOpt->reversed, std::nullopt,
-                             seedOpt->endPos, std::nullopt));
-          continue;
-        }
-      }
-    } catch (const std::exception& e) {
-      logging::warn("DEBUG_RECOMP: Error checking seed compatibility in block {}: {}", blockId, e.what());
-    }
-  }
   
   
   // STEP 3: Process recomputation ranges if any
   auto ranges = stateManager.getRecompRanges(nodeId);
   
-  // debugSeedFile << "-> getRecompRanges for node " << nodeId << std::endl;
-  // for (const auto& range : ranges) {
-  //   debugSeedFile << "Recomp range: [" << range.start << ", " << range.end << ")" << std::endl;
-  // }
-  // debugSeedFile << std::endl;
-  if (ranges.empty()) {
-    
-    // debugSeedFile << "NONE recomputation ranges for node " << nodeId << std::endl;
-  } else {
-    
+  if (!ranges.empty()) {
     
     std::vector<coordinates::CoordRange> expandedRanges;
     try {
@@ -1070,12 +980,6 @@ void recomputeSeeds(
       
     }
 
-    // debugSeedFile << "-> expandRecompRanges for node " << nodeId << std::endl;
-    // for (const auto& range : expandedRanges) {
-    //   debugSeedFile << "Expanded range: [" << range.start << ", " << range.end << ")" << std::endl;
-    // }
-    // debugSeedFile << std::endl;
-    
     
     int64_t totalRangeSize = 0;
     for(const auto& range : expandedRanges) totalRangeSize += (range.end - range.start);
@@ -1085,240 +989,137 @@ void recomputeSeeds(
       const auto &range = expandedRanges[rangeIdx];
       try {
         // Extract sequence from the range
-        std::string sequence;
+        std::string gappedSequence;
         std::vector<int64_t> positions;
-        std::tie(sequence, positions) = stateManager.extractSequence(nodeId, range, true);
-        
-        if (sequence.length() < static_cast<size_t>(k)) {
+        std::vector<bool> gaps;
+        std::vector<int64_t> endPositions;
+        std::tie(gappedSequence, positions, gaps, endPositions) = stateManager.extractSequence(nodeId, range, false);
+
+
+        std::string ungappedSequence = gappedSequence;
+        ungappedSequence.erase(
+            std::remove_if(ungappedSequence.begin(), ungappedSequence.end(), [](char c) { return c == '-' || c == 'x'; }),
+            ungappedSequence.end());
+
+        if (ungappedSequence.length() < static_cast<size_t>(k)) {
           continue;
         }
         
+
+        // make a vector of int64_t that maps local index in ungapped seq to local position in gapped sequence
+        std::vector<int64_t> localToGappedPos(ungappedSequence.length(), -1);
+        int64_t gappedIndex = 0;
+        for (size_t i = 0; i < gappedSequence.length(); ++i) {
+          if (gappedSequence[i] != '-' && gappedSequence[i] != 'x') {
+            localToGappedPos[gappedIndex++] = i; // Map gapped position to ungapped index
+          }
+        }
+
+        std::cerr << " ___ ours ____" << std::endl;
+        std::cerr << "Range: [" << range.start << ", " << range.end << "]" << std::endl;
+        std::cerr << "Gapped Sequence: " << gappedSequence << std::endl;
+        std::cerr << "Ungapped Sequence: " << ungappedSequence << std::endl;
+        std::cerr << "localIdx -> gappedIndex -> globalPos: " << std::endl;
+        for (size_t i = 0; i < localToGappedPos.size(); ++i) {
+          if (localToGappedPos[i] != -1) {
+            int64_t globalPos = positions[localToGappedPos[i]];
+            std::cerr << "  " << i << " -> " << localToGappedPos[i] << " -> " << globalPos << std::endl;
+          } else {
+            std::cerr << "  " << i << " -> -1 (no mapping)" << std::endl;
+          }
+        }
+
+
+
         // Step 1: First collect all positions in this range that currently have seeds
-        std::unordered_map<int64_t, seeding::seed_t> existingSeedsInRange;
+        std::unordered_map<size_t, seeding::seed_t> existingSeedsInRange;
         for (size_t i = 0; i < positions.size(); i++) {
           int64_t globalPos = positions[i];
           if (i + k <= positions.size()) { // Ensure we have at least k positions from here
             auto seedOpt = kmer_utils::getSeedAtPosition(stateManager, nodeId, globalPos);
             if (seedOpt.has_value()) {
-              existingSeedsInRange[globalPos] = seedOpt.value();
+              existingSeedsInRange[i] = seedOpt.value();
             }
           }
         }
-        // logging::debug("DEBUG_RECOMP: Found {} positions with existing seeds in range [{}, {})", 
-        //              existingSeedsInRange.size(), range.start, range.end);
-        
-
-        // Attempt to get the full block sequence for the block containing range.start for debugging
-        // try {
-        //     // Use range.start to find the block it belongs to
-        //     auto coordOpt = stateManager.fastMapGlobalToLocal(range.start);
-        //     if (coordOpt) {
-        //         // Extract blockId from the mapping result
-        //         auto [mappedBlockId, _nucPos, _gapPos] = *coordOpt; 
-        //         
-        //         // Get the full range of this identified block
-        //         coordinates::CoordRange actualBlockRange = stateManager.getBlockRange(mappedBlockId); 
-        //         
-        //         // Extract the sequence for this full block range
-        //         const auto &[fullBlockSequence, fullBlockPositions] = stateManager.extractSequence(nodeId, actualBlockRange, true /* skipGaps */);
-        //         
-        //         // debugSeedFile << "Node ID: " << nodeId << " (debug info for block containing range.start=" << range.start << ")" << std::endl;
-        //         // debugSeedFile << "  Mapped to Block ID: " << mappedBlockId << std::endl;
-        //         // debugSeedFile << "  Full Block Range: [" << actualBlockRange.start << ", " << actualBlockRange.end << ")" << std::endl;
-        //         // debugSeedFile << "  Full Block Sequence (ID " << mappedBlockId << "): " << fullBlockSequence << std::endl;
-        //         // debugSeedFile << "  Full Block Positions (ID " << mappedBlockId << "): ";
-        //         // for (const auto& pos : fullBlockPositions) {
-        //         //     debugSeedFile << pos << " ";
-        //         // }
-        //         // debugSeedFile << std::endl;
-
-        //     } else {
-        //         // debugSeedFile << "Node ID: " << nodeId << " (debug info for block containing range.start=" << range.start << ")" << std::endl;
-        //         // debugSeedFile << "  Could not map global position " << range.start << " to a local block coordinate (it may be in a gap or out of bounds)." << std::endl;
-        //     }
-        // } catch (const std::exception& e) {
-        //     // debugSeedFile << "Node ID: " << nodeId << " (debug info for block containing range.start=" << range.start << ")" << std::endl;
-        //     // debugSeedFile << "  Error during debug block sequence retrieval for range.start=" << range.start << ": " << e.what() << std::endl;
-        // }
-
-        // debugSeedFile << "Range: [" << range.start << ", " << range.end << ")" << std::endl;
-        // debugSeedFile << "Sequence: " << sequence << std::endl;
-        // debugSeedFile << "Positions: ";
-        // for (const auto& pos : positions) {
-        //     debugSeedFile << pos << " ";
-        // }
-        // debugSeedFile << std::endl;
-        // Step 2: Process k-mers in this range
-        std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmers =
-            seeding::rollingSyncmers(sequence, k, s, false, 0, false);
-        // debugSeedFile << "RollingSyncmers: [hash, isReverse, isSyncmer, localStartPos, sequence]" << std::endl;
-        // for (const auto& syncmer : syncmers) {
-        //     int64_t globalPos = positions[std::get<3>(syncmer)];
-        //     debugSeedFile << std::get<0>(syncmer) << " " << std::get<1>(syncmer) << " " << std::get<2>(syncmer) << " " << std::get<3>(syncmer) << " " << stateManager.extractKmer(nodeId, globalPos, k).first << std::endl;
-        // }
-        // debugSeedFile << std::endl;
-        if (nodeId == "DJ068250.1" || nodeId == "KU950649.1") {
-            std::cerr << "[SEED TODAY] " << nodeId << " changes: " << syncmers.size() << " syncmers in range [" << range.start << ", " << range.end << ")" << std::endl;
-            std::cerr << "seq: " << sequence << std::endl;
+        // If any existing seed starts at a gap, delete it
+        std::vector<size_t> seedsToDelete;
+        for (const auto& [localIdx, seed] : existingSeedsInRange) {
+          if (localIdx < gaps.size() && gaps[localIdx]) {
+            // This seed starts at a gap position, mark for deletion
+            seedsToDelete.push_back(localIdx);
+          }
         }
-        // Step 3: Track which positions are still valid syncmers
-        std::unordered_set<int64_t> validSyncmerPositions;
-        for (const auto& [hash, isReverse, isSyncmer, localStartPos] : syncmers) {
-          // Skip if not a syncmer
-          if (!isSyncmer) continue;
+        // Delete seeds that start at gap positions
+        for (size_t localIdx : seedsToDelete) {
+          int64_t globalPos = positions[localIdx];
+          stateManager.clearSeedAtPosition(nodeId, globalPos);
+          existingSeedsInRange.erase(localIdx);
+          seedsCleared++;
           
-          // Map local position to global position
-          if (localStartPos >= positions.size()) {
-            logging::warn("DEBUG_RECOMP: Invalid local position {} (larger than positions size {})", 
-                         localStartPos, positions.size());
-            continue;
-          }
+          seedChanges.emplace_back(
+              std::make_tuple(globalPos, true, false, std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt, std::nullopt));
           
-          int64_t globalStartPos = positions[localStartPos];
-          validSyncmerPositions.insert(globalStartPos);
-          
-          // Get end position - k-1 positions away from start
-          int64_t globalEndPos = (localStartPos + k - 1 < positions.size()) ? 
-                                positions[localStartPos + k - 1] : globalStartPos + k - 1;
-          
-          // Check for existing seed
-          auto existingSeedIt = existingSeedsInRange.find(globalStartPos);
-          bool hadSeed = (existingSeedIt != existingSeedsInRange.end());
-          
-          // Extract k-mer string
-          std::string kmer = "<unavailable>";
-          if (localStartPos + k <= sequence.length()) {
-            kmer = sequence.substr(localStartPos, k);
-          }
-          
-          if (hadSeed && existingSeedIt->second.hash != hash) {
+          logging::debug("DEBUG_RECOMP: Deleted seed at gap position {}", globalPos);
+        }
+
+        // Step 2: Process k-mers in this range
+        std::vector<std::tuple<size_t, bool, bool, int64_t>> kmers =
+            seeding::rollingSyncmers(ungappedSequence, k, s, false, 0, true);
+
+        for (const auto& [hash, isReverse, isNowSeed, localStartPos] : kmers) {
+          int64_t gappedLocalStartPos = localToGappedPos[localStartPos];
+          int64_t globalPos = positions[gappedLocalStartPos];
+          bool hadSeed = existingSeedsInRange.find(gappedLocalStartPos) != existingSeedsInRange.end();
+          // Case 1: Seed position ON in parent, seed position ON in current node,
+          // hashes are different
+          if (hadSeed && isNowSeed && existingSeedsInRange[gappedLocalStartPos].hash != hash) {
+            seedsChanged++;
             // Modify existing seed
-            auto &oldSeed = existingSeedIt->second;
+            auto &oldSeed = existingSeedsInRange[gappedLocalStartPos];
             
             // Create new seed
             seeding::seed_t newSeed;
             newSeed.hash = hash;
             newSeed.reversed = isReverse;
-            newSeed.endPos = globalEndPos;
-            
+            // Use pre-calculated end position - ensure we use the correct index
+            newSeed.endPos = (gappedLocalStartPos < endPositions.size()) ? 
+                             endPositions[gappedLocalStartPos] : globalPos + k - 1;
+            auto kmerObj = stateManager.extractKmer(node->identifier, globalPos, k);
+            std::string kmer = kmerObj.first;
+                             
             // Store seed
-            stateManager.setSeedAtPosition(nodeId, globalStartPos, newSeed);
+            stateManager.setSeedAtPosition(nodeId, globalPos, newSeed);
             seedsAdded++;
             
             seedChanges.emplace_back(
-                std::make_tuple(globalStartPos, true, true, oldSeed.hash, hash,
+                std::make_tuple(globalPos, true, true, oldSeed.hash, hash,
                                 oldSeed.reversed, isReverse,
-                                oldSeed.endPos, globalEndPos));
+                                oldSeed.endPos, newSeed.endPos));
                                 
-            
             uniqueKmersCollector.insert(kmer);
             
+            stateManager.nodeKmerSequences[nodeId][globalPos] = kmer;
+            stateManager.nodeKmerEndOffsets[nodeId][globalPos] = static_cast<uint32_t>(newSeed.endPos - globalPos);
             
-            stateManager.nodeKmerSequences[nodeId][globalStartPos] = kmer;
-            stateManager.nodeKmerEndOffsets[nodeId][globalStartPos] = static_cast<uint16_t>(globalEndPos - globalStartPos);
-            
-            
-            if (!kmer.empty() && kmerDictionary != nullptr) {
-              uint32_t dictId;
-              auto it = kmerDictionary->find(kmer);
-              if (it != kmerDictionary->end()) {
-                dictId = it->second;
-              } else {
-                dictId = static_cast<uint32_t>(uniqueKmersCollector.size() - 1); 
-              }
-              
-              dictionaryIds.push_back(dictId);
-              dictionaryPositions.push_back(globalStartPos);
-              dictionaryEndOffsets.push_back(static_cast<uint16_t>(globalEndPos - globalStartPos));
-              
-              logging::debug("DEBUG_RECOMP: Added global dictionary reference for modified seed at pos {}: kmer='{}', dictId={}, endOffset={}",
-                           globalStartPos, kmer, dictId, globalEndPos - globalStartPos);
-            }
-            
-            logging::debug("DEBUG_RECOMP: Modified seed at position {}, hash {} -> {}, k-mer: {}", 
-                          globalStartPos, oldSeed.hash, hash, kmer);
-          } else if (!hadSeed) {
-            // Add new seed
-            seeding::seed_t newSeed;
-            newSeed.hash = hash;
-            newSeed.reversed = isReverse;
-            newSeed.endPos = globalEndPos;
-            
-            // Store seed
-            stateManager.setSeedAtPosition(nodeId, globalStartPos, newSeed);
-            seedsAdded++;
-            
-            
-            seedChanges.emplace_back(
-                std::make_tuple(globalStartPos, false, true, std::nullopt, hash,
-                               std::nullopt, isReverse,
-                               std::nullopt, globalEndPos));
-                               
-            
-            uniqueKmersCollector.insert(kmer);
-            
-            
-            stateManager.nodeKmerSequences[nodeId][globalStartPos] = kmer;
-            stateManager.nodeKmerEndOffsets[nodeId][globalStartPos] = static_cast<uint16_t>(globalEndPos - globalStartPos);
-            
-            
-            if (!kmer.empty() && kmerDictionary != nullptr) {
-              uint32_t dictId;
-              auto it = kmerDictionary->find(kmer);
-              if (it != kmerDictionary->end()) {
-                dictId = it->second;
-              } else {
-                dictId = static_cast<uint32_t>(uniqueKmersCollector.size() - 1); 
-              }
-              
-              dictionaryIds.push_back(dictId);
-              dictionaryPositions.push_back(globalStartPos);
-              dictionaryEndOffsets.push_back(static_cast<uint16_t>(globalEndPos - globalStartPos));
-              
-              logging::debug("DEBUG_RECOMP: Added global dictionary reference for new seed at pos {}: kmer='{}', dictId={}, endOffset={}",
-                           globalStartPos, kmer, dictId, globalEndPos - globalStartPos);
-            }
           }
-          
-          
-          coordinates::BlockCoordinate coords =
-              stateManager.mapGlobalToBlockCoords(nodeId, globalStartPos);
-              
-          if (coords.blockId >= 0 && stateManager.isBlockOn(nodeId, coords.blockId)) {
-            try {
-              
-              if (hadSeed && existingSeedIt->second.hash != hash) {
-                coordinates::BlockCoordinate oldCoords =
-                    stateManager.mapGlobalToBlockCoords(nodeId, globalStartPos);
-                    
-                if (oldCoords.blockId >= 0 && oldCoords.blockId != coords.blockId) {
-                  stateManager.removeSeedFromBlock(oldCoords.blockId, globalStartPos);
-                }
-              }
-              
-              
-              stateManager.addSeedToBlock(coords.blockId, globalStartPos);
-              
-              
-              engine.addSeed(globalStartPos, hash, node, coords.blockId);
-            } catch (const std::exception &e) {
-              logging::err("ERROR adding seed to block {} at position {}: {}", 
-                          coords.blockId, globalStartPos, e.what());
-            }
+          // Case 2: Seed position ON in parent, seed position ON in current node,
+          // hashes are the same
+          if (hadSeed && isNowSeed && existingSeedsInRange[gappedLocalStartPos].hash == hash) {
+            // No change needed, just continue
+            continue;
           }
-        }
-        
-        // Step 4: Delete seeds that are no longer syncmers
-        int seedsDeletedInRange = 0;
-        for (const auto& [globalPos, seed] : existingSeedsInRange) {
-          if (validSyncmerPositions.find(globalPos) == validSyncmerPositions.end()) {
-            // This position had a seed but is no longer a valid syncmer position
+          // Case 3: Seed position ON in parent, seed position OFF in current node,
+          if (hadSeed && !isNowSeed) {
+            // Remove existing seed
+            auto &oldSeed = existingSeedsInRange[gappedLocalStartPos];
             
             // Add deletion to seed changes
             seedChanges.emplace_back(
-                std::make_tuple(globalPos, true, false, seed.hash, std::nullopt,
-                               seed.reversed, std::nullopt,
-                               seed.endPos, std::nullopt));
+                std::make_tuple(globalPos, true, false, oldSeed.hash, std::nullopt,
+                               oldSeed.reversed, std::nullopt,
+                               oldSeed.endPos, std::nullopt));
             
             // Remove seed from block
             try {
@@ -1334,15 +1135,36 @@ void recomputeSeeds(
             // Clear the seed
             stateManager.clearSeedAtPosition(nodeId, globalPos);
             seedsCleared++;
-            seedsDeletedInRange++;
-            
-            logging::debug("DEBUG_RECOMP: Deleted seed at position {} that is no longer a syncmer", globalPos);
           }
+          // Case 4: Seed position OFF in parent, seed position ON in current node,
+          // => New seed
+          if (!hadSeed && isNowSeed) {
+            // Add new seed
+            seeding::seed_t newSeed;
+            newSeed.hash = hash;
+            newSeed.reversed = isReverse;
+            // Use pre-calculated end position - ensure we use the correct index
+            newSeed.endPos = (gappedLocalStartPos < endPositions.size()) ? 
+                             endPositions[gappedLocalStartPos] : globalPos + k - 1;
+                             
+            // Store seed
+            stateManager.setSeedAtPosition(nodeId, globalPos, newSeed);
+            seedsAdded++;
+            
+            seedChanges.emplace_back(
+                std::make_tuple(globalPos, false, true, std::nullopt, hash,
+                               std::nullopt, isReverse,
+                               std::nullopt, newSeed.endPos));
+                               
+            
+            uniqueKmersCollector.insert(ungappedSequence.substr(localStartPos, k));
+            
+            stateManager.nodeKmerSequences[nodeId][globalPos] = ungappedSequence.substr(localStartPos, k);
+            stateManager.nodeKmerEndOffsets[nodeId][globalPos] = static_cast<uint32_t>(newSeed.endPos - globalPos);
+          }
+
         }
         
-        if (seedsDeletedInRange > 0) {
-          logging::debug("DEBUG_RECOMP: Deleted {} seeds that are no longer syncmers in range", seedsDeletedInRange);
-        }
       } catch (const std::exception &e) {
         logging::err("Error processing range {} for node {}: {}", 
                     rangeIdx, nodeId, e.what());
@@ -1354,10 +1176,8 @@ void recomputeSeeds(
   
   std::vector<int64_t> basePositions;
   std::vector<uint64_t> bitMasks;
-  
+
   if (!seedChanges.empty()) {
-    logging::info("Encoding {} total seed changes for node {} (deleted: {}, added/modified: {}, dictionary entries: {})", 
-                  seedChanges.size(), nodeId, seedsCleared, seedsAdded, dictionaryIds.size());
     processSeedChanges(seedChanges, basePositions, bitMasks);
     
     if (perNodeSeedMutations != nullptr) {
@@ -1408,6 +1228,10 @@ void recomputeSeeds(
           
           logging::info("Node {}: Successfully encoded {} seed changes (deleted: {}, added/modified: {}, dictionary entries: {}, inherited seeds: {} - not encoded)", 
                        nodeId, seedChanges.size(), seedsCleared, seedsAdded, dictionaryIds.size(), seedsInherited);
+          
+          // Update efficient seed count tracking in NodeState
+          auto &nodeState = stateManager.getNodeState(nodeId);
+          nodeState.updateSeedCounts(seedsCleared, seedsAdded, seedsChanged);
         } else {
           logging::err("DFS index {} is out of bounds for {} seed mutation entries", 
                        dfsIndex, perNodeSeedMutations->size());
@@ -1418,22 +1242,63 @@ void recomputeSeeds(
     } else {
       auto &nodeState = stateManager.getNodeState(nodeId);
       nodeState.addSeedChanges(basePositions, bitMasks);
+      
+      // Update efficient seed count tracking in NodeState
+      nodeState.updateSeedCounts(seedsCleared, seedsAdded, seedsChanged);
     }
   } else {
     
     logging::debug("No seed changes to encode for node {} (inherited: {}, all seeds preserved)", 
                   nodeId, seedsInherited);
+    
+    // Even if no changes, update NodeState to inherit parent seed count for efficiency
+    auto &nodeState = stateManager.getNodeState(nodeId);
+    if (node->parent) {
+      try {
+        const auto &parentState = stateManager.getNodeState(node->parent->identifier);
+        nodeState.initializeSeedCountFromParent(parentState.getTotalSeedCount());
+      } catch (const std::exception& e) {
+        // If parent state not available, calculate from scratch as fallback
+        logging::warn("Failed to inherit seed count from parent for node {}: {}", nodeId, e.what());
+      }
+    }
   }
-  std::cerr << "SEED CHANGES at node " << nodeId << ": " << seedChanges.size() << std::endl;
-  // print the seed changes at this node
-  // for (const auto& change : seedChanges) {
-  //   const auto &[pos, wasOn, isOn, oldHash, newHash, oldReversed, newReversed,
-  //                oldEndPos, newEndPos] = change;
-  //   const auto &[kmerSeq, _] = stateManager.extractKmer(nodeId, pos, k);
-  //   debugSeedFile << "SEED_CHANGE: pos=" << pos << ", wasOn=" << (wasOn ? "true" : "false") << ", isOn=" << (isOn ? "true" : "false") << ", oldHash=" << oldHash.value_or(0) << ", newHash=" << newHash.value_or(0) << ", oldReversed=" << (oldReversed ? "true" : "false") << ", newReversed=" << (newReversed ? "true" : "false") << ", oldEndPos=" << oldEndPos.value_or(0) << ", newEndPos=" << newEndPos.value_or(0) << ", kmer=" << kmerSeq << std::endl;
-  // }
+
+  if (node->identifier == "node_434" || node->identifier == "node_426") {
+    std::cerr << "[[ node " << node->identifier << " ]] " << std::endl;
+    std::cerr << "** full reconstruction (gapped): ** " << std::endl;
+    // print each block sequence
+    auto fullRange = coordinates::CoordRange{stateManager.getActiveBlockRanges(nodeId)[0].second.start, 
+                     stateManager.getActiveBlockRanges(nodeId).back().second.end};
+    auto [fullSeqGapped, _, __, ___] = stateManager.extractSequence(nodeId, fullRange, false);
+    std::cerr << fullSeqGapped << std::endl;
+    std::cerr << "** full reconstruction (ungapped): ** " << std::endl;
+    auto [fullSeqUngapped, ____, _____, ______] = stateManager.extractSequence(nodeId, fullRange, true);
+    std::cerr << fullSeqUngapped << std::endl;
+    std::cerr << "** seeds across genome: ** " << std::endl;
+    auto seedsFull = seeding::rollingSyncmers(fullSeqUngapped, k, s, false, 0, false);
+    for (const auto &[hash, isReverse, isSyncmer, startPos] : seedsFull) {
+      std::string kmer = fullSeqUngapped.substr(startPos, k);
+      std::cerr << "Hash: " << hash << ", Reverse: " << isReverse 
+                << ", Syncmer: " << isSyncmer << ", StartPos: " << startPos 
+                << ", K-mer: " << kmer << std::endl;
+    }
+    std::cerr << "** our version: ** " << std::endl;
+    
+    for (int64_t pos = fullRange.start; pos < fullRange.end; pos++) {
+      auto seedOpt = kmer_utils::getSeedAtPosition(stateManager, nodeId, pos);
+      if (seedOpt.has_value()) {
+        auto &seed = seedOpt.value();
+        std::cerr << "Pos: " << pos << ", Hash: " << seed.hash 
+                  << ", Reversed: " << seed.reversed 
+                  << ", EndPos: " << seed.endPos << std::endl;
+      }
+    }
+
+  }
+
   
-  return;
+  return std::make_pair(blockDeletions, blockInsertions);
 }
 
 /**
@@ -1463,8 +1328,6 @@ void processSeedChanges(
     logging::debug("SEED_ENCODE: No seed changes to encode");
     return;
   }
-
-  logging::debug("SEED_ENCODE: Processing {} seed changes for quaternary encoding", seedChanges.size());
 
   
   constexpr uint8_t BITS_PER_VALUE = 2;
@@ -1515,10 +1378,28 @@ void processSeedChanges(
                 valueCount[0], valueCount[1], valueCount[2], valueCount[3]);
 
   
-  std::sort(positionValuePairs.begin(), positionValuePairs.end(),
-            [](const auto &a, const auto &b) { return a.first > b.first; });
+  // // Sort to process deletions -> modifications -> additions: custom order (deletions=1, modifications=3, additions=2), then by position descending
+  // std::sort(positionValuePairs.begin(), positionValuePairs.end(),
+  //           [](const auto &a, const auto &b) { 
+  //             // Custom operation type priority: deletions (1) -> modifications (3) -> additions (2)
+  //             auto getPriority = [](uint8_t value) -> int {
+  //               if (value == 1) return 0; // Deletions first
+  //               if (value == 3) return 1; // Modifications second
+  //               if (value == 2) return 2; // Additions third
+  //               return 3; // Unchanged last
+  //             };
+              
+  //             int priorityA = getPriority(a.second);
+  //             int priorityB = getPriority(b.second);
+              
+  //             if (priorityA != priorityB) {
+  //               return priorityA < priorityB;
+  //             }
+  //             // Within same operation type, sort by position descending
+  //             return a.first > b.first; 
+  //           });
 
-  logging::debug("SEED_ENCODE: Sorted {} position-value pairs", positionValuePairs.size());
+  logging::debug("SEED_ENCODE: Sorted {} position-value pairs (deletions -> modifications -> additions)", positionValuePairs.size());
 
   
   
@@ -1673,18 +1554,23 @@ void processNodesByLevel(
   }
 
   
-  logging::debug("Processing {} nodes in parallel with TBB auto_partitioner ({} hardware threads available)",
-               nodes.size(), std::thread::hardware_concurrency());
+  // Calculate optimal grain size for TBB parallel_for
+  const size_t numThreads = std::thread::hardware_concurrency();
+  const size_t nodeCount = nodes.size();
+  const size_t optimalGrainSize = std::max(1UL, 
+      std::min(nodeCount / (numThreads * 4), 64UL)); // Prevent too small or too large grains
+  
+  logging::debug("Processing {} nodes in parallel with TBB optimal grain size {} ({} hardware threads available)",
+               nodeCount, optimalGrainSize, numThreads);
 
   tbb::parallel_for(
-      tbb::blocked_range<size_t>(0, nodes.size()),
+      tbb::blocked_range<size_t>(0, nodeCount, optimalGrainSize),
       [&](const tbb::blocked_range<size_t> &range) {
         logging::debug("Thread processing range [{}, {})", range.begin(), range.end());
         for (size_t i = range.begin(); i < range.end(); ++i) {
           processFunction(nodes[i]);
         }
-      },
-      tbb::auto_partitioner());
+      });
 
   logging::debug("Completed parallel processing of {} nodes", nodes.size());
 }
@@ -2049,12 +1935,12 @@ initializeStateManager(panmanUtils::Tree *tree, panmanUtils::Node *rootNode,
 
               if (range595.start < range595.end) {
                   // Use rootNode->identifier as the "nodeId" for extracting the initial reference sequence state
-                  std::pair<std::string, std::vector<int64_t>> b595_seq_data = stateManager->extractSequence(rootNode->identifier, range595, false);
-                  b595_log << "Block 595 Gappy Content (length " << b595_seq_data.first.length() << "):\n";
-                  for (size_t i = 0; i < b595_seq_data.first.length(); i += 80) {
-                      b595_log << b595_seq_data.first.substr(i, 80) << "\n";
+                  auto [b595_sequence, b595_positions, b595_gaps, b595_endPositions] = stateManager->extractSequence(rootNode->identifier, range595, false);
+                  b595_log << "Block 595 Gappy Content (length " << b595_sequence.length() << "):\n";
+                  for (size_t i = 0; i < b595_sequence.length(); i += 80) {
+                      b595_log << b595_sequence.substr(i, 80) << "\n";
                   }
-                  if (b595_seq_data.first.empty()) {
+                  if (b595_sequence.empty()) {
                        b595_log << "[EMPTY SEQUENCE EXTRACTED FOR BLOCK 595 INITIAL STATE]\n";
                   }
               } else {
@@ -2107,272 +1993,6 @@ initializeStateManagerLight(panmanUtils::Tree* tree, panmanUtils::Node* rootNode
   return stateManager;
 }
 
-// // Parallel index generator for multiple nodes
-// void parallelIndexPan(
-//     panmanUtils::Tree *tree, state::StateManager *stateManager,
-//     panmanUtils::Node *commonAncestor, bool seeding, int k, int s, int threads,
-//     ::capnp::List<SeedMutations>::Builder *perNodeSeedMutations,
-//     ::capnp::MallocMessageBuilder *outMessage, const std::string &indexPath,
-//     size_t flushInterval = 100) {
-//   // Validate input parameters
-//   if (!tree || !commonAncestor) {
-//     throw std::runtime_error("Invalid tree or common ancestor for indexing");
-//   }
-
-//   if (!stateManager) {
-//     throw std::runtime_error("StateManager is null in parallelIndexPan");
-//   }
-
-//   // OPTIMIZATION: Adaptive thread count based on system and node count
-//   // Use std::max to ensure we have at least 1 thread
-//   const int availableThreads = std::thread::hardware_concurrency();
-//   const int requestedThreads = threads > 0 ? threads : availableThreads;
-  
-//   // Don't use more threads than we have nodes or available cores
-//   // Also cap at a reasonable number to prevent excessive overhead
-//   const size_t nodeCount = tree->allNodes.size();
-//   const int optimalThreads = std::min({
-//     requestedThreads,
-//     static_cast<int>(nodeCount),
-//     static_cast<int>(availableThreads),
-//     64  // Hard cap to prevent excessive thread creation
-//   });
-  
-//   logging::info("Starting parallel indexing with {} threads ({} available, {} nodes)", // CHANGED to info
-//                optimalThreads, availableThreads, nodeCount);
-
-//   // Create a task arena with the optimal thread count
-//   logging::info("Creating TBB task arena with {} threads...", optimalThreads); // ADDED LOG
-//   tbb::task_arena arena(optimalThreads);
-//   logging::info("TBB task arena created."); // ADDED LOG
-  
-//   // OPTIMIZATION: Reduce mutex contention with thread-local collections
-//   // Using thread_local for TBB is tricky, so we use vectors with thread indices
-//   std::vector<std::unordered_set<std::string>> threadLocalKmerCollectors(optimalThreads);
-
-//   // Initialize state
-//   placement::PlacementEngine engine(k);
-  
-//   // Collection for unique k-mers
-//   std::unordered_set<std::string> uniqueKmersCollector;
-//   // Reserve space to avoid expensive rehashing
-//   uniqueKmersCollector.reserve(std::min(size_t(10000000), nodeCount * 1000));
-
-//   // Progress tracking and cancellation
-//   std::atomic<size_t> operationCount{0};
-//   std::atomic<bool> shouldCancel{false};
-
-//   // Determine if we should write to disk at the end
-//   const bool enableWriting = outMessage && !indexPath.empty();
-
-//   try {
-//     // Compute node paths and organize by level
-//     auto nodePaths = state::computeNodePaths(tree, commonAncestor);
-//     auto nodesByLevel = state::groupNodesByLevel(tree, commonAncestor);
-
-//     logging::debug("Organized nodes by {} levels", nodesByLevel.size());
-
-//     // *** ADDED: Sequential Initialization Pass ***
-//     logging::info("Sequentially initializing all node states before parallel processing...");
-//     size_t initCounter = 0;
-//     for (const auto& [nodeId, nodePtr] : tree->allNodes) {
-//         try {
-//             stateManager->initializeNode(nodeId); // Ensure state exists
-//             initCounter++;
-//             if (initCounter % 500 == 0 || initCounter == nodeCount) {
-//                  fprintf(stderr, "\rInitializing states: %zu/%zu...", initCounter, nodeCount);
-//                  fflush(stderr);
-//             }
-//         } catch (const std::exception& e) {
-//             logging::err("Error initializing node {} state sequentially: {}. Aborting.", nodeId, e.what());
-//             throw; // Re-throw critical initialization errors
-//         }
-//     }
-//     fprintf(stderr, "\nSequential initialization complete.\n");
-//     // *** END: Sequential Initialization Pass ***
-
-//     logging::info("Starting main level processing loop...");
-    
-//     // Add counter for node statistics reporting
-//     std::atomic<size_t> totalNodesProcessed{0};
-//     size_t lastReportedNode = 0;
-    
-//     for (size_t levelIdx = 0; levelIdx < nodesByLevel.size(); ++levelIdx) {
-//       // Early exit if cancellation is requested
-//       if (shouldCancel) {
-//         logging::warn("Cancellation requested, stopping indexing");
-//         break;
-//       }
-
-//       const auto &currentLevelNodes = nodesByLevel[levelIdx];
-//       logging::info("Processing level {} with {} nodes", levelIdx, currentLevelNodes.size());
-
-//       // Add cout before arena.execute
-//       std::cout << "[COUT DEBUG] Preparing to execute arena for level " << levelIdx << std::endl;
-//       arena.execute([&]() {
-//         // Add cout inside arena.execute, before parallel_for
-//         std::cout << "[COUT DEBUG] Entered arena execute for level " << levelIdx << ". Starting parallel_for..." << std::endl;
-
-//         tbb::parallel_for(
-//             tbb::blocked_range<size_t>(0, currentLevelNodes.size()),
-//             [&](const tbb::blocked_range<size_t> &range) {
-//               logging::info("Inside TBB parallel_for lambda for level {} (range [{}, {}))", levelIdx, range.begin(), range.end()); // ADDED LOG
-//               try {
-//                 // Process each node in the range
-//                 for (size_t i = range.begin(); i < range.end(); ++i) {
-//                   // Skip processing if cancellation requested
-//                   if (shouldCancel)
-//                     break;
-
-//                   auto *node = currentLevelNodes[i];
-
-//                   // Process mutations for this node
-//                   processMutationsForNode(*stateManager, tree, node, commonAncestor,
-//                                            nodePaths, nullptr, nullptr); // Added 7th nullptr argument
-
-//                   // If seeding is enabled, immediately compute seeds for this node
-//                   if (seeding) {
-//                     // Use complete node processing with selective operations
-//                     processNodeComplete(*stateManager, engine, tree, node, commonAncestor, 
-//                                       nodePaths, k, s, perNodeSeedMutations, nullptr,
-//                                       false, // Skip mutations since we already processed them
-//                                       true,  // Do compute seeds
-//                                       uniqueKmersCollector); // Use existing collector instead of temporary
-
-//                     // Increment operation count for statistics
-//                       operationCount.fetch_add(1, std::memory_order_relaxed);
-                    
-//                     // Increment diagnostic nodes counter and print report at intervals
-//                     size_t currentNode = totalNodesProcessed.fetch_add(1, std::memory_order_relaxed) + 1;
-//                     if (currentNode / DIAGNOSTIC_INTERVAL > lastReportedNode / DIAGNOSTIC_INTERVAL) {
-//                         // Print diagnostic report
-//                         printDiagnosticReport(currentNode);
-//                         lastReportedNode = currentNode;
-//                         // Reset counters for next interval
-//                         resetDiagnosticCounters();
-//                     }
-//                   }
-//                 }
-//               } catch (const std::exception &e) {
-//                 // Log error but allow other threads to continue
-//                 logging::err("ERROR in parallel processing thread: {}", e.what());
-//               }
-//             },
-//             tbb::auto_partitioner());
-            
-//         logging::info("Finished TBB parallel_for for level {}.", levelIdx); // ADDED LOG
-//         // Add cout inside arena.execute, after parallel_for
-//         std::cout << "[COUT DEBUG] Finished parallel_for for level " << levelIdx << std::endl;
-//       });
-      
-//       // Print final diagnostic report for this level if needed
-//       if (totalNodesProcessed.load() > lastReportedNode) {
-//           printDiagnosticReport(totalNodesProcessed.load());
-//           lastReportedNode = totalNodesProcessed.load();
-//           resetDiagnosticCounters();
-//       }
-      
-//       // Add cout after arena.execute
-//       std::cout << "[COUT DEBUG] Finished arena execute for level " << levelIdx << std::endl;
-
-//       logging::debug("Completed processing level {}", levelIdx);
-
-//       // REMOVED: Intermediate flushing after each level
-//       // We will only write the index at the end
-//     }
-
-//     // Save placement index if seeding is enabled
-//     if (seeding && !shouldCancel) {
-//       logging::debug("Saving placement index");
-//       engine.saveIndex();
-//       logging::debug("Placement index saved");
-//     }
-
-//     // Write the index to disk only once at the end of processing
-//     if (enableWriting && !shouldCancel) {
-//       try {
-//         logging::info("Writing final index to disk: {}", indexPath);
-        
-//         // Before writing, verify the key fields are set correctly
-//         if (outMessage) {
-//           auto index = outMessage->getRoot<Index>();
-          
-//           // Ensure k and s are properly set
-//           if (index.getK() != static_cast<uint32_t>(k) || index.getS() != static_cast<uint32_t>(s)) {
-//             logging::warn("Key index parameters were corrupted, restoring before writing");
-//             index.setK(k);
-//             index.setS(s);
-//           }
-          
-//           // Check seed mutations are initialized
-//           auto seedMutations = index.getPerNodeSeedMutations();
-//           if (seedMutations.size() == 0) {
-//             logging::warn("Seed mutations list is empty!");
-//           } else {
-//             logging::debug("Seed mutations list has {} entries", seedMutations.size());
-//           }
-          
-//           // CRITICAL FIX: Build placement acceleration data before writing
-//           logging::info("Building placement acceleration data (nodePathInfo)...");
-//           buildPlacementAccelerationData(tree, index, *stateManager);
-          
-//           // Verify nodePathInfo was properly populated
-//           auto nodePathInfo = index.getNodePathInfo();
-//           if (nodePathInfo.size() == 0) {
-//             logging::err("CRITICAL ERROR: nodePathInfo is still empty after building acceleration data");
-//             throw std::runtime_error("Failed to populate nodePathInfo structure");
-//           } else {
-//             logging::info("Successfully populated nodePathInfo with {} entries", nodePathInfo.size());
-//           }
-          
-//           // Final verification and log
-//           logging::debug("Verified index has k={}, s={}, seedMutations={}, nodePathInfo={}", 
-//                         index.getK(), index.getS(), seedMutations.size(), nodePathInfo.size());
-//           }
-          
-//         // Now write the index file
-//         ::writeCapnp(*outMessage, indexPath);
-          
-//         // Verify written index if possible
-//           try {
-//             auto reader = ::readCapnp(indexPath);
-//             if (reader) {
-//               auto verifyRoot = reader->getRoot<Index>();
-            
-//             // Check key data was written properly
-//               uint32_t verify_k = verifyRoot.getK();
-//               uint32_t verify_s = verifyRoot.getS();
-//               size_t verify_mutations = verifyRoot.getPerNodeSeedMutations().size();
-//             size_t verify_nodePathInfo = verifyRoot.getNodePathInfo().size();
-              
-//             logging::info("Verified written index: k={}, s={}, mutations={}, nodePathInfo={}", 
-//                          verify_k, verify_s, verify_mutations, verify_nodePathInfo);
-              
-//             if (verify_k != k || verify_s != s || verify_mutations == 0 || verify_nodePathInfo == 0) {
-//               logging::err("ERROR: Written index validation failed! Expected k={}, s={}, got k={}, s={}, nodePathInfo={}",
-//                           k, s, verify_k, verify_s, verify_nodePathInfo);
-//               throw std::runtime_error("Index validation failed: k=" + std::to_string(verify_k) + 
-//                                         ", s=" + std::to_string(verify_s) + 
-//                                       ", mutations=" + std::to_string(verify_mutations) + 
-//                                       ", nodePathInfo=" + std::to_string(verify_nodePathInfo));
-//               }
-//             }
-//         } catch (const std::exception &e) {
-//           logging::warn("Could not verify written index: {}", e.what());
-//         }
-//       } catch (const std::exception &e) {
-//         logging::err("ERROR writing final index: {}", e.what());
-//         // Continue execution - don't abort completely
-//       }
-//     } else {
-//       logging::err("outMessage is null, cannot write index");
-//     }
-//   } catch (const std::exception &e) {
-//     logging::critical("FATAL ERROR during indexing: {}", e.what());
-//     throw;
-//   }
-// }
-
 // Build additional data for placement acceleration
 void buildPlacementAccelerationData(panmanUtils::Tree *tree,
                                     Index::Builder &index,
@@ -2399,68 +2019,6 @@ void buildPlacementAccelerationData(panmanUtils::Tree *tree,
   std::set<std::string> missingInStateManager;  // Nodes in tree but not in StateManager
   std::set<std::string> indexableNodeIds;       // Nodes that can be included in the index
 
-  // First pass: Collect all node IDs and check their presence in StateManager
-  logging::info("Verifying node consistency between tree and StateManager...");
-  for (const auto &[nodeId, node] : tree->allNodes) {
-    treeNodeIds.insert(nodeId);
-    
-    // Check if node exists in StateManager
-    try {
-      stateManager.getActiveBlocks(nodeId);
-      stateManagerNodeIds.insert(nodeId);
-      indexableNodeIds.insert(nodeId);
-    } catch (const std::exception &e) {
-      missingInStateManager.insert(nodeId);
-      logging::warn("Node {} is in the tree but missing from StateManager: {}", 
-                    nodeId, e.what());
-    }
-  }
-
-  // Log summary of node verification
-  logging::info("Node Verification: {} total tree nodes, {} in StateManager, {} missing from StateManager", 
-               treeNodeIds.size(), stateManagerNodeIds.size(), missingInStateManager.size());
-
-  // CRITICAL: Check if any nodes are missing from StateManager
-  if (!missingInStateManager.empty()) {
-    // List up to first 10 missing nodes
-    std::stringstream missingNodesList;
-    size_t count = 0;
-    for (const auto& nodeId : missingInStateManager) {
-      if (count < 10) {
-        if (count > 0) missingNodesList << ", ";
-        missingNodesList << nodeId;
-      }
-      count++;
-    }
-    if (count > 10) {
-      missingNodesList << ", ... and " << (count - 10) << " more";
-    }
-    
-    logging::warn("CRITICAL: {} nodes exist in tree but are missing from StateManager: {}", 
-                 missingInStateManager.size(), missingNodesList.str());
-    
-    // Ensure at least the most important nodes exist (root + first level)
-    // This is a basic consistency check for critical nodes
-    for (const auto& level : nodesByLevel) {
-      if (level.empty()) continue;
-      
-      for (const auto& node : level) {
-        if (!node) continue;
-        
-        // Check important nodes (root and first few levels)
-        if (node == tree->root || node->parent == tree->root) {
-          if (missingInStateManager.find(node->identifier) != missingInStateManager.end()) {
-            logging::critical("CRITICAL NODE MISSING: {} ({})", 
-                            node->identifier, 
-                            node == tree->root ? "ROOT" : "Child of root");
-          }
-        }
-      }
-      
-      // Only check root and first level
-      break;
-    }
-  }
 
   // Initialize node path info builder - always use the tree size
   logging::debug("Initializing node path info for {} nodes", tree->allNodes.size());
@@ -2762,10 +2320,21 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
   std::mutex fastaWriteMutex; // Mutex to synchronize writes to the FASTA file
 
 
-  std::ofstream debugSeedFile("debug_seeds.txt");
-  if (!debugSeedFile.is_open()) {
-    logging::err("Failed to open debug_seeds.txt for writing seed information.");
-  }
+  std::ofstream debugSeedFile("debug.tsv");
+
+  debugSeedFile << "NodeID\tFULL_TotalSeeds\tFULL_SeedDeletions\tFULL_SeedInsertions\t"
+                << "FULL_SeedModifications\t"
+                << "FULL_OnSequenceLength\t"
+                << "FULL_OnBlocks\t"
+                << "FULL_BlockDeletions\t"
+                << "FULL_BlockInsertions\t"
+                << "OURS_TotalSeeds\t"
+                << "OURS_SeedDeletions\tOURS_SeedInsertions\t"
+                << "OURS_SeedModifications\t"
+                << "OURS_OnSequenceLength\t"
+                << "OURS_OnBlocks\t"
+                << "OURS_BlockDeletions\t"
+                << "OURS_BlockInsertions\tDIFF_FULL_vs_OURS\n";
 
   if (k <= 0 || s <= 0 || s >= k) {
     throw std::invalid_argument("Invalid k=" + std::to_string(k) +
@@ -2849,9 +2418,15 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
     for (size_t level = 1; level < nodesByLevel.size(); level++) {
       logging::debug("Processing level {} with {} nodes", level, nodesByLevel[level].size());
       const auto& currentLevelNodes = nodesByLevel[level]; // Get nodes for the current level
+      
+      // Calculate optimal grain size for TBB parallel_for
+      const size_t numThreads = std::thread::hardware_concurrency();
+      const size_t levelSize = currentLevelNodes.size();
+      const size_t optimalGrainSize = std::max(1UL, 
+          std::min(levelSize / (numThreads * 4), 64UL)); // Prevent too small or too large grains
 
-      // --- Parallelize the inner loop over nodes in the current level --- 
-      tbb::parallel_for(tbb::blocked_range<size_t>(0, currentLevelNodes.size()),
+      // --- Parallelize the inner loop over nodes in the current level with optimized grain size --- 
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, currentLevelNodes.size(), optimalGrainSize),
           [&](const tbb::blocked_range<size_t>& r) { // Use capture-by-reference [&]
           
           // Get a reference to the thread-local k-mer collector for this thread
@@ -2880,9 +2455,9 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
                       for (const auto& block_info_pair : active_blocks_with_ranges) {
                           const coordinates::CoordRange& block_range = block_info_pair.second;
                           if (block_range.start < block_range.end) {
-                              std::pair<std::string, std::vector<int64_t>> block_seq_data = 
+                              auto [blockSequence, blockPositions, blockGaps, blockEndPositions] = 
                                   stateManager->extractSequence(nodeId, block_range, true /* skipGaps */);
-                              full_sequence_for_node += block_seq_data.first;
+                              full_sequence_for_node += blockSequence;
                           }
                       }
                   } catch (const std::exception& e) {
@@ -2972,7 +2547,7 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
             // Convert stored k-mer sequences to dictionary IDs
             std::vector<uint32_t> dictIds;
             std::vector<int64_t> positions;
-            std::vector<uint16_t> endOffsets;
+            std::vector<uint32_t> endOffsets;
             
             // Get stored k-mers
             const auto& posToKmerMap = nodeKmersIt->second;
@@ -2991,7 +2566,7 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
                     positions.push_back(pos);
                     
                     // Get end offset
-                    uint16_t endOffset = k - 1; // Default
+                    uint32_t endOffset = k - 1; // Default
                     auto offsetsIt = stateManager->nodeKmerEndOffsets.find(nodeId);
                     if (offsetsIt != stateManager->nodeKmerEndOffsets.end()) {
                         auto posOffsetIt = offsetsIt->second.find(pos);
@@ -3448,7 +3023,6 @@ void processNodeComplete(
     if (node->parent) { 
         std::string parentId = node->parent->identifier;
         try {
-            // Explicit propagation is no longer needed
             // Just ensure the node is initialized
             stateManager.getNodeState(strNodeId);
             // std::cerr << "[DEBUG] PNC: Node " << strNodeId << " will inherit from parent " << parentId << " as needed" << std::endl;
@@ -3458,6 +3032,12 @@ void processNodeComplete(
         }
     }
 
+    if (node->identifier != tree->root->identifier) {
+      for (const int32_t blockId : stateManager.getActiveBlocks(node->parent->identifier)) {
+        stateManager.setBlockOn(strNodeId, blockId, true);
+      }
+    }
+
     std::stringstream condensed_ss_ourcode_stream; // Use a local stream for this function\'s log part
 
 
@@ -3465,17 +3045,261 @@ void processNodeComplete(
     std::string* ab_before_ptr = nullptr;
     std::stringstream* condensed_stream_for_pmfn = nullptr; 
 
-
     processMutationsForNode(stateManager, tree, node, commonAncestor, nodePaths, 
         ab_before_ptr,
         condensed_stream_for_pmfn 
     );
 
-    // Existing logic for seed computation follows
     if (computeSeeds) {
-        auto activeBlocksCheck = stateManager.getActiveBlocks(nodeId);
-        recomputeSeeds(stateManager, engine, node, k, s, perNodeSeedMutations, kmerDictionary, uniqueKmersCollector, debugSeedFile);
+        auto [blockDeletions, blockInsertions] = recomputeSeeds(stateManager, engine, node, k, s, perNodeSeedMutations, kmerDictionary, uniqueKmersCollector, debugSeedFile);
 
+        // Helper function to count seeds in ranges
+        auto countSeedsInRanges = [&](const std::string& targetNodeId, const std::vector<coordinates::CoordRange>& ranges) -> int64_t {
+            int64_t count = 0;
+            for (const auto& range : ranges) {
+                for (int64_t pos = range.start; pos < range.end; pos++) {
+                    if (kmer_utils::getSeedAtPosition(stateManager, targetNodeId, pos).has_value()) {
+                        count++;
+                    }
+                }
+            }
+            return count;
+        };
+
+        // Helper function to collect seeds from ranges
+        auto collectSeedsFromRanges = [&](const std::string& targetNodeId, int64_t startPos, int64_t endPos) -> std::pair<std::unordered_set<int64_t>, std::unordered_map<int64_t, seeding::seed_t>> {
+            std::unordered_set<int64_t> positions;
+            std::unordered_map<int64_t, seeding::seed_t> seeds;
+            for (int64_t pos = startPos; pos < endPos; pos++) {
+                auto seedOpt = kmer_utils::getSeedAtPosition(stateManager, targetNodeId, pos);
+                if (seedOpt.has_value()) {
+                    positions.insert(pos);
+                    seeds[pos] = seedOpt.value();
+                }
+            }
+            return {positions, seeds};
+        };
+
+        // Helper function to calculate seed differences
+        auto calculateDifferences = [&](const std::unordered_set<int64_t>& set1, const std::unordered_map<int64_t, seeding::seed_t>& seeds1,
+                                       const std::unordered_set<int64_t>& set2, const std::unordered_map<int64_t, seeding::seed_t>& seeds2) -> std::tuple<int64_t, int64_t, int64_t> {
+            int64_t only1 = 0, only2 = 0, modified = 0;
+            for (int64_t pos : set1) {
+                if (set2.find(pos) == set2.end()) only1++;
+            }
+            for (int64_t pos : set2) {
+                if (set1.find(pos) == set1.end()) {
+                    only2++;
+                } else {
+                    const auto& seed1 = seeds1.at(pos);
+                    const auto& seed2 = seeds2.at(pos);
+                    if (seed1.hash != seed2.hash || seed1.reversed != seed2.reversed || seed1.endPos != seed2.endPos) {
+                        modified++;
+                    }
+                }
+            }
+            return {only1, only2, modified};
+        };
+
+        std::cerr << "FULL FULL FULL FULL FULL" << std::endl;
+        // FULL vs PARTIAL_OURS vs OURS comparison for TSV logging
+        try {
+            auto activeBlocksAndRanges = stateManager.getActiveBlockRanges(nodeId);
+            if (activeBlocksAndRanges.empty()) {
+                debugSeedFile << nodeId << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\n";
+                return;
+            }
+            
+            int64_t fullStart = activeBlocksAndRanges[0].second.start;
+            int64_t fullEnd = activeBlocksAndRanges.back().second.end;
+            coordinates::CoordRange fullRange{fullStart, fullEnd};
+            
+            // === APPROACH 1: FULL ===
+            auto [fullSequence, fullPositions, fullGaps, fullEndPositions] = 
+                stateManager.extractSequence(nodeId, fullRange, false);
+
+            std::string ungappedSequence = fullSequence;
+            ungappedSequence.erase(std::remove_if(ungappedSequence.begin(), ungappedSequence.end(), [](char c) { return c == '-' || c == 'x'; }), ungappedSequence.end());
+            
+            
+            // make a vector of int64_t that maps local index in ungapped seq to local position in gapped sequence
+            std::vector<int64_t> localToGappedPos(ungappedSequence.length(), -1);
+            int64_t gappedIndex = 0;
+            for (size_t i = 0; i < fullSequence.length(); ++i) {
+              if (fullSequence[i] != '-' && fullSequence[i] != 'x') {
+                localToGappedPos[gappedIndex++] = i; // Map gapped position to ungapped index
+              }
+            }
+
+            // print gapped and ungapped seq and positions and mappings
+            std::cerr << ")))))    Gapped: " << fullSequence << "\n";
+            std::cerr << "*****  Ungapped: " << ungappedSequence << "\n";
+            std::cerr << "Global range: [" << fullStart << ", " << fullEnd << "]\n";
+            std::cerr << "Local to Gapped Index Mapping:\n";
+            for (size_t i = 0; i < localToGappedPos.size(); ++i) {
+              std::cerr << "  Ungapped idx " << i << " -> Gapped idx " << localToGappedPos[i] << "-> Global pos " << fullPositions[localToGappedPos[i]] << "\n";
+            }
+
+
+            
+
+            if (fullSequence.length() < static_cast<size_t>(k)) {
+                debugSeedFile << nodeId << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\n";
+                return;
+            }
+            
+            auto fullKmers = seeding::rollingSyncmers(ungappedSequence, k, s, false, 0, true);
+            
+            std::unordered_set<int64_t> fullSeedPositions;
+            std::unordered_map<int64_t, seeding::seed_t> fullSeeds;
+            int64_t fullTotalSeeds = 0;
+            int64_t commonSeqLength = fullSequence.length();
+            int64_t commonBlocks = activeBlocksAndRanges.size();
+            
+            std::cerr << "[full seeds] Node: " << nodeId << std::endl;
+            for (const auto& [hash, isReverse, isSeed, localStartPos] : fullKmers) {
+                if (isSeed && localStartPos < fullPositions.size()) {
+                    int64_t localGappedStartPos = localToGappedPos[localStartPos];
+                    int64_t globalPos = fullPositions[localGappedStartPos];
+                    fullSeedPositions.insert(globalPos);
+                    
+                    // Create seed with proper field assignment
+                    seeding::seed_t seed;
+                    seed.hash = hash;
+                    seed.pos = globalPos;
+                    seed.idx = 0;  // Index not used in this context
+                    seed.reversed = isReverse;
+                    seed.rpos = 0; // Reference position not used in this context
+                    seed.endPos = fullEndPositions[localGappedStartPos];
+                    
+                    fullSeeds[globalPos] = seed;
+                    fullTotalSeeds++;
+                }
+            }
+            
+            // === APPROACH 2: PARTIAL_OURS ===
+            int64_t partialOursTotalSeeds = 0;
+            std::string parentNodeId = (node && node->parent) ? node->parent->identifier : "";
+            
+            try {
+                const auto& nodeState = stateManager.getNodeState(nodeId);
+                
+                // Use efficient seed counting if available
+                if (nodeState.getTotalSeedCount() > 0) {
+                    partialOursTotalSeeds = nodeState.getTotalSeedCount();
+                } else {
+                    // Fallback to parent seed count + changes calculation
+                    if (!parentNodeId.empty()) {
+                        try {
+                            const auto& parentState = stateManager.getNodeState(parentNodeId);
+                            partialOursTotalSeeds = parentState.getTotalSeedCount();
+                        } catch (const std::exception& e) {
+                            auto parentBlockRanges = stateManager.getActiveBlockRanges(parentNodeId);
+                            std::vector<coordinates::CoordRange> parentRanges;
+                            for (const auto& [blockId, range] : parentBlockRanges) {
+                                parentRanges.push_back(range);
+                            }
+                            partialOursTotalSeeds = countSeedsInRanges(parentNodeId, parentRanges);
+                        }
+                    } else {
+                        partialOursTotalSeeds = 0;
+                    }
+                    
+                    auto seedChanges = nodeState.getSeedChanges();
+                    for (const auto& [pos, wasOn, isOn] : seedChanges) {
+                        if (wasOn && !isOn) partialOursTotalSeeds--;
+                        else if (!wasOn && isOn) partialOursTotalSeeds++;
+                    }
+                }
+            } catch (const std::exception& e) {
+                auto activeBlockRanges = stateManager.getActiveBlockRanges(nodeId);
+                std::vector<coordinates::CoordRange> activeSeedRanges;
+                for (const auto& [blockId, range] : activeBlockRanges) {
+                    activeSeedRanges.push_back(range);
+                }
+                partialOursTotalSeeds = countSeedsInRanges(nodeId, activeSeedRanges);
+            }
+
+
+            // print fullSeeds and ourSeeds
+            std::cerr << " $$$$$ FULL SEEDS $$$$$\n";
+            for (const auto& [pos, seed] : fullSeeds) {
+              std::cerr << "Position: " << pos << ", Hash: " << seed.hash 
+                        << ", Reversed: " << (seed.reversed ? "YES" : "NO") 
+                        << ", EndPos: " << seed.endPos << " Kmer: " << stateManager.extractKmer(nodeId, pos, k).first << "\n";
+            }
+           
+
+            std::cerr << " OURS OURS OURS OURS OURS OURS OURS OURS\n";
+
+            // === APPROACH 3: OURS ===
+            auto [oursSeedPositions, oursSeeds] = collectSeedsFromRanges(nodeId, fullStart, fullEnd);
+            int64_t oursTotalSeeds = oursSeedPositions.size();
+            
+            
+            std::cerr << "Global range: [" << fullStart << ", " << fullEnd << "]\n";
+            std::cerr << "Local to Gapped Index Mapping:\n";
+            for (size_t i = 0; i < localToGappedPos.size(); ++i) {
+              std::cerr << "  Ungapped idx " << i << " -> Gapped idx " << localToGappedPos[i] << "-> Global pos " << fullPositions[localToGappedPos[i]] << "\n";
+            }
+
+
+            std::cerr << " $$$$$ OUR SEEDS $$$$$\n";
+            for (const auto& [pos, seed] : oursSeeds) {
+              std::cerr << "Position: " << pos << ", Hash: " << seed.hash 
+                        << ", Reversed: " << (seed.reversed ? "YES" : "NO") 
+                        << ", EndPos: " << seed.endPos << " Kmer: " << stateManager.extractKmer(nodeId, pos, k).first << "\n";
+            }
+            
+            
+
+            // === Calculate differences ===
+            auto [fullOnly, oursOnly, fullOursModified] = calculateDifferences(fullSeedPositions, fullSeeds, oursSeedPositions, oursSeeds);
+            
+            std::string deltasFullvsOurs;
+            std::string deltasFullvsPartial;
+            // for each position in fullSeedPositions, check if it exists in oursSeedPositions
+            for (const auto& pos : fullSeedPositions) {
+                if (oursSeedPositions.find(pos) == oursSeedPositions.end()) {
+                    auto kmerPair = stateManager.extractKmer(nodeId, pos, k);
+                    std::string kmer = kmerPair.first;
+                    deltasFullvsOurs += "diff_fullHasWeDont@" + std::to_string(pos) + ":" + kmer + ", ";
+                } else {
+                    const auto& fullSeed = fullSeeds[pos];
+                    const auto& oursSeed = oursSeeds[pos];
+                    if (fullSeed.hash != oursSeed.hash || fullSeed.reversed != oursSeed.reversed || fullSeed.endPos != oursSeed.endPos) {
+                        deltasFullvsOurs += "diff_fullHasWeHave@" + std::to_string(pos) + ":" + std::to_string(fullSeed.hash) + " != " + std::to_string(oursSeed.hash) + " || " + std::to_string(fullSeed.reversed) + " != " + std::to_string(oursSeed.reversed) + " || " + std::to_string(fullSeed.endPos) + " != " + std::to_string(oursSeed.endPos) + ", ";
+                    }
+                }
+            }
+            for (const auto& pos : oursSeedPositions) {
+                if (fullSeedPositions.find(pos) == fullSeedPositions.end()) {
+                    auto kmerPair = stateManager.extractKmer(nodeId, pos, k);
+                    std::string kmer = kmerPair.first;
+                    deltasFullvsOurs += "diff_weHaveFullDoesnt@" + std::to_string(pos) + ":" + kmer + ", ";
+                } else {
+                    const auto& fullSeed = fullSeeds[pos];
+                    const auto& oursSeed = oursSeeds[pos];
+                    if (fullSeed.hash != oursSeed.hash || fullSeed.reversed != oursSeed.reversed || fullSeed.endPos != oursSeed.endPos) {
+                        deltasFullvsOurs += "diff_weHaveFullHas@" + std::to_string(pos) + ":" + std::to_string(oursSeed.hash) + " != " + std::to_string(fullSeed.hash) + " || " + std::to_string(oursSeed.reversed) + " != " + std::to_string(fullSeed.reversed) + " || " + std::to_string(oursSeed.endPos) + " != " + std::to_string(fullSeed.endPos) + ", ";
+                    }
+                }
+            }
+            
+
+            // === TSV OUTPUT ===
+            debugSeedFile << nodeId << "\t"
+                         // FULL (8 columns)
+                         << fullTotalSeeds << "\t" << fullOnly << "\t" << oursOnly << "\t" << fullOursModified << "\t"
+                         << commonSeqLength << "\t" << commonBlocks << "\t" << blockDeletions << "\t" << blockInsertions << "\t"
+                         << commonSeqLength << "\t" << commonBlocks << "\t" << blockDeletions << "\t" << blockInsertions << "\t"
+                         // OURS (8 columns)
+                         << oursTotalSeeds << "\t" << fullOnly << "\t" << oursOnly << "\t" << fullOursModified << "\t"
+                         << commonSeqLength << "\t" << commonBlocks << "\t" << blockDeletions << "\t" << blockInsertions << "\t" << deltasFullvsOurs << "\n";
+        } catch (const std::exception& e) {
+            logging::warn("Error in FULL vs PARTIAL_OURS vs OURS comparison for node {}: {}", nodeId, e.what());
+            debugSeedFile << nodeId << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions << "\n";
+        }
     }
     
 

@@ -69,7 +69,7 @@ namespace kmer_utils {
  * @param dictionary The k-mer dictionary mapping sequences to IDs
  * @return Optional pair of dictionary ID and end position offset
  */
-std::optional<std::pair<uint32_t, uint16_t>> lookupKmerInDictionary(
+std::optional<std::pair<uint32_t, uint32_t>> lookupKmerInDictionary(
     const std::string& kmerSeq,
     int64_t pos,
     int64_t endPos,
@@ -111,7 +111,7 @@ std::optional<std::string_view> extractKmerView(
  * @param endPos Ending position
  * @return End position offset, or k-1 if invalid
  */
-uint16_t calculateEndOffset(int64_t startPos, int64_t endPos, int k);
+uint32_t calculateEndOffset(int64_t startPos, int64_t endPos, int k);
 
 /**
  * @brief Get existing seed at a position if available
@@ -142,7 +142,7 @@ std::optional<seeding::seed_t> getSeedAtPosition(
 
 
 // ---> START kmer_utils implementations <---
-inline std::optional<std::pair<uint32_t, uint16_t>> kmer_utils::lookupKmerInDictionary(
+inline std::optional<std::pair<uint32_t, uint32_t>> kmer_utils::lookupKmerInDictionary(
     const std::string& kmerSeq,
     int64_t pos,
     int64_t endPos,
@@ -160,7 +160,7 @@ inline std::optional<std::pair<uint32_t, uint16_t>> kmer_utils::lookupKmerInDict
     }
     
     // Calculate end offset
-    uint16_t endOffset = static_cast<uint16_t>(endPos - pos);
+    uint32_t endOffset = static_cast<uint32_t>(endPos - pos);
     
     // Return dictionary ID and end offset wrapped in optional
     // Ensure make_pair and make_optional are available (requires <utility> and <optional>)
@@ -220,20 +220,20 @@ inline std::optional<std::string_view> kmer_utils::extractKmerView(
     }
 }
 
-inline uint16_t kmer_utils::calculateEndOffset(int64_t startPos, int64_t endPos, int k) {
+inline uint32_t kmer_utils::calculateEndOffset(int64_t startPos, int64_t endPos, int k) {
     // Validate positions
     if (endPos < startPos) {
         // Default to k-1 if positions are invalid
-        return static_cast<uint16_t>(k - 1);
+        return static_cast<uint32_t>(k - 1);
     }
     
-    // Calculate offset (ensuring we don't exceed uint16_t range)
+    // Calculate offset (ensuring we don't exceed uint32_t range)
     int64_t offset = endPos - startPos;
-    if (offset > std::numeric_limits<uint16_t>::max()) {
-        return std::numeric_limits<uint16_t>::max();
+    if (offset > std::numeric_limits<uint32_t>::max()) {
+        return std::numeric_limits<uint32_t>::max();
     }
     
-    return static_cast<uint16_t>(offset);
+    return static_cast<uint32_t>(offset);
 }
 
 inline std::optional<seeding::seed_t> kmer_utils::getSeedAtPosition(
@@ -590,8 +590,10 @@ decodeSeedChanges(const std::vector<int64_t> &basePositions,
  * @param perNodeSeedMutations Optional Cap'n Proto builder for direct writing
  * @param kmerDictionary Optional pointer to k-mer dictionary for direct writing
  * @param uniqueKmersCollector Collector for unique k-mers
+ * @param debugSeedFile Debug output file stream
+ * @return Pair of (blockDeletions, blockInsertions) counts
  */
-void recomputeSeeds(
+std::pair<int, int> recomputeSeeds(
     state::StateManager &stateManager, 
     placement::PlacementEngine &engine,
     panmanUtils::Node *node, int k, int s,

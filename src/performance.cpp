@@ -12,6 +12,7 @@ thread_local size_t *KmerBufferPool::hash_buffer = nullptr;
 thread_local bool *KmerBufferPool::orientation_buffer = nullptr;
 thread_local int64_t *KmerBufferPool::position_buffer = nullptr;
 thread_local size_t KmerBufferPool::buffer_size = 0;
+thread_local bool KmerBufferPool::is_initialized = false;
 } // namespace memory
 
 // Add implementation of suggestOptimalKmerSize that was in fixed_kmer.cpp

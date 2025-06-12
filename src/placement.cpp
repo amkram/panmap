@@ -9,6 +9,7 @@
 #include <utility>
 #include <iomanip>  // For std::fixed and std::setprecision
 #include <algorithm> // Added for std::min and std::transform
+#include <sstream>  // For std::ostringstream
 #include "placement.hpp"
 #include "caller_logging.hpp"
 #include "index.capnp.h"
@@ -431,7 +432,7 @@ void processNewSeedAddition(
     int64_t pos,
     const TraversalParams& params,
     absl::flat_hash_map<int64_t, uint32_t>& positionToDictId,
-    absl::flat_hash_map<int64_t, uint16_t>& positionToEndOffset,
+    absl::flat_hash_map<int64_t, uint32_t>& positionToEndOffset,
     size_t& seedAdditions,
     size_t& dictionaryLookups) {
     
@@ -868,14 +869,23 @@ void placementTraversal(
     
     logging::info("Processing tree with {} nodes using {} threads", totalNodes, numThreads);
     
+    std::ofstream countsFile("node_seed_counts.tsv");
+    countsFile << "node_id\tseed_count\tdeletions\tinsertions\tmodifications\tdeletion_operations\tinsertion_operations\tmodification_operations\n";
+
     // Process each level in breadth-first order
     for (const auto& level : nodesByLevel) {
         logging::debug("Processing level with {} nodes", level.size());
         
         arena.execute([&]() {
-            // Process nodes at this level in parallel
+            // OPTIMIZED: Use better grain size calculation for TBB parallel_for
+            // Calculate optimal grain size based on level size and thread count
+            const size_t levelSize = level.size();
+            const size_t optimalGrainSize = std::max(1UL, 
+                std::min(levelSize / (numThreads * 4), 64UL)); // Prevent too small or too large grains
+            
+            // Process nodes at this level in parallel with optimized partitioning
             tbb::parallel_for(
-                tbb::blocked_range<size_t>(0, level.size()),
+                tbb::blocked_range<size_t>(0, levelSize, optimalGrainSize),
                 [&](const tbb::blocked_range<size_t>& r) {
                     // Thread-local result for best scores (existing ones)
                     double localBestJaccardScore = 0.0; // This is for weighted Jaccard
@@ -896,7 +906,16 @@ void placementTraversal(
                     double localBestJaccardPresenceScore = 0.0;
                     panmanUtils::Node* localBestJaccardPresenceNode = nullptr;
                     std::vector<panmanUtils::Node*> localTiedJaccardPresenceNodes;
+
+                    // Thread-local collectors to reduce mutex contention
+                    std::vector<std::pair<std::string, std::unordered_map<int64_t, seeding::seed_t>>> localNodeSeedMaps;
+                    std::vector<std::string> localTsvOutputLines;
                     
+                    // Reserve space for better performance
+                    localNodeSeedMaps.reserve(r.end() - r.begin());
+                    localTsvOutputLines.reserve(r.end() - r.begin());
+                    
+
                     for (size_t i = r.begin(); i < r.end(); i++) {
                         panmanUtils::Node* node = level[i];
                         if (!node) continue;
@@ -926,6 +945,7 @@ void placementTraversal(
                             absl::flat_hash_set<size_t> uniqueSeedHashes; // This is for weighted Jaccard denominator, based on currentGenomeSeedCounts keys
                             uniqueSeedHashes.clear();
 
+
                             if (node->parent != nullptr) {
                                 std::lock_guard<std::mutex> lock(resultMutex); // Protects result.nodeSeedMap
                                 if (result.nodeSeedMap.count(node->parent->identifier)) {
@@ -935,8 +955,9 @@ void placementTraversal(
                                     std::cerr << "These are the seeds in " << node->parent->identifier << ":" << std::endl;
                                     for (const auto& entry : parent_map) {
                                         nodeScore.kmerSeedMap.insert(entry);
-                                        std::cerr << "Seed Hash: " << entry.second.hash << ", Kmer: " << state.hashToKmer.at(entry.second.hash) << std::endl;
+                                        // std::cerr << "Seed Hash: " << entry.second.hash << ", Kmer: " << state.hashToKmer.at(entry.second.hash) << std::endl;
                                     }
+                                    countsFile << node->parent->identifier << "\t" << nodeScore.kmerSeedMap.size() << "\n";
                                     // Initialize scores from inherited seeds
                                     for (const auto& pair : nodeScore.kmerSeedMap) {
                                         const seeding::seed_t& inherited_seed = pair.second;
@@ -972,6 +993,8 @@ void placementTraversal(
                                 logging::warn("Node {} not found in index, skipping", node->identifier);
                                 continue;
                             }
+
+                            bool shouldLog = node->identifier == "node_434";
                             
                             auto seedMutation = state.perNodeSeedMutations[nodeIndex];
                             auto basePositions = seedMutation.getBasePositions();
@@ -982,7 +1005,7 @@ void placementTraversal(
                             auto kmerEndOffsets = seedMutation.getKmerEndOffsets();
                             
                             absl::flat_hash_map<int64_t, uint32_t> positionToDictId;
-                            absl::flat_hash_map<int64_t, uint16_t> positionToEndOffset;
+                            absl::flat_hash_map<int64_t, uint32_t> positionToEndOffset;
                             
                             // Ensure all three lists kmerDictionaryIds, kmerPositions, kmerEndOffsets are accessed safely
                             // Assuming kmerPositions is the reference for actual count of dictionary-linked seeds
@@ -998,6 +1021,23 @@ void placementTraversal(
                                 }
                             }
 
+                            if (shouldLog) {
+                                std::cerr << "Processing node: " << node->identifier << std::endl;
+                                std::cerr << "positionToDictId:" << std::endl;
+                                for (const auto& entry : positionToDictId) {
+                                    std::cerr << "  Pos: " << entry.first << ", DictID: " << entry.second << " kmer: " << 
+                                              (state.kmerDictionary.count(entry.second) ? state.kmerDictionary.at(entry.second) : "<unknown>") << std::endl;
+                                }
+                            }
+
+                            // Initialize tracking variables for seed operations
+                            size_t deletionCount = 0;
+                            size_t insertionCount = 0;
+                            size_t modificationCount = 0;
+                            std::vector<std::string> deletionOperations;
+                            std::vector<std::string> insertionOperations;
+                            std::vector<std::string> modificationOperations;
+
                             if (basePositions.size() > 0 && perPosMasks.size() > 0 && basePositions.size() == perPosMasks.size()) {
                                 for (size_t j = 0; j < basePositions.size(); j++) {
                                         int64_t basePos = basePositions[j];
@@ -1006,7 +1046,12 @@ void placementTraversal(
                                         for (uint8_t offset = 0; offset < 32; offset++) {
                                             uint8_t value = (mask >> (offset * 2)) & 0x3;
                                                 int64_t pos = basePos - offset;
-                                                
+                                    
+                                        if (shouldLog) {
+                                            std::cerr << " A SEED CHANGE OF VALUE " << static_cast<int>(value) 
+                                                      << " was found at position " << pos 
+                                                      << " in node " << node->identifier << std::endl;
+                                        }
                                         if (value == 0) continue; 
 
                                         seeding::seed_t current_seed_at_pos{}; // Default initialize
@@ -1016,8 +1061,11 @@ void placementTraversal(
                                         }
 
                                         if (value == 1) { // Delete
+                                            deletionCount++;
                                             if (existed_before_mutation) {
                                                 size_t deleted_hash = current_seed_at_pos.hash;
+                                                
+                                                
                                                 nodeScore.kmerSeedMap.erase(pos);
 
                                                 if (state.seedFreqInReads.count(deleted_hash)) {
@@ -1044,6 +1092,7 @@ void placementTraversal(
                                                 }
                                             }
                                         } else { // Add (value == 2) or Modify (value == 3)
+                                            std::cerr << " ANd now this." << std::endl;
                                             if (!positionToDictId.count(pos)) {
                                                 logging::warn("Node {}: Cannot find dictionary ID for position {} to add/modify seed.", node->identifier, pos);
                                                 continue;
@@ -1058,6 +1107,19 @@ void placementTraversal(
                                             int64_t end_offset_val = positionToEndOffset.count(pos) ? positionToEndOffset.at(pos) : params.k -1;
                                             seeding::seed_t new_seed = createSeedFromDictionary(kmerStr, pos, pos + end_offset_val, params.k, params.s);
                                             size_t new_hash = new_seed.hash;
+
+                                            // Track operation type and details
+                                            if (value == 2) {
+                                                insertionCount++;
+                                                insertionOperations.push_back("pos:" + std::to_string(pos) + ",hash:" + std::to_string(new_hash) + ",kmer:" + kmerStr);
+                                            } else if (value == 3) {
+                                                modificationCount++;
+                                                std::string oldKmerInfo = "<unknown>";
+                                                if (existed_before_mutation) {
+                                                    oldKmerInfo = "hash:" + std::to_string(current_seed_at_pos.hash);
+                                                }
+                                                modificationOperations.push_back("pos:" + std::to_string(pos) + ",old:" + oldKmerInfo + ",new:hash:" + std::to_string(new_hash) + ",kmer:" + kmerStr);
+                                            }
 
                                             if (value == 3 && existed_before_mutation) { 
                                                 size_t old_hash = current_seed_at_pos.hash;
@@ -1500,16 +1562,51 @@ void placementTraversal(
                                             localTiedWeightedNodes.push_back(node);
                                         }
                                         
-                                        {
-                                            std::lock_guard<std::mutex> lock(resultMutex);
-                                            // Store this node's final seed map for its children to inherit
-                                            std::unordered_map<int64_t, seeding::seed_t> temp_map;
-                                            temp_map.reserve(nodeScore.kmerSeedMap.size());
-                                            for (const auto& entry : nodeScore.kmerSeedMap) {
-                                                temp_map.insert(entry);
-                                            }
-                                            result.nodeSeedMap[node->identifier] = temp_map;
+                                        // Collect node seed map for batch processing (thread-local)
+                                        std::unordered_map<int64_t, seeding::seed_t> temp_map;
+                                        temp_map.reserve(nodeScore.kmerSeedMap.size());
+                                        for (const auto& entry : nodeScore.kmerSeedMap) {
+                                            temp_map.insert(entry);
                                         }
+                                        localNodeSeedMaps.emplace_back(node->identifier, std::move(temp_map));
+                                        
+                                        // Prepare TSV output for batch writing (thread-local)
+                                        std::string deletionOpsStr = deletionOperations.empty() ? "none" : "";
+                                        std::string insertionOpsStr = insertionOperations.empty() ? "none" : "";
+                                        std::string modificationOpsStr = modificationOperations.empty() ? "none" : "";
+                                        
+                                        if (!deletionOperations.empty()) {
+                                            for (size_t i = 0; i < deletionOperations.size(); ++i) {
+                                                deletionOpsStr += deletionOperations[i];
+                                                if (i < deletionOperations.size() - 1) deletionOpsStr += ";";
+                                            }
+                                        }
+                                        
+                                        if (!insertionOperations.empty()) {
+                                            for (size_t i = 0; i < insertionOperations.size(); ++i) {
+                                                insertionOpsStr += insertionOperations[i];
+                                                if (i < insertionOperations.size() - 1) insertionOpsStr += ";";
+                                            }
+                                        }
+                                        
+                                        if (!modificationOperations.empty()) {
+                                            for (size_t i = 0; i < modificationOperations.size(); ++i) {
+                                                modificationOpsStr += modificationOperations[i];
+                                                if (i < modificationOperations.size() - 1) modificationOpsStr += ";";
+                                            }
+                                        }
+                                        
+                                        // Collect TSV line for batch writing
+                                        std::ostringstream tsvLine;
+                                        tsvLine << node->identifier << "\t" 
+                                               << nodeScore.kmerSeedMap.size() << "\t"
+                                               << deletionCount << "\t"
+                                               << insertionCount << "\t"
+                                               << modificationCount << "\t"
+                                               << deletionOpsStr << "\t"
+                                               << insertionOpsStr << "\t"
+                                               << modificationOpsStr << "\n";
+                                        localTsvOutputLines.push_back(tsvLine.str());
                                         
                                         nodesProcessed++;
                                         
@@ -1519,6 +1616,21 @@ void placementTraversal(
 
 
                         // std::cerr << node->identifier << "\t" << localBestWeightedScore << "\t" << localBestJaccardScore << "\t" << localBestRawSeedMatchScore << "\t" << localBestCosineScore << "\t" << localBestJaccardPresenceScore << std::endl;
+                    }
+                    
+                    // Batch process thread-local collections to reduce mutex contention
+                    {
+                        std::lock_guard<std::mutex> lock(resultMutex);
+                        
+                        // Batch insert node seed maps
+                        for (const auto& [nodeId, seedMap] : localNodeSeedMaps) {
+                            result.nodeSeedMap[nodeId] = seedMap;
+                        }
+                        
+                        // Batch write TSV output lines
+                        for (const std::string& line : localTsvOutputLines) {
+                            countsFile << line;
+                        }
                     }
                     
                     // Merge results with global best
@@ -2070,6 +2182,9 @@ void place(
             const std::string& kmerSeqStr = dict_entry.second;
             if (!kmerSeqStr.empty()) {
                 std::string upperKmerSeqStr = kmerSeqStr;
+                // Normalize k-mer to uppercase for consistent hashing
+                std::transform(upperKmerSeqStr.begin(), upperKmerSeqStr.end(), upperKmerSeqStr.begin(),
+                              [](unsigned char c){ return std::toupper(c); });
                 
                 auto syncmers = seeding::rollingSyncmers(upperKmerSeqStr, params.k, params.s, false, 0, false);
                 if (!syncmers.empty()) {
@@ -2190,14 +2305,14 @@ void place(
         state.jaccardDenominator = readSeedCounts.size();
         state.readUniqueSeedCount = readSeedCounts.size(); // Initialize new field for presence/absence Jaccard
         
-        std::cerr << "These are the seeds from the reads: " << std::endl;
-        // print all read seeds, hashes and their kmers
-        for (int i = 0; i < readSeeds.size(); i++) {
-            for (int j = 0; j < readSeeds[i].size(); j++) {
-                std::string kmer_str = readSeedSeqs[i][j];
-                std::cerr << "Seed Hash: " << readSeeds[i][j].hash << ", Kmer: " << kmer_str << std::endl;
-            }
-        }
+        // std::cerr << "These are the seeds from the reads: " << std::endl;
+        // // print all read seeds, hashes and their kmers
+        // for (int i = 0; i < readSeeds.size(); i++) {
+        //     for (int j = 0; j < readSeeds[i].size(); j++) {
+        //         std::string kmer_str = readSeedSeqs[i][j];
+        //         std::cerr << "Seed Hash: " << readSeeds[i][j].hash << ", Kmer: " << kmer_str << std::endl;
+        //     }
+        // }
 
         logging::debug("Total seed occurrences in reads: {}", state.totalReadSeedCount);
         

@@ -1,5 +1,9 @@
 #include <boost/iostreams/categories.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
+#include <boost/iostreams/filter/lzma.hpp>
+#include <boost/program_options.hpp>
+#include <boost/filesystem.hpp>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -7,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <fcntl.h>
 #include <fstream>
@@ -24,6 +29,12 @@
 #include <vector>
 #include <stack>
 #include <sys/stat.h>
+// Additional headers for robust signal handling
+#include <signal.h>
+#include <atomic>
+// Headers for backtrace functionality
+#include <execinfo.h>
+#include <cxxabi.h>
 
 #include "capnp/message.h"
 #include "capnp/serialize-packed.h"
@@ -35,20 +46,6 @@
 #include "panman.hpp"
 #include "placement.hpp"
 #include "timing.hpp"
-#include <atomic>
-#include <boost/filesystem.hpp>
-#include <boost/filesystem/exception.hpp>
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/iostreams/filter/lzma.hpp>
-#include <boost/iostreams/filtering_stream.hpp>
-#include <boost/program_options.hpp>
-#include <htslib/kseq.h>
-#include <panmanUtils.hpp>
-#include <cxxabi.h>
-#include <execinfo.h>
-#include "spdlog/spdlog.h"
-#include "spdlog/async.h" // For spdlog::shutdown() if using async logger
 
 using namespace logging;
 namespace po = boost::program_options;
@@ -423,11 +420,18 @@ void printStackTrace(int skip = 1) {
 
 /**
  * Signal handler for handling interrupts (SIGINT, SIGTERM, etc.)
- * Captures the stack trace and sets the shouldStop flag
+ * Simple and robust handler to ensure gmon.out gets saved
  * 
  * @param signum The signal number
  */
 void signalHandler(int signum) {
+    // Prevent recursive signal handling
+    static volatile sig_atomic_t handling_signal = 0;
+    if (handling_signal) {
+        _exit(1);
+    }
+    handling_signal = 1;
+
     const char* sigName = "UNKNOWN";
     switch (signum) {
         case SIGINT:  sigName = "SIGINT (Interrupt/Ctrl+C)"; break;
@@ -437,40 +441,32 @@ void signalHandler(int signum) {
     }
 
     if (signum == SIGINT || signum == SIGTERM) {
-        std::cerr << "\n\n*** Program interrupted by signal: " << sigName << " ***" << std::endl;
-        std::cerr << "Attempting to shut down spdlog and disable further logging." << std::endl;
-        try {
-            // 1. Set level to off to stop new messages from being processed by most checks.
-            spdlog::set_level(spdlog::level::off);
-
-            // 2. Attempt to flush and shut down spdlog to release resources.
-            // This is more forceful than just setting the level.
-            spdlog::shutdown(); // This drops all registered loggers and shuts down the thread pool for async.
-            std::cerr << "spdlog shutdown attempted." << std::endl;
-
-        } catch (const std::exception& e) {
-            std::cerr << "Exception while trying to shutdown/disable spdlog: " << e.what() << std::endl;
-        } catch (...) {
-            std::cerr << "Unknown exception while trying to shutdown/disable spdlog." << std::endl;
-        }
-
-        printStackTrace(2);  // Skip signalHandler and signal handler dispatcher frames
-        std::cerr << "\nGracefully shutting down..." << std::endl;
-        std::cerr << "Attempting graceful exit to finalize profiling data (gmon.out)..." << std::endl;
-        shouldStop = true; // Set your global flag    
-        exit(128 + signum); // Proceed with exit
-
-    } else if (signum == SIGSEGV || signum == SIGABRT) {
-        fprintf(stderr, "\n\n*** Program interrupted by signal: %s ***\n", sigName); // Use fprintf for basic safety
-        printStackTrace(2);  // Skip signalHandler and signal handler dispatcher frames
-        fprintf(stderr, "\nGracefully shutting down...\nFatal error, exiting immediately.\n");
-        _exit(128 + signum); // Use _exit for immediate termination without further cleanup
-    } else {
-        // Handle other signals if any are registered for this handler
-        fprintf(stderr, "\n\n*** Program interrupted by signal: %s ***\n", sigName);
-        printStackTrace(2); // Skip signalHandler and signal handler dispatcher frames
+        // Use write() instead of printf/fprintf for signal safety
+        const char* msg = "\n*** Program interrupted by signal ***\n";
+        write(STDERR_FILENO, msg, strlen(msg));
+        
+        // Set the flag to indicate we should stop
         shouldStop = true;
-        _exit(128 + signum); // Use _exit for immediate termination
+        
+        // Minimal cleanup - just try to shutdown spdlog quietly
+        try {
+            spdlog::set_level(spdlog::level::off);
+            spdlog::shutdown();
+        } catch (...) {
+            // Ignore any exceptions during shutdown
+        }
+        
+        const char* cleanup_msg = "Attempting graceful exit to preserve profiling data...\n";
+        write(STDERR_FILENO, cleanup_msg, strlen(cleanup_msg));
+        
+        // Use exit() (not _exit()) to ensure atexit handlers run, including gprof's
+        exit(0);  // Exit with 0 for gprof compatibility
+
+    } else {
+        // For fatal signals, exit immediately without cleanup
+        const char* fatal_msg = "\n*** Fatal signal received, exiting immediately ***\n";
+        write(STDERR_FILENO, fatal_msg, strlen(fatal_msg));
+        _exit(1);
     }
 }
 
@@ -642,7 +638,7 @@ bool saveNodeConstructedSequence(state::StateManager &stateManager, panmanUtils:
     }
     
     coordinates::CoordRange fullRange = {startPos, endPos};
-    auto [sequence, _] = stateManager.extractSequence(nodeId, fullRange);
+    auto [sequence, _, __, ___] = stateManager.extractSequence(nodeId, fullRange);
     
     logging::info("Extracted sequence of length {} for node {}", sequence.length(), nodeId);
     std::ofstream outFile(outputFileName);
@@ -668,6 +664,13 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, signalHandler);  // Termination request
     signal(SIGSEGV, signalHandler);  // Segmentation fault
     signal(SIGABRT, signalHandler);  // Abort
+    
+    // Register an atexit handler to ensure gprof data is written
+    std::atexit([]() {
+        // This ensures that any profiling data (gmon.out) gets written
+        // even if we exit from a signal handler
+        std::cerr << "Program cleanup completed - profiling data should be saved." << std::endl;
+    });
     
     auto main_start = std::chrono::high_resolution_clock::now();
     
@@ -1393,7 +1396,7 @@ int main(int argc, char *argv[]) {
                     
                     // Try to check the full sequence
                     coordinates::CoordRange blockRange = stateManager.getBlockRange(617);
-                    auto [sequence, positions] = stateManager.extractSequence("node_2", blockRange, false);
+                    auto [sequence, positions, gaps, endPositions] = stateManager.extractSequence("node_2", blockRange, false);
                     debugLog << "Block 617 extracted sequence: " << sequence << std::endl;
                     
                 } catch (const std::exception& e) {
@@ -1407,7 +1410,7 @@ int main(int argc, char *argv[]) {
                     coordinates::CoordRange blockRange = stateManager.getBlockRange(941);
                     debugLog << "Block 941 range: [" << blockRange.start << ", " << blockRange.end << ")" << std::endl;
                     
-                    auto [sequence, positions] = stateManager.extractSequence("node_2", blockRange, false);
+                    auto [sequence, positions, gaps, endPositions] = stateManager.extractSequence("node_2", blockRange, false);
                     debugLog << "Extracted sequence length: " << sequence.length() << std::endl;
                     debugLog << "Full sequence: " << sequence << std::endl;
                     

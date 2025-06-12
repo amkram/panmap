@@ -25,20 +25,37 @@ private:
     std::chrono::high_resolution_clock::time_point last_start;
   };
 
+  // Thread-local timing data to reduce mutex contention
+  static inline thread_local std::stack<std::pair<std::string,
+                           std::chrono::high_resolution_clock::time_point>>
+      local_timing_stack{};
+  static inline thread_local std::unordered_map<std::string, TimingStats> 
+      local_function_stats{};
+  
+  // Global aggregation data (protected by mutex)
   static inline std::mutex timing_mutex{};
-  static inline std::unordered_map<
-      std::thread::id,
-      std::stack<std::pair<std::string,
-                           std::chrono::high_resolution_clock::time_point>>>
-      timing_stacks{};
-  static inline std::unordered_map<std::string, TimingStats> function_stats{};
+  static inline std::unordered_map<std::string, TimingStats> global_function_stats{};
   static inline double min_time_to_report{0.0001}; // 100 microseconds
+  
+  // Aggregate thread-local stats to global (call periodically)
+  static void aggregateLocalStats() {
+    if (local_function_stats.empty()) return;
+    
+    std::lock_guard<std::mutex> lock(timing_mutex);
+    for (const auto& [func_name, local_stats] : local_function_stats) {
+      auto& global_stats = global_function_stats[func_name];
+      global_stats.total_time += local_stats.total_time;
+      global_stats.calls += local_stats.calls;
+      global_stats.min_time = std::min(global_stats.min_time, local_stats.min_time);
+      global_stats.max_time = std::max(global_stats.max_time, local_stats.max_time);
+    }
+    local_function_stats.clear(); // Clear after aggregation
+  }
 
 public:
   static void start(const std::string &function_name) {
-    std::lock_guard<std::mutex> lock(timing_mutex);
-    auto &stack = timing_stacks[std::this_thread::get_id()];
-    stack.push({function_name, std::chrono::high_resolution_clock::now()});
+    // Use thread-local stack - no mutex needed
+    local_timing_stack.push({function_name, std::chrono::high_resolution_clock::now()});
   }
 
   static void startBlock(const std::string &block_name,
@@ -48,13 +65,11 @@ public:
   }
 
   static void stop() {
-    std::lock_guard<std::mutex> lock(timing_mutex);
-    auto &stack = timing_stacks[std::this_thread::get_id()];
-    if (stack.empty())
-      return;
-
-    auto [function_name, start_time] = stack.top();
-    stack.pop();
+    // Use thread-local stack - no mutex needed
+    if (local_timing_stack.empty()) return;
+    
+    auto [function_name, start_time] = local_timing_stack.top();
+    local_timing_stack.pop();
 
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -62,14 +77,23 @@ public:
                         .count() /
                     1000000.0;
 
-    auto &stats = function_stats[function_name];
+    // Update thread-local stats
+    auto& stats = local_function_stats[function_name];
     stats.total_time += duration;
+    stats.calls++;
     stats.min_time = std::min(stats.min_time, duration);
     stats.max_time = std::max(stats.max_time, duration);
-    stats.calls++;
+    
+    // Periodically aggregate to reduce global mutex contention
+    static thread_local int aggregation_counter = 0;
+    if (++aggregation_counter >= 100) { // Aggregate every 100 timings
+      aggregateLocalStats();
+      aggregation_counter = 0;
+    }
   }
 
   static void setMinTimeToReport(double seconds) {
+    std::lock_guard<std::mutex> lock(timing_mutex);
     min_time_to_report = seconds;
   }
 
@@ -88,15 +112,10 @@ public:
   }
 
   static void report() {
+    // First aggregate any remaining thread-local stats
+    aggregateLocalStats();
+    
     std::lock_guard<std::mutex> lock(timing_mutex);
-
-    // Check for any unclosed timers
-    for (const auto &[thread_id, stack] : timing_stacks) {
-      if (!stack.empty()) {
-        std::cerr << "Warning: Found " << stack.size()
-                  << " unclosed timer(s) in thread " << thread_id << "\n";
-      }
-    }
 
     std::cout << "\n=== Timing Report ===\n\n";
     std::cout << std::left << std::setw(40) << "Function" << std::right
@@ -109,7 +128,7 @@ public:
 
     // Sort by total time
     std::vector<std::pair<std::string, TimingStats>> sorted_stats(
-        function_stats.begin(), function_stats.end());
+        global_function_stats.begin(), global_function_stats.end());
     std::sort(sorted_stats.begin(), sorted_stats.end(),
               [](const auto &a, const auto &b) {
                 return a.second.total_time > b.second.total_time;
@@ -134,9 +153,15 @@ public:
   }
 
   static void reset() {
+    // First aggregate any remaining thread-local stats
+    aggregateLocalStats();
+    
     std::lock_guard<std::mutex> lock(timing_mutex);
-    timing_stacks.clear();
-    function_stats.clear();
+    global_function_stats.clear();
+    
+    // Also clear thread-local data
+    local_timing_stack = {};
+    local_function_stats.clear();
   }
 };
 
