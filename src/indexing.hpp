@@ -236,35 +236,6 @@ inline uint32_t kmer_utils::calculateEndOffset(int64_t startPos, int64_t endPos,
     return static_cast<uint32_t>(offset);
 }
 
-inline std::optional<seeding::seed_t> kmer_utils::getSeedAtPosition(
-    state::StateManager& stateManager,
-    int64_t pos) {
-    
-    if (pos < 0) {
-        // It's generally better practice to throw exceptions for truly invalid arguments
-        // rather than returning nullopt silently, especially if a negative position is never expected.
-        // Logging could also be added here.
-        throw std::invalid_argument("Invalid position " + std::to_string(pos) + 
-                                  " in getSeedAtPosition");
-    }
-    
-    // Find the root node ID
-    std::string rootNodeId;
-    for (const auto& [nodeId, hierarchy] : stateManager.getNodeHierarchy()) {
-        if (hierarchy.parentId.empty()) {
-            rootNodeId = nodeId;
-            break;
-        }
-    }
-    
-    if (rootNodeId.empty()) {
-        logging::warn("No root node found for getSeedAtPosition({})", pos);
-        return std::nullopt;
-    }
-    
-    // Delegate to node-specific StateManager method with the root node ID
-    return stateManager.getSeedAtPosition(rootNodeId, pos);
-}
 
 inline std::optional<seeding::seed_t> kmer_utils::getSeedAtPosition(
     state::StateManager& stateManager,
@@ -591,9 +562,9 @@ decodeSeedChanges(const std::vector<int64_t> &basePositions,
  * @param kmerDictionary Optional pointer to k-mer dictionary for direct writing
  * @param uniqueKmersCollector Collector for unique k-mers
  * @param debugSeedFile Debug output file stream
- * @return Pair of (blockDeletions, blockInsertions) counts
+ * @return Tuple of (blockDeletions, blockInsertions, totalMaterializedSeeds, seedsFoundInDeletedBlocks, blockDeletionPositionsChecked, seedsCleared, seedsAdded, recompRangeCount, recompRangeSize, recompRangeList) counts
  */
-std::pair<int, int> recomputeSeeds(
+std::tuple<int, int, int, int, int, int, int, int, int, std::string> recomputeSeeds(
     state::StateManager &stateManager, 
     placement::PlacementEngine &engine,
     panmanUtils::Node *node, int k, int s,

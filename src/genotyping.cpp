@@ -222,8 +222,7 @@ void genotyping::fillMutationMatricesFromTree_test(
   logging::info("Building mutation matrices from tree...");
   
   // Initialize state manager for coordinate access
-  auto stateManager = std::make_unique<state::StateManager>(tree->blocks.size());
-  stateManager->initializeDfsIndices(tree);
+  auto stateManager = std::make_unique<state::StateManager>();
   
   // Initialize base count vectors and mutation counters
   std::vector<int64_t> parentBaseCounts(4, 0);

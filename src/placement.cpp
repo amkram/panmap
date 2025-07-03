@@ -850,10 +850,7 @@ void placementTraversal(
     const size_t totalNodes = T->allNodes.size();
     const auto startTime = std::chrono::high_resolution_clock::now();
     
-    logging::debug("Pre-computing paths for all nodes...");
     
-    // Pre-compute paths for all nodes using common function from state
-    const auto nodePaths = state::computeNodePaths(T, T->root);
     
     logging::debug("Grouping nodes by level...");
     // Group nodes by level using common function from state
@@ -952,35 +949,35 @@ void placementTraversal(
                                     const auto& parent_map = result.nodeSeedMap.at(node->parent->identifier);
                                     nodeScore.kmerSeedMap.reserve(parent_map.size());
                                     
-                                    std::cerr << "These are the seeds in " << node->parent->identifier << ":" << std::endl;
-                                    for (const auto& entry : parent_map) {
-                                        nodeScore.kmerSeedMap.insert(entry);
-                                        // std::cerr << "Seed Hash: " << entry.second.hash << ", Kmer: " << state.hashToKmer.at(entry.second.hash) << std::endl;
-                                    }
-                                    countsFile << node->parent->identifier << "\t" << nodeScore.kmerSeedMap.size() << "\n";
-                                    // Initialize scores from inherited seeds
-                                    for (const auto& pair : nodeScore.kmerSeedMap) {
-                                        const seeding::seed_t& inherited_seed = pair.second;
-                                        size_t inherited_hash = inherited_seed.hash;
+                                    // std::cerr << "These are the seeds in " << node->parent->identifier << ":" << std::endl;
+                                    // for (const auto& entry : parent_map) {
+                                    //     nodeScore.kmerSeedMap.insert(entry);
+                                    //     // std::cerr << "Seed Hash: " << entry.second.hash << ", Kmer: " << state.hashToKmer.at(entry.second.hash) << std::endl;
+                                    // }
+                                    // countsFile << node->parent->identifier << "\t" << nodeScore.kmerSeedMap.size() << "\n";
+                                    // // Initialize scores from inherited seeds
+                                    // for (const auto& pair : nodeScore.kmerSeedMap) {
+                                    //     const seeding::seed_t& inherited_seed = pair.second;
+                                    //     size_t inherited_hash = inherited_seed.hash;
                                         
-                                        nodeScore.currentGenomeUniqueSeedHashes.insert(inherited_hash); // For presence/absence Jaccard
-                                        nodeScore.currentGenomeSeedCounts[inherited_hash]++; // For weighted Jaccard and Cosine
-                                        uniqueSeedHashes.insert(inherited_hash); // For weighted Jaccard denominator
+                                    //     nodeScore.currentGenomeUniqueSeedHashes.insert(inherited_hash); // For presence/absence Jaccard
+                                    //     nodeScore.currentGenomeSeedCounts[inherited_hash]++; // For weighted Jaccard and Cosine
+                                    //     uniqueSeedHashes.insert(inherited_hash); // For weighted Jaccard denominator
 
-                                        auto readIt = state.seedFreqInReads.find(inherited_hash);
-                                        if (readIt != state.seedFreqInReads.end()) {
-                                            int64_t readCount = readIt->second;
-                                            nodeScore.hitsInThisGenome += readCount; // Used for weighted Jaccard numerator
-                                            nodeScore.currentJaccardNumerator += readCount; // Used for weighted Jaccard numerator
-                                            nodeScore.rawSeedMatchScore += readCount; // For raw seed match score
-                                            nodeScore.jaccardPresenceNumerator++; // For presence/absence Jaccard numerator
+                                    //     auto readIt = state.seedFreqInReads.find(inherited_hash);
+                                    //     if (readIt != state.seedFreqInReads.end()) {
+                                    //         int64_t readCount = readIt->second;
+                                    //         nodeScore.hitsInThisGenome += readCount; // Used for weighted Jaccard numerator
+                                    //         nodeScore.currentJaccardNumerator += readCount; // Used for weighted Jaccard numerator
+                                    //         nodeScore.rawSeedMatchScore += readCount; // For raw seed match score
+                                    //         nodeScore.jaccardPresenceNumerator++; // For presence/absence Jaccard numerator
                                             
-                                            auto [num_delta, den_delta] = getCosineDelta(false, true, inherited_hash, state.seedFreqInReads, nodeScore.currentGenomeSeedCounts);
-                                            nodeScore.currentCosineNumerator += num_delta;
-                                            nodeScore.currentCosineDenominator += den_delta;
-                                        }
+                                    //         auto [num_delta, den_delta] = getCosineDelta(false, true, inherited_hash, state.seedFreqInReads, nodeScore.currentGenomeSeedCounts);
+                                    //         nodeScore.currentCosineNumerator += num_delta;
+                                    //         nodeScore.currentCosineDenominator += den_delta;
+                                    //     }
 
-                                    }
+                                    // }
 
 
                                 }
@@ -1021,14 +1018,7 @@ void placementTraversal(
                                 }
                             }
 
-                            if (shouldLog) {
-                                std::cerr << "Processing node: " << node->identifier << std::endl;
-                                std::cerr << "positionToDictId:" << std::endl;
-                                for (const auto& entry : positionToDictId) {
-                                    std::cerr << "  Pos: " << entry.first << ", DictID: " << entry.second << " kmer: " << 
-                                              (state.kmerDictionary.count(entry.second) ? state.kmerDictionary.at(entry.second) : "<unknown>") << std::endl;
-                                }
-                            }
+                           
 
                             // Initialize tracking variables for seed operations
                             size_t deletionCount = 0;
@@ -1047,11 +1037,7 @@ void placementTraversal(
                                             uint8_t value = (mask >> (offset * 2)) & 0x3;
                                                 int64_t pos = basePos - offset;
                                     
-                                        if (shouldLog) {
-                                            std::cerr << " A SEED CHANGE OF VALUE " << static_cast<int>(value) 
-                                                      << " was found at position " << pos 
-                                                      << " in node " << node->identifier << std::endl;
-                                        }
+                                        
                                         if (value == 0) continue; 
 
                                         seeding::seed_t current_seed_at_pos{}; // Default initialize
@@ -1092,7 +1078,7 @@ void placementTraversal(
                                                 }
                                             }
                                         } else { // Add (value == 2) or Modify (value == 3)
-                                            std::cerr << " ANd now this." << std::endl;
+                                            // std::cerr << " ANd now this." << std::endl;
                                             if (!positionToDictId.count(pos)) {
                                                 logging::warn("Node {}: Cannot find dictionary ID for position {} to add/modify seed.", node->identifier, pos);
                                                 continue;
@@ -2172,7 +2158,7 @@ void place(
     }
     // --- > NEW: Populate state.hashToKmer from state.kmerDictionary < ---
     state.hashToKmer.clear();
-    std::cerr << "This is the kmer table built from the genome index: " << std::endl;
+    // std::cerr << "This is the kmer table built from the genome index: " << std::endl;
     if (!state.kmerDictionary.empty() && params.k > 0 && params.s > 0 && params.k > params.s) {
         state.hashToKmer.reserve(state.kmerDictionary.size());
         logging::info("Populating state.hashToKmer from state.kmerDictionary ({} entries) using k={}, s={}...", 
@@ -2192,7 +2178,7 @@ void place(
                     bool is_syncmer = std::get<2>(syncmers[0]);
                     if (is_syncmer) {
                         state.hashToKmer[hash] = kmerSeqStr; // Store original k-mer from dict
-                        std::cerr << "Hash: " << hash << ", Kmer: " << kmerSeqStr << std::endl;
+                        // std::cerr << "Hash: " << hash << ", Kmer: " << kmerSeqStr << std::endl;
                     }
                 }
             }
