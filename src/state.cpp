@@ -443,7 +443,7 @@ bool StateManager::isBlockInverted_unsafe(std::string_view nodeId, int32_t block
 
 // Unsafe version of getActiveBlockRanges - caller must hold the lock
 std::vector<std::pair<int32_t, coordinates::CoordRange>>
-StateManager::getActiveBlockRanges_unsafe(std::string_view nodeId) const {
+StateManager::getActiveBlockRanges(std::string_view nodeId) const {
   // Convert string_view to string once and reuse
   std::string nodeIdStr(nodeId);
   std::vector<std::pair<int32_t, coordinates::CoordRange>> activeBlocks;
@@ -479,7 +479,7 @@ StateManager::getActiveBlockRanges_unsafe(std::string_view nodeId) const {
               });
               
   } catch (const std::exception& e) {
-    logging::err("Exception in getActiveBlockRanges_unsafe for node {}: {}", nodeIdStr, e.what());
+    logging::err("Exception in getActiveBlockRanges for node {}: {}", nodeIdStr, e.what());
   }
   
   return activeBlocks;
@@ -1132,8 +1132,32 @@ bool StateManager::applyBlockMutation(std::string_view nodeId, int32_t blockId,
   // Add upstream recomputation range for block insertions and deletions
   // This implements the critical logic: k non-gap characters upstream in previous ON block
   if (effectiveActivation || effectiveDeactivation || effectiveOrientationChange) {
-    // Get active blocks using unsafe version since we already hold the lock
-    auto activeBlocks = getActiveBlockRanges_unsafe(strNodeId);
+    // DEADLOCK FIX: Cannot call getActiveBlockRanges here because it will try to acquire the lock again
+    // Instead, manually collect active blocks since we already hold the lock
+    
+    // CRITICAL FIX: We need the PARENT state to determine upstream blocks, not the current node state
+    // The current node state may have already been modified by previous mutations
+    std::vector<std::pair<int32_t, coordinates::CoordRange>> activeBlocks;
+    
+    // Get parent's active blocks (before mutations) for upstream recomputation logic
+    std::string parentId = nodeState.parentId;
+    if (!parentId.empty()) {
+      // Use parent's block state to determine which blocks are upstream
+      for (int32_t testBlockId = 0; testBlockId < static_cast<int32_t>(numBlocks); ++testBlockId) {
+        if (isBlockOn_unsafe(parentId, testBlockId)) {
+          auto rangeIt = blockRanges.find(testBlockId);
+          if (rangeIt != blockRanges.end()) {
+            activeBlocks.emplace_back(testBlockId, rangeIt->second);
+          }
+        }
+      }
+    }
+    
+    // Sort by global position for consistent ordering
+    std::sort(activeBlocks.begin(), activeBlocks.end(), 
+              [](const auto& a, const auto& b) {
+                return a.second.start < b.second.start;
+              });
     
     // Find the previous active block (upstream from current block)
     int32_t previousActiveBlockId = -1;
@@ -1773,13 +1797,6 @@ StateManager::getActiveBlockRanges(std::string_view nodeId) {
   return const_cast<StateManager*>(this)->getActiveBlockRangesImpl(nodeId); 
 }
 
-// Public method to get active block ranges (const version)
-std::vector<std::pair<int32_t, coordinates::CoordRange>>
-StateManager::getActiveBlockRanges(std::string_view nodeId) const {
-  // Calls the renamed public implementation method
-  return getActiveBlockRangesImpl(nodeId);
-}
-
 // Helper to get node gap map
 std::shared_ptr<HierarchicalGapMap>
 StateManager::getNodeGapMap(std::string_view nodeId) const {
@@ -1894,11 +1911,9 @@ std::optional<seeding::seed_t> StateManager::getSeedAtPosition(std::string_view 
     
     if (should_debug) {
         auto& nodeState = nodeStateIt->second;
-        std::lock_guard<std::mutex> lock(nodeState.materializedStateMutex);
-        size_t mat_count = nodeState.materializedSeeds.size();
-        bool mat_computed = nodeState.materializedStateComputed;
-        logging::debug("SEED_LOOKUP_DEBUG: Node {} pos {} - materializedSeeds.size()={}, materializedStateComputed={}", 
-                       strNodeId, pos, mat_count, mat_computed);
+        // Avoid lock for debug logging to prevent deadlock
+        logging::debug("SEED_LOOKUP_DEBUG: Node {} pos {} - checking seed state", 
+                       strNodeId, pos);
         
         // Check if this specific position exists in materialized seeds
         auto seed_it = nodeState.materializedSeeds.find(pos);
@@ -3388,8 +3403,6 @@ StateManager::fastMapGlobalToLocal(int64_t globalPos) const {
 
 // Fast lookup from (blockId, nucPos, gapPos) to global position
 int64_t StateManager::fastMapLocalToGlobal(int32_t blockId, int32_t nucPos, int32_t gapPos) const {
-    // Assuming blockCoordToGlobalPos is populated during initialization and then read-only.
-    // If it could be modified concurrently by non-const methods, a shared_lock would be needed here.
     PositionKey key = PositionKey::create(blockId, nucPos, gapPos);
     auto it = blockCoordToGlobalPos.find(key);
     if (it != blockCoordToGlobalPos.end()) {
@@ -3400,7 +3413,7 @@ int64_t StateManager::fastMapLocalToGlobal(int32_t blockId, int32_t nucPos, int3
 
 // Extract a k-mer starting from a specific position (scanning until finding k non-gap chars)
 std::pair<std::string, std::vector<int64_t>> StateManager::extractKmer(
-    std::string_view nodeId, int64_t startPos, int k) const {
+    std::string_view nodeId, int64_t pos, int k, bool reverse) const {
   
   // Declare tracking variables for diagnostics with correct global scope
   // These are in global scope (no namespace), not in state::
@@ -3419,7 +3432,7 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractKmer(
   // Main kmer extraction implementation
   std::string rawKmer; // Store raw sequence with gaps
   std::string ungappedKmer; // Store sequence with gaps removed
-  std::vector<int64_t> positions;
+  std::vector<int64_t> positions; // non-gapped positions of each k-mer character
   int nonGapCount = 0;
 
   rawKmer.reserve(k * 2); // Reserve more to account for gaps
@@ -3427,9 +3440,12 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractKmer(
   positions.reserve(k * 2);
 
   // Extract one character at a time
-  int64_t pos = startPos;
+  int64_t currentPos = pos;
+  int direction = reverse ? -1 : 1; // Move backwards if reverse=true
+  
   while (nonGapCount < k) { 
-    if (pos >= numCoords) {
+    // Check bounds based on direction
+    if (currentPos < 0 || currentPos >= static_cast<int64_t>(numCoords)) {
       try {
         kmerFailedDueToLength.fetch_add(1, std::memory_order_relaxed);
       } catch (...) {}
@@ -3438,41 +3454,43 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractKmer(
     }
 
     // Map position to block coordinates
-    auto coordsOpt = fastMapGlobalToLocal(pos);
+    auto coordsOpt = fastMapGlobalToLocal(currentPos);
     if (!coordsOpt) {
-      // Could not map this position, try next
-      pos++;
-      continue;
+      throw std::runtime_error("Failed to map position " + std::to_string(currentPos) + 
+                           " to block coordinates for node " + std::string(nodeId));
     }
 
     auto [blockId, nucPos, gapPos] = *coordsOpt;
 
-    // ADD THIS: Get the node's gap map
     std::shared_ptr<HierarchicalGapMap> nodeGapMap;
     try {
-        nodeGapMap = getNodeGapMap(nodeId); // Make sure getNodeGapMap is efficient
+        nodeGapMap = getNodeGapMap(nodeId); 
     } catch (const std::exception& e) {
-        // Log or handle error if gap map cannot be retrieved, maybe default to no gap map
         logging::warn("StateManager::extractKmer: Could not get gap map for node {}: {}", nodeId, e.what());
     }
 
-    char c;
-    if (nodeGapMap && nodeGapMap->isGap(pos)) { // Check gap map first
-        c = '-';
+    char c = getCharAtPosition(nodeId, blockId, nucPos, gapPos);
+
+    if (reverse) {
+      // For reverse mode, prepend characters to build the k-mer in correct order
+      rawKmer.insert(0, 1, c);
+      if (c != '-' && c != 'x') {
+        ungappedKmer.insert(0, 1, c);
+        positions.insert(positions.begin(), currentPos);
+        nonGapCount++;
+      }
     } else {
-        c = getCharAtPosition(nodeId, blockId, nucPos, gapPos);
+      // Forward mode (original logic)
+      rawKmer.push_back(c);
+      if (c != '-' && c != 'x') {
+        ungappedKmer.push_back(c);
+        positions.push_back(currentPos);
+        nonGapCount++;
+      }
     }
 
-    rawKmer.push_back(c);
-    positions.push_back(pos);
-
-    if (c != '-' && c != 'x') {
-      ungappedKmer.push_back(c);
-      nonGapCount++;
-    }
-
-    // Move to next position
-    pos++;
+    // Move to next position in the specified direction
+    currentPos += direction;
   }
 
   if (nonGapCount < k) {
@@ -4027,7 +4045,7 @@ void StateManager::clearSeedAtPosition(std::string_view nodeId, int64_t pos) {
         // Also update materialized state if it exists
         auto nodeStateIt = nodeStates.find(strNodeId);
         if (nodeStateIt != nodeStates.end()) {
-            std::lock_guard<std::mutex> lock(nodeStateIt->second.materializedStateMutex);
+            // Remove lock to prevent deadlock - this is just for cleanup
             nodeStateIt->second.materializedSeeds.erase(pos);
         }
         
@@ -4093,41 +4111,17 @@ void StateManager::materializeNodeState(const std::string& nodeId) {
         logging::debug("materializeNodeState: Node {} has seedStore, materializing with parent {}", 
                       nodeId, parentState ? nodeState.parentId : "none");
         
-        // Debug: Check parent state before materialization
-        if (parentState) {
-            std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
-            logging::debug("materializeNodeState: Parent {} has {} materialized seeds", 
-                          nodeState.parentId, parentState->materializedSeeds.size());
-        }
-        
         nodeState.materializeSeedState(parentState, hierIt->second.seedStore.get());
         
-        // Debug: Check child state after materialization
-        {
-            std::lock_guard<std::mutex> childLock(nodeState.materializedStateMutex);
-            logging::debug("materializeNodeState: Node {} now has {} materialized seeds after using seedStore", 
-                          nodeId, nodeState.materializedSeeds.size());
-        }
+        logging::debug("materializeNodeState: Node {} materialized with seedStore", nodeId);
     } else {
         // Even if node has no local seedStore, it should inherit parent's materialized seeds
         logging::debug("materializeNodeState: Node {} has no seedStore, directly inheriting from parent {}", 
                       nodeId, parentState ? nodeState.parentId : "none");
         
-        // Debug: Check parent state before materialization
-        if (parentState) {
-            std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
-            logging::debug("materializeNodeState: Parent {} has {} materialized seeds (no local seedStore)", 
-                          nodeState.parentId, parentState->materializedSeeds.size());
-        }
-        
         nodeState.materializeSeedState(parentState, nullptr);
         
-        // Debug: Check child state after materialization
-        {
-            std::lock_guard<std::mutex> childLock(nodeState.materializedStateMutex);
-            logging::debug("materializeNodeState: Node {} now has {} materialized seeds after null seedStore", 
-                          nodeId, nodeState.materializedSeeds.size());
-        }
+        logging::debug("materializeNodeState: Node {} materialized without seedStore", nodeId);
     }
     
     logging::debug("materializeNodeState: Successfully materialized state for node {}", nodeId);
