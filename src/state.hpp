@@ -1196,14 +1196,13 @@ struct NodeState {
     
     materializedSeeds.clear();
     
-    // Step 1: Always inherit from parent seed state (if parent exists and is materialized)
+    // Step 1: Inherit from parent seed state
     if (parentState && parentState->materializedStateComputed) {
       std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
-      // Always copy parent's seeds - this is the key fix for seed inheritance
       materializedSeeds = parentState->materializedSeeds;
     }
     
-    // Step 2: Apply local seed mutations on top of inherited seeds
+    // Step 2: Apply local seed mutations
     if (seedStore) {
       auto localValues = seedStore->getLocalValues();
       for (const auto& [position, seed] : localValues) {
@@ -1655,6 +1654,9 @@ private:
   // Helper to check if one node is a descendant of another
   bool isDescendant(const std::string &ancestorId,
                     const std::string &nodeId) const;
+
+  // Materialize node state for optimal performance
+  void materializeNodeState(const std::string& nodeId);
   
   // Helper to get root/reference character for fallback lookup
   std::optional<char> getRootCharacter(const PositionKey& posKey) const;
@@ -1691,7 +1693,7 @@ public:
   void initializeNodeHierarchy(panmanUtils::Tree* T, panmanUtils::Node* rootNode);
 
   // Sequence and K-mer Extraction
-  std::pair<std::string, std::vector<int64_t>> extractKmer(std::string_view nodeId, int64_t pos, int k) const;
+  std::pair<std::string, std::vector<int64_t>> extractKmer(std::string_view nodeId, int64_t pos, int k, bool reverse = false) const;
   std::tuple<std::string, std::vector<int64_t>, std::vector<bool>, std::vector<int64_t>> extractSequence(std::string_view nodeId, const coordinates::CoordRange& range, bool includeGaps = false) const;
   
   // Additional extractSequence overloads for backward compatibility
@@ -1721,9 +1723,6 @@ public:
   bool applyBlockMutation(std::string_view nodeId, int32_t blockId, bool isInsertion, bool isInversion_flag);
   void initializeNode(const std::string &nodeId);
 
-  // Materialize node state for optimal performance
-  void materializeNodeState(const std::string& nodeId);
-
   int16_t getKmerSize() const;
   void setKmerSize(int16_t k);
 
@@ -1752,7 +1751,6 @@ public:
   // Block State and Mutations
   bool isBlockOn_unsafe(std::string_view nodeId, int32_t blockId) const;
   bool isBlockInverted_unsafe(std::string_view nodeId, int32_t blockId) const;
-  std::vector<std::pair<int32_t, coordinates::CoordRange>> getActiveBlockRanges_unsafe(std::string_view nodeId) const;
   bool isGapAt(int32_t blockId, int64_t blockPos) const;
   bool isGapPosition(std::shared_ptr<HierarchicalGapMap> nodeGapMap, int64_t pos) const;
   bool isNonGapChar(char c) const;

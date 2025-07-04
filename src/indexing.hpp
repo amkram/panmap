@@ -562,9 +562,9 @@ decodeSeedChanges(const std::vector<int64_t> &basePositions,
  * @param kmerDictionary Optional pointer to k-mer dictionary for direct writing
  * @param uniqueKmersCollector Collector for unique k-mers
  * @param debugSeedFile Debug output file stream
- * @return Tuple of (blockDeletions, blockInsertions, totalMaterializedSeeds, seedsFoundInDeletedBlocks, blockDeletionPositionsChecked, seedsCleared, seedsAdded, recompRangeCount, recompRangeSize, recompRangeList) counts
+ * @return Tuple of (blockDeletions, blockInsertions, totalMaterializedSeeds, seedsFoundInDeletedBlocks, blockDeletionPositionsChecked, seedsCleared, seedsAdded, recompRangeCount, recompRangeSize, recompRangeList, uniquePositionsProcessed, totalKmersInRanges) counts
  */
-std::tuple<int, int, int, int, int, int, int, int, int, std::string> recomputeSeeds(
+std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> recomputeSeeds(
     state::StateManager &stateManager, 
     placement::PlacementEngine &engine,
     panmanUtils::Node *node, int k, int s,
