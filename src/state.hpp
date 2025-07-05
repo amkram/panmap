@@ -1073,10 +1073,6 @@ struct NodeState {
   }
   
   int64_t getTotalSeedCount() const {
-    std::lock_guard<std::mutex> lock(materializedStateMutex);
-    if (materializedStateComputed && !materializedSeeds.empty()) {
-      return materializedSeeds.size();
-    }
     return inheritedSeedCount + localSeedChanges;
   }
   
@@ -1201,20 +1197,110 @@ struct NodeState {
     materializedSeeds.clear();
     
     // Step 1: Inherit from parent seed state
-    if (parentState && parentState->materializedStateComputed) {
-      std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
-      materializedSeeds = parentState->materializedSeeds;
+    size_t inheritedSeeds = 0;
+    if (parentState) {
+      std::cout << "MATERIALIZE_SEED_DEBUG: Parent exists, materializedStateComputed=" << parentState->materializedStateComputed << " parentSeeds=" << parentState->materializedSeeds.size() << std::endl;
+      if (parentState->materializedStateComputed) {
+        std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
+        materializedSeeds = parentState->materializedSeeds;
+        inheritedSeeds = materializedSeeds.size();
+        std::cout << "MATERIALIZE_SEED_DEBUG: Successfully inherited " << inheritedSeeds << " seeds from parent" << std::endl;
+      } else {
+        std::cout << "MATERIALIZE_SEED_DEBUG: Parent not materialized yet" << std::endl;
+      }
+    } else {
+      std::cout << "MATERIALIZE_SEED_DEBUG: No parent state provided" << std::endl;
     }
     
-    // Step 2: Apply local seed mutations
-    if (seedStore) {
-      auto localValues = seedStore->getLocalValues();
-      for (const auto& [position, seed] : localValues) {
-        materializedSeeds[position] = seed;
+    // Note: Local seed mutations are NOT applied here because they haven't been computed yet.
+    // This method only handles inheritance. Local seeds will be applied after recomputation.
+    
+    // Debug logging
+    std::cout << "MATERIALIZE_SEED_COMPLETE: inherited=" << inheritedSeeds << " local=0 total=" << materializedSeeds.size() << std::endl;
+    
+    materializedStateComputed = true;
+  }
+  
+  
+    
+  /**
+   * @brief Update materialized seed state by applying the computed seed changes with full seed data
+   * @param detailedSeedChanges Vector of detailed seed changes with all hash/endPos information
+   */
+  void updateMaterializedSeedsAfterRecomputation(const std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& detailedSeedChanges) {
+    std::lock_guard<std::mutex> lock(materializedStateMutex);
+    
+    if (!materializedStateComputed) {
+      std::cout << "MATERIALIZE_SEED_UPDATE: Cannot update - not yet materialized" << std::endl;
+      return;
+    }
+    
+    size_t initialCount = materializedSeeds.size();
+    std::cout << "MATERIALIZE_SEED_UPDATE_START: Starting with " << initialCount << " seeds in materialized state" << std::endl;
+    
+    size_t deletedCount = 0;
+    size_t addedCount = 0;
+    size_t modifiedCount = 0;
+    
+    // Debug: Log first few changes to see what we're processing
+    std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Processing " << detailedSeedChanges.size() << " changes..." << std::endl;
+    for (size_t i = 0; i < std::min(detailedSeedChanges.size(), size_t(5)); i++) {
+      const auto& [pos, wasSeed, isSeed, prevHash, newHash, prevReversed, newReversed, prevEndPos, newEndPos] = detailedSeedChanges[i];
+      std::cout << "  Change[" << i << "]: pos=" << pos << " wasSeed=" << wasSeed << " isSeed=" << isSeed << std::endl;
+    }
+    
+    // Apply all detailed seed changes
+    for (const auto& [pos, wasSeed, isSeed, prevHash, newHash, prevReversed, newReversed, prevEndPos, newEndPos] : detailedSeedChanges) {
+      if (wasSeed && !isSeed) {
+        // Seed was deleted
+        auto it = materializedSeeds.find(pos);
+        bool seedExists = (it != materializedSeeds.end());
+        bool wasErased = materializedSeeds.erase(pos);
+        if (wasErased) {
+          deletedCount++;
+        }
+        if (deletedCount <= 10 || !wasErased) {  // Debug first 10 deletions and all failures
+          std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Deleted seed at pos " << pos;
+          if (!seedExists) {
+            std::cout << " (WARNING: seed was not in materialized map! totalSeeds=" << materializedSeeds.size() << ")";
+          } else if (!wasErased) {
+            std::cout << " (WARNING: erase failed despite seed existing!)";
+          } else {
+            std::cout << " (success)";
+          }
+          std::cout << std::endl;
+        }
+      } else if (!wasSeed && isSeed) {
+        // Seed was added - use the new seed data from the change record
+        seeding::seed_t newSeed;
+        newSeed.hash = newHash.value_or(0);
+        newSeed.reversed = newReversed.value_or(false);
+        newSeed.endPos = newEndPos.value_or(pos + 32 - 1);
+        
+        materializedSeeds[pos] = newSeed;
+        addedCount++;
+        if (addedCount <= 5) {  // Debug first few additions
+          std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Added seed at pos " << pos << " hash=" << newSeed.hash << std::endl;
+        }
+      } else if (wasSeed && isSeed) {
+        // Seed was modified - use the new seed data from the change record
+        seeding::seed_t modifiedSeed;
+        modifiedSeed.hash = newHash.has_value() ? newHash.value() : (prevHash.has_value() ? prevHash.value() : 0);
+        modifiedSeed.reversed = newReversed.has_value() ? newReversed.value() : (prevReversed.has_value() ? prevReversed.value() : false);
+        modifiedSeed.endPos = newEndPos.has_value() ? newEndPos.value() : (prevEndPos.has_value() ? prevEndPos.value() : pos + 32 - 1);
+        
+        materializedSeeds[pos] = modifiedSeed;
+        modifiedCount++;
+        if (modifiedCount <= 5) {  // Debug first few modifications
+          std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Modified seed at pos " << pos << " hash=" << modifiedSeed.hash << std::endl;
+        }
       }
     }
     
-    materializedStateComputed = true;
+    size_t finalCount = materializedSeeds.size();
+    std::cout << "MATERIALIZE_SEED_UPDATE: Applied " << detailedSeedChanges.size() << " detailed seed changes: "
+              << "deleted=" << deletedCount << " added=" << addedCount << " modified=" << modifiedCount
+              << " total seeds: " << finalCount << " (was " << initialCount << ")" << std::endl;
   }
   
   /**
@@ -1715,6 +1801,18 @@ public:
   std::vector<std::pair<int32_t, coordinates::CoordRange>>
   getActiveBlockRanges(std::string_view nodeId) const;
 
+  // Materialize node state for optimal performance
+  void materializeNodeState(const std::string& nodeId);
+
+  /**
+   * @brief Update materialized seed state after recomputation
+   * This should be called after seed recomputation to ensure materialized state reflects new seeds
+   * 
+   * @param nodeId Node to update
+   * @param detailedSeedChanges Vector of detailed seed changes with all hash/endPos information
+   */
+  void updateMaterializedSeedsAfterRecomputation(const std::string& nodeId, const std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& detailedSeedChanges);
+
 
   void setBlockOn(std::string_view nodeId, int32_t blockId, bool on);
   void setBlockForward(std::string_view nodeId, int32_t blockId, bool forward);
@@ -1723,9 +1821,6 @@ public:
   bool isBlockInverted(std::string_view nodeId, int32_t blockId) const;
   bool applyBlockMutation(std::string_view nodeId, int32_t blockId, bool isInsertion, bool isInversion_flag);
   void initializeNode(const std::string &nodeId);
-  
-  // Materialize node state for optimal performance
-  void materializeNodeState(const std::string& nodeId);
 
   int16_t getKmerSize() const;
   void setKmerSize(int16_t k);

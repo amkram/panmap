@@ -241,6 +241,7 @@ void StateManager::setNumBlocks(size_t blockCount) {
 
 // Initialize a node's state
 void StateManager::initializeNode(const std::string &nodeId) {
+  std::cout << "DEBUG_INIT_NODE: Initializing " << nodeId << std::endl;
   // Acquire the lock at the beginning of the function
   std::unique_lock<std::shared_mutex> lock(nodeMutex);
 
@@ -249,6 +250,7 @@ void StateManager::initializeNode(const std::string &nodeId) {
 
   // Check if node is already initialized
   if (nodeStates.find(nodeId) != nodeStates.end()) {
+    std::cout << "DEBUG_INIT_NODE: " << nodeId << " already initialized, parentId='" << nodeStates[nodeId].parentId << "'" << std::endl;
     if (verbose_logging) {
       std::cerr << "[DEBUG] Node " << nodeId << " already initialized" << std::endl;
     }
@@ -257,6 +259,7 @@ void StateManager::initializeNode(const std::string &nodeId) {
 
   // Create a new node state
   nodeStates.emplace(nodeId, NodeState());
+  std::cout << "DEBUG_INIT_NODE: Created new state for " << nodeId << std::endl;
   if (verbose_logging) {
     std::cerr << "[DEBUG] Created new node state for node " << nodeId << std::endl;
   }
@@ -286,12 +289,22 @@ void StateManager::initializeNode(const std::string &nodeId) {
   auto hierarchyIt = nodeHierarchy.find(nodeId);
   if (hierarchyIt != nodeHierarchy.end()) {
     parentId = hierarchyIt->second.parentId;
+    std::cout << "DEBUG_INIT_NODE: " << nodeId << " parent=" << parentId << std::endl;
     
     // Set up hierarchical structure inheritance from nodeHierarchy directly
     auto& nodeState = nodeStates[nodeId];
     nodeState.parentId = parentId;
+    std::cout << "DEBUG_INIT_NODE: Set parent ID for " << nodeId << " to '" << parentId << "' (nodeState.parentId now = '" << nodeState.parentId << "')" << std::endl;
+    std::cout << "DEBUG_PARENTID_TRACE: " << nodeId << " parentId SET to '" << parentId << "' at initialization" << std::endl;
+  } else {
+    std::cout << "DEBUG_INIT_NODE: Node " << nodeId << " NOT found in nodeHierarchy during initialization!" << std::endl;
+  }
+  
+  // Get reference to the node state
+  auto& nodeState = nodeStates[nodeId];
     
-    // Initialize gap map and character store from nodeHierarchy if available
+  // Initialize gap map and character store from nodeHierarchy if available
+  if (hierarchyIt != nodeHierarchy.end()) {
     if (hierarchyIt->second.gapMap) {
       nodeState.gapMap = std::make_shared<HierarchicalGapMap>(hierarchyIt->second.gapMap);
       if (verbose_logging) {
@@ -305,15 +318,8 @@ void StateManager::initializeNode(const std::string &nodeId) {
         std::cerr << "[DEBUG] Node " << nodeId << " inherited character store from hierarchy" << std::endl;
       }
     }
-    
-    // Initialize seed store from nodeHierarchy if available
-    if (hierarchyIt->second.seedStore) {
-      // Propagate the seed store from hierarchy to node state for consistency
-      if (verbose_logging) {
-        std::cerr << "[DEBUG] Node " << nodeId << " initializing with seed store from hierarchy" << std::endl;
-      }
-    }
   }
+   
 
   // If this is not the root and we have a parent,
   // propagate state from parent to this node
@@ -372,20 +378,10 @@ void StateManager::initializeNode(const std::string &nodeId) {
         const NodeState* parentState = &parentStateIt->second;
         const HierarchicalCharacterStore* characterStore = finalNodeState.characterStore.get();
         
-        // Use empty root characters map as fallback
-        static const absl::flat_hash_map<PositionKey, char, PositionKey::Hash> emptyRootChars;
-        
-        // Materialize character state for fast lookups
-        finalNodeState.materializeCharacterState(parentState, characterStore, emptyRootChars);
-        
-        // Also materialize seed state for fast lookups
-        auto hierIt = nodeHierarchy.find(nodeId);
-        if (hierIt != nodeHierarchy.end() && hierIt->second.seedStore) {
-          finalNodeState.materializeSeedState(parentState, hierIt->second.seedStore.get());
-        }
-        
+        // Note: Materialization is deferred until explicitly called via materializeNodeState()
+        // This ensures proper parent-child inheritance order
         if (verbose_logging) {
-          std::cerr << "[DEBUG] Materialized character and seed data for node " << nodeId << std::endl;
+          std::cerr << "[DEBUG] Initialization complete for node " << nodeId << " (materialization deferred)" << std::endl;
         }
       }
     } catch (const std::exception& e) {
@@ -525,9 +521,25 @@ void StateManager::setBlockForward(std::string_view nodeId, int32_t blockId,
                                    bool forward) {
   std::unique_lock<std::shared_mutex> lock(nodeMutex); // ADD THIS: Use unique lock for modifications
   std::string strNodeId(nodeId); // Convert once
-  auto &nodeState = nodeStates[strNodeId]; // operator[] might insert if key not found - getNodeState might be safer?
-                                          // Let's stick to existing pattern for now.
+  
+  // Ensure node exists before modifying it
+  auto nodeIt = nodeStates.find(strNodeId);
+  if (nodeIt == nodeStates.end()) {
+    std::cout << "DEBUG_SETBLOCK_ERROR: Node " << strNodeId << " not found in nodeStates, calling getNodeState first" << std::endl;
+    lock.unlock(); // Release lock temporarily
+    getNodeState(strNodeId); // This will initialize the node properly
+    lock.lock(); // Re-acquire lock
+    nodeIt = nodeStates.find(strNodeId);
+    if (nodeIt == nodeStates.end()) {
+      std::cerr << "ERROR: Failed to initialize node " << strNodeId << std::endl;
+      return;
+    }
+  }
+  
+  auto &nodeState = nodeIt->second;
+  std::cout << "DEBUG_SETBLOCK: Node " << strNodeId << " parentId='" << nodeState.parentId << "' before setBlockForward" << std::endl;
   nodeState.setBlockForward(blockId, forward);
+  std::cout << "DEBUG_SETBLOCK: Node " << strNodeId << " parentId='" << nodeState.parentId << "' after setBlockForward" << std::endl;
 
   // Reset cache since block orientation changed
   resetNodeCache(strNodeId);
@@ -797,22 +809,8 @@ bool StateManager::setCharAtPosition(std::string_view nodeId, int32_t blockId,
         nodeState.characterStore = std::make_shared<HierarchicalCharacterStore>(parentCharStore);
         logging::warn("Created characterStore for node {} with parent inheritance", nodeIdStr);
         
-        // Immediately materialize character data for performance
-        try {
-          auto parentStateIt = nodeStates.find(parentId);
-          if (parentStateIt != nodeStates.end()) {
-            static const absl::flat_hash_map<PositionKey, char, PositionKey::Hash> emptyRootChars;
-            nodeState.materializeCharacterState(&parentStateIt->second, nodeState.characterStore.get(), emptyRootChars);
-            
-            // Also materialize seed data
-            auto hierIt = nodeHierarchy.find(nodeIdStr);
-            if (hierIt != nodeHierarchy.end() && hierIt->second.seedStore) {
-              nodeState.materializeSeedState(&parentStateIt->second, hierIt->second.seedStore.get());
-            }
-          }
-        } catch (const std::exception& e) {
-          logging::warn("Failed to materialize character/seed data for new store in node {}: {}", nodeIdStr, e.what());
-        }
+        // Note: Materialization is deferred until explicitly called via materializeNodeState()
+        // This ensures proper parent-child inheritance order
       } else {
         nodeState.characterStore = std::make_shared<HierarchicalCharacterStore>();
         logging::warn("Created characterStore for node {} without parent", nodeIdStr);
@@ -1360,18 +1358,8 @@ void StateManager::propagateState(const std::string &fromNode, const std::string
     // Use empty root characters as fallback
     static const absl::flat_hash_map<PositionKey, char, PositionKey::Hash> emptyRootChars;
     
-    // Materialize the child's complete character state
-    childState.materializeCharacterState(parentStatePtr, childCharStore, emptyRootChars);
-    
-    // Also materialize the child's complete seed state
-    auto hierarchyIt_child = nodeHierarchy.find(toNode);
-    if (hierarchyIt_child != nodeHierarchy.end() && hierarchyIt_child->second.seedStore) {
-      childState.materializeSeedState(parentStatePtr, hierarchyIt_child->second.seedStore.get());
-    }
-    
-    if (verbose_logging) {
-      logging::debug("Materialized character and seed data during state propagation from {} to {}", fromNode, toNode);
-    }
+    // Note: Materialization is deferred until explicitly called via materializeNodeState()
+    // This ensures proper parent-child inheritance order and avoids premature materialization
   } catch (const std::exception& e) {
     logging::warn("Failed to materialize character data during propagation from {} to {}: {}", 
                   fromNode, toNode, e.what());
@@ -1904,22 +1892,21 @@ std::optional<seeding::seed_t> StateManager::getSeedAtPosition(std::string_view 
         throw std::runtime_error("Node state not found for " + strNodeId);
     }
     
-    // Debug: Track why getSeedAtPosition is failing for deletion processing
+    // Debug: Track inheritance for specific nodes
     static thread_local int debug_call_count = 0;
-    bool is_debug_node = (strNodeId == "node_2" || strNodeId == "node_4");
-    bool should_debug = is_debug_node && (debug_call_count++ < 10);
+    bool is_debug_node = (strNodeId == "node_3");
+    bool should_debug = is_debug_node && (debug_call_count++ < 20);
     
     if (should_debug) {
+        std::cout << "SEED_LOOKUP: node=" << strNodeId << " pos=" << pos;
         auto& nodeState = nodeStateIt->second;
-        // Avoid lock for debug logging to prevent deadlock
-        logging::debug("SEED_LOOKUP_DEBUG: Node {} pos {} - checking seed state", 
-                       strNodeId, pos);
-        
-        // Check if this specific position exists in materialized seeds
-        auto seed_it = nodeState.materializedSeeds.find(pos);
-        bool found_in_mat = (seed_it != nodeState.materializedSeeds.end());
-        logging::debug("SEED_LOOKUP_DEBUG: Node {} pos {} - found_in_materialized_seeds={}", 
-                       strNodeId, pos, found_in_mat);
+        std::cout << " materialized=" << nodeState.materializedStateComputed;
+        if (nodeState.materializedStateComputed) {
+            auto seed_it = nodeState.materializedSeeds.find(pos);
+            bool found = (seed_it != nodeState.materializedSeeds.end());
+            std::cout << " found=" << found << " totalSeeds=" << nodeState.materializedSeeds.size();
+        }
+        std::cout << std::endl;
     }
     
     // All inherited seeds should already be materialized before mutations are applied
@@ -3195,6 +3182,8 @@ void StateManager::initializeNodeHierarchy(panmanUtils::Tree *tree, panmanUtils:
     // Set parent relationship
     hierarchy.parentId = parentId;
     
+    std::cout << "HIERARCHY_DEBUG: Setting node '" << nodeId << "' parent to '" << parentId << "'" << std::endl;
+    
     // Record parent-child relationship for both parent and child
     if (!parentId.empty()) {
       nodeHierarchy[parentId].childrenIds.push_back(nodeId);
@@ -4076,27 +4065,51 @@ void StateManager::materializeNodeState(const std::string& nodeId) {
     
     // Check if already materialized
     if (nodeState.materializedStateComputed) {
-        logging::debug("materializeNodeState: Node {} already has materialized state", nodeId);
         return;
     }
     
     // Get parent state to copy from (parent should already be materialized in topological order)
     const NodeState* parentState = nullptr;
+    std::cout << "MATERIALIZE_DEBUG: Node " << nodeId << " parentId='" << nodeState.parentId << "'" << std::endl;
+    
+    // Debug: Check if node exists in hierarchy
+    auto hierIt = nodeHierarchy.find(nodeId);
+    if (hierIt != nodeHierarchy.end()) {
+        std::cout << "MATERIALIZE_DEBUG: Found " << nodeId << " in hierarchy, parentId='" << hierIt->second.parentId << "'" << std::endl;
+        if (hierIt->second.parentId != nodeState.parentId) {
+            std::cout << "MATERIALIZE_DEBUG: WARNING - parentId mismatch! hierarchy='" << hierIt->second.parentId << "' vs nodeState='" << nodeState.parentId << "'" << std::endl;
+            // FIX: Copy the correct parentId from hierarchy to nodeState
+            nodeState.parentId = hierIt->second.parentId;
+            std::cout << "MATERIALIZE_DEBUG: FIXED - Set nodeState.parentId='" << nodeState.parentId << "'" << std::endl;
+        }
+    } else {
+        std::cout << "MATERIALIZE_DEBUG: Node " << nodeId << " NOT found in hierarchy!" << std::endl;
+    }
+    
     if (!nodeState.parentId.empty()) {
+        std::cout << "MATERIALIZE_DEBUG: Looking for parent '" << nodeState.parentId << "' in nodeStates..." << std::endl;
         auto parentIt = nodeStates.find(nodeState.parentId);
         if (parentIt != nodeStates.end()) {
             parentState = &parentIt->second;
+            std::cout << "MATERIALIZE_DEBUG: Found parent state for " << nodeState.parentId << std::endl;
             
             // Parent should already be materialized due to topological initialization order
             if (!parentState->materializedStateComputed) {
-                logging::warn("materializeNodeState: Parent {} of node {} not materialized - initialization order issue",
-                             nodeState.parentId, nodeId);
-                // Don't try to fix this with recursion - it indicates a deeper problem
+                // Recursively materialize parent first
+                lock.unlock();
+                materializeNodeState(nodeState.parentId);
+                lock.lock();
+                // Re-get the parent state after potential changes
+                auto parentIt2 = nodeStates.find(nodeState.parentId);
+                if (parentIt2 != nodeStates.end()) {
+                    parentState = &parentIt2->second;
+                }
             }
         } else {
-            logging::warn("materializeNodeState: Parent {} of node {} not found in nodeStates", 
-                         nodeState.parentId, nodeId);
+            std::cout << "MATERIALIZE_DEBUG: Parent state not found for parentId='" << nodeState.parentId << "'" << std::endl;
         }
+    } else {
+        std::cout << "MATERIALIZE_DEBUG: Node " << nodeId << " has empty parentId" << std::endl;
     }
     
     // Materialize character state
@@ -4106,25 +4119,12 @@ void StateManager::materializeNodeState(const std::string& nodeId) {
     }
     
     // Materialize seed state
-    auto hierIt = nodeHierarchy.find(nodeId);
     if (hierIt != nodeHierarchy.end() && hierIt->second.seedStore) {
-        logging::debug("materializeNodeState: Node {} has seedStore, materializing with parent {}", 
-                      nodeId, parentState ? nodeState.parentId : "none");
-        
         nodeState.materializeSeedState(parentState, hierIt->second.seedStore.get());
-        
-        logging::debug("materializeNodeState: Node {} materialized with seedStore", nodeId);
     } else {
         // Even if node has no local seedStore, it should inherit parent's materialized seeds
-        logging::debug("materializeNodeState: Node {} has no seedStore, directly inheriting from parent {}", 
-                      nodeId, parentState ? nodeState.parentId : "none");
-        
         nodeState.materializeSeedState(parentState, nullptr);
-        
-        logging::debug("materializeNodeState: Node {} materialized without seedStore", nodeId);
     }
-    
-    logging::debug("materializeNodeState: Successfully materialized state for node {}", nodeId);
 }
 
 // Consolidated gap update method for efficient batch operations
@@ -4184,6 +4184,21 @@ std::vector<coordinates::CoordRange> StateManager::getRecompRanges(const std::st
 // String overload for mapGlobalToBlockCoords
 coordinates::BlockCoordinate StateManager::mapGlobalToBlockCoords(const std::string& nodeId, int64_t globalPos) const {
   return mapGlobalToBlockCoords(std::string_view(nodeId), globalPos);
+}
+
+void StateManager::updateMaterializedSeedsAfterRecomputation(const std::string& nodeId, const std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>& detailedSeedChanges) {
+    std::unique_lock<std::shared_mutex> lock(nodeMutex);
+    
+    auto nodeStateIt = nodeStates.find(nodeId);
+    if (nodeStateIt == nodeStates.end()) {
+        logging::warn("updateMaterializedSeedsAfterRecomputation: Node {} not found", nodeId);
+        return;
+    }
+    
+    auto& nodeState = nodeStateIt->second;
+    
+    // Apply the detailed seed changes computed during recomputation
+    nodeState.updateMaterializedSeedsAfterRecomputation(detailedSeedChanges);
 }
 
 } // namespace state
