@@ -974,7 +974,7 @@ void writeSeedChangesToCapnp(
 }
 
 
-std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> recomputeSeeds(
+std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, std::optional<bool>, std::optional<bool>, std::optional<int64_t>, std::optional<int64_t>>>> recomputeSeeds(
     state::StateManager &stateManager,
     placement::PlacementEngine &engine,
     panmanUtils::Node *node, int k, int s,
@@ -987,6 +987,7 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
   thread_local std::string kmerBuffer;
 
   std::string nodeId = node->identifier;
+  std::cout << "DEBUG_RECOMP_START: Starting recomputeSeeds for " << nodeId << std::endl;
   
   // New debug metrics for TSV
   int totalMaterializedSeeds = 0;
@@ -1040,9 +1041,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
   int blockInsertions = 0;
 
   
-  std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>,
-                         std::optional<size_t>, std::optional<bool>,
-                         std::optional<bool>, std::optional<int64_t>,
+  std::vector<std::tuple<int64_t, bool, bool, std::optional<size_t>, std::optional<size_t>, 
+                         std::optional<bool>, std::optional<bool>, std::optional<int64_t>, 
                          std::optional<int64_t>>> seedChanges;
 
   // Track positions where seeds were cleared due to block deletions
@@ -1106,8 +1106,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
             positionsWithClearedSeeds.insert(pos);
                                   
             seedChanges.emplace_back(
-                std::make_tuple(pos, true, false, seed.hash, std::nullopt,
-                                seed.reversed, std::nullopt, seed.endPos, std::nullopt));
+                std::make_tuple(pos, true, false, std::optional<size_t>(static_cast<size_t>(seed.hash)), std::optional<size_t>(),
+                                std::optional<bool>(seed.reversed), std::optional<bool>(), std::optional<int64_t>(seed.endPos), std::optional<int64_t>()));
             seedsCleared++;
             
             // Debug: Log individual seed deletions
@@ -1157,8 +1157,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
             stateManager.clearSeedAtPosition(nodeId, pos);
                                   
             seedChanges.emplace_back(
-                std::make_tuple(pos, true, false, seed.hash, std::nullopt,
-                                seed.reversed, std::nullopt, seed.endPos, std::nullopt));
+                std::make_tuple(pos, true, false, std::optional<size_t>(static_cast<size_t>(seed.hash)), std::optional<size_t>(),
+                                std::optional<bool>(seed.reversed), std::optional<bool>(), std::optional<int64_t>(seed.endPos), std::optional<int64_t>()));
             seedsCleared++;
           }
         } catch (const std::system_error& e) {
@@ -1524,8 +1524,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
               positionsWithClearedSeeds.insert(globalPos);
               
               seedChanges.emplace_back(
-                  std::make_tuple(globalPos, true, false, deletedSeed.hash, std::nullopt,
-                                 deletedSeed.reversed, std::nullopt, deletedSeed.endPos, std::nullopt));
+                  std::make_tuple(globalPos, true, false, std::optional<size_t>(static_cast<size_t>(deletedSeed.hash)), std::optional<size_t>(),
+                                 std::optional<bool>(deletedSeed.reversed), std::optional<bool>(), std::optional<int64_t>(deletedSeed.endPos), std::optional<int64_t>()));
               
               logging::debug("DEBUG_RECOMP: Deleted seed at gap position {} (char='{}')", globalPos, 
                            (globalPos - range.start < static_cast<int64_t>(gappedSequence.size())) ? 
@@ -1620,9 +1620,9 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
               stateManager.setSeedAtPosition(nodeId, globalPos, newSeed);
               
               seedChanges.emplace_back(
-                  std::make_tuple(globalPos, true, true, oldSeed.hash, hash,
-                                  oldSeed.reversed, isReverse,
-                                  oldSeed.endPos, newSeed.endPos));
+                  std::make_tuple(globalPos, true, true, std::optional<size_t>(static_cast<size_t>(oldSeed.hash)), std::optional<size_t>(static_cast<size_t>(hash)),
+                                  std::optional<bool>(oldSeed.reversed), std::optional<bool>(isReverse),
+                                  std::optional<int64_t>(oldSeed.endPos), std::optional<int64_t>(newSeed.endPos)));
                                   
               uniqueKmersCollector.insert(kmer);
               
@@ -1658,9 +1658,9 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
               
               // Add deletion to seed changes
               seedChanges.emplace_back(
-                  std::make_tuple(globalPos, true, false, oldSeed.hash, std::nullopt,
-                                 oldSeed.reversed, std::nullopt,
-                                 oldSeed.endPos, std::nullopt));
+                  std::make_tuple(globalPos, true, false, std::optional<size_t>(static_cast<size_t>(oldSeed.hash)), std::optional<size_t>(),
+                                 std::optional<bool>(oldSeed.reversed), std::optional<bool>(),
+                                 std::optional<int64_t>(oldSeed.endPos), std::optional<int64_t>()));
               
               // DEADLOCK SAFE: Remove seed from block and clear seed
               try {
@@ -1707,9 +1707,9 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
               seedsAdded++;
               
               seedChanges.emplace_back(
-                  std::make_tuple(globalPos, false, true, std::nullopt, hash,
-                                 std::nullopt, isReverse,
-                                 std::nullopt, newSeed.endPos));
+                  std::make_tuple(globalPos, false, true, std::optional<size_t>(), std::optional<size_t>(static_cast<size_t>(hash)),
+                                 std::optional<bool>(), std::optional<bool>(isReverse),
+                                 std::optional<int64_t>(), std::optional<int64_t>(newSeed.endPos)));
                                  
               
               std::string extractedKmer = ungappedSequence.substr(localStartPos, k);
@@ -1862,7 +1862,7 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
 
 
   
-  return std::make_tuple(blockDeletions, blockInsertions, totalMaterializedSeeds, seedsFoundInDeletedBlocks, blockDeletionPositionsChecked, seedsCleared, seedsAdded, recompRangeCount, recompRangeSize, recompRangesFormatted, static_cast<int>(uniquePositionsProcessed.size()), totalKmersProcessedInRanges);
+  return std::make_tuple(blockDeletions, blockInsertions, totalMaterializedSeeds, seedsFoundInDeletedBlocks, blockDeletionPositionsChecked, seedsCleared, seedsAdded, recompRangeCount, recompRangeSize, recompRangesFormatted, static_cast<int>(uniquePositionsProcessed.size()), totalKmersProcessedInRanges, seedChanges);
 }
 
 /**
@@ -2958,7 +2958,8 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
               std::string parentId = node->parent ? node->parent->identifier : ""; // Handle null parent for root
               std::string nodeId = node->identifier;
 
-              stateManager->initializeNode(nodeId); 
+              // NOTE: Node should already be initialized during StateManager initialization
+              // Redundant initializeNode() call removed to prevent parentId corruption
 
               // Apply mutations from parent to child and compute seeds
               processNodeComplete(*stateManager, engine, tree, node, tree->root, nodePaths, k, s,
@@ -3565,8 +3566,11 @@ void processNodeComplete(
 
     // CRITICAL: Materialize node state BEFORE applying local mutations
     // This ensures inherited seeds are available during block deletion processing
+    std::cout << "DEBUG_PROCESS_NODE: Processing node " << nodeId << std::endl;
     stateManager.getNodeState(nodeId); // This will trigger initialization if needed
+    std::cout << "DEBUG_PROCESS_NODE: About to materialize node " << nodeId << std::endl;
     stateManager.materializeNodeState(nodeId); // EXPLICITLY materialize node state
+    std::cout << "DEBUG_PROCESS_NODE: Materialized node " << nodeId << std::endl;
     
     // Apply mutations for the node IF THE FLAG IS SET
     std::string* ab_before_ptr = nullptr;
@@ -3578,7 +3582,10 @@ void processNodeComplete(
     );
 
     if (computeSeeds) {
-        auto [blockDeletions, blockInsertions, totalMaterializedSeeds, seedsFoundInDeletedBlocks, blockDeletionPositionsChecked, seedsCleared, seedsAdded, recompRangeCount, recompRangeSize, recompRangeList, uniquePositionsProcessed, totalKmersInRanges] = recomputeSeeds(stateManager, engine, node, k, s, perNodeSeedMutations, kmerDictionary, uniqueKmersCollector, debugSeedFile);
+        auto [blockDeletions, blockInsertions, totalMaterializedSeeds, seedsFoundInDeletedBlocks, blockDeletionPositionsChecked, seedsCleared, seedsAdded, recompRangeCount, recompRangeSize, recompRangeList, uniquePositionsProcessed, totalKmersInRanges, detailedSeedChanges] = recomputeSeeds(stateManager, engine, node, k, s, perNodeSeedMutations, kmerDictionary, uniqueKmersCollector, debugSeedFile);
+
+        // Update materialized seed state with detailed seed changes from recomputation
+        stateManager.updateMaterializedSeedsAfterRecomputation(nodeId, detailedSeedChanges);
 
         // Get materialized state computed flag for debug TSV
         bool materializedStateComputed = false;
