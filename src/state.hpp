@@ -1073,6 +1073,10 @@ struct NodeState {
   }
   
   int64_t getTotalSeedCount() const {
+    std::lock_guard<std::mutex> lock(materializedStateMutex);
+    if (materializedStateComputed && !materializedSeeds.empty()) {
+      return materializedSeeds.size();
+    }
     return inheritedSeedCount + localSeedChanges;
   }
   
@@ -1654,9 +1658,6 @@ private:
   // Helper to check if one node is a descendant of another
   bool isDescendant(const std::string &ancestorId,
                     const std::string &nodeId) const;
-
-  // Materialize node state for optimal performance
-  void materializeNodeState(const std::string& nodeId);
   
   // Helper to get root/reference character for fallback lookup
   std::optional<char> getRootCharacter(const PositionKey& posKey) const;
@@ -1722,6 +1723,9 @@ public:
   bool isBlockInverted(std::string_view nodeId, int32_t blockId) const;
   bool applyBlockMutation(std::string_view nodeId, int32_t blockId, bool isInsertion, bool isInversion_flag);
   void initializeNode(const std::string &nodeId);
+  
+  // Materialize node state for optimal performance
+  void materializeNodeState(const std::string& nodeId);
 
   int16_t getKmerSize() const;
   void setKmerSize(int16_t k);

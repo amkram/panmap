@@ -1045,6 +1045,9 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
                          std::optional<bool>, std::optional<int64_t>,
                          std::optional<int64_t>>> seedChanges;
 
+  // Track positions where seeds were cleared due to block deletions
+  std::set<int64_t> positionsWithClearedSeeds;
+  
   // STEP 1: Handle block mutations - clear seeds from deleted/inverted blocks
   for (const auto &block_mutation : node->blockMutation) {
     bool isInsertion = (block_mutation.blockMutInfo == 1);
@@ -1098,6 +1101,9 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
             seedsFoundInThisBlock++;
             seeding::seed_t seed = seedOpt.value();
             stateManager.clearSeedAtPosition(nodeId, pos);
+            
+            // Track this position as having a cleared seed
+            positionsWithClearedSeeds.insert(pos);
                                   
             seedChanges.emplace_back(
                 std::make_tuple(pos, true, false, seed.hash, std::nullopt,
@@ -1459,8 +1465,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
           
           // DEADLOCK SAFE: Wrap getSeedAtPosition call to avoid deadlocks
           try {
-            auto parentId = node->parent ? node->parent->identifier : node->identifier;
-            auto seedOpt = stateManager.getSeedAtPosition(parentId, globalPos);
+            // Query seeds from current node - materialized state includes inherited seeds
+            auto seedOpt = stateManager.getSeedAtPosition(nodeId, globalPos);
             if (seedOpt.has_value()) {
               existingSeedsInRange[globalPos] = seedOpt.value(); // Key by globalPos
               foundSeeds++;
@@ -1476,8 +1482,15 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
         
         // Diagnostic logging to understand seed inheritance
         if (nodeId == "node_2" || nodeId == "node_3") {
-          logging::debug("DEBUG_SEED_INHERITANCE: Node {} range [{},{}): found {} existing seeds out of {} positions", 
+          logging::info("DEBUG_SEED_INHERITANCE: Node {} range [{},{}): found {} existing seeds out of {} positions", 
                         nodeId, range.start, range.end, foundSeeds, totalPositions);
+          
+          // Sample a few positions to see what's happening
+          for (size_t i = 0; i < std::min(5, totalPositions); i++) {
+            int64_t globalPos = positions[i];
+            bool hasExisting = existingSeedsInRange.find(globalPos) != existingSeedsInRange.end();
+            logging::info("  pos[{}]: globalPos={} hasExisting={}", i, globalPos, hasExisting);
+          }
         }
         // Delete seeds at any position that now has a gap character ('-' or 'x')
         // Loop over existing seeds and check if their positions now have gaps
@@ -1506,6 +1519,9 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
               stateManager.clearSeedAtPosition(nodeId, globalPos);
               existingSeedsInRange.erase(seedIt);
               seedsCleared++;
+              
+              // Track this position as having a cleared seed (for gap deletions)
+              positionsWithClearedSeeds.insert(globalPos);
               
               seedChanges.emplace_back(
                   std::make_tuple(globalPos, true, false, deletedSeed.hash, std::nullopt,
@@ -1582,7 +1598,7 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
           }
           
           // Case 1: Seed position ON in parent, seed position ON in current node,
-          // hashes are different
+          // hashes are different → MODIFICATION
           if (hadSeed && isNowSeed && existingSeedsInRange[globalPos].hash != hash) {
             seedsChanged++;
             // Modify existing seed
@@ -1602,7 +1618,6 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
                                
               // Store seed
               stateManager.setSeedAtPosition(nodeId, globalPos, newSeed);
-              // NOTE: seedsChanged is a modification, not addition+deletion
               
               seedChanges.emplace_back(
                   std::make_tuple(globalPos, true, true, oldSeed.hash, hash,
@@ -1628,49 +1643,53 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
             
           }
           // Case 2: Seed position ON in parent, seed position ON in current node,
-          // hashes are the same
-          if (hadSeed && isNowSeed && existingSeedsInRange[globalPos].hash == hash) {
-            // No change needed, just continue
+          // hashes are the same → NO CHANGE
+          else if (hadSeed && isNowSeed && existingSeedsInRange[globalPos].hash == hash) {
+            // No change needed, seed remains the same
             continue;
           }
-          // Case 3: Seed position ON in parent, seed position OFF in current node,
-          if (hadSeed && !isNowSeed) {
-            // Remove existing seed
-            auto &oldSeed = existingSeedsInRange[globalPos];
+          // Case 3: Seed position ON in parent, seed position OFF in current node → DELETION
+          else if (hadSeed && !isNowSeed) {
+            // Count as deletion ONLY if position wasn't already cleared by block operations
+            bool alreadyClearedByBlock = positionsWithClearedSeeds.find(globalPos) != positionsWithClearedSeeds.end();
             
-            // Add deletion to seed changes
-            seedChanges.emplace_back(
-                std::make_tuple(globalPos, true, false, oldSeed.hash, std::nullopt,
-                               oldSeed.reversed, std::nullopt,
-                               oldSeed.endPos, std::nullopt));
-            
-            // DEADLOCK SAFE: Remove seed from block and clear seed
-            try {
-              coordinates::BlockCoordinate coords = 
-                  stateManager.mapGlobalToBlockCoords(nodeId, globalPos);
-              if (coords.blockId >= 0) {
-                stateManager.removeSeedFromBlock(coords.blockId, globalPos);
-              }
+            if (!alreadyClearedByBlock) {
+              auto &oldSeed = existingSeedsInRange[globalPos];
               
-              // Clear the seed
-              stateManager.clearSeedAtPosition(nodeId, globalPos);
-              seedsCleared++;
+              // Add deletion to seed changes
+              seedChanges.emplace_back(
+                  std::make_tuple(globalPos, true, false, oldSeed.hash, std::nullopt,
+                                 oldSeed.reversed, std::nullopt,
+                                 oldSeed.endPos, std::nullopt));
               
-              // DEBUG: Compact logging for node_2
-              if (nodeId == "node_2") {
-                // logging::info("SEED_DELETE: {} pos={}", nodeId, globalPos);
+              // DEADLOCK SAFE: Remove seed from block and clear seed
+              try {
+                coordinates::BlockCoordinate coords = 
+                    stateManager.mapGlobalToBlockCoords(nodeId, globalPos);
+                if (coords.blockId >= 0) {
+                  stateManager.removeSeedFromBlock(coords.blockId, globalPos);
+                }
+                
+                // Clear the seed
+                stateManager.clearSeedAtPosition(nodeId, globalPos);
+                seedsCleared++;
+                
+                // DEBUG: Compact logging for node_2
+                if (nodeId == "node_2") {
+                  // logging::info("SEED_DELETE: {} pos={}", nodeId, globalPos);
+                }
+              } catch (const std::system_error& e) {
+                if (e.code() == std::errc::resource_deadlock_would_occur) {
+                  throw std::runtime_error("Resource deadlock detected during seed removal at pos " + 
+                                         std::to_string(globalPos) + " for node " + nodeId);
+                }
+                throw; // Re-throw other exceptions
               }
-            } catch (const std::system_error& e) {
-              if (e.code() == std::errc::resource_deadlock_would_occur) {
-                throw std::runtime_error("Resource deadlock detected during seed removal at pos " + 
-                                     std::to_string(globalPos) + " for node " + nodeId);
             }
-            throw; // Re-throw other exceptions
+            // If already cleared by block operations, don't count it as another deletion
           }
-          }
-          // Case 4: Seed position OFF in parent, seed position ON in current node,
-          // => New seed
-          if (!hadSeed && isNowSeed) {
+          // Case 4: Seed position OFF in parent, seed position ON in current node → ADDITION
+          else if (!hadSeed && isNowSeed) {
             // Add new seed
             seeding::seed_t newSeed;
             newSeed.hash = hash;
@@ -1683,6 +1702,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int> r
             try {
               // Store seed
               stateManager.setSeedAtPosition(nodeId, globalPos, newSeed);
+              
+              // Always count as addition - this is a true new seed
               seedsAdded++;
               
               seedChanges.emplace_back(
@@ -3544,7 +3565,8 @@ void processNodeComplete(
 
     // CRITICAL: Materialize node state BEFORE applying local mutations
     // This ensures inherited seeds are available during block deletion processing
-    stateManager.getNodeState(nodeId); // This will trigger materialization if needed
+    stateManager.getNodeState(nodeId); // This will trigger initialization if needed
+    stateManager.materializeNodeState(nodeId); // EXPLICITLY materialize node state
     
     // Apply mutations for the node IF THE FLAG IS SET
     std::string* ab_before_ptr = nullptr;
