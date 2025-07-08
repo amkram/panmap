@@ -471,6 +471,69 @@ void processMutationsForNode(
   }
   
 
+  // Process nucleotide mutations to find recomputation ranges
+  if (strNodeId == "node_3") {
+    // Define debug positions for node_3
+    std::set<int64_t> debugPositions = {369894, 369925, 370975, 370981, 371019, 371042, 375703, 375704, 375710, 375724, 377237, 377962, 378303, 378327, 378336, 378337, 400112, 401809, 506725, 513651, 539424, 572027, 572085};
+    
+    logging::info("DEBUG_NUC_MUTATIONS: Node {} has {} nucleotide mutations:", strNodeId, node->nucMutation.size());
+    for (size_t i = 0; i < node->nucMutation.size(); i++) {
+      const auto& mut = node->nucMutation[i];
+      
+      // Extract mutation type from mutInfo field
+      uint8_t mutType = mut.mutInfo & 0x7;
+      int mutLen = (mut.mutInfo >> 4);
+      std::string mutTypeStr = "UNKNOWN";
+      switch (mutType) {
+        case panmanUtils::NucMutationType::NS: mutTypeStr = "SUBSTITUTION"; break;
+        case panmanUtils::NucMutationType::NI: mutTypeStr = "INSERTION"; break;
+        case panmanUtils::NucMutationType::ND: mutTypeStr = "DELETION"; break;
+        case panmanUtils::NucMutationType::NSNPS: mutTypeStr = "SNP_SUB"; mutLen = 1; break;
+        case panmanUtils::NucMutationType::NSNPI: mutTypeStr = "SNP_INS"; mutLen = 1; break;
+        case panmanUtils::NucMutationType::NSNPD: mutTypeStr = "SNP_DEL"; mutLen = 1; break;
+        default: mutTypeStr = "TYPE_" + std::to_string(static_cast<int>(mutType)); break;
+      }
+      
+      // Calculate global position for this mutation
+      int64_t globalPos = -1;
+      try {
+        bool isBlockInverted = stateManager.isBlockInverted(strNodeId, mut.primaryBlockId);
+        globalPos = stateManager.mapToGlobalCoordinate(mut.primaryBlockId, mut.nucPosition, 
+                                                      mut.nucGapPosition, isBlockInverted);
+      } catch (...) {
+        throw std::runtime_error("Error mapping mutation position for node " + strNodeId + 
+                             ", blockId " + std::to_string(mut.primaryBlockId) + 
+                             ", nucPos " + std::to_string(mut.nucPosition) + 
+                             ", nucGapPos " + std::to_string(mut.nucGapPosition));
+      }
+      
+      logging::info("  NucMutation[{}]: {} at globalPos {} (blockId={} nucPos={} nucGapPos={} len={})", 
+                   i, mutTypeStr, globalPos, mut.primaryBlockId, mut.nucPosition, mut.nucGapPosition, mutLen);
+      
+      // Check if any debug positions are near this mutation
+      std::vector<int64_t> nearbyDebugPos;
+      if (globalPos != -1) {
+        for (int64_t debugPos : debugPositions) {
+          // Check if debug position is within k_val bases of this mutation
+          int64_t distance = std::abs(debugPos - globalPos);
+          if (distance < k_val) {  // k_val is the kmer size, mutations within k_val bases can affect seeds
+            nearbyDebugPos.push_back(debugPos);
+          }
+        }
+        if (!nearbyDebugPos.empty()) {
+          std::stringstream nearbyList;
+          for (size_t j = 0; j < nearbyDebugPos.size(); j++) {
+            if (j > 0) nearbyList << ",";
+            nearbyList << nearbyDebugPos[j] << "(dist=" << (nearbyDebugPos[j] - globalPos) << ")";
+          }
+          logging::info("    Near debug positions: {}", nearbyList.str());
+        }
+      }
+    }
+  }
+
+  // PHASE 3.5: Nucleotide mutation range calculation will happen AFTER mutations are applied
+
   // PHASE 5: Apply nucleotide mutations (batched to minimize lock contention)
   for (const auto &nuc_mutation : node->nucMutation) {
     int32_t blockId = nuc_mutation.primaryBlockId;
@@ -521,13 +584,13 @@ void processMutationsForNode(
 
     // Check if the block is currently active
     bool isCurrentBlockActive = stateManager.isBlockOn(strNodeId, blockId);
-    
-    // Count mutations by block activation status
-    if (isCurrentBlockActive) {
-      nucMutationsInActiveBlocks++;
-    } else {
-      nucMutationsInInactiveBlocks++;
+    if (blockId == 595) {
+      std::cout << "Node " << strNodeId 
+                << " Block " << blockId 
+                << " is currently " << (isCurrentBlockActive ? "ACTIVE" : "INACTIVE") 
+                << std::endl;
     }
+    // Note: mutation counting happens later in the range generation phase
 
     
     auto decodeNucleotide = [&](int charIndex) -> char { 
@@ -693,6 +756,7 @@ void processMutationsForNode(
 
 
   // PHASE 3.5: Collect nucleotide mutation ranges and blocksToDeactivate ranges
+  // NOW calculate nucleotide mutation ranges AFTER mutations are applied
   
   // Process blocksToDeactivate ranges
   for (const auto &blockId : blocksToDeactivate) {
@@ -711,10 +775,11 @@ void processMutationsForNode(
     allRecompRanges.push_back(prevBoundary);
   }
   
-  // Process nucleotide mutation ranges
+  // Process nucleotide mutation ranges AFTER mutations are applied
   for (const auto &nuc_mutation : node->nucMutation) {
     int32_t blockId = nuc_mutation.primaryBlockId;
     int32_t nucPos = nuc_mutation.nucPosition;
+    int32_t nucGapPos = nuc_mutation.nucGapPosition;
     uint32_t mutInfo = nuc_mutation.mutInfo;
     uint8_t type = mutInfo & 0x7;
     int len = (mutInfo >> 4);
@@ -729,37 +794,50 @@ void processMutationsForNode(
       
       // Only generate recomputation ranges for active blocks
       try {
-        auto rangeOpt = stateManager.calculateRecompRange(
-            strNodeId, blockId, nucPos, len, false, false);
+        // Calculate the global position for this mutation to ensure correct recomputation range
+        int64_t globalPos = -1;
+        try {
+          bool isBlockInverted = stateManager.isBlockInverted(strNodeId, blockId);
+          globalPos = stateManager.mapToGlobalCoordinate(blockId, nucPos, nucGapPos, isBlockInverted);
+        } catch (...) {
+          // If global position calculation fails, fall back to block-relative calculation
+          globalPos = -1;
+        }
+        
+        coordinates::CoordRange baseRange;
+        if (globalPos != -1) {
+          // Use global position to create a centered recomputation range
+          baseRange.start = globalPos;
+          baseRange.end = globalPos + len;
+        } else {
+          throw std::runtime_error("Failed to calculate global position for nucleotide mutation");
+        }
 
-        if (rangeOpt && rangeOpt->start < rangeOpt->end) {
-          coordinates::CoordRange baseRange = *rangeOpt;
+        if (baseRange.start < baseRange.end) {
           
-          // Expand the nucleotide mutation range upstream by k non-gaps
+          // Expand the nucleotide mutation range upstream by k-1 non-gaps
           // to capture k-mers that span across the mutation point
           try {
-            // Get the current block range to find a good starting position
-            auto currentBlockRange = stateManager.getBlockRange(blockId);
+            // Start looking for k non-gap characters from the mutation position itself
+            // This ensures we capture all k-mers that could span the mutation
+            int64_t searchStart = baseRange.start;
             
-            // Start looking for k non-gap characters from the beginning of the base range
-            // This could span within the current block or into previous blocks
-            int64_t searchStart = std::max(static_cast<int64_t>(0), baseRange.start - 1);
-            
-            // Extract k non-gap characters going backward from the search start
+            // Extract k non-gap characters going backward from the mutation position
             auto kmerResult = stateManager.extractKmer(strNodeId, searchStart, k_val, true); // reverse=true to go backward
             
             if (!kmerResult.first.empty() && kmerResult.second.size() >= k_val) {
-              // The positions are end positions, so we need the range from the start of the first k-mer
-              int64_t upstreamStart = kmerResult.second[k_val - 1] - (k_val - 1); // Start of the k-th last character
+              // kmerResult.second[0] is the furthest back position when reverse=true
+              // This gives us the start position of the first character in the k-mer
+              int64_t upstreamStart = kmerResult.second[0];
               
               if (upstreamStart >= 0 && upstreamStart < baseRange.start) {
                 // Extend the base range to include upstream context
                 baseRange.start = upstreamStart;
-                // std::cout << "=> Extended nuc mut range [" << baseRange.start << ", " << baseRange.end << ") with " << k_val << " upstream non-gap chars" << std::endl;
+                // std::cout << "=> Extended nuc mut range [" << baseRange.start << ", " << baseRange.end << ") with " << k_val << " upstream non-gap chars from pos " << upstreamStart << std::endl;
               }
             } else {
               // If we can't find k non-gap characters, fall back to simple position-based extension
-              int64_t simpleUpstreamStart = std::max(static_cast<int64_t>(0), baseRange.start - k_val);
+              int64_t simpleUpstreamStart = std::max(static_cast<int64_t>(0), baseRange.start - (k_val - 1));
               if (simpleUpstreamStart < baseRange.start) {
                 baseRange.start = simpleUpstreamStart;
                 // std::cout << "=> Extended nuc mut range [" << baseRange.start << ", " << baseRange.end << ") with simple upstream fallback (couldn't find " << k_val << " non-gap chars)" << std::endl;
@@ -767,15 +845,23 @@ void processMutationsForNode(
             }
           } catch (const std::exception& e) {
             // Fallback: simple upstream extension if extractKmer fails
-            int64_t simpleUpstreamStart = std::max(static_cast<int64_t>(0), baseRange.start - k_val);
+            int64_t simpleUpstreamStart = std::max(static_cast<int64_t>(0), baseRange.start - (k_val - 1));
             if (simpleUpstreamStart < baseRange.start) {
               baseRange.start = simpleUpstreamStart;
               // std::cout << "=> Extended nuc mut range [" << baseRange.start << ", " << baseRange.end << ") with simple upstream fallback (extractKmer failed)" << std::endl;
             }
           }
           
+
+          
           nucMutationInducedRanges.push_back(baseRange);
           allRecompRanges.push_back(baseRange);
+          
+          // Debug log for nucleotide mutation ranges
+          if (strNodeId == "node_3") {
+            logging::info("DEBUG_NUC_RANGE_POST: Node {} mutation in block {} at nucPos {} nucGapPos {} globalPos {} generated range [{}, {}) size={}", 
+                         strNodeId, blockId, nucPos, nucGapPos, globalPos, baseRange.start, baseRange.end, baseRange.end - baseRange.start);
+          }
         }
       } catch (const std::exception &e) {
         // Error handled silently to prevent overflow
@@ -1048,7 +1134,46 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
   // Track positions where seeds were cleared due to block deletions
   std::set<int64_t> positionsWithClearedSeeds;
   
+  // Track specific positions of interest for debugging
+  std::set<int64_t> debugPositions = {369894, 369925, 370975, 370981, 371019, 371042, 375703, 375704, 375710, 375724, 377237, 377962, 378303, 378327, 378336, 378337, 400112, 401809, 506725, 513651, 539424, 572027, 572085};
+  
   // STEP 1: Handle block mutations - clear seeds from deleted/inverted blocks
+  if (nodeId == "node_3") {
+    logging::info("DEBUG_BLOCK_MUTATIONS: Node {} has {} block mutations:", nodeId, node->blockMutation.size());
+    for (size_t i = 0; i < node->blockMutation.size(); i++) {
+      const auto& mut = node->blockMutation[i];
+      std::string mutType = "UNKNOWN";
+      if (mut.blockMutInfo == 1) mutType = "INSERTION";
+      else if (mut.blockMutInfo == 0 && mut.inversion) mutType = "INVERSION";
+      else if (mut.blockMutInfo == 0 && !mut.inversion) mutType = "DELETION";
+      
+      try {
+        auto blockRange = stateManager.getBlockRange(mut.primaryBlockId);
+        logging::info("  Mutation[{}]: {} block {} range [{}, {}) size={}", 
+                     i, mutType, mut.primaryBlockId, blockRange.start, blockRange.end, 
+                     blockRange.end - blockRange.start);
+        
+        // Check if any debug positions fall within this block
+        std::vector<int64_t> debugPosInBlock;
+        for (int64_t debugPos : debugPositions) {
+          if (debugPos >= blockRange.start && debugPos < blockRange.end) {
+            debugPosInBlock.push_back(debugPos);
+          }
+        }
+        if (!debugPosInBlock.empty()) {
+          std::stringstream debugList;
+          for (size_t j = 0; j < debugPosInBlock.size(); j++) {
+            if (j > 0) debugList << ",";
+            debugList << debugPosInBlock[j];
+          }
+          logging::info("    Block contains debug positions: {}", debugList.str());
+        }
+      } catch (...) {
+        logging::info("  Mutation[{}]: {} block {} (could not get range)", i, mutType, mut.primaryBlockId);
+      }
+    }
+  }
+  
   for (const auto &block_mutation : node->blockMutation) {
     bool isInsertion = (block_mutation.blockMutInfo == 1);
     bool isDeletionOrInversion = (block_mutation.blockMutInfo == 0);
@@ -1104,6 +1229,12 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             
             // Track this position as having a cleared seed
             positionsWithClearedSeeds.insert(pos);
+            
+            // Report if this is a position of interest
+            if (debugPositions.find(pos) != debugPositions.end()) {
+              logging::info("DEBUG_POS_TRACK: Node {} - BLOCK_DELETION cleared seed at debug position {} in block {}", 
+                           nodeId, pos, block_mutation.primaryBlockId);
+            }
                                   
             seedChanges.emplace_back(
                 std::make_tuple(pos, true, false, std::optional<size_t>(static_cast<size_t>(seed.hash)), std::optional<size_t>(),
@@ -1200,6 +1331,87 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
       throw std::runtime_error("Resource deadlock detected during recomputation range query for node " + nodeId);
     } else {
       throw; // Re-throw other exceptions
+    }
+  }
+  
+  // Merge overlapping ranges BEFORE processing to avoid duplicate work
+  std::vector<coordinates::CoordRange> mergedRanges;
+  if (!ranges.empty()) {
+    // Sort ranges by start position
+    std::vector<coordinates::CoordRange> sortedRanges = ranges;
+    std::sort(sortedRanges.begin(), sortedRanges.end(), 
+              [](const coordinates::CoordRange& a, const coordinates::CoordRange& b) {
+                return a.start < b.start;
+              });
+    
+    // Merge overlapping ranges
+    for (const auto& range : sortedRanges) {
+      if (mergedRanges.empty() || mergedRanges.back().end < range.start) {
+        // No overlap, add new range
+        mergedRanges.push_back(range);
+      } else {
+        // Overlap detected, merge with previous range
+        mergedRanges.back().end = std::max(mergedRanges.back().end, range.end);
+      }
+    }
+    
+    // Update ranges to use merged ranges
+    ranges = mergedRanges;
+    
+    // Log merging results for debugging
+    if (nodeId == "node_3" || nodeId == "node_2") {
+      logging::info("DEBUG_MERGE: Node {} had {} original ranges, merged to {} ranges", 
+                    nodeId, sortedRanges.size(), ranges.size());
+    }
+  }
+  
+  // Log recomputation ranges and check for debug positions coverage
+  if (nodeId == "node_3") {
+    logging::info("DEBUG_RECOMP_RANGES: Node {} has {} recomputation ranges (after merging):", nodeId, ranges.size());
+    for (size_t i = 0; i < ranges.size(); i++) {
+      const auto& range = ranges[i];
+      logging::info("  Range[{}]: [{}, {}) size={}", i, range.start, range.end, range.end - range.start);
+      
+      // Check if any debug positions fall within this range
+      std::vector<int64_t> debugPosInRange;
+      for (int64_t debugPos : debugPositions) {
+        if (debugPos >= range.start && debugPos < range.end) {
+          debugPosInRange.push_back(debugPos);
+        }
+      }
+      if (!debugPosInRange.empty()) {
+        std::stringstream debugList;
+        for (size_t j = 0; j < debugPosInRange.size(); j++) {
+          if (j > 0) debugList << ",";
+          debugList << debugPosInRange[j];
+        }
+        logging::info("    Contains debug positions: {}", debugList.str());
+      }
+    }
+    
+    // Check for debug positions NOT covered by any range
+    std::vector<int64_t> uncoveredDebugPos;
+    for (int64_t debugPos : debugPositions) {
+      bool covered = false;
+      for (const auto& range : ranges) {
+        if (debugPos >= range.start && debugPos < range.end) {
+          covered = true;
+          break;
+        }
+      }
+      if (!covered) {
+        uncoveredDebugPos.push_back(debugPos);
+      }
+    }
+    
+    if (!uncoveredDebugPos.empty()) {
+      std::stringstream uncoveredList;
+      for (size_t j = 0; j < uncoveredDebugPos.size(); j++) {
+        if (j > 0) uncoveredList << ",";
+        uncoveredList << uncoveredDebugPos[j];
+      }
+      logging::info("DEBUG_RECOMP_RANGES: Node {} - Debug positions NOT covered by any recomp range: {}", 
+                   nodeId, uncoveredList.str());
     }
   }
   
@@ -1339,34 +1551,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
   
   if (!ranges.empty()) {
     
-    // Merge overlapping ranges to avoid overcounting seeds
-    std::vector<coordinates::CoordRange> mergedRanges;
-    
-    // Sort ranges by start position
-    std::vector<coordinates::CoordRange> sortedRanges = ranges;
-    std::sort(sortedRanges.begin(), sortedRanges.end(), 
-              [](const coordinates::CoordRange& a, const coordinates::CoordRange& b) {
-                return a.start < b.start;
-              });
-    
-    // Merge overlapping ranges
-    for (const auto& range : sortedRanges) {
-      if (mergedRanges.empty() || mergedRanges.back().end < range.start) {
-        // No overlap, add new range
-        mergedRanges.push_back(range);
-      } else {
-        // Overlap detected, merge with previous range
-        mergedRanges.back().end = std::max(mergedRanges.back().end, range.end);
-      }
-    }
-    
-    std::vector<coordinates::CoordRange> rangesToProcess = mergedRanges;
-    
-    // Log the merging results for debugging
-    if (nodeId == "node_2") {
-      // logging::info("DEBUG_MERGE: Node {} had {} original ranges, merged to {} ranges", 
-                    // nodeId, ranges.size(), rangesToProcess.size());
-    }
+    // Ranges are already merged at the beginning of STEP 3
+    std::vector<coordinates::CoordRange> rangesToProcess = ranges;
     
     logging::debug("DEBUG_RECOMP: Node '{}' processing {} merged recomputation ranges", nodeId, rangesToProcess.size());
 
@@ -1470,6 +1656,18 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             if (seedOpt.has_value()) {
               existingSeedsInRange[globalPos] = seedOpt.value(); // Key by globalPos
               foundSeeds++;
+              
+              // Report if this is a position of interest
+              if (debugPositions.find(globalPos) != debugPositions.end()) {
+                logging::info("DEBUG_POS_TRACK: Node {} - Found EXISTING seed at debug position {} (hash {})", 
+                             nodeId, globalPos, seedOpt.value().hash);
+              }
+            } else {
+              // Report if this is a position of interest that has no seed
+              if (debugPositions.find(globalPos) != debugPositions.end()) {
+                logging::info("DEBUG_POS_TRACK: Node {} - NO existing seed at debug position {}", 
+                             nodeId, globalPos);
+              }
             }
           } catch (const std::system_error& e) {
             if (e.code() == std::errc::resource_deadlock_would_occur) {
@@ -1567,6 +1765,20 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
           
           int64_t globalPos = positions[gappedLocalStartPos];
           
+          // Report syncmer processing result for debug positions
+          if (debugPositions.find(globalPos) != debugPositions.end()) {
+            std::string kmerSeq = (localStartPos + k <= ungappedSequence.size()) ? 
+                                 ungappedSequence.substr(localStartPos, k) : "TRUNCATED";
+            logging::info("DEBUG_POS_TRACK: Node {} - SYNCMER_RESULT at debug position {} kmer='{}' hash={} isReverse={} isNowSeed={}", 
+                         nodeId, globalPos, kmerSeq, hash, isReverse, isNowSeed);
+          }
+          
+          // Report if this is a position of interest
+          if (debugPositions.find(globalPos) != debugPositions.end()) {
+            logging::info("DEBUG_POS_TRACK: Node {} - Processing debug position {} in range [{},{})", 
+                         nodeId, globalPos, range.start, range.end);
+          }
+          
           // Only process seeds within the original range, not in the extended context
           // The extended context is only used to ensure complete k-mers can be extracted
           if (globalPos >= range.end) {
@@ -1574,6 +1786,13 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             if (nodeId == "node_2") {              // logging::info("SKIP_EXTENDED: pos={} >= range.end={} in range [{},{})", 
                              // globalPos, range.end, range.start, range.end);
             }
+            
+            // Report if this debug position is being skipped due to extended range
+            if (debugPositions.find(globalPos) != debugPositions.end()) {
+              logging::info("DEBUG_POS_TRACK: Node {} - SKIPPED debug position {} (>= range.end={}) in extended context", 
+                           nodeId, globalPos, range.end);
+            }
+            
             continue; // Skip seeds in the extended context area
           }
           
@@ -1584,6 +1803,23 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
           totalKmersProcessedInRanges++;
           
           bool hadSeed = existingSeedsInRange.find(globalPos) != existingSeedsInRange.end(); // Use globalPos as key
+          
+          // Report decision logic for debug positions
+          if (debugPositions.find(globalPos) != debugPositions.end()) {
+            std::string decision = "UNKNOWN";
+            if (!isNowSeed) decision = "NO_CHANGE_NOT_SEED";
+            else if (!hadSeed) decision = "ADD_NEW_SEED"; 
+            else if (existingSeedsInRange[globalPos].hash != hash) decision = "MODIFY_SEED";
+            else decision = "NO_CHANGE_SAME_HASH";
+            
+            logging::info("DEBUG_POS_TRACK: Node {} - DECISION for debug position {}: hadSeed={} isNowSeed={} decision={}", 
+                         nodeId, globalPos, hadSeed, isNowSeed, decision);
+            
+            if (hadSeed) {
+              logging::info("DEBUG_POS_TRACK: Node {} - Existing seed at {}: hash={} vs new hash={}", 
+                           nodeId, globalPos, existingSeedsInRange[globalPos].hash, hash);
+            }
+          }
           
           // DEBUG: Compact logging for node_2 - log every syncmer position processed and decision
           if (nodeId == "node_2") {
@@ -1603,6 +1839,12 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             seedsChanged++;
             // Modify existing seed
             auto &oldSeed = existingSeedsInRange[globalPos];
+            
+            // Report if this is a position of interest
+            if (debugPositions.find(globalPos) != debugPositions.end()) {
+              logging::info("DEBUG_POS_TRACK: Node {} - MODIFY seed at debug position {} (hash {} -> {})", 
+                           nodeId, globalPos, oldSeed.hash, hash);
+            }
             
             // Create new seed
             seeding::seed_t newSeed;
@@ -1656,6 +1898,12 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             if (!alreadyClearedByBlock) {
               auto &oldSeed = existingSeedsInRange[globalPos];
               
+              // Report if this is a position of interest
+              if (debugPositions.find(globalPos) != debugPositions.end()) {
+                logging::info("DEBUG_POS_TRACK: Node {} - DELETE seed at debug position {} (hash {})", 
+                             nodeId, globalPos, oldSeed.hash);
+              }
+              
               // Add deletion to seed changes
               seedChanges.emplace_back(
                   std::make_tuple(globalPos, true, false, std::optional<size_t>(static_cast<size_t>(oldSeed.hash)), std::optional<size_t>(),
@@ -1697,6 +1945,12 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             // Use pre-calculated end position - ensure we use the correct index
             newSeed.endPos = (gappedLocalStartPos < endPositions.size()) ? 
                              endPositions[gappedLocalStartPos] : globalPos + k - 1;
+            
+            // Report if this is a position of interest
+            if (debugPositions.find(globalPos) != debugPositions.end()) {
+              logging::info("DEBUG_POS_TRACK: Node {} - ADD seed at debug position {} (hash {})", 
+                           nodeId, globalPos, hash);
+            }
                              
             // DEADLOCK SAFE: Store seed and update kmer sequences
             try {
@@ -2847,7 +3101,11 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
 
   std::ofstream debugSeedFile("debug.tsv");
 
-  debugSeedFile << "NodeID\tFULL_TotalSeeds\tFULL_OnlySeeds\tOURS_OnlySeeds\tCOMMON_ModifiedSeeds\tSeqLength\tBlockCount\tBlockDeletions\tBlockInsertions\tACCURATE_TotalSeeds\tInheritedSeeds\tLocalSeedChanges\tCOMMON_ModifiedSeeds\tSeqLength\tBlockCount\tBlockDeletions\tBlockInsertions\tDelta_Seeds\tMaterializedSeeds\tSeedsFoundInDeletedBlocks\tPositionsCheckedInDeletedBlocks\tSeedsClearedTotal\tSeedsAddedTotal\tRecompRanges\tRecompRangeSize\tActiveBlocks\tRecompRangeList\tMaterializedStateComputed\tMissingRangeBlocks\tBlockRanges\tFULL_SeedPositions\tACCURATE_SeedPositions\n";
+  // Minimal TSV logging: just node, FULL seed count, ACCURATE seed count
+  debugSeedFile << "NodeID\tFULL_TotalSeeds\tACCURATE_TotalSeeds\n";
+  
+  // Comment out the complex debug TSV header:
+  // debugSeedFile << "NodeID\tFULL_TotalSeeds\tFULL_OnlySeeds\tOURS_OnlySeeds\tCOMMON_ModifiedSeeds\tSeqLength\tBlockCount\tBlockDeletions\tBlockInsertions\tACCURATE_TotalSeeds\tInheritedSeeds\tLocalSeedChanges\tCOMMON_ModifiedSeeds\tSeqLength\tBlockCount\tBlockDeletions\tBlockInsertions\tDelta_Seeds\tFULL_SeedPositions\tACCURATE_SeedPositions\tBlockBoundaries\tActiveBlocks\tDeletedSeeds\tAddedSeeds\tModifiedSeeds\n";
 
   if (k <= 0 || s <= 0 || s >= k) {
     throw std::invalid_argument("Invalid k=" + std::to_string(k) +
@@ -3611,13 +3869,7 @@ void processNodeComplete(
         }
     if (activeBlocksAndRanges.empty()) {
         // No blocks → all counts zero
-        debugSeedFile << nodeId 
-                      << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions
-                      << "\t0\t0\t0\t0\t0\t0\t" << blockDeletions << "\t" << blockInsertions
-                      << "\t0\t" << totalMaterializedSeeds << "\t" << seedsFoundInDeletedBlocks << "\t" << blockDeletionPositionsChecked 
-                      << "\t" << seedsCleared << "\t" << seedsAdded 
-                      << "\t" << recompRangeCount << "\t" << recompRangeSize << "\t0\t" << recompRangeList 
-                      << "\t" << (materializedStateComputed ? "1" : "0") << "\t\t\t\n";
+        debugSeedFile << nodeId << "\t0\t0\n";
         return;
     }
 
@@ -3712,21 +3964,24 @@ void processNodeComplete(
     int64_t fullOursMod     = 0;  // compute as needed
 
     // === OURS method - SAFE version ===
-    // Get seed positions from our implementation using nodeKmerSequences
+    // Get seed positions from our implementation using the complete materialized state
     std::unordered_set<int64_t> oursPositions;
     
-    // Access stored k-mer sequences safely - this should be safe after processing is complete
-    auto nodeKmersIt = stateManager.nodeKmerSequences.find(nodeId);
-    if (nodeKmersIt != stateManager.nodeKmerSequences.end()) {
-        for (const auto& [position, kmerSeq] : nodeKmersIt->second) {
+    // Get all seed positions from the materialized state (includes inherited + local)
+    try {
+        const auto& nodeState = stateManager.getNodeState(nodeId);
+        // Get all materialized seeds (both inherited and local)
+        for (const auto& [position, seed] : nodeState.materializedSeeds) {
             oursPositions.insert(position);
         }
-        logging::info("Successfully retrieved {} k-mer positions from nodeKmerSequences for node {}", oursPositions.size(), nodeId);
-    } else {
-        logging::warn("No k-mer sequences found in nodeKmerSequences for node {}", nodeId);
+        logging::info("Successfully retrieved {} complete seed positions from materialized state for node {}", oursPositions.size(), nodeId);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to retrieve materialized seeds for node " + nodeId + ": " + e.what());
     }
     
     int64_t oursTotalSeeds = oursPositions.size();
+    
+    
 
     // Compute diffs between fullKmers and oursSeeds if you want fullOnly/oursOnly/fullOursMod:
     //   for each seed in fullKmers  → if not in oursSeeds ⇒ fullOnly++
@@ -3761,10 +4016,58 @@ void processNodeComplete(
     // Format active block ranges for TSV output
     std::string blockRangesStr = "";
     for (size_t i = 0; i < activeBlocksAndRanges.size(); ++i) {
-        if (i > 0) blockRangesStr += ";";
+        if (i > 0) blockRangesStr += ",";
         const auto& [blockId, range] = activeBlocksAndRanges[i];
-        int64_t length = range.end - range.start;
-        blockRangesStr += std::to_string(length) + ":" + std::to_string(blockId) + "[" + std::to_string(range.start) + "," + std::to_string(range.end) + ")";
+        blockRangesStr += std::to_string(range.start) + "-" + std::to_string(range.end) + ":" + std::to_string(blockId);
+    }
+    
+    // Format active block IDs for TSV output
+    std::string activeBlocksStr = "";
+    for (size_t i = 0; i < activeBlocksAndRanges.size(); ++i) {
+        if (i > 0) activeBlocksStr += ",";
+        const auto& [blockId, range] = activeBlocksAndRanges[i];
+        activeBlocksStr += std::to_string(blockId);
+    }
+
+    // Compute seed position differences between FULL and ACCURATE methods
+    std::set<int64_t> fullPositionsSet(fullSeedPositions.begin(), fullSeedPositions.end());
+    std::set<int64_t> accuratePositionsSet(oursPositions.begin(), oursPositions.end());
+    
+    // Deleted seeds: in FULL but not in ACCURATE
+    std::vector<int64_t> deletedSeeds;
+    std::set_difference(fullPositionsSet.begin(), fullPositionsSet.end(),
+                       accuratePositionsSet.begin(), accuratePositionsSet.end(),
+                       std::back_inserter(deletedSeeds));
+    
+    // Added seeds: in ACCURATE but not in FULL
+    std::vector<int64_t> addedSeeds;
+    std::set_difference(accuratePositionsSet.begin(), accuratePositionsSet.end(),
+                       fullPositionsSet.begin(), fullPositionsSet.end(),
+                       std::back_inserter(addedSeeds));
+    
+    // Modified seeds: in both FULL and ACCURATE (intersection)
+    std::vector<int64_t> modifiedSeeds;
+    std::set_intersection(fullPositionsSet.begin(), fullPositionsSet.end(),
+                         accuratePositionsSet.begin(), accuratePositionsSet.end(),
+                         std::back_inserter(modifiedSeeds));
+
+    // Format seed difference lists as comma-separated strings
+    std::string deletedSeedsStr = "";
+    for (size_t i = 0; i < deletedSeeds.size(); ++i) {
+        if (i > 0) deletedSeedsStr += ",";
+        deletedSeedsStr += std::to_string(deletedSeeds[i]);
+    }
+    
+    std::string addedSeedsStr = "";
+    for (size_t i = 0; i < addedSeeds.size(); ++i) {
+        if (i > 0) addedSeedsStr += ",";
+        addedSeedsStr += std::to_string(addedSeeds[i]);
+    }
+    
+    std::string modifiedSeedsStr = "";
+    for (size_t i = 0; i < modifiedSeeds.size(); ++i) {
+        if (i > 0) modifiedSeedsStr += ",";
+        modifiedSeedsStr += std::to_string(modifiedSeeds[i]);
     }
 
     // For node_2, extract and log k-mers at missing positions
@@ -3832,7 +4135,11 @@ void processNodeComplete(
         }
     }
 
-    // === TSV OUTPUT ===
+    // === MINIMAL TSV OUTPUT ===
+    debugSeedFile << nodeId << "\t" << fullTotalSeeds << "\t" << accurateTotalSeeds << "\n";
+    
+    // Comment out the complex TSV output:
+    /*
     debugSeedFile 
         << nodeId 
         // FULL: total, full-only, ours-only, modified
@@ -3842,22 +4149,21 @@ void processNodeComplete(
                 << "\t" << blockDeletions << "\t" << blockInsertions
         // ACCURATE: inherited + local = total
         << "\t" << accurateTotalSeeds << "\t" << inheritedSeeds << "\t" << localChanges << "\t" << fullOursMod
-        // SAME COMMON metrics
+        // SAME COMMON metrics (duplicated as requested)
         << "\t" << commonSeqLength << "\t" << commonBlocks 
                 << "\t" << blockDeletions << "\t" << blockInsertions
         // Delta using accurate count
         << "\t" << deltaFullVsAccurate 
-        // New debug columns
-        << "\t" << totalMaterializedSeeds << "\t" << seedsFoundInDeletedBlocks << "\t" << blockDeletionPositionsChecked
-        << "\t" << seedsCleared << "\t" << seedsAdded
-        << "\t" << recompRangeCount << "\t" << recompRangeSize << "\t" << commonBlocks << "\t" << recompRangeList
-        << "\t" << uniquePositionsProcessed << "\t" << totalKmersInRanges
-        << "\t" << (materializedStateComputed ? "1" : "0")
-        << "\t" << blockRangesStr
         // Seed position lists
         << "\t" << fullSeedPosStr << "\t" << accurateSeedPosStr
+        // Block boundaries
+        << "\t" << blockRangesStr
+        // Active blocks
+        << "\t" << activeBlocksStr
+        // Seed differences
+        << "\t" << deletedSeedsStr << "\t" << addedSeedsStr << "\t" << modifiedSeedsStr
         << "\n";
-        // << "\n";
+    */
 
         debugSeedFile.flush();
   }
