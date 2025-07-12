@@ -119,6 +119,7 @@ struct PlacementResult {
 
   // Jaccard Index (Presence/Absence) (New)
   double bestJaccardPresenceScore = 0.0;
+  int64_t bestJaccardPresenceCount = 0;  // Raw count of seed matches (not ratio)
   panmanUtils::Node *bestJaccardPresenceNode = nullptr;
   std::vector<panmanUtils::Node *> tiedJaccardPresenceNodes;
 
@@ -153,7 +154,7 @@ struct PlacementResult {
   void updateHitsScore(panmanUtils::Node* node, int64_t hits); // This is for the existing "maxHitsInAnyGenome"
   void updateRawSeedMatchScore(panmanUtils::Node* node, int64_t score); // New
   void updateJaccardScore(panmanUtils::Node* node, double score); // This is for weighted Jaccard
-  void updateJaccardPresenceScore(panmanUtils::Node* node, double score); // New
+  void updateJaccardPresenceScore(panmanUtils::Node* node, double score, int64_t rawCount); // New
   void updateCosineScore(panmanUtils::Node* node, double score);
   void updateWeightedScore(panmanUtils::Node* node, double score, double scale);
 };
