@@ -1284,10 +1284,19 @@ int main(int argc, char *argv[]) {
           placement::place(result, &T, index_input, reads1, reads2,
                          placementFileName, effective_index_path, debug_specific_node_id);
 
-          // ---> Add call to dump placement summary <--- 
+
+          /* @Alan this is the end of placement
+            -> next step is pass seeds of target node to Nico's alignment code
+            -> and genotyping
+
+            placementResult should have nodeSeedMap[targetId] with the target seed set
+            
+            TODO: I'm not sure k-mer end positions are correct yet
+          */
+
+
           std::string placementSummaryFileName = prefix + ".placement.summary.md";
           placement::dumpPlacementSummary(result, placementSummaryFileName);
-          // ---> End summary dump call <--- 
 
           // Report the top 3 metrics as requested
           msg("=== TOP PLACEMENT RESULTS ===");
