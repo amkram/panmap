@@ -507,8 +507,8 @@ void processMutationsForNode(
                              ", nucGapPos " + std::to_string(mut.nucGapPosition));
       }
       
-      logging::info("  NucMutation[{}]: {} at globalPos {} (blockId={} nucPos={} nucGapPos={} len={})", 
-                   i, mutTypeStr, globalPos, mut.primaryBlockId, mut.nucPosition, mut.nucGapPosition, mutLen);
+      // logging::info("  NucMutation[{}]: {} at globalPos {} (blockId={} nucPos={} nucGapPos={} len={})", 
+      //              i, mutTypeStr, globalPos, mut.primaryBlockId, mut.nucPosition, mut.nucGapPosition, mutLen);
       
       // Check if any debug positions are near this mutation
       std::vector<int64_t> nearbyDebugPos;
@@ -526,7 +526,7 @@ void processMutationsForNode(
             if (j > 0) nearbyList << ",";
             nearbyList << nearbyDebugPos[j] << "(dist=" << (nearbyDebugPos[j] - globalPos) << ")";
           }
-          logging::info("    Near debug positions: {}", nearbyList.str());
+          // logging::info("    Near debug positions: {}", nearbyList.str());
         }
       }
     }
@@ -584,12 +584,12 @@ void processMutationsForNode(
 
     // Check if the block is currently active
     bool isCurrentBlockActive = stateManager.isBlockOn(strNodeId, blockId);
-    if (blockId == 595) {
-      std::cout << "Node " << strNodeId 
-                << " Block " << blockId 
-                << " is currently " << (isCurrentBlockActive ? "ACTIVE" : "INACTIVE") 
-                << std::endl;
-    }
+    // if (blockId == 595) {
+    //   std::cout << "Node " << strNodeId 
+    //             << " Block " << blockId 
+    //             << " is currently " << (isCurrentBlockActive ? "ACTIVE" : "INACTIVE") 
+    //             << std::endl;
+    // }
     // Note: mutation counting happens later in the range generation phase
 
     
@@ -1073,7 +1073,7 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
   thread_local std::string kmerBuffer;
 
   std::string nodeId = node->identifier;
-  std::cout << "DEBUG_RECOMP_START: Starting recomputeSeeds for " << nodeId << std::endl;
+  // std::cout << "DEBUG_RECOMP_START: Starting recomputeSeeds for " << nodeId << std::endl;
   
   // New debug metrics for TSV
   int totalMaterializedSeeds = 0;
@@ -1232,8 +1232,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             
             // Report if this is a position of interest
             if (debugPositions.find(pos) != debugPositions.end()) {
-              logging::info("DEBUG_POS_TRACK: Node {} - BLOCK_DELETION cleared seed at debug position {} in block {}", 
-                           nodeId, pos, block_mutation.primaryBlockId);
+              // logging::info("DEBUG_POS_TRACK: Node {} - BLOCK_DELETION cleared seed at debug position {} in block {}", 
+              //              nodeId, pos, block_mutation.primaryBlockId);
             }
                                   
             seedChanges.emplace_back(
@@ -1659,14 +1659,14 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
               
               // Report if this is a position of interest
               if (debugPositions.find(globalPos) != debugPositions.end()) {
-                logging::info("DEBUG_POS_TRACK: Node {} - Found EXISTING seed at debug position {} (hash {})", 
-                             nodeId, globalPos, seedOpt.value().hash);
+                // logging::info("DEBUG_POS_TRACK: Node {} - Found EXISTING seed at debug position {} (hash {})", 
+                //              nodeId, globalPos, seedOpt.value().hash);
               }
             } else {
               // Report if this is a position of interest that has no seed
               if (debugPositions.find(globalPos) != debugPositions.end()) {
-                logging::info("DEBUG_POS_TRACK: Node {} - NO existing seed at debug position {}", 
-                             nodeId, globalPos);
+                // logging::info("DEBUG_POS_TRACK: Node {} - NO existing seed at debug position {}", 
+                //              nodeId, globalPos);
               }
             }
           } catch (const std::system_error& e) {
@@ -1680,14 +1680,14 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
         
         // Diagnostic logging to understand seed inheritance
         if (nodeId == "node_2" || nodeId == "node_3") {
-          logging::info("DEBUG_SEED_INHERITANCE: Node {} range [{},{}): found {} existing seeds out of {} positions", 
-                        nodeId, range.start, range.end, foundSeeds, totalPositions);
+          // logging::info("DEBUG_SEED_INHERITANCE: Node {} range [{},{}): found {} existing seeds out of {} positions", 
+          //               nodeId, range.start, range.end, foundSeeds, totalPositions);
           
           // Sample a few positions to see what's happening
           for (size_t i = 0; i < std::min(5, totalPositions); i++) {
             int64_t globalPos = positions[i];
             bool hasExisting = existingSeedsInRange.find(globalPos) != existingSeedsInRange.end();
-            logging::info("  pos[{}]: globalPos={} hasExisting={}", i, globalPos, hasExisting);
+            // logging::info("  pos[{}]: globalPos={} hasExisting={}", i, globalPos, hasExisting);
           }
         }
         // Delete seeds at any position that now has a gap character ('-' or 'x')
@@ -1769,14 +1769,14 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
           if (debugPositions.find(globalPos) != debugPositions.end()) {
             std::string kmerSeq = (localStartPos + k <= ungappedSequence.size()) ? 
                                  ungappedSequence.substr(localStartPos, k) : "TRUNCATED";
-            logging::info("DEBUG_POS_TRACK: Node {} - SYNCMER_RESULT at debug position {} kmer='{}' hash={} isReverse={} isNowSeed={}", 
-                         nodeId, globalPos, kmerSeq, hash, isReverse, isNowSeed);
+            // logging::info("DEBUG_POS_TRACK: Node {} - SYNCMER_RESULT at debug position {} kmer='{}' hash={} isReverse={} isNowSeed={}", 
+            //              nodeId, globalPos, kmerSeq, hash, isReverse, isNowSeed);
           }
           
           // Report if this is a position of interest
           if (debugPositions.find(globalPos) != debugPositions.end()) {
-            logging::info("DEBUG_POS_TRACK: Node {} - Processing debug position {} in range [{},{})", 
-                         nodeId, globalPos, range.start, range.end);
+            // logging::info("DEBUG_POS_TRACK: Node {} - Processing debug position {} in range [{},{})", 
+            //              nodeId, globalPos, range.start, range.end);
           }
           
           // Only process seeds within the original range, not in the extended context
@@ -1789,8 +1789,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             
             // Report if this debug position is being skipped due to extended range
             if (debugPositions.find(globalPos) != debugPositions.end()) {
-              logging::info("DEBUG_POS_TRACK: Node {} - SKIPPED debug position {} (>= range.end={}) in extended context", 
-                           nodeId, globalPos, range.end);
+              // logging::info("DEBUG_POS_TRACK: Node {} - SKIPPED debug position {} (>= range.end={}) in extended context", 
+              //              nodeId, globalPos, range.end);
             }
             
             continue; // Skip seeds in the extended context area
@@ -1812,12 +1812,12 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             else if (existingSeedsInRange[globalPos].hash != hash) decision = "MODIFY_SEED";
             else decision = "NO_CHANGE_SAME_HASH";
             
-            logging::info("DEBUG_POS_TRACK: Node {} - DECISION for debug position {}: hadSeed={} isNowSeed={} decision={}", 
-                         nodeId, globalPos, hadSeed, isNowSeed, decision);
+            // logging::info("DEBUG_POS_TRACK: Node {} - DECISION for debug position {}: hadSeed={} isNowSeed={} decision={}", 
+            //              nodeId, globalPos, hadSeed, isNowSeed, decision);
             
             if (hadSeed) {
-              logging::info("DEBUG_POS_TRACK: Node {} - Existing seed at {}: hash={} vs new hash={}", 
-                           nodeId, globalPos, existingSeedsInRange[globalPos].hash, hash);
+              // logging::info("DEBUG_POS_TRACK: Node {} - Existing seed at {}: hash={} vs new hash={}", 
+              //              nodeId, globalPos, existingSeedsInRange[globalPos].hash, hash);
             }
           }
           
@@ -1842,8 +1842,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             
             // Report if this is a position of interest
             if (debugPositions.find(globalPos) != debugPositions.end()) {
-              logging::info("DEBUG_POS_TRACK: Node {} - MODIFY seed at debug position {} (hash {} -> {})", 
-                           nodeId, globalPos, oldSeed.hash, hash);
+              // logging::info("DEBUG_POS_TRACK: Node {} - MODIFY seed at debug position {} (hash {} -> {})", 
+              //              nodeId, globalPos, oldSeed.hash, hash);
             }
             
             // Create new seed
@@ -1900,8 +1900,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
               
               // Report if this is a position of interest
               if (debugPositions.find(globalPos) != debugPositions.end()) {
-                logging::info("DEBUG_POS_TRACK: Node {} - DELETE seed at debug position {} (hash {})", 
-                             nodeId, globalPos, oldSeed.hash);
+                // logging::info("DEBUG_POS_TRACK: Node {} - DELETE seed at debug position {} (hash {})", 
+                //              nodeId, globalPos, oldSeed.hash);
               }
               
               // Add deletion to seed changes
@@ -1948,8 +1948,8 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
             
             // Report if this is a position of interest
             if (debugPositions.find(globalPos) != debugPositions.end()) {
-              logging::info("DEBUG_POS_TRACK: Node {} - ADD seed at debug position {} (hash {})", 
-                           nodeId, globalPos, hash);
+              // logging::info("DEBUG_POS_TRACK: Node {} - ADD seed at debug position {} (hash {})", 
+              //              nodeId, globalPos, hash);
             }
                              
             // DEADLOCK SAFE: Store seed and update kmer sequences
@@ -1989,14 +1989,14 @@ std::tuple<int, int, int, int, int, int, int, int, int, std::string, int, int, s
         
         // DEBUG: Log range processing summary for node_2
         if (nodeId == "node_2") {
-          logging::info("RANGE_DONE: [{},{}): {} syncmers, {} unique pos processed", 
-                       range.start, range.end, kmers.size(), 
-                       std::count_if(kmers.begin(), kmers.end(), 
-                                   [&](const auto& kmer) { 
-                                     auto [h, rev, isSeed, localPos] = kmer;
-                                     return localPos < localToGappedPos.size() && 
-                                            localToGappedPos[localPos] >= 0;
-                                   }));
+          // logging::info("RANGE_DONE: [{},{}): {} syncmers, {} unique pos processed", 
+          //              range.start, range.end, kmers.size(), 
+          //              std::count_if(kmers.begin(), kmers.end(), 
+          //                          [&](const auto& kmer) { 
+          //                            auto [h, rev, isSeed, localPos] = kmer;
+          //                            return localPos < localToGappedPos.size() && 
+          //                                   localToGappedPos[localPos] >= 0;
+          //                          }));
         }
         
       } catch (const std::exception &e) {
@@ -2201,6 +2201,10 @@ void processSeedChanges(
   size_t groupCount = 0;
   size_t currentIndex = 0;
   const size_t totalPairs = positionValuePairs.size();
+
+  // sort reverse
+  std::sort(positionValuePairs.begin(), positionValuePairs.end(),
+          [](const auto &a, const auto &b) { return a.first > b.first; });
 
   while (currentIndex < totalPairs) {
     groupCount++;
@@ -2753,7 +2757,7 @@ initializeStateManagerLight(panmanUtils::Tree* tree, panmanUtils::Node* rootNode
     throw std::invalid_argument("Invalid tree or root node in initializeStateManagerLight");
   }
 
-  logging::info("Initializing StateManager (light) with k={}, s={}", kmerSize, smerSize);
+  // logging::info("Initializing StateManager (light) with k={}, s={}", kmerSize, smerSize);
   
   
   
@@ -3619,11 +3623,11 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
             logging::info("Final verification before writing: Checking node IDs in index...");
             auto finalVerifyPathInfo = rootForWriting.getNodePathInfo();
             if (finalVerifyPathInfo.size() > 0) {
-                logging::info("Sample node IDs in final index:");
+                // logging::info("Sample node IDs in final index:");
                 for (size_t i = 0; i < std::min<size_t>(5, finalVerifyPathInfo.size()); i++) {
                     auto nodeId = finalVerifyPathInfo[i].getNodeId();
                     std::string nodeIdStr(nodeId.begin(), nodeId.end());
-                    logging::info("  [{}]: '{}'", i, nodeIdStr);
+                    // logging::info("  [{}]: '{}'", i, nodeIdStr);
                     
                     if (nodeIdStr.empty()) {
                         logging::critical("CRITICAL: Empty node ID found at index {} just before writing!", i);
@@ -3824,11 +3828,11 @@ void processNodeComplete(
 
     // CRITICAL: Materialize node state BEFORE applying local mutations
     // This ensures inherited seeds are available during block deletion processing
-    std::cout << "DEBUG_PROCESS_NODE: Processing node " << nodeId << std::endl;
+    // std::cout << "DEBUG_PROCESS_NODE: Processing node " << nodeId << std::endl;
     stateManager.getNodeState(nodeId); // This will trigger initialization if needed
-    std::cout << "DEBUG_PROCESS_NODE: About to materialize node " << nodeId << std::endl;
+    // std::cout << "DEBUG_PROCESS_NODE: About to materialize node " << nodeId << std::endl;
     stateManager.materializeNodeState(nodeId); // EXPLICITLY materialize node state
-    std::cout << "DEBUG_PROCESS_NODE: Materialized node " << nodeId << std::endl;
+    // std::cout << "DEBUG_PROCESS_NODE: Materialized node " << nodeId << std::endl;
     
     // Apply mutations for the node IF THE FLAG IS SET
     std::string* ab_before_ptr = nullptr;
@@ -3873,270 +3877,270 @@ void processNodeComplete(
         return;
     }
 
-    // Compute full span - use safe defaults if no active blocks
-    int64_t fullStart = 0;
-    int64_t fullEnd = 1000; // Default small range
-    int64_t commonSeqLength = 0;
-    int64_t commonBlocks = 0;
+    // // Compute full span - use safe defaults if no active blocks
+    // int64_t fullStart = 0;
+    // int64_t fullEnd = 1000; // Default small range
+    // int64_t commonSeqLength = 0;
+    // int64_t commonBlocks = 0;
     
-    if (!activeBlocksAndRanges.empty()) {
-        fullStart = activeBlocksAndRanges.front().second.start;
-        fullEnd = activeBlocksAndRanges.back().second.end;
-        commonSeqLength = fullEnd - fullStart;
-        commonBlocks = activeBlocksAndRanges.size();
-    }
+    // if (!activeBlocksAndRanges.empty()) {
+    //     fullStart = activeBlocksAndRanges.front().second.start;
+    //     fullEnd = activeBlocksAndRanges.back().second.end;
+    //     commonSeqLength = fullEnd - fullStart;
+    //     commonBlocks = activeBlocksAndRanges.size();
+    // }
 
-    // === FULL method - SAFE version ===
-    std::string fullSeq = "";
-    std::vector<int64_t> fullPos;
-    std::vector<bool> fullGaps;
-    std::vector<int64_t> fullEndPos;
+    // // === FULL method - SAFE version ===
+    // std::string fullSeq = "";
+    // std::vector<int64_t> fullPos;
+    // std::vector<bool> fullGaps;
+    // std::vector<int64_t> fullEndPos;
     
-    // Try sequence extraction safely
-    try {
-        // Extend fullEnd to include k more non-gap characters downstream
-        int64_t extendedFullEnd = fullEnd;
-        int k_val = stateManager.getKmerSize();
-        if (k_val > 0) {
-            try {
-                // Use extractKmer to get k characters downstream from fullEnd
-                auto kmerResult = stateManager.extractKmer(nodeId, fullEnd, k_val);
-                if (!kmerResult.first.empty() && !kmerResult.second.empty()) {
-                    // Use the position after the k-th character (end position of k-mer)
-                    extendedFullEnd = kmerResult.second[k_val - 1] + 1;
-                } else {
-                    // If k-mer extraction fails, fall back to simple position extension
-                    extendedFullEnd = fullEnd + k_val;
-                }
-            } catch (...) {
-                // If k-mer extraction fails, fall back to simple position extension
-                extendedFullEnd = fullEnd + k_val;
-            }
-        }
+    // // Try sequence extraction safely
+    // try {
+    //     // Extend fullEnd to include k more non-gap characters downstream
+    //     int64_t extendedFullEnd = fullEnd;
+    //     int k_val = stateManager.getKmerSize();
+    //     if (k_val > 0) {
+    //         try {
+    //             // Use extractKmer to get k characters downstream from fullEnd
+    //             auto kmerResult = stateManager.extractKmer(nodeId, fullEnd, k_val);
+    //             if (!kmerResult.first.empty() && !kmerResult.second.empty()) {
+    //                 // Use the position after the k-th character (end position of k-mer)
+    //                 extendedFullEnd = kmerResult.second[k_val - 1] + 1;
+    //             } else {
+    //                 // If k-mer extraction fails, fall back to simple position extension
+    //                 extendedFullEnd = fullEnd + k_val;
+    //             }
+    //         } catch (...) {
+    //             // If k-mer extraction fails, fall back to simple position extension
+    //             extendedFullEnd = fullEnd + k_val;
+    //         }
+    //     }
         
-        auto extractResult = stateManager.extractSequence(nodeId, {fullStart, extendedFullEnd}, false);
-        fullSeq = std::get<0>(extractResult);
-        fullPos = std::get<1>(extractResult);
-        fullGaps = std::get<2>(extractResult);
-        fullEndPos = std::get<3>(extractResult);
-    } catch (...) {
-        // Skip StateManager call to avoid deadlock
-        logging::warn("Skipped extractSequence for node {} to avoid deadlock", nodeId);
-        // Use empty defaults
-    }
+    //     auto extractResult = stateManager.extractSequence(nodeId, {fullStart, extendedFullEnd}, false);
+    //     fullSeq = std::get<0>(extractResult);
+    //     fullPos = std::get<1>(extractResult);
+    //     fullGaps = std::get<2>(extractResult);
+    //     fullEndPos = std::get<3>(extractResult);
+    // } catch (...) {
+    //     // Skip StateManager call to avoid deadlock
+    //     logging::warn("Skipped extractSequence for node {} to avoid deadlock", nodeId);
+    //     // Use empty defaults
+    // }
 
-    // Strip gaps to get ungappedSequence
-    std::string ungapped = fullSeq;
-    ungapped.erase(std::remove_if(ungapped.begin(), ungapped.end(),
-                                  [](char c){ return c=='-'||c=='x'; }),
-                    ungapped.end());
+    // // Strip gaps to get ungappedSequence
+    // std::string ungapped = fullSeq;
+    // ungapped.erase(std::remove_if(ungapped.begin(), ungapped.end(),
+    //                               [](char c){ return c=='-'||c=='x'; }),
+    //                 ungapped.end());
 
-    // Map ungapped → gapped indices
-    std::vector<int64_t> ung2gap(ungapped.size(), -1);
-    for (size_t i = 0, gi = 0; i < fullSeq.size(); ++i) {
-        if (fullSeq[i] != '-' && fullSeq[i] != 'x') {
-            ung2gap[gi++] = i; // Map gapped position to ungapped index
-        }
-    }
+    // // Map ungapped → gapped indices
+    // std::vector<int64_t> ung2gap(ungapped.size(), -1);
+    // for (size_t i = 0, gi = 0; i < fullSeq.size(); ++i) {
+    //     if (fullSeq[i] != '-' && fullSeq[i] != 'x') {
+    //         ung2gap[gi++] = i; // Map gapped position to ungapped index
+    //     }
+    // }
 
-    // Collect rolling syncmers
-    auto fullKmers = seeding::rollingSyncmers(ungapped, k, s, false, 0, true);
+    // // Collect rolling syncmers
+    // auto fullKmers = seeding::rollingSyncmers(ungapped, k, s, false, 0, true);
 
-    // Count only actual syncmers, not all k-mer positions
-    // But restrict to seeds within the original range [fullStart, fullEnd]
-    int64_t fullTotalSeeds = 0;
-    std::vector<int64_t> fullSeedPositions;
-    for (const auto& [hash, isReverse, isSyncmer, startPos] : fullKmers) {
-        if (isSyncmer) {
-            // Convert local ungapped position to global position
-            if (startPos < ung2gap.size() && ung2gap[startPos] != -1) {
-                int64_t globalPos = fullPos[ung2gap[startPos]];
-                // Only count seeds within the original range [fullStart, fullEnd]
-                if (globalPos >= fullStart && globalPos <= fullEnd) {
-                    fullTotalSeeds++;
-                    fullSeedPositions.push_back(globalPos);
-                }
-            }
-        }
-    }
-    int64_t fullOnly        = 0;  // compute as needed
-    int64_t oursOnly        = 0;  // compute as needed
-    int64_t fullOursMod     = 0;  // compute as needed
+    // // Count only actual syncmers, not all k-mer positions
+    // // But restrict to seeds within the original range [fullStart, fullEnd]
+    // int64_t fullTotalSeeds = 0;
+    // std::vector<int64_t> fullSeedPositions;
+    // for (const auto& [hash, isReverse, isSyncmer, startPos] : fullKmers) {
+    //     if (isSyncmer) {
+    //         // Convert local ungapped position to global position
+    //         if (startPos < ung2gap.size() && ung2gap[startPos] != -1) {
+    //             int64_t globalPos = fullPos[ung2gap[startPos]];
+    //             // Only count seeds within the original range [fullStart, fullEnd]
+    //             if (globalPos >= fullStart && globalPos <= fullEnd) {
+    //                 fullTotalSeeds++;
+    //                 fullSeedPositions.push_back(globalPos);
+    //             }
+    //         }
+    //     }
+    // }
+    // int64_t fullOnly        = 0;  // compute as needed
+    // int64_t oursOnly        = 0;  // compute as needed
+    // int64_t fullOursMod     = 0;  // compute as needed
 
-    // === OURS method - SAFE version ===
-    // Get seed positions from our implementation using the complete materialized state
-    std::unordered_set<int64_t> oursPositions;
+    // // === OURS method - SAFE version ===
+    // // Get seed positions from our implementation using the complete materialized state
+    // std::unordered_set<int64_t> oursPositions;
     
-    // Get all seed positions from the materialized state (includes inherited + local)
-    try {
-        const auto& nodeState = stateManager.getNodeState(nodeId);
-        // Get all materialized seeds (both inherited and local)
-        for (const auto& [position, seed] : nodeState.materializedSeeds) {
-            oursPositions.insert(position);
-        }
-        logging::info("Successfully retrieved {} complete seed positions from materialized state for node {}", oursPositions.size(), nodeId);
-    } catch (const std::exception& e) {
-        throw std::runtime_error("Failed to retrieve materialized seeds for node " + nodeId + ": " + e.what());
-    }
+    // // Get all seed positions from the materialized state (includes inherited + local)
+    // try {
+    //     const auto& nodeState = stateManager.getNodeState(nodeId);
+    //     // Get all materialized seeds (both inherited and local)
+    //     for (const auto& [position, seed] : nodeState.materializedSeeds) {
+    //         oursPositions.insert(position);
+    //     }
+    //     logging::info("Successfully retrieved {} complete seed positions from materialized state for node {}", oursPositions.size(), nodeId);
+    // } catch (const std::exception& e) {
+    //     throw std::runtime_error("Failed to retrieve materialized seeds for node " + nodeId + ": " + e.what());
+    // }
     
-    int64_t oursTotalSeeds = oursPositions.size();
+    // int64_t oursTotalSeeds = oursPositions.size();
     
     
 
-    // Compute diffs between fullKmers and oursSeeds if you want fullOnly/oursOnly/fullOursMod:
-    //   for each seed in fullKmers  → if not in oursSeeds ⇒ fullOnly++
-    //   for each seed in oursSeeds  → if not in fullKmers ⇒ oursOnly++
-    //   common ⇒ else fullOursMod++
+    // // Compute diffs between fullKmers and oursSeeds if you want fullOnly/oursOnly/fullOursMod:
+    // //   for each seed in fullKmers  → if not in oursSeeds ⇒ fullOnly++
+    // //   for each seed in oursSeeds  → if not in fullKmers ⇒ oursOnly++
+    // //   common ⇒ else fullOursMod++
 
-    // Compute delta if desired:
-    int64_t deltaFullVsOurs = oursTotalSeeds - fullTotalSeeds;
+    // // Compute delta if desired:
+    // int64_t deltaFullVsOurs = oursTotalSeeds - fullTotalSeeds;
     
-    // Get the accurate total seed count from NodeState
-    const auto& nodeState = stateManager.getNodeState(nodeId);
-    int64_t accurateTotalSeeds = nodeState.getTotalSeedCount();
-    int64_t inheritedSeeds = nodeState.inheritedSeedCount;
-    int64_t localChanges = nodeState.localSeedChanges;
-    int64_t deltaFullVsAccurate = accurateTotalSeeds - fullTotalSeeds;
+    // // Get the accurate total seed count from NodeState
+    // const auto& nodeState = stateManager.getNodeState(nodeId);
+    // int64_t accurateTotalSeeds = nodeState.getTotalSeedCount();
+    // int64_t inheritedSeeds = nodeState.inheritedSeedCount;
+    // int64_t localChanges = nodeState.localSeedChanges;
+    // int64_t deltaFullVsAccurate = accurateTotalSeeds - fullTotalSeeds;
 
-    // Convert seed position vectors to comma-separated strings
-    std::string fullSeedPosStr = "";
-    for (size_t i = 0; i < fullSeedPositions.size(); ++i) {
-        if (i > 0) fullSeedPosStr += ",";
-        fullSeedPosStr += std::to_string(fullSeedPositions[i]);
-    }
+    // // Convert seed position vectors to comma-separated strings
+    // std::string fullSeedPosStr = "";
+    // for (size_t i = 0; i < fullSeedPositions.size(); ++i) {
+    //     if (i > 0) fullSeedPosStr += ",";
+    //     fullSeedPosStr += std::to_string(fullSeedPositions[i]);
+    // }
     
-    std::string accurateSeedPosStr = "";
-    bool first = true;
-    for (const auto& position : oursPositions) {
-        if (!first) accurateSeedPosStr += ",";
-        accurateSeedPosStr += std::to_string(position);
-        first = false;
-    }
+    // std::string accurateSeedPosStr = "";
+    // bool first = true;
+    // for (const auto& position : oursPositions) {
+    //     if (!first) accurateSeedPosStr += ",";
+    //     accurateSeedPosStr += std::to_string(position);
+    //     first = false;
+    // }
 
-    // Format active block ranges for TSV output
-    std::string blockRangesStr = "";
-    for (size_t i = 0; i < activeBlocksAndRanges.size(); ++i) {
-        if (i > 0) blockRangesStr += ",";
-        const auto& [blockId, range] = activeBlocksAndRanges[i];
-        blockRangesStr += std::to_string(range.start) + "-" + std::to_string(range.end) + ":" + std::to_string(blockId);
-    }
+    // // Format active block ranges for TSV output
+    // std::string blockRangesStr = "";
+    // for (size_t i = 0; i < activeBlocksAndRanges.size(); ++i) {
+    //     if (i > 0) blockRangesStr += ",";
+    //     const auto& [blockId, range] = activeBlocksAndRanges[i];
+    //     blockRangesStr += std::to_string(range.start) + "-" + std::to_string(range.end) + ":" + std::to_string(blockId);
+    // }
     
-    // Format active block IDs for TSV output
-    std::string activeBlocksStr = "";
-    for (size_t i = 0; i < activeBlocksAndRanges.size(); ++i) {
-        if (i > 0) activeBlocksStr += ",";
-        const auto& [blockId, range] = activeBlocksAndRanges[i];
-        activeBlocksStr += std::to_string(blockId);
-    }
+    // // Format active block IDs for TSV output
+    // std::string activeBlocksStr = "";
+    // for (size_t i = 0; i < activeBlocksAndRanges.size(); ++i) {
+    //     if (i > 0) activeBlocksStr += ",";
+    //     const auto& [blockId, range] = activeBlocksAndRanges[i];
+    //     activeBlocksStr += std::to_string(blockId);
+    // }
 
-    // Compute seed position differences between FULL and ACCURATE methods
-    std::set<int64_t> fullPositionsSet(fullSeedPositions.begin(), fullSeedPositions.end());
-    std::set<int64_t> accuratePositionsSet(oursPositions.begin(), oursPositions.end());
+    // // Compute seed position differences between FULL and ACCURATE methods
+    // std::set<int64_t> fullPositionsSet(fullSeedPositions.begin(), fullSeedPositions.end());
+    // std::set<int64_t> accuratePositionsSet(oursPositions.begin(), oursPositions.end());
     
-    // Deleted seeds: in FULL but not in ACCURATE
-    std::vector<int64_t> deletedSeeds;
-    std::set_difference(fullPositionsSet.begin(), fullPositionsSet.end(),
-                       accuratePositionsSet.begin(), accuratePositionsSet.end(),
-                       std::back_inserter(deletedSeeds));
+    // // Deleted seeds: in FULL but not in ACCURATE
+    // std::vector<int64_t> deletedSeeds;
+    // std::set_difference(fullPositionsSet.begin(), fullPositionsSet.end(),
+    //                    accuratePositionsSet.begin(), accuratePositionsSet.end(),
+    //                    std::back_inserter(deletedSeeds));
     
-    // Added seeds: in ACCURATE but not in FULL
-    std::vector<int64_t> addedSeeds;
-    std::set_difference(accuratePositionsSet.begin(), accuratePositionsSet.end(),
-                       fullPositionsSet.begin(), fullPositionsSet.end(),
-                       std::back_inserter(addedSeeds));
+    // // Added seeds: in ACCURATE but not in FULL
+    // std::vector<int64_t> addedSeeds;
+    // std::set_difference(accuratePositionsSet.begin(), accuratePositionsSet.end(),
+    //                    fullPositionsSet.begin(), fullPositionsSet.end(),
+    //                    std::back_inserter(addedSeeds));
     
-    // Modified seeds: in both FULL and ACCURATE (intersection)
-    std::vector<int64_t> modifiedSeeds;
-    std::set_intersection(fullPositionsSet.begin(), fullPositionsSet.end(),
-                         accuratePositionsSet.begin(), accuratePositionsSet.end(),
-                         std::back_inserter(modifiedSeeds));
+    // // Modified seeds: in both FULL and ACCURATE (intersection)
+    // std::vector<int64_t> modifiedSeeds;
+    // std::set_intersection(fullPositionsSet.begin(), fullPositionsSet.end(),
+    //                      accuratePositionsSet.begin(), accuratePositionsSet.end(),
+    //                      std::back_inserter(modifiedSeeds));
 
-    // Format seed difference lists as comma-separated strings
-    std::string deletedSeedsStr = "";
-    for (size_t i = 0; i < deletedSeeds.size(); ++i) {
-        if (i > 0) deletedSeedsStr += ",";
-        deletedSeedsStr += std::to_string(deletedSeeds[i]);
-    }
+    // // Format seed difference lists as comma-separated strings
+    // std::string deletedSeedsStr = "";
+    // for (size_t i = 0; i < deletedSeeds.size(); ++i) {
+    //     if (i > 0) deletedSeedsStr += ",";
+    //     deletedSeedsStr += std::to_string(deletedSeeds[i]);
+    // }
     
-    std::string addedSeedsStr = "";
-    for (size_t i = 0; i < addedSeeds.size(); ++i) {
-        if (i > 0) addedSeedsStr += ",";
-        addedSeedsStr += std::to_string(addedSeeds[i]);
-    }
+    // std::string addedSeedsStr = "";
+    // for (size_t i = 0; i < addedSeeds.size(); ++i) {
+    //     if (i > 0) addedSeedsStr += ",";
+    //     addedSeedsStr += std::to_string(addedSeeds[i]);
+    // }
     
-    std::string modifiedSeedsStr = "";
-    for (size_t i = 0; i < modifiedSeeds.size(); ++i) {
-        if (i > 0) modifiedSeedsStr += ",";
-        modifiedSeedsStr += std::to_string(modifiedSeeds[i]);
-    }
+    // std::string modifiedSeedsStr = "";
+    // for (size_t i = 0; i < modifiedSeeds.size(); ++i) {
+    //     if (i > 0) modifiedSeedsStr += ",";
+    //     modifiedSeedsStr += std::to_string(modifiedSeeds[i]);
+    // }
 
-    // For node_2, extract and log k-mers at missing positions
-    if (nodeId == "node_2") {
-        std::set<int64_t> fullPositionsSet(fullSeedPositions.begin(), fullSeedPositions.end());
-        std::set<int64_t> missingPositions;
-        for (int64_t pos : fullPositionsSet) {
-            if (oursPositions.find(pos) == oursPositions.end()) {
-                missingPositions.insert(pos);
-            }
-        }
+    // // For node_2, extract and log k-mers at missing positions
+    // if (nodeId == "node_2") {
+    //     std::set<int64_t> fullPositionsSet(fullSeedPositions.begin(), fullSeedPositions.end());
+    //     std::set<int64_t> missingPositions;
+    //     for (int64_t pos : fullPositionsSet) {
+    //         if (oursPositions.find(pos) == oursPositions.end()) {
+    //             missingPositions.insert(pos);
+    //         }
+    //     }
         
-        if (!missingPositions.empty()) {
-            logging::info("NODE_2_MISSING_KMERS: Found {} missing positions in ACCURATE vs FULL", missingPositions.size());
+    //     if (!missingPositions.empty()) {
+    //         logging::info("NODE_2_MISSING_KMERS: Found {} missing positions in ACCURATE vs FULL", missingPositions.size());
             
-            for (int64_t pos : missingPositions) {
-                std::string fullKmer = "NOTFOUND";
-                std::string accurateKmer = "NOTFOUND";
+    //         for (int64_t pos : missingPositions) {
+    //             std::string fullKmer = "NOTFOUND";
+    //             std::string accurateKmer = "NOTFOUND";
                 
-                // --- FULL k-mer extraction (SAFE) ---
-                try {
-                    // Find the corresponding k-mer in fullKmers by matching the global position
-                    size_t syncmerIdx = 0;
-                    for (const auto& [hash, isReverse, isSyncmer, startPos] : fullKmers) {
-                        if (isSyncmer) {
-                            if (syncmerIdx < fullSeedPositions.size() && fullSeedPositions[syncmerIdx] == pos) {
-                                if (startPos + k <= ungapped.size()) {
-                                    fullKmer = ungapped.substr(startPos, k);
-                                }
-                                break;
-                            }
-                            syncmerIdx++;
-                        }
-                    }
-                } catch (...) {
-                    // If extraction fails, leave as NOTFOUND
-                }
+    //             // --- FULL k-mer extraction (SAFE) ---
+    //             try {
+    //                 // Find the corresponding k-mer in fullKmers by matching the global position
+    //                 size_t syncmerIdx = 0;
+    //                 for (const auto& [hash, isReverse, isSyncmer, startPos] : fullKmers) {
+    //                     if (isSyncmer) {
+    //                         if (syncmerIdx < fullSeedPositions.size() && fullSeedPositions[syncmerIdx] == pos) {
+    //                             if (startPos + k <= ungapped.size()) {
+    //                                 fullKmer = ungapped.substr(startPos, k);
+    //                             }
+    //                             break;
+    //                         }
+    //                         syncmerIdx++;
+    //                     }
+    //                 }
+    //             } catch (...) {
+    //                 // If extraction fails, leave as NOTFOUND
+    //             }
                 
-                // --- ACCURATE (OURS) k-mer extraction ---
-                // First try our stored sequences
-                auto nodeKmersIt = stateManager.nodeKmerSequences.find(nodeId);
-                if (nodeKmersIt != stateManager.nodeKmerSequences.end()) {
-                    auto kmerIt = nodeKmersIt->second.find(pos);
-                    if (kmerIt != nodeKmersIt->second.end()) {
-                        accurateKmer = kmerIt->second;
-                    } else {
-                        accurateKmer = "NOT_FOUND_IN_STORED_KMERS";
-                    }
-                } else {
-                    accurateKmer = "NO_KMERS_STORED_FOR_NODE";
-                }
+    //             // --- ACCURATE (OURS) k-mer extraction ---
+    //             // First try our stored sequences
+    //             auto nodeKmersIt = stateManager.nodeKmerSequences.find(nodeId);
+    //             if (nodeKmersIt != stateManager.nodeKmerSequences.end()) {
+    //                 auto kmerIt = nodeKmersIt->second.find(pos);
+    //                 if (kmerIt != nodeKmersIt->second.end()) {
+    //                     accurateKmer = kmerIt->second;
+    //                 } else {
+    //                     accurateKmer = "NOT_FOUND_IN_STORED_KMERS";
+    //                 }
+    //             } else {
+    //                 accurateKmer = "NO_KMERS_STORED_FOR_NODE";
+    //             }
                 
-                // Additionally, try to extract the actual k-mer at this position from our sequence
-                std::string actualKmerAtPos = "EXTRACTION_FAILED";
-                try {
-                    auto kmerResult = stateManager.extractKmer(nodeId, pos, k);
-                    actualKmerAtPos = kmerResult.first;
-                } catch (...) {
-                    actualKmerAtPos = "EXTRACTION_FAILED";
-                }
+    //             // Additionally, try to extract the actual k-mer at this position from our sequence
+    //             std::string actualKmerAtPos = "EXTRACTION_FAILED";
+    //             try {
+    //                 auto kmerResult = stateManager.extractKmer(nodeId, pos, k);
+    //                 actualKmerAtPos = kmerResult.first;
+    //             } catch (...) {
+    //                 actualKmerAtPos = "EXTRACTION_FAILED";
+    //             }
                 
-                logging::info("NODE_2_MISSING_KMER: pos={} FULL_kmer={} ACCURATE_stored={} ACCURATE_actual={}", 
-                              pos, fullKmer, accurateKmer, actualKmerAtPos);
-            }
-        }
-    }
+    //             logging::info("NODE_2_MISSING_KMER: pos={} FULL_kmer={} ACCURATE_stored={} ACCURATE_actual={}", 
+    //                           pos, fullKmer, accurateKmer, actualKmerAtPos);
+    //         }
+    //     }
+    // }
 
-    // === MINIMAL TSV OUTPUT ===
-    debugSeedFile << nodeId << "\t" << fullTotalSeeds << "\t" << accurateTotalSeeds << "\n";
+    // // === MINIMAL TSV OUTPUT ===
+    // debugSeedFile << nodeId << "\t" << fullTotalSeeds << "\t" << accurateTotalSeeds << "\n";
     
     // Comment out the complex TSV output:
     /*

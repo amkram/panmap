@@ -1289,22 +1289,31 @@ int main(int argc, char *argv[]) {
           placement::dumpPlacementSummary(result, placementSummaryFileName);
           // ---> End summary dump call <--- 
 
-          // Get placement results for raw seed matches
-          panmanUtils::Node *bestRawMatchNode = result.bestRawSeedMatchNode;
-          int64_t bestRawMatchScore = result.bestRawSeedMatchScore;
-
-          msg("Best raw seed match: node {} with score {} (sum of read frequencies for matched seeds)",
-              bestRawMatchNode ? bestRawMatchNode->identifier : "none", bestRawMatchScore);
-
-          // Log all other best scores to console
-          msg("Best Jaccard (Presence/Absence): node {} with score {:.4f}",
-              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", result.bestJaccardPresenceScore);
+          // Report the top 3 metrics as requested
+          msg("=== TOP PLACEMENT RESULTS ===");
+          
+          // 1. Raw number of matches (set, no frequency) - using raw count
+          msg("Top by raw seed matches (unique count): node {} with {} matches (Jaccard score {:.4f})",
+              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", 
+              result.bestJaccardPresenceCount,
+              result.bestJaccardPresenceScore);
+          
+          // 2. Number of matches scaled by read frequency 
+          msg("Top by weighted seed matches (frequency-scaled): node {} with score {}",
+              result.bestRawSeedMatchNode ? result.bestRawSeedMatchNode->identifier : "none", 
+              result.bestRawSeedMatchScore);
+          
+          // 3. Cosine similarity
+          msg("Top by cosine similarity: node {} with score {:.4f}",
+              result.bestCosineNode ? result.bestCosineNode->identifier : "none", 
+              result.bestCosineScore);
+          
+          msg("=== ADDITIONAL METRICS ===");
           msg("Best Weighted Jaccard: node {} with score {:.4f}",
-              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore); // bestJaccardScore is Weighted Jaccard
-          msg("Best Cosine Similarity: node {} with score {:.4f}",
-              result.bestCosineNode ? result.bestCosineNode->identifier : "none", result.bestCosineScore);
+              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore);
           msg("Overall Best Weighted Score (Jaccard*scale + Cosine*(1-scale)): node {} with score {:.4f}",
               result.bestWeightedNode ? result.bestWeightedNode->identifier : "none", result.bestWeightedScore);
+          
         }
         
         // Validate the loaded index

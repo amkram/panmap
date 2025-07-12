@@ -859,6 +859,9 @@ private:
   // Declare the thread-local cache (definition in .cpp file)
   static thread_local CacheType tlsCache;
 
+  /** @brief Node ID for debugging purposes */
+  mutable std::string nodeId;
+
 public:
   /**
    * @brief Constructor for root store
@@ -878,38 +881,15 @@ public:
   }
 
   /**
-   * @brief Get value, checking parent if not in local store
+   * @brief Get value from local store only (no hierarchical traversal)
    * 
    * @param key The key to look up
    * @return The value if found, std::nullopt otherwise
    */
   std::optional<char> get(const PositionKey& key) const {
-    // Optimized iterative traversal to minimize shared_ptr overhead
-    const HierarchicalStore<char>* current = this;
-    bool firstLevel = true;
-    
-    while (current) {
-        // Check this level with minimal lock time
-        {
-            std::lock_guard<std::mutex> lock(current->storeMutex);
-            auto it = current->localValues.find(key);
-            if (it != current->localValues.end()) {
-                if (firstLevel) {
-                    localCacheHits.fetch_add(1, std::memory_order_relaxed);
-                } else {
-                    parentTraversals.fetch_add(1, std::memory_order_relaxed);
-                }
-                return it->second;
-            }
-        }
-        
-        // Move to parent - only one shared_ptr lock per level
-        auto parentPtr = current->parent.lock();
-        current = parentPtr.get();
-        firstLevel = false;
-    }
-    
-    return std::nullopt;
+    // OPTIMIZATION: Use only local values, no hierarchical traversal
+    // Materialized state is now handled directly by StateManager methods
+    return getLocal(key);
   }
 
   /**
@@ -1167,19 +1147,19 @@ struct NodeState {
     // Clear any existing materialized state
     materializedCharacters.clear();
     
-    // Step 1: Inherit from parent state
+    // Step 1: Start with root/base characters
+    materializedCharacters = rootCharacters;
+    
+    // Step 2: Inherit from parent state (overwrites base characters)
     if (parentState && parentState->materializedStateComputed) {
       std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
-      materializedCharacters = parentState->materializedCharacters;
-    }
-    
-    // Step 2: Apply local mutations
-    if (characterStore) {
-      auto localValues = characterStore->getLocalValues();
-      for (const auto& [posKey, character] : localValues) {
+      for (const auto& [posKey, character] : parentState->materializedCharacters) {
         materializedCharacters[posKey] = character;
       }
     }
+    
+    // Step 3: Local mutations will be applied directly via setMaterializedCharacter()
+    // when nucleotide mutations are processed, not during initial materialization
     
     materializedStateComputed = true;
   }
@@ -1199,24 +1179,24 @@ struct NodeState {
     // Step 1: Inherit from parent seed state
     size_t inheritedSeeds = 0;
     if (parentState) {
-      std::cout << "MATERIALIZE_SEED_DEBUG: Parent exists, materializedStateComputed=" << parentState->materializedStateComputed << " parentSeeds=" << parentState->materializedSeeds.size() << std::endl;
+      // std::cout << "MATERIALIZE_SEED_DEBUG: Parent exists, materializedStateComputed=" << parentState->materializedStateComputed << " parentSeeds=" << parentState->materializedSeeds.size() << std::endl;
       if (parentState->materializedStateComputed) {
         std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
         materializedSeeds = parentState->materializedSeeds;
         inheritedSeeds = materializedSeeds.size();
-        std::cout << "MATERIALIZE_SEED_DEBUG: Successfully inherited " << inheritedSeeds << " seeds from parent" << std::endl;
+        // std::cout << "MATERIALIZE_SEED_DEBUG: Successfully inherited " << inheritedSeeds << " seeds from parent" << std::endl;
       } else {
-        std::cout << "MATERIALIZE_SEED_DEBUG: Parent not materialized yet" << std::endl;
+        // std::cout << "MATERIALIZE_SEED_DEBUG: Parent not materialized yet" << std::endl;
       }
     } else {
-      std::cout << "MATERIALIZE_SEED_DEBUG: No parent state provided" << std::endl;
+      // std::cout << "MATERIALIZE_SEED_DEBUG: No parent state provided" << std::endl;
     }
     
     // Note: Local seed mutations are NOT applied here because they haven't been computed yet.
     // This method only handles inheritance. Local seeds will be applied after recomputation.
     
     // Debug logging
-    std::cout << "MATERIALIZE_SEED_COMPLETE: inherited=" << inheritedSeeds << " local=0 total=" << materializedSeeds.size() << std::endl;
+    // std::cout << "MATERIALIZE_SEED_COMPLETE: inherited=" << inheritedSeeds << " local=0 total=" << materializedSeeds.size() << std::endl;
     
     materializedStateComputed = true;
   }
@@ -1243,10 +1223,10 @@ struct NodeState {
     size_t modifiedCount = 0;
     
     // Debug: Log first few changes to see what we're processing
-    std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Processing " << detailedSeedChanges.size() << " changes..." << std::endl;
+    // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Processing " << detailedSeedChanges.size() << " changes..." << std::endl;
     for (size_t i = 0; i < std::min(detailedSeedChanges.size(), size_t(5)); i++) {
       const auto& [pos, wasSeed, isSeed, prevHash, newHash, prevReversed, newReversed, prevEndPos, newEndPos] = detailedSeedChanges[i];
-      std::cout << "  Change[" << i << "]: pos=" << pos << " wasSeed=" << wasSeed << " isSeed=" << isSeed << std::endl;
+      // std::cout << "  Change[" << i << "]: pos=" << pos << " wasSeed=" << wasSeed << " isSeed=" << isSeed << std::endl;
     }
     
     // Apply all detailed seed changes
@@ -1260,15 +1240,15 @@ struct NodeState {
           deletedCount++;
         }
         if (deletedCount <= 10 || !wasErased) {  // Debug first 10 deletions and all failures
-          std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Deleted seed at pos " << pos;
+          // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Deleted seed at pos " << pos;
           if (!seedExists) {
-            std::cout << " (WARNING: seed was not in materialized map! totalSeeds=" << materializedSeeds.size() << ")";
+            // std::cout << " (WARNING: seed was not in materialized map! totalSeeds=" << materializedSeeds.size() << ")";
           } else if (!wasErased) {
-            std::cout << " (WARNING: erase failed despite seed existing!)";
+            // std::cout << " (WARNING: erase failed despite seed existing!)";
           } else {
-            std::cout << " (success)";
+            // std::cout << " (success)";
           }
-          std::cout << std::endl;
+          // std::cout << std::endl;
         }
       } else if (!wasSeed && isSeed) {
         // Seed was added - use the new seed data from the change record
@@ -1280,7 +1260,7 @@ struct NodeState {
         materializedSeeds[pos] = newSeed;
         addedCount++;
         if (addedCount <= 5) {  // Debug first few additions
-          std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Added seed at pos " << pos << " hash=" << newSeed.hash << std::endl;
+          // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Added seed at pos " << pos << " hash=" << newSeed.hash << std::endl;
         }
       } else if (wasSeed && isSeed) {
         // Seed was modified - use the new seed data from the change record
@@ -1292,7 +1272,7 @@ struct NodeState {
         materializedSeeds[pos] = modifiedSeed;
         modifiedCount++;
         if (modifiedCount <= 5) {  // Debug first few modifications
-          std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Modified seed at pos " << pos << " hash=" << modifiedSeed.hash << std::endl;
+          // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Modified seed at pos " << pos << " hash=" << modifiedSeed.hash << std::endl;
         }
       }
     }
