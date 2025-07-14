@@ -1,5 +1,7 @@
 #include "genotyping.hpp"
 #include "conversion.hpp"
+#include "panmanUtils.hpp"
+#include "panmap_utils.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cctype>
@@ -21,6 +23,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <boost/icl/interval_set.hpp>
 
 using namespace std;
 using namespace genotyping;
@@ -210,173 +213,155 @@ void genotyping::buildMutationMatricesHelper(
   }
 }
 
-void genotyping::fillMutationMatricesFromTree_test(
-    mutationMatrices &mutMat, 
-    panmanUtils::Tree *tree, 
-    const std::string& path) {
+// void genotyping::fillMutationMatricesFromTree_test(
+//     mutationMatrices &mutMat, 
+//     panmanUtils::Tree *tree, 
+//     const std::string& path) {
   
-  if (!tree || !tree->root) {
-    throw std::invalid_argument("Invalid tree or root node");
-  }
+//   if (!tree || !tree->root) {
+//     throw std::invalid_argument("Invalid tree or root node");
+//   }
   
-  logging::info("Building mutation matrices from tree...");
+//   logging::info("Building mutation matrices from tree...");
   
-  // Initialize state manager for coordinate access
-  auto stateManager = std::make_unique<state::StateManager>();
+//   // Initialize state manager for coordinate access
+//   auto stateManager = std::make_unique<state::StateManager>();
   
-  // Initialize base count vectors and mutation counters
-  std::vector<int64_t> parentBaseCounts(4, 0);
-  std::vector<int64_t> totalBaseCounts(4, 0);
-  std::vector<std::vector<int64_t>> subCount(4, std::vector<int64_t>(4, 0));
-  std::unordered_map<int64_t, int64_t> insCount;
-  std::unordered_map<int64_t, int64_t> delCount;
+//   // Initialize base count vectors and mutation counters
+//   std::vector<int64_t> parentBaseCounts(4, 0);
+//   std::vector<int64_t> totalBaseCounts(4, 0);
+//   std::vector<std::vector<int64_t>> subCount(4, std::vector<int64_t>(4, 0));
+//   std::unordered_map<int64_t, int64_t> insCount;
+//   std::unordered_map<int64_t, int64_t> delCount;
   
-  // Process the tree to build mutation statistics
-  // buildMutationMatricesHelper(mutMat, tree, tree->root, *stateManager, 
-  //                        parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
+//   // Process the tree to build mutation statistics
+//   // buildMutationMatricesHelper(mutMat, tree, tree->root, *stateManager, 
+//   //                        parentBaseCounts, totalBaseCounts, subCount, insCount, delCount);
   
-  // Calculate totals
-  int64_t totalNucCounts = 0;
-  int64_t totalInsCounts = 0;
-  int64_t totalDelCounts = 0;
+//   // Calculate totals
+//   int64_t totalNucCounts = 0;
+//   int64_t totalInsCounts = 0;
+//   int64_t totalDelCounts = 0;
   
-  for (const auto& count : totalBaseCounts) totalNucCounts += count;
-  for (const auto& [size, count] : insCount) totalInsCounts += count;
-  for (const auto& [size, count] : delCount) totalDelCounts += count;
+//   for (const auto& count : totalBaseCounts) totalNucCounts += count;
+//   for (const auto& [size, count] : insCount) totalInsCounts += count;
+//   for (const auto& [size, count] : delCount) totalDelCounts += count;
   
-  // Add no-mutation counts
-  insCount[0] = totalNucCounts - totalInsCounts;
-  delCount[0] = totalNucCounts - totalDelCounts;
+//   // Add no-mutation counts
+//   insCount[0] = totalNucCounts - totalInsCounts;
+//   delCount[0] = totalNucCounts - totalDelCounts;
   
-  // Initialize substitution matrix with base counts
-  for (int i = 0; i < 4; ++i) {
-    mutMat.submat[i][i] = static_cast<double>(totalBaseCounts[i]);
-  }
+//   // Initialize substitution matrix with base counts
+//   for (int i = 0; i < 4; ++i) {
+//     mutMat.submat[i][i] = static_cast<double>(totalBaseCounts[i]);
+//   }
   
-  // Update substitution matrix with counts
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4; ++j) {
-      if (i != j) {
-        mutMat.submat[i][j] = static_cast<double>(subCount[i][j]);
-        mutMat.submat[i][i] -= mutMat.submat[i][j];
-      }
-    }
-  }
+//   // Update substitution matrix with counts
+//   for (int i = 0; i < 4; ++i) {
+//     for (int j = 0; j < 4; ++j) {
+//       if (i != j) {
+//         mutMat.submat[i][j] = static_cast<double>(subCount[i][j]);
+//         mutMat.submat[i][i] -= mutMat.submat[i][j];
+//       }
+//     }
+//   }
   
-  // Store insertion and deletion counts
-  for (const auto& [size, count] : insCount) {
-    mutMat.insmat[size] = static_cast<double>(count);
-  }
+//   // Store insertion and deletion counts
+//   for (const auto& [size, count] : insCount) {
+//     mutMat.insmat[size] = static_cast<double>(count);
+//   }
   
-  for (const auto& [size, count] : delCount) {
-    mutMat.delmat[size] = static_cast<double>(count);
-  }
+//   for (const auto& [size, count] : delCount) {
+//     mutMat.delmat[size] = static_cast<double>(count);
+//   }
   
-  // Convert counts to log probabilities
+//   // Convert counts to log probabilities
   
-  // Insertions
-  for (auto [size, count] : mutMat.insmat) {
-    mutMat.insmat[size] = -10 * log10(count / static_cast<double>(totalNucCounts));
-  }
+//   // Insertions
+//   for (auto [size, count] : mutMat.insmat) {
+//     mutMat.insmat[size] = -10 * log10(count / static_cast<double>(totalNucCounts));
+//   }
   
-  // Deletions
-  for (auto [size, count] : mutMat.delmat) {
-    mutMat.delmat[size] = -10 * log10(count / static_cast<double>(totalNucCounts));
-  }
+//   // Deletions
+//   for (auto [size, count] : mutMat.delmat) {
+//     mutMat.delmat[size] = -10 * log10(count / static_cast<double>(totalNucCounts));
+//   }
   
-  // Calculate maximum log probabilities for insertions and deletions
-  mutMat.maxInsLogProb = 100.0; // Default high penalty
-  mutMat.maxDelLogProb = 100.0; // Default high penalty
+//   // Calculate maximum log probabilities for insertions and deletions
+//   mutMat.maxInsLogProb = 100.0; // Default high penalty
+//   mutMat.maxDelLogProb = 100.0; // Default high penalty
   
-  if (!mutMat.insmat.empty()) {
-    mutMat.maxInsLogProb = std::max_element(
-      mutMat.insmat.begin(), mutMat.insmat.end(),
-      [](const auto& a, const auto& b) { return a.second < b.second; }
-    )->second;
-  }
+//   if (!mutMat.insmat.empty()) {
+//     mutMat.maxInsLogProb = std::max_element(
+//       mutMat.insmat.begin(), mutMat.insmat.end(),
+//       [](const auto& a, const auto& b) { return a.second < b.second; }
+//     )->second;
+//   }
   
-  if (!mutMat.delmat.empty()) {
-    mutMat.maxDelLogProb = std::max_element(
-      mutMat.delmat.begin(), mutMat.delmat.end(),
-      [](const auto& a, const auto& b) { return a.second < b.second; }
-    )->second;
-  }
+//   if (!mutMat.delmat.empty()) {
+//     mutMat.maxDelLogProb = std::max_element(
+//       mutMat.delmat.begin(), mutMat.delmat.end(),
+//       [](const auto& a, const auto& b) { return a.second < b.second; }
+//     )->second;
+//   }
   
-  // Substitutions
-  for (auto i = 0; i < 4; i++) {
-    for (auto j = 0; j < 4; j++) {
-      if (totalBaseCounts[i] > 0) {
-        mutMat.submat[i][j] = -10 * log10(mutMat.submat[i][j] / static_cast<double>(totalBaseCounts[i]));
-      } else {
-        mutMat.submat[i][j] = 100.0; // High penalty for unseen bases
-      }
-    }
-  }
+//   // Substitutions
+//   for (auto i = 0; i < 4; i++) {
+//     for (auto j = 0; j < 4; j++) {
+//       if (totalBaseCounts[i] > 0) {
+//         mutMat.submat[i][j] = -10 * log10(mutMat.submat[i][j] / static_cast<double>(totalBaseCounts[i]));
+//       } else {
+//         mutMat.submat[i][j] = 100.0; // High penalty for unseen bases
+//       }
+//     }
+//   }
   
-  mutMat.filled = true;
+//   mutMat.filled = true;
   
-  // Write matrices to file
-  std::ofstream outFile(path);
-  if (!outFile.is_open()) {
-    std::stringstream ss;
-    ss << "Failed to open file for writing mutation matrices: " << path
-       << ". Please check file permissions and path validity.";
-    throw std::runtime_error(ss.str());
-  }
+//   // Write matrices to file
+//   std::ofstream outFile(path);
+//   if (!outFile.is_open()) {
+//     std::stringstream ss;
+//     ss << "Failed to open file for writing mutation matrices: " << path
+//        << ". Please check file permissions and path validity.";
+//     throw std::runtime_error(ss.str());
+//   }
   
-  // Write substitution matrix
-  for (auto i = 0; i < 4; i++) {
-    for (auto j = 0; j < 4; j++) {
-      outFile << mutMat.submat[i][j] << " ";
-    }
-    outFile << "\n";
-  }
+//   // Write substitution matrix
+//   for (auto i = 0; i < 4; i++) {
+//     for (auto j = 0; j < 4; j++) {
+//       outFile << mutMat.submat[i][j] << " ";
+//     }
+//     outFile << "\n";
+//   }
   
-  // Write insertion matrix
-  std::vector<std::pair<int64_t, double>> insmat_sorted(mutMat.insmat.begin(), mutMat.insmat.end());
-  std::sort(insmat_sorted.begin(), insmat_sorted.end(), 
-            [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
-              return a.first < b.first;
-            });
+//   // Write insertion matrix
+//   std::vector<std::pair<int64_t, double>> insmat_sorted(mutMat.insmat.begin(), mutMat.insmat.end());
+//   std::sort(insmat_sorted.begin(), insmat_sorted.end(), 
+//             [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+//               return a.first < b.first;
+//             });
   
-  for (const auto& [size, logProb] : insmat_sorted) {
-    outFile << size << ":" << logProb << " ";
-  }
-  outFile << "\n";
+//   for (const auto& [size, logProb] : insmat_sorted) {
+//     outFile << size << ":" << logProb << " ";
+//   }
+//   outFile << "\n";
   
-  // Write deletion matrix
-  std::vector<std::pair<int64_t, double>> delmat_sorted(mutMat.delmat.begin(), mutMat.delmat.end());
-  std::sort(delmat_sorted.begin(), delmat_sorted.end(), 
-            [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
-              return a.first < b.first;
-            });
+//   // Write deletion matrix
+//   std::vector<std::pair<int64_t, double>> delmat_sorted(mutMat.delmat.begin(), mutMat.delmat.end());
+//   std::sort(delmat_sorted.begin(), delmat_sorted.end(), 
+//             [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+//               return a.first < b.first;
+//             });
   
-  for (const auto& [size, logProb] : delmat_sorted) {
-    outFile << size << ":" << logProb << " ";
-  }
-  outFile << "\n";
+//   for (const auto& [size, logProb] : delmat_sorted) {
+//     outFile << size << ":" << logProb << " ";
+//   }
+//   outFile << "\n";
   
-  outFile.close();
-  logging::info("Mutation matrices saved to {}", path);
-}
-
-enum variationType { SNP = 1, INS = 2, DEL = 4 };
-
-double phred_complement(double q) {
-  double p = pow(10, (-q / 10));
-  return -10 * log10(1 - p);
-}
-
-double third_phred(double q) {
-  double p = pow(10, (-q / 10)) / 3.0;
-  return -10 * log10(p);
-}
-
-void to_upper(string &str) {
-  for (char &c : str) {
-    c = toupper(c);
-  }
-}
+//   outFile.close();
+//   logging::info("Mutation matrices saved to {}", path);
+// }
 
 static int getIndexFromNucleotide(char nuc) {
   switch (nuc) {
@@ -398,6 +383,1068 @@ static int getIndexFromNucleotide(char nuc) {
     return 5;
   }
   return 5;
+}
+static void initializeSequence(
+  panmanUtils::Tree *tree,
+  std::vector<std::vector<std::pair<char, std::vector<char>>>> &sequence,
+  std::vector<bool> &blockExists,
+  std::vector<bool> &blockStrand
+) {
+  sequence.resize(tree->blocks.size() + 1);
+  blockExists.resize(tree->blocks.size() + 1, false);
+  blockStrand.resize(tree->blocks.size() + 1, true);
+
+  int32_t maxBlockId = 0;
+
+  for(size_t i = 0; i < tree->blocks.size(); i++) {
+    const auto& curBlock = tree->blocks[i];
+    int32_t primaryBlockId = ((int32_t)curBlock.primaryBlockId);
+    if (i != static_cast<size_t>(primaryBlockId)) {
+      std::cerr << "primaryBlockId: " << primaryBlockId << " i: " << i << std::endl;
+      std::exit(1);
+    }
+    maxBlockId = std::max(maxBlockId, primaryBlockId);
+    for(size_t j = 0; j < curBlock.consensusSeq.size(); j++) {
+      bool endFlag = false;
+      for(size_t k = 0; k < 8; k++) {
+        const int nucCode = (((curBlock.consensusSeq[j]) >> (4*(7 - k))) & 15);
+
+        if(nucCode == 0) {
+          endFlag = true;
+          break;
+        }
+        // len++;
+        const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
+        sequence[primaryBlockId].push_back({nucleotide, {}});
+      }
+
+      if(endFlag) {
+        break;
+      }
+    }
+    // End character to incorporate for gaps at the end
+    sequence[primaryBlockId].push_back({'x', {}});
+  }
+
+  // resize in case of early stop
+  sequence.resize(maxBlockId + 1);
+  blockExists.resize(maxBlockId + 1);
+  blockStrand.resize(maxBlockId + 1);
+
+  // assign gaps
+  for(size_t i = 0; i < tree->gaps.size(); i++) {
+    const auto& curGap = tree->gaps[i];
+    int32_t primaryBId = (curGap.primaryBlockId);
+    int32_t secondaryBId = (curGap.secondaryBlockId);
+    for(size_t j = 0; j < curGap.nucPosition.size(); j++) {
+      int len = curGap.nucGapLength[j];
+      int pos = curGap.nucPosition[j];
+      sequence[primaryBId][pos].second.resize(len, '-');
+    }
+  }
+}
+
+
+static char getNucFromTuple(const std::tuple<int64_t, int64_t, int64_t> &tupleCoord, const std::vector<std::vector<std::pair<char, std::vector<char>>>> &sequence) {
+  const auto& [blockId, nucPos, nucGapPos] = tupleCoord;
+  if (nucGapPos == -1) {
+    return sequence[blockId][nucPos].first;
+  }
+  return sequence[blockId][nucPos].second[nucGapPos];
+}
+
+
+
+void clearBlockBaseCounts(
+  int32_t blockId,
+  bool blockStrand,
+  std::vector<int64_t> &curBaseCounts,
+  std::vector<int64_t> &parentBaseCountsBacktrack,
+  const panmapUtils::GlobalCoords &globalCoords,
+  const std::vector<std::vector<std::pair<char, std::vector<char>>>> &sequence
+) {
+  std::tuple<int64_t, int64_t, int64_t> coord = globalCoords.getBlockStartTuple(blockId);
+  std::tuple<int64_t, int64_t, int64_t> end   = globalCoords.getBlockEndTuple(blockId);
+
+  while (true) {
+    char c = getNucFromTuple(coord, sequence);
+    if (!blockStrand) {
+      c = panmanUtils::getComplementCharacter(c);
+    }
+
+    if (getIndexFromNucleotide(c) <= 3) {
+      --curBaseCounts[getIndexFromNucleotide(c)];
+      ++parentBaseCountsBacktrack[getIndexFromNucleotide(c)];
+    }
+
+    if (coord == end) {
+      break;
+    }
+
+    coord = globalCoords.stepRight(coord);
+    if (coord == std::make_tuple(-1, -1, -1)) {
+      logging::err("stepRight returned -1, -1, -1");
+      std::exit(1);
+    }
+  }
+}
+
+static void applyMutations(
+    panmanUtils::Tree *tree,
+    panmanUtils::Node *node,
+    panmapUtils::BlockSequences &blockSequences,
+    std::vector<bool> &oldBlockExists,
+    std::vector<bool> &oldBlockStrand,
+    std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> &blockMutationRecord,
+    std::vector<std::tuple<panmapUtils::Coordinate, char, char>> &nucMutationRecord,
+    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> &gapRunUpdates,
+    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> &gapRunBacktracks,
+    std::unordered_set<int64_t> &invertedBlocks,
+    std::vector<std::pair<int64_t, bool>> &invertedBlocksBacktracks,
+    std::vector<int64_t> &curBaseCounts,
+    std::vector<int64_t> &parentBaseCountsBacktrack,
+    std::vector<std::vector<int64_t>> &subCount,
+    bool &isMutatedNuc,
+    const panmapUtils::GlobalCoords &globalCoords,
+    const std::vector<std::pair<int64_t, int64_t>> &blockRanges
+) {
+  std::vector<bool>& blockExists = blockSequences.blockExists;
+  std::vector<bool>& blockStrand = blockSequences.blockStrand;
+
+  std::vector<std::vector<std::pair<char, std::vector<char>>>> &sequence = blockSequences.sequence;
+  for (const auto& blockMutation : node->blockMutation) {
+    const int32_t& blockId  = blockMutation.primaryBlockId;
+    const bool& isInsertion = blockMutation.blockMutInfo;
+    const bool& isInversion = blockMutation.inversion;
+    bool oldExists = blockExists[blockId];
+    bool oldStrand = blockStrand[blockId];
+    if (isInsertion) {
+      // insertion
+      blockExists[blockId] = true;
+      blockStrand[blockId] = !isInversion;
+      if (!blockStrand[blockId]) {
+        invertedBlocks.insert(blockId);
+        if (oldStrand) {
+          invertedBlocksBacktracks.emplace_back(blockId, true);
+        }
+      }
+    } else if (isInversion) {
+      // simple inversion
+      blockStrand[blockId] = !blockStrand[blockId];
+      if (!blockStrand[blockId]) {
+        invertedBlocks.insert(blockId);
+        if (oldStrand) {
+          invertedBlocksBacktracks.emplace_back(blockId, true);
+        }
+      } else {
+        invertedBlocks.erase(blockId);
+        if (!oldStrand) {
+          invertedBlocksBacktracks.emplace_back(blockId, false);
+        }
+      }
+      std::vector<int64_t> oldCurBaseCounts = curBaseCounts;
+      clearBlockBaseCounts(blockId, oldBlockStrand[blockId], curBaseCounts, parentBaseCountsBacktrack, globalCoords, sequence);
+    } else {
+      // deletion
+      blockExists[blockId] = false;
+      blockStrand[blockId] = true;
+      if (!oldStrand) {
+        invertedBlocks.erase(blockId);
+        invertedBlocksBacktracks.emplace_back(blockId, false);
+      }
+      std::vector<int64_t> oldCurBaseCounts = curBaseCounts;
+      clearBlockBaseCounts(blockId, oldBlockStrand[blockId], curBaseCounts, parentBaseCountsBacktrack, globalCoords, sequence);
+    }
+    blockMutationRecord.emplace_back(std::make_tuple(blockId, oldExists, oldStrand, blockExists[blockId], blockStrand[blockId]));
+  }
+
+  for (const auto& nucMutation : node->nucMutation) {
+    int length = nucMutation.mutInfo >> 4;
+    for (int i = 0; i < length; i++) {
+      panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
+      char originalNuc = blockSequences.getSequenceBase(pos);
+      int newNucCode = (nucMutation.nucs >> (4*(5-i))) & 0xF;
+      char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
+      blockSequences.setSequenceBase(pos, newNuc);
+      nucMutationRecord.emplace_back(std::make_tuple(pos, originalNuc, newNuc));
+    }
+  }
+
+  for (auto &nucMutation : nucMutationRecord) {
+    const auto& [coord, originalNuc, newNuc] = nucMutation;
+    int blockId = coord.primaryBlockId;
+    if (oldBlockExists[blockId] && blockExists[blockId] && oldBlockStrand[blockId] == blockStrand[blockId]) {
+      // on to on -> collect gap runs and nuc runs
+      char parChar = originalNuc == 'x' ? '-' : originalNuc;
+      char curChar = newNuc == 'x' ? '-' : newNuc;
+
+      int64_t scalar = globalCoords.getScalarFromCoord(coord);
+      if (!blockStrand[blockId]) {
+        scalar = blockRanges[blockId].first + blockRanges[blockId].second - scalar;
+      }
+
+      if (!oldBlockStrand[blockId]) parChar = panmanUtils::getComplementCharacter(parChar);
+      if (!blockStrand[blockId])    curChar =  panmanUtils::getComplementCharacter(curChar);
+
+      if (getIndexFromNucleotide(parChar) <= 3) {
+        --curBaseCounts[getIndexFromNucleotide(parChar)];
+        ++parentBaseCountsBacktrack[getIndexFromNucleotide(parChar)];
+      }
+      if (getIndexFromNucleotide(curChar) <= 3) {
+        ++curBaseCounts[getIndexFromNucleotide(curChar)];
+        --parentBaseCountsBacktrack[getIndexFromNucleotide(curChar)];
+      }
+      if (getIndexFromNucleotide(parChar) <= 3 && getIndexFromNucleotide(curChar) <= 3) {
+        isMutatedNuc = true;
+        ++subCount[getIndexFromNucleotide(parChar)][getIndexFromNucleotide(curChar)];
+      }
+
+
+      if (parChar != '-' && curChar == '-') {
+        // nuc to gap
+        if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true && gapRunUpdates.back().second.second + 1 == scalar) {
+          ++(gapRunUpdates.back().second.second);
+        }
+        else {
+          gapRunUpdates.emplace_back(true, std::make_pair(scalar, scalar)); 
+        }
+      } else if (parChar == '-' && curChar != '-') {
+        // gap to nuc
+        if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false && gapRunUpdates.back().second.second + 1 == scalar) {
+          ++(gapRunUpdates.back().second.second);
+        } else {
+          gapRunUpdates.emplace_back(false, std::make_pair(scalar, scalar));
+        }
+      }
+    }
+  }
+}
+
+static void updateGapMapStep(std::map<int64_t, int64_t>& gapMap, const std::pair<bool, std::pair<int64_t, int64_t>>& update, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapMapUpdates, bool recordGapMapUpdates=true) {
+  bool toGap = update.first;
+  int64_t start = update.second.first;
+  int64_t end = update.second.second;
+
+  auto rightIt = gapMap.upper_bound(start);
+  auto leftIt = (rightIt == gapMap.begin()) ? gapMap.end() : std::prev(rightIt);
+
+  bool rightItExists = rightIt != gapMap.end();
+  bool leftItExists = leftIt != gapMap.end();
+
+  if (toGap) {
+    // add gap range
+    if (gapMap.empty()) {
+      gapMap[start] = end;
+      backtrack.emplace_back(true, std::make_pair(start, end));
+      if (recordGapMapUpdates) {
+        gapMapUpdates.emplace_back(false, std::make_pair(start, end));
+      }
+      return;
+    }
+    
+    decltype(rightIt) curIt;
+
+    // curIt starts outside of any range
+    if (!leftItExists || (!rightItExists && start > leftIt->second) || (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
+      if (leftItExists && start == leftIt->second + 1) {
+        // 1 base after left range and merge with left
+        curIt = leftIt;
+        backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+        curIt->second = end;
+        if (recordGapMapUpdates) {
+          gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+        }
+      } else {
+        // insert new range
+        auto tmpIt = gapMap.emplace(start, end);
+        curIt = tmpIt.first;
+        backtrack.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+        if (recordGapMapUpdates) {
+          gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+        }
+      }
+    } else {
+      curIt = leftIt;
+      if (end <= curIt->second) {
+        return;
+      }
+      backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+      curIt->second = end;
+      if (recordGapMapUpdates) {
+        gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+      }
+    }
+
+    auto nextIt = std::next(curIt);
+    while (true) {
+      if (nextIt == gapMap.end()) {
+        break;
+      }
+
+      if (nextIt->second <= curIt->second) {
+        auto tmpIt = nextIt;
+        nextIt = std::next(nextIt);
+        backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
+        if (recordGapMapUpdates) {
+          gapMapUpdates.emplace_back(true, std::make_pair(tmpIt->first, tmpIt->second));
+        }
+        gapMap.erase(tmpIt);
+      } else if (nextIt->first <= end + 1) {
+        backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+        curIt->second = nextIt->second;
+        backtrack.emplace_back(false, std::make_pair(nextIt->first, nextIt->second));
+        if (recordGapMapUpdates) {
+          gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          gapMapUpdates.emplace_back(true, std::make_pair(nextIt->first, nextIt->second));
+        }
+        gapMap.erase(nextIt);
+        break;
+      } else {
+        break;
+      }
+    }
+  } else {
+    // remove gap range
+    if (gapMap.empty() || (!leftItExists && end < rightIt->first) || (!rightItExists && start > leftIt->second)) {
+      return;
+    }
+
+    decltype(rightIt) curIt;
+    decltype(rightIt) nextIt;
+    if (!leftItExists || (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
+      // curIt starts outside of any range
+      curIt = rightIt;
+
+      if (end < curIt->first) {
+        return;
+      }
+
+      // ends within the curIt range
+      if (end <= curIt->second) {
+        if (end == curIt->second) {
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+          }
+          gapMap.erase(curIt);
+        } else {
+          gapMap[end+1] = curIt->second;
+          backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(false, std::make_pair(end+1, curIt->second));
+            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+          }
+          gapMap.erase(curIt);
+        }
+        return;
+      } else {
+        nextIt = std::next(curIt);
+        backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+        if (recordGapMapUpdates) {
+          gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+        }
+        gapMap.erase(curIt);
+      }
+      
+    } else {
+      // curIt starts inside of a range
+      curIt = leftIt;
+      
+      if (end <= curIt->second) {
+        // contained in the curIt range
+        if (start == curIt->first && end == curIt->second) {
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+          }
+          gapMap.erase(curIt);
+        } else if (start == curIt->first) {
+          gapMap[end + 1] = curIt->second;
+          backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(false, std::make_pair(end+1, curIt->second));
+            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+          }
+          gapMap.erase(curIt);
+        } else if (end == curIt->second) {
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          curIt->second = start - 1;
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          }
+        } else {
+          gapMap[end + 1] = curIt->second;
+          backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(false, std::make_pair(end+1, curIt->second));
+            gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, start-1));
+          }
+          curIt->second = start - 1;
+        }
+        return;
+      } else {
+        if (start == curIt->first) {
+          nextIt = std::next(curIt);
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+          }
+          gapMap.erase(curIt);
+        } else {
+          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          curIt->second = start - 1;
+          if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
+          }
+          nextIt = std::next(curIt);
+        }
+      }
+    }
+
+    
+    while (true) {
+      if (nextIt == gapMap.end()) {
+        break;
+      }
+
+      if (nextIt->first > end) {
+        break;
+      } else if (nextIt->second <= end) {
+        auto tmpIt = nextIt;
+        nextIt = std::next(nextIt);
+        backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
+        if (recordGapMapUpdates) {
+          gapMapUpdates.emplace_back(true, std::make_pair(tmpIt->first, tmpIt->second));
+        }
+        gapMap.erase(tmpIt);
+      } else {
+        gapMap[end + 1] = nextIt->second;
+        backtrack.emplace_back(true, std::make_pair(end+1, nextIt->second));
+        backtrack.emplace_back(false, std::make_pair(nextIt->first, nextIt->second));
+        if (recordGapMapUpdates) {
+          gapMapUpdates.emplace_back(false, std::make_pair(end+1, nextIt->second));
+          gapMapUpdates.emplace_back(true, std::make_pair(nextIt->first, nextIt->second));
+        }
+        gapMap.erase(nextIt);
+        break;
+      }
+    }
+  }
+}
+
+static void updateGapMap(std::map<int64_t, int64_t>& gapMap, const std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& updates, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapMapUpdates) {
+  for (const auto& update : updates) {
+    updateGapMapStep(gapMap, update, backtrack, gapMapUpdates);
+  }
+}
+
+static void invertGapMap(std::map<int64_t, int64_t>& gapMap, const std::pair<int64_t, int64_t>& invertRange, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& backtrack, std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapMapUpdates) {
+  const auto& [start, end] = invertRange;
+
+  auto rightIt = gapMap.upper_bound(start);
+  auto leftIt = (rightIt == gapMap.begin()) ? gapMap.end() : std::prev(rightIt);
+
+  bool rightItExists = rightIt != gapMap.end();
+  bool leftItExists = leftIt != gapMap.end();
+
+  // completely inside or outside a gap range -> do nothing
+  if (
+    gapMap.empty() || // empty gap map
+    (!leftItExists && end < rightIt->first) || // completely left of first gap range
+    (!rightItExists && start > leftIt->second) // completely right of last gap range
+    // (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first) || // completely between two gap ranges
+    // (leftItExists && start >= leftIt->first && end <= leftIt->second) // completely inside a gap range
+  ) {
+    return;
+  }
+  
+  //                    gaps            beg      end
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> blockRuns;
+  if (!leftItExists || (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
+    // start outside of a range
+    auto curIt = rightIt;
+    blockRuns.emplace_back(false, std::make_pair(start, curIt->first - 1));
+    if (end <= curIt->second) {
+      blockRuns.emplace_back(true, std::make_pair(blockRuns.back().second.second + 1, end));
+    } else {
+      blockRuns.emplace_back(true, std::make_pair(blockRuns.back().second.second + 1, curIt->second));
+      curIt = std::next(curIt);
+      while (true) {
+        if (curIt == gapMap.end()) {
+          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
+          break;
+        } else if (end < curIt->first) {
+          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
+          break;
+        } else if (end > curIt->second) {
+          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
+          blockRuns.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+          curIt = std::next(curIt);
+        } else {
+          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
+          blockRuns.emplace_back(true, std::make_pair(curIt->first, end));
+          break;
+        }
+      }
+    }
+  } else {
+    // start inside of a range
+    auto curIt = leftIt;
+    blockRuns.emplace_back(true, std::make_pair(start, curIt->second));
+    curIt = std::next(curIt);
+    while (true) {
+      if (curIt == gapMap.end()) {
+        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
+        break;
+      } else if (end < curIt->first) {
+        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
+        break;
+      } else if (end > curIt->second) {
+        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
+        blockRuns.emplace_back(true, std::make_pair(curIt->first, curIt->second));
+        curIt = std::next(curIt);
+      } else {
+        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
+        blockRuns.emplace_back(true, std::make_pair(curIt->first, end));
+        break;
+      }
+    }
+  }
+
+  int64_t curBeg = blockRuns.front().second.first;
+  for (auto it = blockRuns.rbegin(); it != blockRuns.rend(); ++it) {
+    int64_t curEnd = curBeg + (it->second.second - it->second.first);
+    updateGapMapStep(gapMap, {it->first, {curBeg, curEnd}}, backtrack, gapMapUpdates, false);
+    curBeg = curEnd + 1;
+  }
+}
+
+static std::vector<std::pair<int64_t, int64_t>> invertRanges(const std::vector<std::pair<int64_t, int64_t>>& nucRanges, const std::pair<int64_t, int64_t>& invertRange) {
+  std::vector<std::pair<int64_t, int64_t>> invertedRanges;
+
+  auto [start, end] = invertRange;
+
+  for (auto it = nucRanges.rbegin(); it != nucRanges.rend(); ++it) {
+    const auto& [curStart, curEnd] = *it;
+    invertedRanges.emplace_back(start + end - curEnd, start + end - curStart);
+  }
+
+  return invertedRanges;
+}
+
+static boost::icl::interval_set<int64_t> gapMapToNucRunSet(const std::map<int64_t, int64_t> &gapMap, const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
+  boost::icl::interval_set<int64_t> curNucRunSet;
+  int64_t start = -1;
+  for (const auto& [curStart, curEnd] : gapMap) {
+    if (start == -1) {
+      if (curStart != 0) {
+        curNucRunSet.add(boost::icl::interval<int64_t>::closed(0, curStart - 1));
+      }
+    } else {
+      curNucRunSet.add(boost::icl::interval<int64_t>::closed(start, curStart - 1));
+    }
+    start = curEnd + 1;
+  }
+  if (start <= blockRanges.back().second) {
+    curNucRunSet.add(boost::icl::interval<int64_t>::closed(start, blockRanges.back().second));
+  }
+  return curNucRunSet;
+}
+
+void undoMutations(
+  panmapUtils::BlockSequences &blockSequences,
+  std::vector<bool> &oldBlockExists,
+  std::vector<bool> &oldBlockStrand,
+  std::unordered_set<int64_t> &invertedBlocks,
+  const std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> &blockMutationRecord,
+  const std::vector<std::tuple<panmapUtils::Coordinate, char, char>> &nucMutationRecord,
+  const std::vector<std::pair<int64_t, bool>> &invertedBlocksBacktracks
+) {
+  std::vector<bool>& blockExists = blockSequences.blockExists;
+  std::vector<bool>& blockStrand = blockSequences.blockStrand;
+
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    blockExists[blockId] = oldExists;
+    blockStrand[blockId] = oldStrand;
+    oldBlockExists[blockId] = oldExists;
+    oldBlockStrand[blockId] = oldStrand;
+  }
+
+  for (const auto& [coord, oldNuc, newNuc] : nucMutationRecord) {
+    blockSequences.setSequenceBase(coord, oldNuc);
+  }
+
+  for (const auto& [blockId, erase] : invertedBlocksBacktracks) {
+    if (erase) {
+      invertedBlocks.erase(blockId);
+    } else {
+      invertedBlocks.insert(blockId);
+    }
+  }
+}
+
+void buildMutationMatricesHelper_test(
+  mutationMatrices &mutMat,
+  panmanUtils::Tree *tree,
+  panmanUtils::Node *node,
+  panmapUtils::BlockSequences &blockSequences,
+  std::vector<bool> &oldBlockExists,
+  std::vector<bool> &oldBlockStrand,
+  std::map<int64_t, int64_t> &gapMap,
+  std::unordered_set<int64_t> &invertedBlocks,
+  std::vector<int64_t> &parentBaseCounts,
+  std::vector<int64_t> &totalBaseCounts,
+  std::vector<std::vector<int64_t>> &subCount,
+  std::unordered_map<int64_t, int64_t> &insCount,
+  std::unordered_map<int64_t, int64_t> &delCount,
+  const panmapUtils::GlobalCoords &globalCoords,
+  const std::vector<std::pair<int64_t, int64_t>> &blockRanges
+) {
+  // for checking with brute force. DELETE THESE AFTER CONFIRMING EVERYTHING WORKS CORRECTLY!!!!!! ----------------------------
+  panmapUtils::BlockSequences oldBlockSequences = blockSequences;
+  std::vector<int64_t> oldParentBaseCounts = parentBaseCounts;
+  std::vector<std::vector<int64_t>> oldSubCount = subCount;
+  // ------------------------------------------------------------------------------------------------
+
+
+  std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> blockMutationRecord;
+  std::vector<std::tuple<panmapUtils::Coordinate, char, char>> nucMutationRecord;
+
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunUpdates;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBacktracks;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapMapUpdates;
+  std::vector<std::pair<int64_t, bool>> invertedBlocksBacktracks;
+
+  std::vector<int64_t> curBaseCounts = parentBaseCounts;
+  std::vector<int64_t> parentBaseCountsBacktrack(4);
+  bool isMutatedNuc = false;
+
+  applyMutations(
+    tree, node,
+    blockSequences, 
+    oldBlockExists, oldBlockStrand,
+    blockMutationRecord, nucMutationRecord,
+    gapRunUpdates, gapRunBacktracks,
+    invertedBlocks, invertedBlocksBacktracks,
+    curBaseCounts, parentBaseCountsBacktrack,
+    subCount, isMutatedNuc,
+    globalCoords, blockRanges);
+
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> gapRunBlocksBacktracks;
+
+  auto parentGapMap = gapMap;
+  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> tmpGapRunBlocksBacktracks;
+  for (size_t i = 0; i < oldBlockStrand.size(); ++i) {
+    if (!oldBlockStrand[i]) {
+      invertGapMap(parentGapMap, blockRanges[i], tmpGapRunBlocksBacktracks, gapMapUpdates);
+    }
+  }
+
+  boost::icl::interval_set<int64_t> parNucRunSet = gapMapToNucRunSet(parentGapMap, blockRanges);
+  boost::icl::interval_set<int64_t> flippedSet;
+  parentGapMap.clear();
+  tmpGapRunBlocksBacktracks.clear();
+
+  updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
+
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    if (oldExists && !newExists) {
+      // on to off -> block range to all gaps
+      const auto& [start, end] = blockRanges[blockId];
+      updateGapMapStep(gapMap, {true, {start, end}}, gapRunBacktracks, gapMapUpdates);
+    } else if (!oldExists && newExists) {
+      // off to on -> recompute across entire block
+      panmapUtils::Coordinate coord = globalCoords.getBlockStartCoord(blockId);
+      panmapUtils::Coordinate end = globalCoords.getBlockEndCoord(blockId);
+      if (!blockSequences.getBlockStrand(blockId)) std::swap(coord, end);
+      std::pair<int64_t, int64_t> curNucRange = {-1, -1};
+      std::vector<std::pair<int64_t, int64_t>> nucRanges;
+      std::vector<int64_t> oldCurBaseCounts = curBaseCounts;
+      while (true) {
+        char c = blockSequences.getSequenceBase(coord);
+        c = c == 'x' ? '-' : c;
+        if (!blockSequences.getBlockStrand(blockId)) c = panmanUtils::getComplementCharacter(c);
+        int64_t scalar = globalCoords.getScalarFromCoord(coord);
+        if (!blockSequences.getBlockStrand(blockId)) {
+          scalar = blockRanges[blockId].first + blockRanges[blockId].second - scalar;
+        }
+
+        if (c != '-') {
+          if (getIndexFromNucleotide(c) <= 3) {
+            ++curBaseCounts[getIndexFromNucleotide(c)];
+            --parentBaseCountsBacktrack[getIndexFromNucleotide(c)];
+          }
+
+          if (curNucRange.first != -1 && curNucRange.second + 1 == scalar) {
+            ++curNucRange.second;
+          } else {
+            if (curNucRange.first != -1) {
+              nucRanges.push_back(curNucRange);
+            }
+            curNucRange = {scalar, scalar};
+          }
+        }
+
+        if (coord == end) break;
+        if (blockSequences.getBlockStrand(blockId)) {
+          coord = globalCoords.stepRight(coord);
+        } else {
+          coord = globalCoords.stepLeft(coord);
+        }
+      }
+
+      if (curNucRange.first != -1) {
+        nucRanges.push_back(curNucRange);
+      }
+
+
+      if (blockSequences.blockStrand[blockId]) {
+        for (const auto& range : nucRanges) {
+          updateGapMapStep(gapMap, {false, range}, gapRunBacktracks, gapMapUpdates);
+        }
+      } else {
+        std::vector<std::pair<int64_t, int64_t>> invertedRanges = invertRanges(nucRanges, blockRanges[blockId]);
+        for (const auto& range : invertedRanges) {
+          updateGapMapStep(gapMap, {false, range}, gapRunBacktracks, gapMapUpdates);
+        }
+      }
+    } else if (oldExists && newExists && (blockSequences.blockStrand[blockId] != oldBlockStrand[blockId])) {
+      // on to on -> but strand flipped
+      flippedSet.add(boost::icl::interval<int64_t>::closed(blockRanges[blockId].first, blockRanges[blockId].second));
+      std::vector<int64_t> oldCurBaseCounts = curBaseCounts;
+      panmapUtils::Coordinate coord = globalCoords.getBlockStartCoord(blockId);
+      panmapUtils::Coordinate end = globalCoords.getBlockEndCoord(blockId);
+
+      while (true) {
+        char c = blockSequences.getSequenceBase(coord);
+        c = c == 'x' ? '-' : c;
+        if (!blockSequences.getBlockStrand(blockId)) c = panmanUtils::getComplementCharacter(c);
+
+        if (getIndexFromNucleotide(c) <= 3) {
+          ++curBaseCounts[getIndexFromNucleotide(c)];
+          --parentBaseCountsBacktrack[getIndexFromNucleotide(c)];
+        }
+
+        if (coord == end) break;
+        coord = globalCoords.stepRight(coord);
+
+      }
+    }
+  }
+
+  for (const auto& blockId : invertedBlocks) {
+    invertGapMap(gapMap, blockRanges[blockId], gapRunBlocksBacktracks, gapMapUpdates);
+  }
+
+  if (node->parent != nullptr) {
+    // make nuc run interval set from gap map
+    boost::icl::interval_set<int64_t> curNucRunSet = gapMapToNucRunSet(gapMap, blockRanges);
+
+    // remove flipped blocks from nucRunSet so they are not counted as indels
+    curNucRunSet -= flippedSet;
+    parNucRunSet -= flippedSet;
+
+    // XOR ranges between cur and par
+    boost::icl::interval_set<int64_t> xorSet = curNucRunSet ^ parNucRunSet;
+
+    // AND ranges bewteen xor and par -> deletion
+    boost::icl::interval_set<int64_t> deletionSet = xorSet & parNucRunSet;
+
+    // AND ranges between xor and cur -> insertion
+    boost::icl::interval_set<int64_t> insertionSet = xorSet & curNucRunSet;
+
+    
+    if (isMutatedNuc || !insertionSet.empty() || !deletionSet.empty()) {
+      for (const auto& interval : insertionSet) {
+        int64_t size = boost::icl::last(interval) - boost::icl::first(interval) + 1;
+        if (insCount.find(size) == insCount.end()) {
+          insCount[size] = 0;
+        }
+        ++insCount[size];
+      }
+
+      for (const auto& interval : deletionSet) {
+        int64_t size = boost::icl::last(interval) - boost::icl::first(interval) + 1;
+        if (delCount.find(size) == delCount.end()) {
+          delCount[size] = 0;
+        }
+        ++delCount[size];
+      }
+
+      for (size_t i = 0; i < 4; ++i) {
+        totalBaseCounts[i] += curBaseCounts[i];
+      }
+    }
+  }
+
+  parentBaseCounts = curBaseCounts;
+
+  for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
+
+  gapRunUpdates.clear();
+
+  // checking nucs with brute force
+  // {
+  //   const auto& oldSequence = oldBlockSequences.sequence;
+  //   const auto& curSequence = blockSequences.sequence;
+  //   std::vector<std::vector<int64_t>> bruteCurNodeSubCount(4, std::vector<int64_t>(4, 0));
+  //   std::vector<int64_t> bruteCurNodeTotalBaseCounts(4, 0);
+  //   std::vector<std::pair<int64_t, int64_t>> bruteCurNodeIns;
+  //   std::vector<std::pair<int64_t, int64_t>> bruteCurNodeDel;
+  //   for (size_t blockId = 0; blockId < oldSequence.size(); blockId++) {
+  //     if (!(oldBlockSequences.blockExists[blockId] || blockSequences.blockExists[blockId])) {
+  //       continue;
+  //     }
+  //     if (blockSequences.blockExists[blockId]) { 
+  //       for (size_t j = 0; j < curSequence[blockId].size(); j++) {
+  //         // process nuc gap positions
+  //         for (size_t k = 0; k < curSequence[blockId][j].second.size(); k++) {
+  //           char curNuc = curSequence[blockId][j].second[k];
+  //           if (getIndexFromNucleotide(curNuc) <= 3) {
+  //             if (blockSequences.blockStrand[blockId]) {
+  //               ++bruteCurNodeTotalBaseCounts[getIndexFromNucleotide(curNuc)];
+  //             } else {
+  //               ++bruteCurNodeTotalBaseCounts[getIndexFromNucleotide(panmanUtils::getComplementCharacter(curNuc))];
+  //             }
+  //           }
+  //         }
+
+  //         // process main nuc position
+  //         char curNuc = curSequence[blockId][j].first;
+  //         if (getIndexFromNucleotide(curNuc) <= 3) {
+  //           if (blockSequences.blockStrand[blockId]) {
+  //             ++bruteCurNodeTotalBaseCounts[getIndexFromNucleotide(curNuc)];
+  //           } else {
+  //             ++bruteCurNodeTotalBaseCounts[getIndexFromNucleotide(panmanUtils::getComplementCharacter(curNuc))];
+  //           }
+  //         }
+  //       }
+  //     }
+  //     if (oldBlockSequences.blockExists[blockId] && blockSequences.blockExists[blockId] && (oldBlockSequences.blockStrand[blockId] == blockSequences.blockStrand[blockId])) {
+  //       for (size_t j = 0; j < oldSequence[blockId].size(); j++) {
+  //         // process nuc gap positions
+  //         for (size_t k = 0; k < oldSequence[blockId][j].second.size(); k++) {
+  //           char oldNuc = oldBlockSequences.blockStrand[blockId] ? oldSequence[blockId][j].second[k] : panmanUtils::getComplementCharacter(oldSequence[blockId][j].second[k]);
+  //           char curNuc = blockSequences.blockStrand[blockId] ? curSequence[blockId][j].second[k] : panmanUtils::getComplementCharacter(curSequence[blockId][j].second[k]);
+  //           if (oldNuc != curNuc && getIndexFromNucleotide(oldNuc) <= 3 && getIndexFromNucleotide(curNuc) <= 3) {
+  //             ++bruteCurNodeSubCount[getIndexFromNucleotide(oldNuc)][getIndexFromNucleotide(curNuc)];
+  //           }
+  //         }
+
+  //         // process main nuc position
+  //         char oldNuc = oldBlockSequences.blockStrand[blockId] ? oldSequence[blockId][j].first : panmanUtils::getComplementCharacter(oldSequence[blockId][j].first);
+  //         char curNuc = blockSequences.blockStrand[blockId] ? curSequence[blockId][j].first : panmanUtils::getComplementCharacter(curSequence[blockId][j].first);
+  //         if (oldNuc != curNuc && getIndexFromNucleotide(oldNuc) <= 3 && getIndexFromNucleotide(curNuc) <= 3) {
+  //           ++bruteCurNodeSubCount[getIndexFromNucleotide(oldNuc)][getIndexFromNucleotide(curNuc)];
+  //         }
+  //       }
+  //     }
+  //   }
+
+  //   std::vector<std::vector<int64_t>> dynamicCurNodeSubCount(4, std::vector<int64_t>(4, 0));
+  //   for (size_t i = 0; i < 4; i++) {
+  //     for (size_t j = 0; j < 4; j++) {
+  //       dynamicCurNodeSubCount[i][j] = subCount[i][j] - oldSubCount[i][j];
+  //     }
+  //   }
+
+  //   for (size_t i = 0; i < 4; i++) {
+  //     if (bruteCurNodeTotalBaseCounts != curBaseCounts) {
+  //       logging::err("At node {}, brute force total base counts do not match dynamic total base counts for index {}, brute: {}, dynamic: {}", node->identifier, i, bruteCurNodeTotalBaseCounts[i], curBaseCounts[i]);
+  //       std::exit(1);
+  //     } else {
+  //       logging::info("At node {}, brute force total base counts match dynamic total base counts for index {}, brute: {}, dynamic: {}", node->identifier, i, bruteCurNodeTotalBaseCounts[i], curBaseCounts[i]);
+  //     }
+  //   }
+
+  //   for (size_t i = 0; i < 4; i++) {
+  //     for (size_t j = 0; j < 4; j++) {
+  //       if (bruteCurNodeSubCount[i][j] != dynamicCurNodeSubCount[i][j]) {
+  //         logging::err("At node {}, brute force sub count do not match dynamic sub count for index {}, {}, brute: {}, dynamic: {}", node->identifier, i, j, bruteCurNodeSubCount[i][j], dynamicCurNodeSubCount[i][j]);
+  //         std::exit(1);
+  //       } else {
+  //         logging::info("At node {}, brute force sub count match dynamic sub count for index {}, {}, brute: {}, dynamic: {}", node->identifier, i, j, bruteCurNodeSubCount[i][j], dynamicCurNodeSubCount[i][j]);
+  //       }
+  //     }
+  //   }
+  //   logging::info("Brute force and dynamic nuc counts match for node {}", node->identifier);
+  // }
+
+  // update oldBlockExists and oldBlockStrand
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    oldBlockExists[blockId] = newExists;
+    oldBlockStrand[blockId] = newStrand;
+  }
+
+  for (panmanUtils::Node *child : node->children) {
+    buildMutationMatricesHelper_test(mutMat, tree, child, blockSequences, oldBlockExists, oldBlockStrand, gapMap, invertedBlocks, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount, globalCoords, blockRanges);
+  }
+
+  // undo gapMap updates
+  for (auto it = gapRunBacktracks.rbegin(); it != gapRunBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
+
+  // undo base counts
+  for (int i = 0; i < 4; i++) {
+    parentBaseCounts[i] += parentBaseCountsBacktrack[i];
+  }
+
+  undoMutations(blockSequences, oldBlockExists, oldBlockStrand, invertedBlocks, blockMutationRecord, nucMutationRecord, invertedBlocksBacktracks);
+}
+
+void genotyping::fillMutationMatricesFromTree_test(
+  mutationMatrices &mutMat, 
+  panmanUtils::Tree *tree, 
+  const std::string& path
+) {
+  
+  if (!tree || !tree->root) {
+    throw std::invalid_argument("Invalid tree or root node");
+  }
+  
+  logging::info("Building mutation matrices from tree...");
+
+  panmapUtils::BlockSequences blockSequences(tree);
+  std::vector<bool> oldBlockExists(blockSequences.numBlocks(), false);
+  std::vector<bool> oldBlockStrand(blockSequences.numBlocks(), true);
+
+  // initialize globalCoords to converted 3d to 1d coordinates -> for general coordinate conversion
+  panmapUtils::GlobalCoords globalCoords(blockSequences.sequence);
+
+  // initialize gapMap to be all gaps -> for counting indels
+  std::map<int64_t, int64_t> gapMap{{0, globalCoords.lastScalarCoord}};
+  std::unordered_set<int64_t> invertedBlocks;
+
+  // block ranges -> for counting indels
+  std::vector<std::pair<int64_t, int64_t>> blockRanges;
+  for (int64_t i = 0; i < blockSequences.numBlocks(); i++) {
+    int64_t start = globalCoords.getBlockStartScalar(i);
+    int64_t end = globalCoords.getBlockEndScalar(i);
+    // sanity check
+    if (i > 1 && start != blockRanges.back().second + 1) {
+      logging::err("blockRanges not continuous");
+      std::exit(1);
+    }
+    blockRanges.push_back({start, end});
+  }
+
+  std::vector<int64_t> parentBaseCounts(4);
+  std::vector<int64_t> totalBaseCounts(4);
+  std::vector<std::vector<int64_t>> subCount(4, std::vector<int64_t>(4, 0));
+  std::unordered_map<int64_t, int64_t> insCount;
+  std::unordered_map<int64_t, int64_t> delCount;
+
+  logging::info("Initializing complete... starting to fill mutation matrices");
+  buildMutationMatricesHelper_test(mutMat, tree, tree->root, blockSequences, oldBlockExists, oldBlockStrand, gapMap, invertedBlocks, parentBaseCounts, totalBaseCounts, subCount, insCount, delCount, globalCoords, blockRanges);
+
+  logging::info("Mutation matrices successfully filled from tree");
+
+  int64_t totalNucCounts = 0;
+  int64_t totalInsCounts = 0;
+  int64_t totalDelCounts = 0;
+  for (const auto& count : totalBaseCounts) totalNucCounts += count;
+  for (const auto& [size, count] : insCount) totalInsCounts += count;
+  for (const auto& [size, count] : delCount) totalDelCounts += count;
+  insCount[0] = totalNucCounts - totalInsCounts;
+  delCount[0] = totalNucCounts - totalDelCounts;
+
+  for (int i = 0; i < 4; ++i) {
+    mutMat.submat[i][i] = static_cast<double>(totalBaseCounts[i]);
+  }
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      if (i != j) {
+        mutMat.submat[i][j] = static_cast<double>(subCount[i][j]);
+        mutMat.submat[i][i] -= mutMat.submat[i][j];
+      }
+    }
+  }
+
+  for (const auto& [size, count] : insCount) {
+    mutMat.insmat[size] = static_cast<double>(count);
+  }
+  for (const auto& [size, count] : delCount) {
+    mutMat.delmat[size] = static_cast<double>(count);
+  }
+
+  // insertion
+  for (auto [size, count] : mutMat.insmat) {
+    mutMat.insmat[size] = -10 * log10f(count / static_cast<double>(totalNucCounts));
+  }
+  // deletion
+  for (auto [size, count] : mutMat.delmat) {
+    mutMat.delmat[size] = -10 * log10f(count / static_cast<double>(totalNucCounts));
+  }
+
+  // substitution
+  for (auto i = 0; i < 4; i++) {
+    for (auto j = 0; j < 4; j++) {
+      mutMat.submat[i][j] = -10 * log10f(mutMat.submat[i][j] / static_cast<double>(totalBaseCounts[i]));
+    }
+  }
+  mutMat.filled = true;
+
+  std::ofstream outFile(path);
+  for (auto i = 0; i < 4; i++) {
+    for (auto j = 0; j < 4; j++) {
+      outFile << mutMat.submat[i][j] << " ";
+    }
+    outFile << "\n";
+  }
+
+  std::vector<std::pair<int64_t, double>> insmat_sorted(mutMat.insmat.begin(), mutMat.insmat.end());
+  std::sort(insmat_sorted.begin(), insmat_sorted.end(), [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+    return a.first < b.first;
+  });
+  for (const auto& [size, logProb] : insmat_sorted) {
+    outFile << size << ":" << logProb << " ";
+  }
+  outFile << "\n";
+
+  std::vector<std::pair<int64_t, double>> delmat_sorted(mutMat.delmat.begin(), mutMat.delmat.end());
+  std::sort(delmat_sorted.begin(), delmat_sorted.end(), [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
+    return a.first < b.first;
+  });
+  for (const auto& [size, logProb] : delmat_sorted) {
+    outFile << size << ":" << logProb << " ";
+  }
+  outFile << "\n";
+  outFile.close();
+  logging::info("Mutation matrices successfully written to file: {}", path);
+}
+
+enum variationType { SNP = 1, INS = 2, DEL = 4 };
+
+double phred_complement(double q) {
+  double p = pow(10, (-q / 10));
+  return -10 * log10(1 - p);
+}
+
+double third_phred(double q) {
+  double p = pow(10, (-q / 10)) / 3.0;
+  return -10 * log10(p);
+}
+
+void to_upper(string &str) {
+  for (char &c : str) {
+    c = toupper(c);
+  }
 }
 
 static char getNucleotideFromIndex(int index) {
