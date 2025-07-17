@@ -1309,6 +1309,9 @@ int main(int argc, char *argv[]) {
           logging::info("Best match sequence built for {} with length {}", result.bestJaccardPresenceNode->identifier, bestMatchSequence.size());
 
           // Since minimap doesn't suppoer k > 28, will set to k = 19 s = 10 when k > 28
+          if (k > 28) {
+            logging::warn("k > 28, setting k = 19, s = 10, t = 0, open = {} for minimap alignment", open);
+          }
           int k_minimap = k > 28 ? 19 : k;
           int s_minimap = k > 28 ? 10 : s;
           int t_minimap = k > 28 ? 0 : t;
@@ -1318,25 +1321,7 @@ int main(int argc, char *argv[]) {
 
 
           // need to rebuild readSeeds with the new syncmer parameters
-          readSeeds.clear();
-          readSeeds.resize(readSequences.size());
-          for (int i = 0; i < readSequences.size(); i++) {
-            std::vector<seeding::seed_t> curReadSeeds;
-            const std::string &readSeq = readSequences[i];
-            for (const auto &[kmerHash, isReverse, isSyncmer, startPos] : seeding::rollingSyncmers(readSeq, k_minimap, s_minimap, open_minimap, t_minimap, false)) {
-                if (!isSyncmer) continue;
-                curReadSeeds.emplace_back(
-                  seeding::seed_t{
-                    kmerHash,                       // hash
-                    static_cast<int64_t>(startPos), // pos 
-                    -1,                             // idx
-                    isReverse,                      // reversed
-                    0,                              // rpos
-                    static_cast<int64_t>(startPos + k_minimap - 1) // endPos
-                  });
-              }
-            readSeeds[i] = std::move(curReadSeeds);
-          }
+          seeding::recalculateReadSeeds(k_minimap, s_minimap, open_minimap, t_minimap, readSequences, readSeeds);
 
           // going to build ref seed from scratch for now until Alex corrects k-mer end positions.
           std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> seedToRefPositions;
