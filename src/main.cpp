@@ -46,6 +46,8 @@
 #include "panman.hpp"
 #include "placement.hpp"
 #include "timing.hpp"
+#include "seeding.hpp"
+#include "panmap_utils.hpp"
 
 using namespace logging;
 namespace po = boost::program_options;
@@ -1224,6 +1226,9 @@ int main(int argc, char *argv[]) {
         
         // Let's check for critical fields
         uint32_t k = index_input.getK();
+        uint32_t s = index_input.getS();
+        bool open = index_input.getOpen();
+        uint32_t t = index_input.getT();
         size_t nodeCount = index_input.getPerNodeSeedMutations().size();
         logging::debug("DEBUG-PLACE: Index contains k={}, nodes={}", k, nodeCount);
         
@@ -1276,12 +1281,17 @@ int main(int argc, char *argv[]) {
             return 0;
           }
 
-          // Initialize placement variables
+          // Initialize placement variables and read information needed for alignment
           placement::PlacementResult result;
+          std::vector<std::vector<seeding::seed_t>> readSeeds;
+          std::vector<std::string> readSequences;
+          std::vector<std::string> readNames;
+          std::vector<std::string> readQuals;
 
           std::string placementFileName = prefix + ".placement.tsv";
           // Perform placement - keep inMessage alive during the whole process
           placement::place(result, &T, index_input, reads1, reads2,
+                          readSeeds, readSequences, readNames, readQuals,
                          placementFileName, effective_index_path, debug_specific_node_id);
 
 
@@ -1293,7 +1303,69 @@ int main(int argc, char *argv[]) {
             
             TODO: I'm not sure k-mer end positions are correct yet
           */
+          
 
+          std::string bestMatchSequence = panmapUtils::getStringFromReference(&T, result.bestJaccardPresenceNode->identifier, false);
+          logging::info("Best match sequence built for {} with length {}", result.bestJaccardPresenceNode->identifier, bestMatchSequence.size());
+
+          // Since minimap doesn't suppoer k > 28, will set to k = 19 s = 10 when k > 28
+          int k_minimap = k > 28 ? 19 : k;
+          int s_minimap = k > 28 ? 10 : s;
+          int t_minimap = k > 28 ? 0 : t;
+          bool open_minimap = open;
+
+          logging::info("k_minimap: {}, s_minimap: {}, t_minimap: {}, open_minimap: {}", k_minimap, s_minimap, t_minimap, open_minimap);
+
+
+          // need to rebuild readSeeds with the new syncmer parameters
+          readSeeds.clear();
+          readSeeds.resize(readSequences.size());
+          for (int i = 0; i < readSequences.size(); i++) {
+            std::vector<seeding::seed_t> curReadSeeds;
+            const std::string &readSeq = readSequences[i];
+            for (const auto &[kmerHash, isReverse, isSyncmer, startPos] : seeding::rollingSyncmers(readSeq, k_minimap, s_minimap, open_minimap, t_minimap, false)) {
+                if (!isSyncmer) continue;
+                curReadSeeds.emplace_back(
+                  seeding::seed_t{
+                    kmerHash,                       // hash
+                    static_cast<int64_t>(startPos), // pos 
+                    -1,                             // idx
+                    isReverse,                      // reversed
+                    0,                              // rpos
+                    static_cast<int64_t>(startPos + k_minimap - 1) // endPos
+                  });
+              }
+            readSeeds[i] = std::move(curReadSeeds);
+          }
+
+          // going to build ref seed from scratch for now until Alex corrects k-mer end positions.
+          std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> seedToRefPositions;
+          for (const auto &[kmerHash, isReverse, isSyncmer, startPos] : seeding::rollingSyncmers(bestMatchSequence, k_minimap, s_minimap, open_minimap, t_minimap, false)) {
+            if (!isSyncmer) {
+              continue;
+            }
+            if (seedToRefPositions.find(kmerHash) == seedToRefPositions.end()) {
+              seedToRefPositions[kmerHash] = std::make_pair(std::vector<uint32_t>(), std::vector<uint32_t>());
+            }
+            if (isReverse) {
+              seedToRefPositions[kmerHash].second.push_back(startPos);
+            } else {
+              seedToRefPositions[kmerHash].first.push_back(startPos);
+            }
+          }
+
+          bool pairedEndReads = reads1.size() > 0 && reads2.size() > 0;
+          std::vector<char *> samAlignments;
+          std::string samHeader;
+          createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, k_minimap, pairedEndReads, samAlignments, samHeader);
+
+          sam_hdr_t *header;
+          bam1_t **bamRecords;
+          createBam(samAlignments, samHeader, bamFileName, header, bamRecords);
+
+          createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName);
+
+          createVcfWithMutationMatrices(prefix, mpileupFileName, mutMat, vcfFileName, 0.0011);
 
           std::string placementSummaryFileName = prefix + ".placement.summary.md";
           placement::dumpPlacementSummary(result, placementSummaryFileName);

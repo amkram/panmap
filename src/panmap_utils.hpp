@@ -1,9 +1,25 @@
 #pragma once
 
 #include "panmanUtils.hpp"
+#include "logging.hpp"
 #include <string>
 
 namespace panmapUtils {
+
+void getSequenceFromReference(
+  panmanUtils::Tree* tree,
+  std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
+  std::vector<bool>& blockExists,
+  std::vector<bool>& blockStrand,
+  std::unordered_map<int, int>& blockLengths,
+  std::string reference
+);
+
+std::string getStringFromReference(
+  panmanUtils::Tree* tree,
+  std::string reference,
+  bool aligned
+);
 
 struct Coordinate {
     int32_t nucPosition;
@@ -503,4 +519,6 @@ struct GlobalCoords {
 
 
 };
+
+
 }
