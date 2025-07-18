@@ -1308,24 +1308,26 @@ int main(int argc, char *argv[]) {
           std::string bestMatchSequence = panmapUtils::getStringFromReference(&T, result.bestJaccardPresenceNode->identifier, false);
           logging::info("Best match sequence built for {} with length {}", result.bestJaccardPresenceNode->identifier, bestMatchSequence.size());
 
-          // Since minimap doesn't suppoer k > 28, will set to k = 19 s = 10 when k > 28
-          if (k > 28) {
+
+          
+          std::vector<std::tuple<size_t, bool, bool, int64_t>> refSyncmers;
+          std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> seedToRefPositions;
+          bool shortenSyncmers = false;
+          
+          if (k > 28 && !shortenSyncmers) {
             logging::warn("k > 28, setting k = 19, s = 10, t = 0, open = {} for minimap alignment", open);
+            int k_minimap = 28;
+            int s_minimap = 15;
+            bool open_minimap = open;
+            int t_minimap = 0;
+            seeding::recalculateReadSeeds(k_minimap, s_minimap, open_minimap, t_minimap, readSequences, readSeeds);
+            refSyncmers = seeding::rollingSyncmers(bestMatchSequence, k_minimap, s_minimap, open_minimap, t_minimap, false);
+          } else {
+            refSyncmers = seeding::rollingSyncmers(bestMatchSequence, k, s, open, t, false);
           }
-          int k_minimap = k > 28 ? 19 : k;
-          int s_minimap = k > 28 ? 10 : s;
-          int t_minimap = k > 28 ? 0 : t;
-          bool open_minimap = open;
-
-          logging::info("k_minimap: {}, s_minimap: {}, t_minimap: {}, open_minimap: {}", k_minimap, s_minimap, t_minimap, open_minimap);
-
-
-          // need to rebuild readSeeds with the new syncmer parameters
-          seeding::recalculateReadSeeds(k_minimap, s_minimap, open_minimap, t_minimap, readSequences, readSeeds);
 
           // going to build ref seed from scratch for now until Alex corrects k-mer end positions.
-          std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> seedToRefPositions;
-          for (const auto &[kmerHash, isReverse, isSyncmer, startPos] : seeding::rollingSyncmers(bestMatchSequence, k_minimap, s_minimap, open_minimap, t_minimap, false)) {
+          for (const auto &[kmerHash, isReverse, isSyncmer, startPos] : refSyncmers) {
             if (!isSyncmer) {
               continue;
             }
@@ -1342,7 +1344,15 @@ int main(int argc, char *argv[]) {
           bool pairedEndReads = reads1.size() > 0 && reads2.size() > 0;
           std::vector<char *> samAlignments;
           std::string samHeader;
-          createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, k_minimap, pairedEndReads, samAlignments, samHeader);
+          if (k > 28) {
+            if (shortenSyncmers) {
+              createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, 28, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
+            } else {
+              createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, 19, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
+            }
+          } else {
+            createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, k, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
+          }
 
           sam_hdr_t *header;
           bam1_t **bamRecords;
