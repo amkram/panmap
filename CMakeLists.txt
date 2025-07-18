@@ -136,13 +136,34 @@ add_custom_command(
     VERBATIM
 )
 
+
+set(MGSR_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/mgsr_index.capnp")
+set(MGSR_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+set(MGSR_CAPNP_GEN_CPP "${MGSR_CAPNP_GEN_DIR}/mgsr_index.capnp.c++")
+set(MGSR_CAPNP_GEN_H "${MGSR_CAPNP_GEN_DIR}/mgsr_index.capnp.h")
+# Custom command to generate CapnProto files
+add_custom_command(
+    OUTPUT ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
+    COMMAND ${CAPNP_EXECUTABLE}
+        compile
+        -o${CAPNPC_CXX_EXECUTABLE}
+        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+        ${MGSR_CAPNP_SRC_FILE}
+    DEPENDS ${MGSR_CAPNP_SRC_FILE} capnp_tools
+    COMMENT "Generating C++ files from mgsr_index.capnp"
+    VERBATIM
+)
+
 # Set variables to point to the generated files
 set(CAPNP_SRCS ${CAPNP_GEN_CPP})
 set(CAPNP_HDRS ${CAPNP_GEN_H})
+set(MGSR_CAPNP_SRCS ${MGSR_CAPNP_GEN_CPP})
+set(MGSR_CAPNP_HDRS ${MGSR_CAPNP_GEN_H})
 
 # Create a target that depends on the generated files
 add_custom_target(index_capnp_generator ALL
     DEPENDS ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
+    DEPENDS ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
 )
 
 # Create a simplified version of the capnp_generate_cpp macro
@@ -533,7 +554,9 @@ target_compile_options(bcftools PRIVATE -fPIC)
 # Define panmap executable sources using the correct list
 set(PANMAP_SOURCES_MAIN
     src/main.cpp
+    src/mgsr.cpp
     src/conversion.cpp
+    src/panmap_utils.cpp
     src/genotyping.cpp
     src/gap_map.cpp
     src/indexing.cpp
@@ -555,7 +578,7 @@ add_executable(panmap ${PANMAP_SOURCES_MAIN})
 add_dependencies(panmap build-deps index_capnp_generator tbb_build)
 
 # Add generated sources to panmap target
-  target_sources(panmap PRIVATE ${CAPNP_SRCS})
+  target_sources(panmap PRIVATE ${CAPNP_SRCS} ${MGSR_CAPNP_SRCS})
 
 # Add include directories
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
