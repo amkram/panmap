@@ -13,14 +13,16 @@ extern "C" {
 void addSeeds(std::vector<seeding::seed_t> &fwdmatchingSeeds,
               std::vector<seeding::seed_t> &bwdmatchingSeeds,
               const std::vector<uint32_t> &positions,
-              const seeding::seed_t &curSeed, bool reverseCondition, int k,
+              const seeding::seed_t &curSeed,
+              bool reverseCondition,
+              int k,
+              bool shortenSyncmers,
               int readlen) {
   for (uint32_t rpos : positions) {
-    seeding::seed_t thisSeed;
-    thisSeed.reversed = curSeed.reversed == reverseCondition;
-    thisSeed.pos = curSeed.pos;
-    thisSeed.hash = curSeed.hash;
-    thisSeed.endPos = (thisSeed.reversed) ? readlen - curSeed.pos + k - 2 : curSeed.endPos;
+    seeding::seed_t thisSeed = curSeed;
+    thisSeed.reversed = thisSeed.reversed == reverseCondition;
+    thisSeed.endPos = thisSeed.pos + k - 1;
+    thisSeed.endPos = (thisSeed.reversed) ? readlen - thisSeed.pos + k - 2 : thisSeed.endPos;
 
     thisSeed.rpos = rpos;
 
@@ -36,16 +38,17 @@ void addSeeds(std::vector<seeding::seed_t> &fwdmatchingSeeds,
 void createSam(
   std::vector<std::vector<seeding::seed_t>> &readSeeds,
   std::vector<std::string> &readSequences,
-  std::vector<std::string> &readQuals, std::vector<std::string> &readNames,
+  std::vector<std::string> &readQuals,
+  std::vector<std::string> &readNames,
   std::string &bestMatchSequence,
   std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions,
   std::string &samFileName,
   int k,
+  bool shortenSyncmers,
   bool pairedEndReads,
   std::vector<char *> &samAlignments,
   std::string &samHeader
 )   {
-
   for (size_t i = 0; i < readSequences.size(); ++i) {
     std::vector<seeding::seed_t>& curReadSeeds = readSeeds[i];
     std::vector<seeding::seed_t> fwdMatchingSeeds;
@@ -54,8 +57,8 @@ void createSam(
     for (size_t j = 0; j < curReadSeeds.size(); ++j) {
       if (seedToRefPositions.find(curReadSeeds[j].hash) == seedToRefPositions.end()) continue;
       const auto& [forwardSeedToRefPositions, reverseSeedToRefPositions] = seedToRefPositions[curReadSeeds[j].hash];
-      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, forwardSeedToRefPositions, curReadSeeds[j], true, k , readSequences[i].size());
-      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, reverseSeedToRefPositions, curReadSeeds[j], false, k, readSequences[i].size());
+      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, forwardSeedToRefPositions, curReadSeeds[j], true, k, shortenSyncmers, readSequences[i].size());
+      addSeeds(fwdMatchingSeeds, bwdMatchingSeeds, reverseSeedToRefPositions, curReadSeeds[j], false, k, shortenSyncmers, readSequences[i].size());
     }
 
     std::reverse(bwdMatchingSeeds.begin(), bwdMatchingSeeds.end());

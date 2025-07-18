@@ -515,9 +515,6 @@ struct GlobalCoords {
     return Coordinate(std::get<1>(tupleCoord), std::get<2>(tupleCoord), std::get<0>(tupleCoord), coord.secondaryBlockId);
   }
 
-
-
-
 };
 
 
