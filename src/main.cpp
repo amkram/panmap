@@ -41,6 +41,7 @@
 
 #include "genotyping.hpp"
 #include "index.capnp.h"
+#include "mgsr_index.capnp.h"
 #include "indexing.hpp"
 #include "logging.hpp"
 #include "panman.hpp"
