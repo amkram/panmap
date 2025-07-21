@@ -159,12 +159,13 @@ void getSequenceFromReference(
   }
 }
 
-std::string getStringFromReference(panmanUtils::Tree* tree, std::string reference, bool aligned) {
-  std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
-  std::unordered_map<int, int> blockLengths;
-  std::vector<bool> blockExists;
-  std::vector<bool> blockStrand;
-  getSequenceFromReference(tree, sequence, blockExists, blockStrand, blockLengths, reference);
+std::string getStringFromSequence(
+  const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
+  const std::unordered_map<int, int>& blockLengths,
+  const std::vector<bool>& blockExists,
+  const std::vector<bool>& blockStrand,
+  bool aligned
+) {
   std::string seqString;
   for (size_t i = 0; i < blockExists.size(); i++) {
     if (blockExists[i]) {
@@ -205,9 +206,19 @@ std::string getStringFromReference(panmanUtils::Tree* tree, std::string referenc
         }
       }
     } else if (aligned){
-      seqString.append(blockLengths[i], '-');
+      seqString.append(blockLengths.at(i), '-');
     }
   }
+  return seqString;
+}
+
+std::string getStringFromReference(panmanUtils::Tree* tree, std::string reference, bool aligned) {
+  std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
+  std::unordered_map<int, int> blockLengths;
+  std::vector<bool> blockExists;
+  std::vector<bool> blockStrand;
+  getSequenceFromReference(tree, sequence, blockExists, blockStrand, blockLengths, reference);
+  std::string seqString = getStringFromSequence(sequence, blockLengths, blockExists, blockStrand, aligned);
   return seqString;
 }
 

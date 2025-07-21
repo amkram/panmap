@@ -1003,11 +1003,11 @@ void buildMutationMatricesHelper_test(
   const panmapUtils::GlobalCoords &globalCoords,
   const std::vector<std::pair<int64_t, int64_t>> &blockRanges
 ) {
-  // for checking with brute force. DELETE THESE AFTER CONFIRMING EVERYTHING WORKS CORRECTLY!!!!!! ----------------------------
-  panmapUtils::BlockSequences oldBlockSequences = blockSequences;
-  std::vector<int64_t> oldParentBaseCounts = parentBaseCounts;
-  std::vector<std::vector<int64_t>> oldSubCount = subCount;
-  // ------------------------------------------------------------------------------------------------
+  // // for checking with brute force. DELETE THESE AFTER CONFIRMING EVERYTHING WORKS CORRECTLY!!!!!! ----------------------------
+  // panmapUtils::BlockSequences oldBlockSequences = blockSequences;
+  // std::vector<int64_t> oldParentBaseCounts = parentBaseCounts;
+  // std::vector<std::vector<int64_t>> oldSubCount = subCount;
+  // // ------------------------------------------------------------------------------------------------
 
 
   std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> blockMutationRecord;

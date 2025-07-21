@@ -6,6 +6,7 @@
 
 namespace panmapUtils {
 
+
 void getSequenceFromReference(
   panmanUtils::Tree* tree,
   std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
@@ -13,6 +14,13 @@ void getSequenceFromReference(
   std::vector<bool>& blockStrand,
   std::unordered_map<int, int>& blockLengths,
   std::string reference
+);
+
+std::string getStringFromSequence(
+  const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
+  const std::vector<bool>& blockExists,
+  const std::vector<bool>& blockStrand,
+  bool aligned
 );
 
 std::string getStringFromReference(
