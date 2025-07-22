@@ -8,10 +8,12 @@ static void compareBruteForce(
   panmanUtils::Node *node,
   const panmapUtils::BlockSequences& blockSequences,
   const panmapUtils::GlobalCoords& globalCoords,
+  const std::map<uint64_t, uint64_t>& gapMap,
   const std::map<uint64_t, uint64_t>& degapCoordIndex,
   const std::map<uint64_t, uint64_t>& regapCoordIndex
 ) {
   bool printCorrect = false;
+  std::string nodeToDebug = "KJ627733.1";
   std::cout << "Checking " << node->identifier << " states with brute force..." << std::endl;
 
   // check sequence object
@@ -21,6 +23,54 @@ static void compareBruteForce(
   std::unordered_map<int, int> blockLengthsBruteForce;
   panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
 
+  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, true);
+  std::vector<std::pair<uint64_t, uint64_t>> gapMapBruteForce;
+  for (uint64_t i = 0; i < gappedSequenceBruteForce.size(); i++) {
+    char nuc = gappedSequenceBruteForce[i];
+    if (nuc == '-') {
+      if (!gapMapBruteForce.empty() && gapMapBruteForce.back().second + 1 == i) {
+        ++gapMapBruteForce.back().second;
+      } else {
+        gapMapBruteForce.emplace_back(i, i);
+      }
+    }
+  }
+  
+  if (gapMapBruteForce.size() != gapMap.size()) {
+    std::cout << "Gap map size mismatch: dynamic " << gapMap.size() << " != brute force " << gapMapBruteForce.size() << std::endl;
+    std::cout << "Dynamic gap map:";
+    for (const auto& [a, b] : gapMap) {
+      std::cout << "(" << a << "," << b << ") ";
+    }
+    std::cout << std::endl;
+    std::cout << "Brute force gap map:";
+    for (const auto& [a, b] : gapMapBruteForce) {
+      std::cout << "(" << a << "," << b << ") ";
+    }
+    std::cout << std::endl;
+    std::exit(1);
+  }
+
+  size_t gapMapIndex = 0;
+  for (const auto& [a, b] : gapMap) {
+    if (a == gapMapBruteForce[gapMapIndex].first && b == gapMapBruteForce[gapMapIndex].second) {
+      ++gapMapIndex;
+    } else {
+      std::cout << "Gap map mismatch at gap map index " << gapMapIndex << " dynamic " << a << " " << b << " != brute force " << gapMapBruteForce[gapMapIndex].first << " " << gapMapBruteForce[gapMapIndex].second << std::endl;
+      std::cout << "Dynamic gap map:";
+      for (const auto& [a, b] : gapMap) {
+        std::cout << "(" << a << "," << b << ") ";
+      }
+      std::cout << std::endl;
+      std::cout << "Brute force gap map:";
+      for (const auto& [a, b] : gapMapBruteForce) {
+        std::cout << "(" << a << "," << b << ") ";
+      }
+      std::cout << std::endl;
+      std::exit(1);
+    }
+  }
+
 
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequenceDynamic = blockSequences.sequence;
   const std::vector<bool>& blockExistsDynamic = blockSequences.blockExists;
@@ -29,7 +79,7 @@ static void compareBruteForce(
     std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic.size() << " != brute force " << sequenceBruteForce.size() << std::endl;
     std::exit(1);
   } else {
-    if (printCorrect) std::cout << "\tIdentical sequence size... passed" << std::endl;
+    if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical sequence size... passed: " << sequenceDynamic.size() << " == " << sequenceBruteForce.size() << std::endl;
   }
 
   uint64_t localScalarCoordBruteForce = 0;
@@ -44,76 +94,141 @@ static void compareBruteForce(
       std::cerr << "Global scalar coord block " << blockId << " start mismatch: dynamic " << globalScalarCoord << " != brute force " << globalCoords.getBlockStartScalar(blockId) << std::endl;
       std::exit(1);
     } else {
-      if (printCorrect) std::cout << "\tIdentical block " << blockId << " start scalar coord... passed" << std::endl;
+      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " start scalar coord... passed: " << globalScalarCoord << " == " << globalCoords.getBlockStartScalar(blockId) << std::endl;
     }
 
     if (blockSequences.blockExists[blockId] != blockExistsBruteForce[blockId]) {
       std::cerr << "Block " << blockId << " exists state mismatch: dynamic " << blockSequences.blockExists[blockId] << " != brute force " << blockExistsBruteForce[blockId] << std::endl;
       std::exit(1);
     } else {
-      if (printCorrect) std::cout << "\tIdentical block " << blockId << " exists state... passed" << std::endl;
+      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " exists state... passed: " << blockSequences.blockExists[blockId] << " == " << blockExistsBruteForce[blockId] << std::endl;
     }
 
     if (blockSequences.blockStrand[blockId] != blockStrandBruteForce[blockId]) {
       std::cerr << "Block " << blockId << " strand state mismatch: dynamic " << blockSequences.blockStrand[blockId] << " != brute force " << blockStrandBruteForce[blockId] << std::endl;
       std::exit(1);
     } else {
-      if (printCorrect) std::cout << "\tIdentical block " << blockId << " strand state... passed" << std::endl;
+      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " strand state... passed: " << blockSequences.blockStrand[blockId] << " == " << blockStrandBruteForce[blockId] << std::endl;
     }
 
-    for (int i = 0; i < sequenceDynamic[blockId].size(); i++) {      
-      if (sequenceDynamic[blockId][i].second.size() != sequenceBruteForce[blockId][i].second.size()) {
-        std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic[blockId][i].second.size() << " != brute force " << sequenceBruteForce[blockId][i].second.size() << std::endl;
-        std::exit(1);
-      } else {
-        if (printCorrect) std::cout << "\tIdentical gap nuc size at (" << blockId << ", " << i << ")... passed" << std::endl;
-      }
-
-      for (int j = 0; j < sequenceDynamic[blockId][i].second.size(); j++) {
-        if (sequenceDynamic[blockId][i].second[j] != sequenceBruteForce[blockId][i].second[j]) {
-          std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", " << j << "): dynamic " << sequenceDynamic[blockId][i].second[j] << " != brute force " << sequenceBruteForce[blockId][i].second[j] << std::endl;
+    if (blockStrandDynamic[blockId]) {
+      for (int i = 0; i < sequenceDynamic[blockId].size(); i++) {      
+        if (sequenceDynamic[blockId][i].second.size() != sequenceBruteForce[blockId][i].second.size()) {
+          std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic[blockId][i].second.size() << " != brute force " << sequenceBruteForce[blockId][i].second.size() << std::endl;
           std::exit(1);
         } else {
-          if (printCorrect) std::cout << "\tIdentical gap nuc at (" << blockId << ", " << i << ", " << j << ")... passed" << std::endl;
+          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc size at (" << blockId << ", " << i << ")... passed: " << sequenceDynamic[blockId][i].second.size() << " == " << sequenceBruteForce[blockId][i].second.size() << std::endl;
         }
-
-        if (sequenceDynamic[blockId][i].second[j] != '-') {
-          if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
-            std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", " << j << ") | " << globalScalarCoord << ": dynamic " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != brute force " << localScalarCoordBruteForce << std::endl;
+  
+        for (int j = 0; j < sequenceDynamic[blockId][i].second.size(); j++) {
+          if (sequenceDynamic[blockId][i].second[j] != sequenceBruteForce[blockId][i].second[j]) {
+            std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", " << j << "): dynamic " << sequenceDynamic[blockId][i].second[j] << " != brute force " << sequenceBruteForce[blockId][i].second[j] << std::endl;
             std::exit(1);
           } else {
-            if (printCorrect) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", " << j << ")... passed" << std::endl;
+            if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc at (" << blockId << ", " << i << ", " << j << ")... passed: " << sequenceDynamic[blockId][i].second[j] << " == " << sequenceBruteForce[blockId][i].second[j] << std::endl;
           }
-          ++localScalarCoordBruteForce;
+  
+          if (sequenceDynamic[blockId][i].second[j] != '-') {
+            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
+              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", " << j << ") and global scalar coord  " << globalScalarCoord << std::endl;
+              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].second[j] << " ?= " << sequenceBruteForce[blockId][i].second[j] << std::endl;
+              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
+              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
+              std::exit(1);
+            } else {
+              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", " << j << ")... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
+            }
+            ++localScalarCoordBruteForce;
+          }
+          ++globalScalarCoord;
         }
-        ++globalScalarCoord;
+  
+        if (sequenceDynamic[blockId][i].first != sequenceBruteForce[blockId][i].first) {
+          std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", -1): dynamic " << sequenceDynamic[blockId][i].first << " != brute force " << sequenceBruteForce[blockId][i].first << std::endl;
+          std::exit(1);
+        } else {
+          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical main nuc at (" << blockId << ", " << i << ", -1)... passed: " << sequenceDynamic[blockId][i].first << " == " << sequenceBruteForce[blockId][i].first << std::endl;
+        }
+  
+        if (sequenceDynamic[blockId][i].first != 'x') {
+          if (sequenceDynamic[blockId][i].first != '-') {
+            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
+              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", -1) and global scalar coord " << globalScalarCoord << std::endl;
+              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].first << " ?= " << sequenceBruteForce[blockId][i].first << std::endl;
+              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
+              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
+              std::exit(1);
+            } else {
+              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", -1)... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
+            }
+            ++localScalarCoordBruteForce;
+          }
+          ++globalScalarCoord;
+        }
       }
+    } else {
+      for (int i = sequenceDynamic[blockId].size() - 1; i >= 0; i--) {
+        if (sequenceDynamic[blockId][i].first != sequenceBruteForce[blockId][i].first) {
+          std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", -1): dynamic " << sequenceDynamic[blockId][i].first << " != brute force " << sequenceBruteForce[blockId][i].first << std::endl;
+          std::exit(1);
+        } else {
+          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical main nuc at (" << blockId << ", " << i << ", -1)... passed: " << sequenceDynamic[blockId][i].first << " == " << sequenceBruteForce[blockId][i].first << std::endl;
+        }
+  
+        if (sequenceDynamic[blockId][i].first != 'x') {
+          if (sequenceDynamic[blockId][i].first != '-') {
+            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
+              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", -1) and global scalar coord " << globalScalarCoord << std::endl;
+              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].first << " ?= " << sequenceBruteForce[blockId][i].first << std::endl;
+              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
+              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
+              std::exit(1);
+            } else {
+              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", -1)... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
+            }
+            ++localScalarCoordBruteForce;
+          }
+          ++globalScalarCoord;
+        }
 
-      if (sequenceDynamic[blockId][i].first != sequenceBruteForce[blockId][i].first) {
-        std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", -1): dynamic " << sequenceDynamic[blockId][i].first << " != brute force " << sequenceBruteForce[blockId][i].first << std::endl;
-        std::exit(1);
-      } else {
-        if (printCorrect) std::cout << "\tIdentical main nuc at (" << blockId << ", " << i << ", -1)... passed" << std::endl;
-      }
-
-      if (sequenceDynamic[blockId][i].first != 'x') {
-        if (sequenceDynamic[blockId][i].first != '-') {
-          if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
-            std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", -1) | " << globalScalarCoord << ": dynamic " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != brute force " << localScalarCoordBruteForce << std::endl;
+        if (sequenceDynamic[blockId][i].second.size() != sequenceBruteForce[blockId][i].second.size()) {
+          std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic[blockId][i].second.size() << " != brute force " << sequenceBruteForce[blockId][i].second.size() << std::endl;
+          std::exit(1);
+        } else {
+          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc size at (" << blockId << ", " << i << ")... passed: " << sequenceDynamic[blockId][i].second.size() << " == " << sequenceBruteForce[blockId][i].second.size() << std::endl;
+        }
+  
+        for (int j = sequenceDynamic[blockId][i].second.size() - 1; j >= 0; j--) {
+          if (sequenceDynamic[blockId][i].second[j] != sequenceBruteForce[blockId][i].second[j]) {
+            std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", " << j << "): dynamic " << sequenceDynamic[blockId][i].second[j] << " != brute force " << sequenceBruteForce[blockId][i].second[j] << std::endl;
             std::exit(1);
           } else {
-            if (printCorrect) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", -1)... passed" << std::endl;
+            if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc at (" << blockId << ", " << i << ", " << j << ")... passed: " << sequenceDynamic[blockId][i].second[j] << " == " << sequenceBruteForce[blockId][i].second[j] << std::endl;
           }
-          ++localScalarCoordBruteForce;
+  
+          if (sequenceDynamic[blockId][i].second[j] != '-') {
+            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
+              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", " << j << ") and global scalar coord " << globalScalarCoord << std::endl;
+              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].second[j] << " ?= " << sequenceBruteForce[blockId][i].second[j] << std::endl;
+              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
+              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
+              std::exit(1);
+            } else {
+              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", " << j << ")... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
+            }
+            ++localScalarCoordBruteForce;
+          }
+          ++globalScalarCoord;
         }
-        ++globalScalarCoord;
+
       }
     }
+
     if (globalScalarCoord - 1 != globalCoords.getBlockEndScalar(blockId)) {
       std::cerr << "Global scalar coord block " << blockId << " end mismatch: dynamic " << globalScalarCoord - 1 << " != brute force " << globalCoords.getBlockEndScalar(blockId) << std::endl;
       std::exit(1);
     } else {
-      if (printCorrect) std::cout << "\tIdentical block " << blockId << " end scalar coord... passed" << std::endl;
+      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " end scalar coord... passed: " << globalScalarCoord - 1 << " == " << globalCoords.getBlockEndScalar(blockId) << std::endl;
     }
   } 
 
@@ -136,7 +251,7 @@ static void applyMutations (
   std::vector<bool>& blockExists = blockSequences.blockExists;
   std::vector<bool>& blockStrand = blockSequences.blockStrand;
   std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
-
+  
   // process block mutations
   for (const auto& blockMutation : node->blockMutation) {
     int32_t blockId = blockMutation.primaryBlockId;
@@ -147,16 +262,12 @@ static void applyMutations (
     if (isInsertion) {
       blockExists[blockId] = true;
       blockStrand[blockId] = !isInversion;
-      if (isInversion) {
-        std::cout << "\t\t" << node->identifier << " inserted inversion block " << blockId << std::endl;
-      }
       if (!blockStrand[blockId]) {
         invertedBlocks.insert(blockId);
         invertedBlocksBacktracks.emplace_back(blockId, true);
       }
     } else if (isInversion) {
       blockStrand[blockId] = !blockStrand[blockId];
-      std::cout << "\t\t" << node->identifier << " inverted block " << blockId << " from " << oldStrand << " to " << blockStrand[blockId] << std::endl;
       if (!blockStrand[blockId]) {
         invertedBlocks.insert(blockId);
         invertedBlocksBacktracks.emplace_back(blockId, true);
@@ -447,6 +558,7 @@ void mgsr::updateGapMapStep(
 }
 
 void mgsr::updateGapMap(
+  panmanUtils::Node *node,
   std::map<uint64_t, uint64_t>& gapMap,
   const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
@@ -486,6 +598,12 @@ void mgsr::invertGapMap(
   std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> blockRuns;
   if (!leftItExists || (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
     // start outside of a range
+
+    if (end < rightIt->first) {
+      // completely completely between two ranges... all nucs are on.. do nothing
+      return;
+    }
+
     auto curIt = rightIt;
     blockRuns.emplace_back(false, std::make_pair(start, curIt->first - 1));
     if (end <= curIt->second) {
@@ -587,7 +705,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 
   applyMutations(node, blockSequences, invertedBlocks, globalCoords, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, blockExistsDelayed, blockStrandDelayed);
   
-  updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
+  updateGapMap(node, gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
 
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     if (oldExists && !newExists) {
@@ -610,9 +728,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
             ++curNucRange.second;
           } else {
             if (curNucRange.first != -1) {
-              if (node->identifier == "MG027860.1" && blockId == 1459) {
-                std::cout << "At node " << node->identifier << " block " << blockId << " updating gap map from " << curNucRange.first << " to " << curNucRange.second << std::endl;
-              }
               updateGapMapStep(gapMap, {false, {(uint64_t)curNucRange.first, (uint64_t)curNucRange.second}}, gapRunBacktracks, gapMapUpdates, true);
             }
             curNucRange = {scalar, scalar};
@@ -623,26 +738,27 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
         coord = globalCoords.stepRight(coord);
       }
       if (curNucRange.first != -1) {
-        if (node->identifier == "MG027860.1" && blockId == 1459) {
-          std::cout << "At node " << node->identifier << " block " << blockId << " updating gap map from " << curNucRange.first << " to " << curNucRange.second << std::endl;
-        }
         updateGapMapStep(gapMap, {false, {(uint64_t)curNucRange.first, (uint64_t)curNucRange.second}}, gapRunBacktracks, gapMapUpdates, true);
       }
     }
   }
 
-  for (const auto& blockId : invertedBlocks) {
+  std::vector<uint64_t> invertedBlocksVec(invertedBlocks.begin(), invertedBlocks.end());
+  std::sort(invertedBlocksVec.begin(), invertedBlocksVec.end());
+  for (const auto& blockId : invertedBlocksVec) {
     uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
     uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
-    if (node->identifier == "MG027860.1" && blockId == 1459) {
-      std::cout << "At node " << node->identifier << " block " << blockId << " inverting gap map from " << beg << " to " << end << std::endl;
-    }
+
     invertGapMap(gapMap, {beg, end}, gapRunBlocksBacktracks, gapMapUpdates);
   }
 
   std::map<uint64_t, uint64_t> degapCoordIndex;
   std::map<uint64_t, uint64_t> regapCoordIndex;
   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, globalCoords);
+
+
+  // compare with brute force for debugging
+  // compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex);
 
   for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
     const auto& [del, range] = *it;
@@ -659,8 +775,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     blockStrandDelayed[blockId] = newStrand;
   }
 
-  // compare with brute force for debugging
-  compareBruteForce(T, node, blockSequences, globalCoords, degapCoordIndex, regapCoordIndex);
+
 
   // update delayed inverted blocks
   for (panmanUtils::Node *child : node->children) {
@@ -679,7 +794,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     blockSequences.setSequenceBase(coord, oldNuc);
   }
 
-  for (const auto& [del, blockId] : invertedBlocksBacktracks) {
+  for (const auto& [blockId, del] : invertedBlocksBacktracks) {
     if (del) {
       invertedBlocks.erase(blockId);
     } else {
@@ -708,5 +823,6 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   std::unordered_set<uint64_t> invertedBlocks;
 
   buildIndexHelper(T->root, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks);
+  std::cout << "Finished building index!" << std::endl;
 }
 

@@ -18,6 +18,7 @@ void getSequenceFromReference(
 
 std::string getStringFromSequence(
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
+  const std::unordered_map<int, int>& blockLengths,
   const std::vector<bool>& blockExists,
   const std::vector<bool>& blockStrand,
   bool aligned

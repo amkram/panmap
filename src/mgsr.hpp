@@ -19,6 +19,7 @@ void updateGapMapStep(
 );
 
 void updateGapMap(
+  panmanUtils::Node *node,
   std::map<uint64_t, uint64_t>& gapMap,
   const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
