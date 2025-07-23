@@ -241,6 +241,7 @@ static void applyMutations (
   panmapUtils::BlockSequences &blockSequences,
   std::unordered_set<uint64_t>& invertedBlocks,
   panmapUtils::GlobalCoords& globalCoords,
+  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
   std::vector<std::tuple<uint32_t, bool, bool, bool, bool>>& blockMutationRecord,
   std::vector<std::tuple<panmapUtils::Coordinate, char, char>>& nucMutationRecord,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapRunUpdates,
@@ -284,13 +285,24 @@ static void applyMutations (
       }
     }
     blockMutationRecord.emplace_back(std::make_tuple(blockId, oldExists, oldStrand, blockExists[blockId], blockStrand[blockId]));
+
+
+    if (blockStrand[blockId]) {
+      // forward strand
+      localMutationRanges.emplace_back(std::make_pair(globalCoords.getBlockStartCoord(blockId), globalCoords.getBlockEndCoord(blockId)));
+    } else {
+      // reversed strand
+      localMutationRanges.emplace_back(std::make_pair(globalCoords.getBlockEndCoord(blockId), globalCoords.getBlockStartCoord(blockId)));
+    }
   }
 
   // process nuc mutations
   for (const auto& nucMutation : node->nucMutation) {
     int length = nucMutation.mutInfo >> 4;
+    int blockId;
     for (int i = 0; i < length; i++) {
       panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
+      blockId = pos.primaryBlockId;
       char oldNuc = blockSequences.getSequenceBase(pos);
       int newNucCode = (nucMutation.nucs >> (4*(5-i))) & 0xF;
       char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
@@ -315,6 +327,49 @@ static void applyMutations (
             gapRunUpdates.emplace_back(false, std::make_pair(scalarCoord, scalarCoord));
           }
         }
+      }
+    }
+    if (blockExists[blockId] && oldBlockExists[blockId] && blockStrand[blockId] == oldBlockStrand[blockId]) {
+      if (blockStrand[blockId]) {
+        localMutationRanges.emplace_back(std::make_pair(panmapUtils::Coordinate(nucMutation, 0), panmapUtils::Coordinate(nucMutation, length - 1)));
+      } else {
+        localMutationRanges.emplace_back(std::make_pair(panmapUtils::Coordinate(nucMutation, length - 1), panmapUtils::Coordinate(nucMutation, 0)));
+      }
+    }
+  }
+
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    if (oldExists && !newExists) {
+      // on to off -> block range to all gaps
+      uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
+      uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
+      gapRunUpdates.emplace_back(true, std::make_pair(beg, end));
+    } else if (!oldExists && newExists) {
+      // off to on -> recompute across entire block
+      panmapUtils::Coordinate coord = globalCoords.getBlockStartCoord(blockId);
+      panmapUtils::Coordinate end = globalCoords.getBlockEndCoord(blockId);
+      std::pair<int64_t, int64_t> curNucRange = {-1, -1};
+      std::vector<std::pair<int64_t, int64_t>> nucRanges;
+      while (true) {
+        char nuc = blockSequences.getSequenceBase(coord);
+        nuc = nuc == 'x' ? '-' : nuc;
+        int64_t scalar = globalCoords.getScalarFromCoord(coord);
+        if (nuc != '-') {
+          if (curNucRange.first != -1 && curNucRange.second + 1 == scalar) {
+            ++curNucRange.second;
+          } else {
+            if (curNucRange.first != -1) {
+              gapRunUpdates.emplace_back(false, std::make_pair((uint64_t)curNucRange.first, (uint64_t)curNucRange.second));
+            }
+            curNucRange = {scalar, scalar};
+          }
+        }
+
+        if (coord == end) break;
+        coord = globalCoords.stepRightCoordinate(coord);
+      }
+      if (curNucRange.first != -1) {
+        gapRunUpdates.emplace_back(false, std::make_pair((uint64_t)curNucRange.first, (uint64_t)curNucRange.second));
       }
     }
   }
@@ -567,6 +622,7 @@ void mgsr::updateGapMap(
   for (const auto& update : updates) {
     updateGapMapStep(gapMap, update, backtrack, gapMapUpdates, true);
   }
+
 }
 
 void mgsr::invertGapMap(
@@ -683,6 +739,54 @@ void mgsr::makeCoordIndex(
   }
 }
 
+std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSyncmerRanges(
+  const panmapUtils::BlockSequences& blockSequences,
+  const panmapUtils::GlobalCoords& globalCoords,
+  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges
+) {
+  std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges;
+  if (localMutationRanges.empty()) {
+    return newSyncmerRanges;
+  }
+
+  const std::vector<bool>& blockExists = blockSequences.blockExists;
+  const std::vector<bool>& blockStrand = blockSequences.blockStrand;
+  const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
+
+  std::sort(localMutationRanges.begin(), localMutationRanges.end(), [&globalCoords, &blockStrand](const auto& a, const auto& b) {
+    return globalCoords.getScalarFromCoord(a.first, blockStrand[a.first.primaryBlockId]) < globalCoords.getScalarFromCoord(b.first, blockStrand[b.first.primaryBlockId]);
+  });
+
+  std::cout << "Before merging, size = " << localMutationRanges.size() << ": " << std::endl;
+  for (const auto& [beg, end] : localMutationRanges) {
+    std::cout << "(" << beg.primaryBlockId << ", " << beg.nucPosition << ", " << beg.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(beg, blockStrand[beg.primaryBlockId]) << " -> (" << end.primaryBlockId << ", " << end.nucPosition << ", " << end.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(end, blockStrand[end.primaryBlockId]) << std::endl;
+  }
+
+  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> mergedLocalMutationRanges{localMutationRanges.front()};
+  for (size_t i = 1; i < localMutationRanges.size(); ++i) {
+    const auto& [curBeg, curEnd] = mergedLocalMutationRanges.back();
+    const auto& [nextBeg, nextEnd] = localMutationRanges[i];
+    
+    // check if the current range and the next range are adjacent on their global scalar coordinates
+    if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId]) + 1 == globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
+      mergedLocalMutationRanges.back().second = nextEnd;
+    } else {
+      mergedLocalMutationRanges.emplace_back(nextBeg, nextEnd);
+    }
+  }
+
+  std::cout << "After merging, size = " << mergedLocalMutationRanges.size() << ": " << std::endl;
+  for (const auto& [beg, end] : mergedLocalMutationRanges) {
+    std::cout << "(" << beg.primaryBlockId << ", " << beg.nucPosition << ", " << beg.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(beg, blockStrand[beg.primaryBlockId]) << " -> (" << end.primaryBlockId << ", " << end.nucPosition << ", " << end.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(end, blockStrand[end.primaryBlockId]) << std::endl;
+  }
+
+
+
+
+
+  return newSyncmerRanges;
+}
+
 void mgsr::mgsrIndexBuilder::buildIndexHelper(
   panmanUtils::Node *node,
   panmapUtils::BlockSequences &blockSequences,
@@ -700,48 +804,15 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapUpdates;
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunUpdates;
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunBacktracks;
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunBlocksBacktracks;
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunBlockInversionBacktracks;
   std::vector<std::pair<uint64_t, bool>> invertedBlocksBacktracks;
 
-  applyMutations(node, blockSequences, invertedBlocks, globalCoords, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, blockExistsDelayed, blockStrandDelayed);
+  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> localMutationRanges;
+
+  applyMutations(node, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, blockExistsDelayed, blockStrandDelayed);
   
   updateGapMap(node, gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
-
-  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
-    if (oldExists && !newExists) {
-      // on to off -> block range to all gaps
-      uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
-      uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
-      updateGapMapStep(gapMap, {true, {beg, end}}, gapRunBacktracks, gapMapUpdates, true);
-    } else if (!oldExists && newExists) {
-      // off to on -> recompute across entire block
-      panmapUtils::Coordinate coord = globalCoords.getBlockStartCoord(blockId);
-      panmapUtils::Coordinate end = globalCoords.getBlockEndCoord(blockId);
-      std::pair<int64_t, int64_t> curNucRange = {-1, -1};
-      std::vector<std::pair<int64_t, int64_t>> nucRanges;
-      while (true) {
-        char nuc = blockSequences.getSequenceBase(coord);
-        nuc = nuc == 'x' ? '-' : nuc;
-        int64_t scalar = globalCoords.getScalarFromCoord(coord);
-        if (nuc != '-') {
-          if (curNucRange.first != -1 && curNucRange.second + 1 == scalar) {
-            ++curNucRange.second;
-          } else {
-            if (curNucRange.first != -1) {
-              updateGapMapStep(gapMap, {false, {(uint64_t)curNucRange.first, (uint64_t)curNucRange.second}}, gapRunBacktracks, gapMapUpdates, true);
-            }
-            curNucRange = {scalar, scalar};
-          }
-        }
-
-        if (coord == end) break;
-        coord = globalCoords.stepRight(coord);
-      }
-      if (curNucRange.first != -1) {
-        updateGapMapStep(gapMap, {false, {(uint64_t)curNucRange.first, (uint64_t)curNucRange.second}}, gapRunBacktracks, gapMapUpdates, true);
-      }
-    }
-  }
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunUpdates); // gapRunUpdates is no longer needed... clear memory
 
   std::vector<uint64_t> invertedBlocksVec(invertedBlocks.begin(), invertedBlocks.end());
   std::sort(invertedBlocksVec.begin(), invertedBlocksVec.end());
@@ -749,18 +820,16 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
     uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
 
-    invertGapMap(gapMap, {beg, end}, gapRunBlocksBacktracks, gapMapUpdates);
+    invertGapMap(gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
   std::map<uint64_t, uint64_t> degapCoordIndex;
   std::map<uint64_t, uint64_t> regapCoordIndex;
   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, globalCoords);
 
-
   // compare with brute force for debugging
   // compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex);
-
-  for (auto it = gapRunBlocksBacktracks.rbegin(); it != gapRunBlocksBacktracks.rend(); ++it) {
+  for (auto it = gapRunBlockInversionBacktracks.rbegin(); it != gapRunBlockInversionBacktracks.rend(); ++it) {
     const auto& [del, range] = *it;
     if (del) {
       gapMap.erase(range.first);
@@ -768,14 +837,24 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       gapMap[range.first] = range.second;
     }
   }
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunBlockInversionBacktracks); // gapRunBlockInversionBacktracks is no longer needed... clear memory
+
+  std::cout << "At node " << node->identifier << std::endl;
+  std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges = computeNewSyncmerRanges(blockSequences, globalCoords, localMutationRanges);
+
+
+
+
+  if (node->identifier == "KX894803.1") {
+    std::cout << "finished node " << node->identifier << std::endl;
+    std::exit(0);
+  }
 
   // update delayed block states
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     blockExistsDelayed[blockId] = newExists;
     blockStrandDelayed[blockId] = newStrand;
   }
-
-
 
   // update delayed inverted blocks
   for (panmanUtils::Node *child : node->children) {
@@ -815,6 +894,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 void mgsr::mgsrIndexBuilder::buildIndex() {
   panmapUtils::BlockSequences blockSequences(T);
   panmapUtils::GlobalCoords globalCoords(blockSequences.sequence);
+  refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
 
   std::vector<bool> blockExistsDelayed = blockSequences.blockExists;
   std::vector<bool> blockStrandDelayed = blockSequences.blockStrand;

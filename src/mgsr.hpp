@@ -5,6 +5,7 @@
 #include "capnp/serialize-packed.h"
 #include "mgsr_index.capnp.h"
 #include "panmap_utils.hpp"
+#include "seeding.hpp"
 
 
 namespace mgsr {
@@ -53,12 +54,13 @@ class mgsrIndexBuilder {
     // tree pointer
     panmanUtils::Tree *T;
 
-    // seedmers object
+
+    // syncmer and k-min-mer objects
+    std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
+    std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
 
     mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l) 
-      : outMessage(),
-        indexBuilder(outMessage.initRoot<MGSRIndex>()),
-        T(T)
+      : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
@@ -76,6 +78,12 @@ class mgsrIndexBuilder {
       panmapUtils::GlobalCoords &globalCoords,
       std::map<uint64_t, uint64_t> &gapMap,
       std::unordered_set<uint64_t> &invertedBlocks
+    );
+
+    std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRanges(
+      const panmapUtils::BlockSequences& blockSequences,
+      const panmapUtils::GlobalCoords& globalCoords,
+      std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges
     );
 };
 
