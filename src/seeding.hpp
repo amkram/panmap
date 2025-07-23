@@ -79,6 +79,12 @@ inline bool isReverseComplementPalindrome(std::string_view kmer) {
 namespace seeding
 {
 
+struct rsyncmer_t {
+  size_t hash;
+  uint64_t endPos;
+  bool isReverse;
+};
+
 // A syncmer seed, defined within a single sequence
 struct seed_t {
   // Core properties

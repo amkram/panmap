@@ -481,7 +481,7 @@ void clearBlockBaseCounts(
       break;
     }
 
-    coord = globalCoords.stepRight(coord);
+    coord = globalCoords.stepRightCoordinate(coord);
     if (coord == std::make_tuple(-1, -1, -1)) {
       logging::err("stepRight returned -1, -1, -1");
       std::exit(1);
@@ -1090,9 +1090,9 @@ void buildMutationMatricesHelper_test(
 
         if (coord == end) break;
         if (blockSequences.getBlockStrand(blockId)) {
-          coord = globalCoords.stepRight(coord);
+          coord = globalCoords.stepRightCoordinate(coord);
         } else {
-          coord = globalCoords.stepLeft(coord);
+          coord = globalCoords.stepLeftCoordinate(coord);
         }
       }
 
@@ -1129,7 +1129,7 @@ void buildMutationMatricesHelper_test(
         }
 
         if (coord == end) break;
-        coord = globalCoords.stepRight(coord);
+        coord = globalCoords.stepRightCoordinate(coord);
 
       }
     }
