@@ -83,6 +83,9 @@ struct rsyncmer_t {
   size_t hash;
   uint64_t endPos;
   bool isReverse;
+
+  rsyncmer_t(size_t hash, uint64_t endPos, bool isReverse) : hash(hash), endPos(endPos), isReverse(isReverse) {}
+  rsyncmer_t() : hash(0), endPos(0), isReverse(false) {}
 };
 
 // A syncmer seed, defined within a single sequence

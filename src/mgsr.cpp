@@ -2,6 +2,8 @@
 
 #include "mgsr.hpp"
 #include "panmap_utils.hpp"
+#include "panmanUtils.hpp"
+#include "seeding.hpp"
 
 static void compareBruteForce(
   panmanUtils::Tree *T,
@@ -10,7 +12,10 @@ static void compareBruteForce(
   const panmapUtils::GlobalCoords& globalCoords,
   const std::map<uint64_t, uint64_t>& gapMap,
   const std::map<uint64_t, uint64_t>& degapCoordIndex,
-  const std::map<uint64_t, uint64_t>& regapCoordIndex
+  const std::map<uint64_t, uint64_t>& regapCoordIndex,
+  const std::vector<std::optional<seeding::rsyncmer_t>>& refOnSyncmers,
+  const std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers,
+  int k, int s, int t, int l, bool open
 ) {
   bool printCorrect = false;
   std::string nodeToDebug = "KJ627733.1";
@@ -25,6 +30,7 @@ static void compareBruteForce(
 
   std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, true);
   std::vector<std::pair<uint64_t, uint64_t>> gapMapBruteForce;
+  // checking gap map with brute force
   for (uint64_t i = 0; i < gappedSequenceBruteForce.size(); i++) {
     char nuc = gappedSequenceBruteForce[i];
     if (nuc == '-') {
@@ -72,6 +78,7 @@ static void compareBruteForce(
   }
 
 
+  // check block sequence objects and coordinates
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequenceDynamic = blockSequences.sequence;
   const std::vector<bool>& blockExistsDynamic = blockSequences.blockExists;
   const std::vector<bool>& blockStrandDynamic = blockSequences.blockStrand;
@@ -230,7 +237,48 @@ static void compareBruteForce(
     } else {
       if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " end scalar coord... passed: " << globalScalarCoord - 1 << " == " << globalCoords.getBlockEndScalar(blockId) << std::endl;
     }
-  } 
+  }
+
+  // check syncmers
+  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
+  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
+  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersDynamic;
+  for (size_t i = 0; i < refOnSyncmers.size(); i++) {
+    if (refOnSyncmers[i].has_value()) {
+      const auto& [hash, endPos, isReverse] = refOnSyncmers[i].value();
+      syncmersDynamic.emplace_back(std::make_tuple(hash, isReverse, true, mgsr::degapGlobal(i, degapCoordIndex)));
+    }
+  }
+
+
+
+  // check all syncmers
+  if (syncmersDynamic.size() != syncmersBruteForce.size()) {
+    std::cout << "Syncmer count mismatch: dynamic " << syncmersDynamic.size() << " != brute force " << syncmersBruteForce.size() << std::endl;
+    std::cout << "Dynamic syncmers: ";
+    for (const auto& syncmer : syncmersDynamic) {
+      std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
+    }
+    std::cout << std::endl;
+    std::cout << "Brute force syncmers: ";
+    for (const auto& syncmer : syncmersBruteForce) {
+      std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
+    }
+    std::cout << std::endl;
+    std::exit(1);
+  } else if (printCorrect && node->identifier == nodeToDebug) {
+    std::cout << "Identical syncmer count... passed: " << syncmersDynamic.size() << " == " << syncmersBruteForce.size() << std::endl;
+  }
+
+  for (size_t i = 0; i < syncmersDynamic.size(); i++) {
+    const auto& [hash, isReverse, isSeed, startPos] = syncmersDynamic[i];
+    const auto& [hashBruteForce, isReverseBruteForce, isSeedBruteForce, startPosBruteForce] = syncmersBruteForce[i];
+    if (hash != hashBruteForce || isReverse != isReverseBruteForce || startPos != startPosBruteForce) {
+      std::cout << "Syncmer mismatch at " << i << "th syncmer: dynamic (" << hash << ", " << startPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
+      std::exit(1);
+    }
+  }
+
 
   std::cout << "         " << node->identifier << " states passed brute force check" << std::endl;
   
@@ -740,9 +788,11 @@ void mgsr::makeCoordIndex(
 }
 
 std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSyncmerRanges(
+  panmanUtils::Node* node,
   const panmapUtils::BlockSequences& blockSequences,
   const panmapUtils::GlobalCoords& globalCoords,
-  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges
+  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
+  std::vector<std::tuple<uint64_t, uint64_t, bool>>& blockOnSyncmersBacktracks
 ) {
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges;
   if (localMutationRanges.empty()) {
@@ -757,10 +807,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     return globalCoords.getScalarFromCoord(a.first, blockStrand[a.first.primaryBlockId]) < globalCoords.getScalarFromCoord(b.first, blockStrand[b.first.primaryBlockId]);
   });
 
-  std::cout << "Before merging, size = " << localMutationRanges.size() << ": " << std::endl;
-  for (const auto& [beg, end] : localMutationRanges) {
-    std::cout << "(" << beg.primaryBlockId << ", " << beg.nucPosition << ", " << beg.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(beg, blockStrand[beg.primaryBlockId]) << " -> (" << end.primaryBlockId << ", " << end.nucPosition << ", " << end.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(end, blockStrand[end.primaryBlockId]) << std::endl;
-  }
 
   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> mergedLocalMutationRanges{localMutationRanges.front()};
   for (size_t i = 1; i < localMutationRanges.size(); ++i) {
@@ -768,22 +814,142 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     const auto& [nextBeg, nextEnd] = localMutationRanges[i];
     
     // check if the current range and the next range are adjacent on their global scalar coordinates
-    if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId]) + 1 == globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
-      mergedLocalMutationRanges.back().second = nextEnd;
+    if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId]) + 1 >= globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
+      if (globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextBeg.primaryBlockId]) > globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId])) {
+        mergedLocalMutationRanges.back().second = nextEnd;
+      }
     } else {
       mergedLocalMutationRanges.emplace_back(nextBeg, nextEnd);
     }
   }
 
-  std::cout << "After merging, size = " << mergedLocalMutationRanges.size() << ": " << std::endl;
-  for (const auto& [beg, end] : mergedLocalMutationRanges) {
-    std::cout << "(" << beg.primaryBlockId << ", " << beg.nucPosition << ", " << beg.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(beg, blockStrand[beg.primaryBlockId]) << " -> (" << end.primaryBlockId << ", " << end.nucPosition << ", " << end.nucGapPosition << ") | " << globalCoords.getScalarFromCoord(end, blockStrand[end.primaryBlockId]) << std::endl;
+  int k = indexBuilder.getK();
+  size_t localMutationRangeIndex = 0;
+  int offsetsToDelete = -1;
+  int endOffset = -1;
+  panmapUtils::NewSyncmerRange curSyncmerRange;
+  while (localMutationRangeIndex < mergedLocalMutationRanges.size()) {
+    auto [curBegCoord, curEndCoord] = mergedLocalMutationRanges[localMutationRangeIndex];
+    auto syncmerRangeBegCoord = curBegCoord;
+    auto syncmerRangeEndCoord = curEndCoord;
+    // expand to the left... if reach newSyncmerRanges.back(), merge
+    bool reachedEnd = false;
+    uint32_t offset = 0;
+    while (offset < k - 1) {
+      if (globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) == 0) {
+        break;
+      }
+      curBegCoord = globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
+      if (!blockExists[curBegCoord.primaryBlockId]) {
+        curBegCoord = globalCoords.getBlockStartCoord(curBegCoord.primaryBlockId);
+        continue;
+      }
+      if (!newSyncmerRanges.empty() 
+          && globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) <= globalCoords.getScalarFromCoord(curSyncmerRange.endCoord, blockStrand[curSyncmerRange.endCoord.primaryBlockId])
+      ) {
+        // reached current newSyncmerRange... merge
+        curBegCoord = curSyncmerRange.begCoord;
+        syncmerRangeBegCoord = curBegCoord;
+        newSyncmerRanges.pop_back();
+        break;
+      }
+
+      if (blockExists[curBegCoord.primaryBlockId] && blockSequences.getSequenceBase(curBegCoord) != '-') {
+        offset++;
+        syncmerRangeBegCoord = curBegCoord;
+      }
+    }
+
+    // expand to the right... if reach mergedLocalMutationRanges[localMutationRangeIndex + 1], merge
+    offset = 0;
+    while (offset < k - 1) {
+      if (globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]) == globalCoords.lastScalarCoord) {
+        reachedEnd = true;
+        break;
+      }
+      curEndCoord = globalCoords.stepForwardScalar(curEndCoord, blockStrand);
+      if (!blockExists[curEndCoord.primaryBlockId]) {
+        curEndCoord = globalCoords.getBlockEndCoord(curEndCoord.primaryBlockId);
+        continue;
+      }
+      if (localMutationRangeIndex != mergedLocalMutationRanges.size() - 1
+          && globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]) >= globalCoords.getScalarFromCoord(mergedLocalMutationRanges[localMutationRangeIndex + 1].first, blockStrand[mergedLocalMutationRanges[localMutationRangeIndex + 1].first.primaryBlockId])
+      ) {
+        // reached next mutation range... merge
+        curEndCoord = mergedLocalMutationRanges[localMutationRangeIndex + 1].second;
+        syncmerRangeEndCoord = curEndCoord;
+        localMutationRangeIndex++;
+        offset = 0;
+        continue;
+      }
+
+      if (blockExists[curEndCoord.primaryBlockId] && blockSequences.getSequenceBase(curEndCoord) != '-') {
+        offset++;
+        syncmerRangeEndCoord = curEndCoord;
+      }
+    }
+
+    newSyncmerRanges.emplace_back(syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint64_t>(), std::vector<uint64_t>());
+    if (reachedEnd) {
+      offsetsToDelete = k - offset - 1;
+      endOffset = offset;
+      break;
+    }
+    localMutationRangeIndex++;
   }
 
+  for (size_t i = 0; i < newSyncmerRanges.size(); i++) {
+    panmapUtils::NewSyncmerRange& syncmerRange = newSyncmerRanges[i];
+    panmapUtils::Coordinate curCoord = syncmerRange.begCoord;
+    panmapUtils::Coordinate curEndCoord = syncmerRange.endCoord;
+    
+    std::string& localRangeSeq = syncmerRange.localRangeSeq;
+    std::vector<uint64_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
+    std::vector<uint64_t>& seedsToDelete = syncmerRange.seedsToDelete;
+    std::vector<uint64_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
+    localRangeSeq = "";
+    std::vector<uint64_t>().swap(localRangeCoordToGlobalScalarCoords);
+    std::vector<uint64_t>().swap(seedsToDelete);
+    std::vector<uint64_t>().swap(localRangeCoordToBlockId);
+    while (true) {
+      if (!blockExists[curCoord.primaryBlockId]) {
+        if (curCoord.primaryBlockId == curEndCoord.primaryBlockId) {
+          break;
+        }
+        curCoord = globalCoords.stepForwardScalar(globalCoords.getBlockEndCoord(curCoord.primaryBlockId), blockStrand);
+        continue;
+      }
+      
+      auto curScalarCoord = globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]);
+      char curNuc = blockSequences.getSequenceBase(curCoord);
+      if (curNuc != '-') {
+        if (!blockStrand[curCoord.primaryBlockId]) curNuc = panmanUtils::getComplementCharacter(curNuc);
+        localRangeSeq += curNuc;
+        localRangeCoordToGlobalScalarCoords.push_back(curScalarCoord);
+        localRangeCoordToBlockId.push_back(curCoord.primaryBlockId);
+      } else if (refOnSyncmers[curScalarCoord].has_value()) {
+        blockOnSyncmers[curCoord.primaryBlockId].erase(curScalarCoord);
+        if (blockOnSyncmers[curCoord.primaryBlockId].empty()) blockOnSyncmers.erase(curCoord.primaryBlockId);
+        blockOnSyncmersBacktracks.emplace_back(curCoord.primaryBlockId, curScalarCoord, false);
+        seedsToDelete.push_back(curScalarCoord);
+      }
+      if (curCoord == curEndCoord) break;
+      curCoord = globalCoords.stepForwardScalar(curCoord, blockStrand);
+    }
 
-
-
-
+    if (i == newSyncmerRanges.size() - 1 && offsetsToDelete != -1) {
+      for (size_t j = localRangeSeq.size() - endOffset - offsetsToDelete; j < localRangeSeq.size(); j++) {
+        if (refOnSyncmers[localRangeCoordToGlobalScalarCoords[j]].has_value()) {
+          auto curScalarCoord = localRangeCoordToGlobalScalarCoords[j];
+          auto curBlockId = localRangeCoordToBlockId[j];
+          blockOnSyncmers[curBlockId].erase(curScalarCoord);
+          if (blockOnSyncmers[curBlockId].empty()) blockOnSyncmers.erase(curBlockId);
+          blockOnSyncmersBacktracks.emplace_back(curBlockId, curScalarCoord, false);
+          seedsToDelete.push_back(localRangeCoordToGlobalScalarCoords[j]);
+        }
+      }
+    }
+  }
   return newSyncmerRanges;
 }
 
@@ -807,7 +973,11 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunBlockInversionBacktracks;
   std::vector<std::pair<uint64_t, bool>> invertedBlocksBacktracks;
 
+  // for computing new syncmers
   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> localMutationRanges;
+  std::vector<std::tuple<uint64_t, bool, seeding::rsyncmer_t>> refOnSyncmersBacktracks;
+  std::vector<std::tuple<uint64_t, uint64_t, bool>> blockOnSyncmersBacktracks;
+
 
   applyMutations(node, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, blockExistsDelayed, blockStrandDelayed);
   
@@ -827,8 +997,67 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   std::map<uint64_t, uint64_t> regapCoordIndex;
   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, globalCoords);
 
+
+  std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges = computeNewSyncmerRanges(node, blockSequences, globalCoords, localMutationRanges, blockOnSyncmersBacktracks);
+
+  for (const auto& syncmerRange : newSyncmerRanges) {
+    const auto& [begCoord, endCoord, localRangeSeq, localRangeCoordToGlobalScalarCoords, localRangeCoordToBlockId, seedsToDelete] = syncmerRange;
+    if (localRangeSeq.size() >= indexBuilder.getK()) {
+      for (auto [hash, isReverse, isSeed, startPos] : seeding::rollingSyncmers(localRangeSeq, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getOpen(), indexBuilder.getT(), true)) {
+        auto startPosGlobal = localRangeCoordToGlobalScalarCoords[startPos];
+        auto endPosGlobal = localRangeCoordToGlobalScalarCoords[startPos + indexBuilder.getK() - 1];
+        auto curBlockId = localRangeCoordToBlockId[startPos];
+        bool wasSeed = refOnSyncmers[startPosGlobal].has_value();
+        if (!wasSeed && isSeed) {
+          refOnSyncmersBacktracks.emplace_back(startPosGlobal, true, seeding::rsyncmer_t());
+          blockOnSyncmersBacktracks.emplace_back(curBlockId, startPosGlobal, true);
+          refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
+          blockOnSyncmers[curBlockId].insert(startPosGlobal);
+        } else if (wasSeed && !isSeed) {
+          refOnSyncmersBacktracks.emplace_back(startPosGlobal, false, refOnSyncmers[startPosGlobal].value());
+          blockOnSyncmersBacktracks.emplace_back(curBlockId, startPosGlobal, false);
+          refOnSyncmers[startPosGlobal] = std::nullopt;
+          blockOnSyncmers[curBlockId].erase(startPosGlobal);
+          if (blockOnSyncmers[localRangeCoordToBlockId[startPos]].empty()) {
+            blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
+          }
+        } else if (wasSeed && isSeed) {
+          refOnSyncmersBacktracks.emplace_back(startPosGlobal, false, refOnSyncmers[startPosGlobal].value());
+          refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
+        }
+      }
+    }
+
+    for (uint64_t pos : seedsToDelete) {
+      if (!refOnSyncmers[pos].has_value()) {
+        std::cerr << "Error: refOnSyncmers[" << pos << "] is null" << std::endl;
+        std::exit(1);
+      }
+      refOnSyncmersBacktracks.emplace_back(pos, false, refOnSyncmers[pos].value());
+      refOnSyncmers[pos] = std::nullopt;
+      // blockOnSyncmers and blockOnSyncmersBacktracks are updated in computeNewSyncmerRanges()
+    }
+  }
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    if (oldExists && !newExists) {
+      if (blockOnSyncmers.find(blockId) != blockOnSyncmers.end()) {
+        for (uint64_t pos : blockOnSyncmers[blockId]) {
+          refOnSyncmersBacktracks.emplace_back(pos, false, refOnSyncmers[pos].value());
+          blockOnSyncmersBacktracks.emplace_back(blockId, pos, false);
+          refOnSyncmers[pos] = std::nullopt;
+        }
+        blockOnSyncmers.erase(blockId);
+      }
+    }
+  }
+
+
   // compare with brute force for debugging
-  // compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex);
+  if (node->children.size() == 0) {
+    compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, blockOnSyncmers, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
+  }
+
+
   for (auto it = gapRunBlockInversionBacktracks.rbegin(); it != gapRunBlockInversionBacktracks.rend(); ++it) {
     const auto& [del, range] = *it;
     if (del) {
@@ -838,17 +1067,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     }
   }
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunBlockInversionBacktracks); // gapRunBlockInversionBacktracks is no longer needed... clear memory
-
-  std::cout << "At node " << node->identifier << std::endl;
-  std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges = computeNewSyncmerRanges(blockSequences, globalCoords, localMutationRanges);
-
-
-
-
-  if (node->identifier == "KX894803.1") {
-    std::cout << "finished node " << node->identifier << std::endl;
-    std::exit(0);
-  }
 
   // update delayed block states
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
@@ -887,6 +1105,25 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       gapMap.erase(range.first);
     } else {
       gapMap[range.first] = range.second;
+    }
+  }
+
+  for (const auto& [pos, del, rsyncmer] : refOnSyncmersBacktracks) {
+    if (del) {
+      refOnSyncmers[pos] = std::nullopt;
+    } else {
+      refOnSyncmers[pos] = rsyncmer;
+    }
+  }
+  
+  for (const auto& [blockId, pos, del] : blockOnSyncmersBacktracks) {
+    if (del) {
+      blockOnSyncmers[blockId].erase(pos);
+      if (blockOnSyncmers[blockId].empty()) {
+        blockOnSyncmers.erase(blockId);
+      }
+    } else {
+      blockOnSyncmers[blockId].insert(pos);
     }
   }
 }
