@@ -81,9 +81,11 @@ class mgsrIndexBuilder {
     );
 
     std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRanges(
+      panmanUtils::Node* node,
       const panmapUtils::BlockSequences& blockSequences,
       const panmapUtils::GlobalCoords& globalCoords,
-      std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges
+      std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
+      std::vector<std::tuple<uint64_t, uint64_t, bool>>& blockOnSyncmersBacktracks
     );
 };
 
