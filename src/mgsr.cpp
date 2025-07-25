@@ -1493,26 +1493,6 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
   refOnKminmers.resize(globalCoords.lastScalarCoord + 1);
 
-  // std::cout << "blockSequence and globalCoords built" << std::endl;
-  // std::cout << "Num blocks: " << blockSequences.numBlocks() << std::endl;
-  // std::cout << std::endl;
-  // size_t totalConsensusNucs = 0;
-  // size_t totalGapNucs = 0;
-  // for (uint64_t i = 0; i < blockSequences.numBlocks(); i++) {
-  //   size_t numGapNucs = 0;
-  //   for (size_t j = 0; j < blockSequences.sequence[i].size(); j++) {
-  //     numGapNucs += blockSequences.sequence[i][j].second.size();
-  //   }
-  //   std::cout << "Block " << i << " has " << blockSequences.sequence[i].size() << " consensus nucs and " << numGapNucs << " gap nucs" << std::endl;
-  //   totalConsensusNucs += blockSequences.sequence[i].size();
-  //   totalGapNucs += numGapNucs;
-  // }
-  // std::cout << std::endl;
-  // std::cout << "Total consensus nucs: " << totalConsensusNucs << std::endl;
-  // std::cout << "Total gap nucs: " << totalGapNucs << std::endl;
-  // std::cout << std::endl;
-
-
   std::vector<bool> blockExistsDelayed = blockSequences.blockExists;
   std::vector<bool> blockStrandDelayed = blockSequences.blockStrand;
 
