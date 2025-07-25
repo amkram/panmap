@@ -57,6 +57,8 @@ class mgsrIndexBuilder {
 
     // syncmer and k-min-mer objects
     std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
+    std::set<uint64_t> refOnSyncmersMap;
+    std::vector<std::optional<seeding::rkminmer_t>> refOnKminmers;
     std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
 
     mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l) 
@@ -77,7 +79,8 @@ class mgsrIndexBuilder {
       std::vector<bool> &blockStrandDelayed,
       panmapUtils::GlobalCoords &globalCoords,
       std::map<uint64_t, uint64_t> &gapMap,
-      std::unordered_set<uint64_t> &invertedBlocks
+      std::unordered_set<uint64_t> &invertedBlocks,
+      uint64_t &dfsIndex
     );
 
     std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRanges(
@@ -85,7 +88,11 @@ class mgsrIndexBuilder {
       const panmapUtils::BlockSequences& blockSequences,
       const panmapUtils::GlobalCoords& globalCoords,
       std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
-      std::vector<std::tuple<uint64_t, uint64_t, bool>>& blockOnSyncmersBacktracks
+      std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>>& blockOnSyncmersBacktracks
+    );
+
+    std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> computeNewKminmerRanges(
+      std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord
     );
 };
 

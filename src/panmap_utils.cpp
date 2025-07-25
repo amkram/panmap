@@ -3,6 +3,19 @@
 
 namespace panmapUtils {
 
+std::string seedChangeTypeToString(seedChangeType changeType) {
+  switch (changeType) {
+    case seedChangeType::ADD:
+      return "ADD";
+    case seedChangeType::DEL:
+      return "DEL";
+    case seedChangeType::SUB:
+      return "SUB";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 void getSequenceFromReference(
   panmanUtils::Tree* tree,
   std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,

@@ -1078,7 +1078,7 @@ int main(int argc, char *argv[]) {
 
     int mgsr_t = 0;
     int mgsr_l = 3;
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l);
+    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l);
     mgsrIndexBuilder.buildIndex();
     exit(0);
 

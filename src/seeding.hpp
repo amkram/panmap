@@ -88,6 +88,17 @@ struct rsyncmer_t {
   rsyncmer_t() : hash(0), endPos(0), isReverse(false) {}
 };
 
+
+struct rkminmer_t {
+  size_t fHash;
+  size_t rHash;
+  uint64_t endPos;
+  bool isReverse;
+
+  rkminmer_t(size_t fHash, size_t rHash, uint64_t endPos, bool isReverse) : fHash(fHash), rHash(rHash), endPos(endPos), isReverse(isReverse) {}
+  rkminmer_t() : fHash(0), rHash(0), endPos(0), isReverse(false) {}
+};
+
 // A syncmer seed, defined within a single sequence
 struct seed_t {
   // Core properties
