@@ -7,6 +7,13 @@
 
 namespace panmapUtils {
 
+enum seedChangeType {
+  ADD,
+  DEL,
+  SUB
+};
+
+std::string seedChangeTypeToString(seedChangeType changeType);
 
 void getSequenceFromReference(
   panmanUtils::Tree* tree,
@@ -176,8 +183,15 @@ struct NewSyncmerRange {
   std::vector<uint64_t> seedsToDelete;
 };
 
+
+
 struct BlockSequences {
   std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
+
+  // uint64_t firstBlockOn;
+  // uint64_t lastBlockOn;
+  // Coordinate firstNucCoordinate;
+  // Coordinate lastNucCoordinate;
   std::vector<bool> blockExists;
   std::vector<bool> blockStrand;
   
