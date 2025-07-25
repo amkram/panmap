@@ -4,6 +4,8 @@
 #include "panmap_utils.hpp"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
+#include <fcntl.h>
+#include <unistd.h>
 
 static void compareBruteForce(
   panmanUtils::Tree *T,
@@ -16,7 +18,9 @@ static void compareBruteForce(
   const std::vector<std::optional<seeding::rsyncmer_t>>& refOnSyncmers,
   const std::set<uint64_t>& refOnSyncmersMap,
   const std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers,
-  const std::vector<std::optional<seeding::rkminmer_t>>& refOnKminmers,
+  const std::vector<std::optional<uint64_t>>& refOnKminmers,
+  const std::vector<seeding::uniqueKminmer_t>& uniqueKminmers,
+  const std::unordered_map<seeding::uniqueKminmer_t, uint64_t>& kminmerToUniqueIndex,
   int k, int s, int t, int l, bool open
 ) {
   bool printCorrect = false;
@@ -333,8 +337,8 @@ static void compareBruteForce(
   std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersDynamic;
   for (size_t i = 0; i < refOnKminmers.size(); i++) {
     if (refOnKminmers[i].has_value()) {
-      const auto& [fhash, rhash, endPos, isReverse] = refOnKminmers[i].value();
-      kminmersDynamic.emplace_back(std::make_tuple(isReverse ? rhash : fhash, mgsr::degapGlobal(i, degapCoordIndex), mgsr::degapGlobal(endPos, degapCoordIndex), isReverse));
+      const auto& [startPos, endPos, hash, isReverse] = uniqueKminmers[refOnKminmers[i].value()];
+      kminmersDynamic.emplace_back(std::make_tuple(hash, mgsr::degapGlobal(startPos, degapCoordIndex), mgsr::degapGlobal(endPos, degapCoordIndex), isReverse));
     }
   }
 
@@ -1153,7 +1157,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>> blockOnSyncmersChangeRecord;
 
   // for computing new k-min-mers
-  std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rkminmer_t>> refOnKminmersChangeRecord;
+  std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, uint64_t>> refOnKminmersChangeRecord;
 
   applyMutations(node, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, blockExistsDelayed, blockStrandDelayed);
 
@@ -1169,7 +1173,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     invertGapMap(gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
-  // not really needed for building the index... But do need to keep it for debugging and comparing with brute force
+  // // not really needed for building the index... But do need to keep it for debugging and comparing with brute force
   // std::map<uint64_t, uint64_t> degapCoordIndex;
   // std::map<uint64_t, uint64_t> regapCoordIndex;
   // makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, globalCoords);
@@ -1252,6 +1256,8 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 
   auto k = indexBuilder.getK();
   auto l = indexBuilder.getL();
+  std::vector<uint64_t> deletedSeedIndices;
+  std::vector<uint64_t> addedSeedIndices;
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
     auto [curIt, endIt] = newKminmerRanges[i];
     auto indexingIt = curIt;
@@ -1277,17 +1283,30 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       reverseHash = seeding::rol(reverseHash, k) ^ startingSyncmerHashes[l - j - 1];
     }
     if (forwardHash != reverseHash) {
-      seeding::rkminmer_t kminmer{forwardHash, reverseHash, refOnSyncmers[*curIt].value().endPos, reverseHash < forwardHash};
+      seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
+
       if (refOnKminmers[*indexingIt].has_value()) {
         refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, refOnKminmers[*indexingIt].value());
       } else {
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, seeding::rkminmer_t());
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
       }
-      refOnKminmers[*indexingIt] = kminmer;
+
+      auto uniqueKminmerIndexIt = kminmerToUniqueIndex.find(uniqueKminmer);
+      if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
+        uniqueKminmers.emplace_back(uniqueKminmer);
+        kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
+        addedSeedIndices.push_back(uniqueKminmers.size() - 1);
+        refOnKminmers[*indexingIt] = uniqueKminmers.size() - 1;
+      } else {
+        addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
+        refOnKminmers[*indexingIt] = uniqueKminmerIndexIt->second;
+      }
+      
     } else {
       if (refOnKminmers[*indexingIt].has_value()) {
         refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*indexingIt].value());
         refOnKminmers[*indexingIt] = std::nullopt;
+        deletedSeedIndices.push_back(*indexingIt);
       }
     }
 
@@ -1301,17 +1320,28 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       ++indexingIt;
 
       if (forwardHash != reverseHash) {
-        seeding::rkminmer_t kminmer{forwardHash, reverseHash, refOnSyncmers[*curIt].value().endPos, reverseHash < forwardHash};
+        seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
         if (refOnKminmers[*indexingIt].has_value()) {
           refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, refOnKminmers[*indexingIt].value());
         } else {
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, seeding::rkminmer_t());
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
         }
-        refOnKminmers[*indexingIt] = kminmer;
+
+        auto uniqueKminmerIndexIt = kminmerToUniqueIndex.find(uniqueKminmer);
+        if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
+          uniqueKminmers.emplace_back(uniqueKminmer);
+          kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
+          addedSeedIndices.push_back(uniqueKminmers.size() - 1);
+          refOnKminmers[*indexingIt] = uniqueKminmers.size() - 1;
+        } else {
+          addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
+          refOnKminmers[*indexingIt] = uniqueKminmerIndexIt->second;
+        }
       } else {
         if (refOnKminmers[*indexingIt].has_value()) {
           refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*indexingIt].value());
           refOnKminmers[*indexingIt] = std::nullopt;
+          deletedSeedIndices.push_back(*indexingIt);
         }
       }
     }
@@ -1323,6 +1353,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       if (refOnKminmers[*delIt].has_value()) {
         refOnKminmersChangeRecord.emplace_back(*delIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*delIt].value());
         refOnKminmers[*delIt] = std::nullopt;
+        deletedSeedIndices.push_back(*delIt);
       }
       if (delIt == refOnSyncmersMap.begin()) break;
     }
@@ -1331,13 +1362,43 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     if (changeType == panmapUtils::seedChangeType::DEL && refOnKminmers[syncmerPos].has_value()) {
       refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, refOnKminmers[syncmerPos].value());
       refOnKminmers[syncmerPos] = std::nullopt;
+      deletedSeedIndices.push_back(syncmerPos);
     }
   }
 
   
-  // compare with brute force for debugging
+  //  Adding node changes to index
+  NodeChanges::Builder curNodeChanges = perNodeChanges[dfsIndex];
+  curNodeChanges.setNodeIndex(dfsIndex);
+
+  // adding inserted/substituted seeds to index
+  capnp::List<uint32_t>::Builder seedInsubBuilder = curNodeChanges.initSeedInsubIndices(addedSeedIndices.size());
+  for (size_t i = 0; i < addedSeedIndices.size(); i++) {
+    seedInsubBuilder.set(i, addedSeedIndices[i]);
+  }
+
+  // adding deleted seeds to index
+  capnp::List<uint32_t>::Builder seedDeletionBuilder = curNodeChanges.initSeedDeletions(deletedSeedIndices.size());
+  for (size_t i = 0; i < deletedSeedIndices.size(); i++) {
+    seedDeletionBuilder.set(i, deletedSeedIndices[i]);
+  }
+
+  // adding coord deltas to index
+  capnp::List<CoordDelta>::Builder coordDeltaBuilder = curNodeChanges.initCoordDeltas(gapMapUpdates.size());
+  for (size_t i = 0; i < gapMapUpdates.size(); i++) {
+    const auto& [del, range] = gapMapUpdates[i];
+    coordDeltaBuilder[i].setPos(range.first);
+    if (del) {
+      coordDeltaBuilder[i].getEndPos().setNone();
+    } else {
+      coordDeltaBuilder[i].getEndPos().setValue(range.second);
+    }
+  }
+
+  
+  // // compare with brute force for debugging
   // if (node->children.size() == 0) {
-  //   compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
+  //   compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, uniqueKminmers, kminmerToUniqueIndex, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
   // }
 
   for (auto it = gapRunBlockInversionBacktracks.rbegin(); it != gapRunBlockInversionBacktracks.rend(); ++it) {
@@ -1417,11 +1478,11 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     }
   }
 
-  for (const auto& [pos, changeType, kminmer] : refOnKminmersChangeRecord) {
+  for (const auto& [pos, changeType, kminmerIndex] : refOnKminmersChangeRecord) {
     if (changeType == panmapUtils::seedChangeType::ADD) {
       refOnKminmers[pos] = std::nullopt;
     } else {
-      refOnKminmers[pos] = kminmer;
+      refOnKminmers[pos] = kminmerIndex;
     }
   }
 }
@@ -1451,6 +1512,7 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   // std::cout << "Total gap nucs: " << totalGapNucs << std::endl;
   // std::cout << std::endl;
 
+
   std::vector<bool> blockExistsDelayed = blockSequences.blockExists;
   std::vector<bool> blockStrandDelayed = blockSequences.blockStrand;
 
@@ -1459,6 +1521,28 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
 
   uint64_t dfsIndex = 0;
   buildIndexHelper(T->root, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
+  
+  // Finally add unique k-min-mers to index
+  capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
+  for (size_t i = 0; i < uniqueKminmers.size(); i++) {
+    seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
+    seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
+    seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
+    seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
+  }
+
   std::cout << "Finished building index!" << std::endl;
+}
+
+void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path) {
+  int fd = open(path.c_str(), O_RDWR | O_CREAT, 0644);
+  if (fd == -1) {
+    std::cerr << "Error: failed to open file " << path << std::endl;
+    std::exit(1);
+  }
+  std::cout << "Writing index to " << path << std::endl;
+  capnp::writePackedMessageToFd(fd, outMessage);
+  close(fd);
+  std::cout << "Index written to " << path << std::endl;
 }
 
