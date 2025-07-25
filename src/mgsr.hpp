@@ -50,27 +50,36 @@ class mgsrIndexBuilder {
     // capnp object
     ::capnp::MallocMessageBuilder outMessage;
     MGSRIndex::Builder indexBuilder;
+    capnp::List<NodeChanges>::Builder perNodeChanges;
+    
 
     // tree pointer
     panmanUtils::Tree *T;
 
 
     // syncmer and k-min-mer objects
+    std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
     std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
     std::set<uint64_t> refOnSyncmersMap;
-    std::vector<std::optional<seeding::rkminmer_t>> refOnKminmers;
-    std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
 
-    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l) 
+    std::vector<seeding::uniqueKminmer_t> uniqueKminmers;
+    std::vector<std::optional<uint64_t>> refOnKminmers;
+    std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;
+
+    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool open) 
       : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
       indexBuilder.setT(t);
       indexBuilder.setL(l);
+      indexBuilder.setOpen(open);
+      perNodeChanges = indexBuilder.initPerNodeChanges(T->allNodes.size());
     }
 
     void buildIndex();
+
+    void writeIndex(const std::string& path);
   private:
     void buildIndexHelper(
       panmanUtils::Node *node,

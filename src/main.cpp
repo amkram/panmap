@@ -1078,8 +1078,10 @@ int main(int argc, char *argv[]) {
 
     int mgsr_t = 0;
     int mgsr_l = 3;
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l);
+    bool open = false;
+    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
     mgsrIndexBuilder.buildIndex();
+    mgsrIndexBuilder.writeIndex("test.pmai");
     exit(0);
 
     // Build index if needed
