@@ -337,7 +337,7 @@ float alignment::align(
     std::vector<char *> samAlignments;
     std::string samHeader;
     createSam(readSeeds, readSequences, readQuals, readNames, nodeSequence,
-              seedToRefPositions, samFileName, k, pairedEndReads, samAlignments,
+              seedToRefPositions, samFileName, k, false, pairedEndReads, samAlignments,
               samHeader);
 
     // Compute alignment metrics

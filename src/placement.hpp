@@ -186,6 +186,10 @@ void loadSeedsFromIndex(state::StateManager& stateManager, const ::Index::Reader
 void place(PlacementResult &result, panmanUtils::Tree *T,
            ::Index::Reader &index, const std::string &reads1,
            const std::string &reads2,
+           std::vector<std::vector<seeding::seed_t>>& readSeeds,
+           std::vector<std::string>& readSequences,
+           std::vector<std::string>& readNames,
+           std::vector<std::string>& readQuals,
            std::string &outputPath,
            const std::string &indexPath,
            const std::string &debug_node_id_param);

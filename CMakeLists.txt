@@ -534,6 +534,7 @@ target_compile_options(bcftools PRIVATE -fPIC)
 set(PANMAP_SOURCES_MAIN
     src/main.cpp
     src/conversion.cpp
+    src/panmap_utils.cpp
     src/genotyping.cpp
     src/gap_map.cpp
     src/indexing.cpp

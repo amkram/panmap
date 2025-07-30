@@ -2054,6 +2054,10 @@ void place(
     ::Index::Reader& index,
     const std::string& reads1Path,
     const std::string& reads2Path,
+    std::vector<std::vector<seeding::seed_t>>& readSeeds,
+    std::vector<std::string>& readSequences,
+    std::vector<std::string>& readNames,
+    std::vector<std::string>& readQuals,
     std::string& placementFileName,
     const std::string& indexPath,
     const std::string& debug_node_id_param) {  
@@ -2255,10 +2259,6 @@ void place(
     
     // Process reads and extract seeds
     absl::flat_hash_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
-    std::vector<std::string> readSequences;
-    std::vector<std::string> readQuals;
-    std::vector<std::string> readNames;
-    std::vector<std::vector<seeding::seed_t>> readSeeds;
     
     try {
         std::vector<std::vector<std::string>> readSeedSeqs;
@@ -2502,9 +2502,14 @@ void placeBatch(
         // Build output file path
         std::string outputFile = std::string(prefixBase) + "_" + sampleName + ".placement";
         
+        std::vector<std::vector<seeding::seed_t>> readSeeds;
+        std::vector<std::string> readSequences;
+        std::vector<std::string> readNames;
+        std::vector<std::string> readQuals;
+
         try {
-            // Call the main place function, passing the indexPath and new debug_node_id_param
-            place(result, T, index, reads1Path, reads2Path, outputFile, indexPath, debug_node_id_param); // Pass it through
+            // Call the main place function with correct parameters
+            place(result, T, index, reads1Path, reads2Path, readSeeds, readSequences, readNames, readQuals, outputFile, indexPath, debug_node_id_param);
             
             // Log successful placement
             logging::debug("Completed placement for sample: {}", sampleName);
