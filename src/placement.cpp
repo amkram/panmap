@@ -545,11 +545,11 @@ bool getNodeIndex(const std::string& nodeId,
     static bool first_search = true;
     if (first_search && state.nodePathInfo.size() > 0) {
         first_search = false;
-        // logging::info("Sample node IDs in index:");
+        logging::info("Sample node IDs in index:");
         for (size_t i = 0; i < std::min<size_t>(5, state.nodePathInfo.size()); i++) {
             auto indexNodeId = state.nodePathInfo[i].getNodeId();
             std::string indexNodeIdStr(indexNodeId.begin(), indexNodeId.end());
-            // logging::info("  [{}]: '{}'", i, indexNodeIdStr);
+            logging::info("  [{}]: '{}'", i, indexNodeIdStr);
         }
     }
     
@@ -640,7 +640,7 @@ void PlacementResult::updateRawSeedMatchScore(panmanUtils::Node* node, int64_t s
  * @param node The node being evaluated
  * @param score The Jaccard score based on presence/absence of seeds
  */
-void PlacementResult::updateJaccardPresenceScore(panmanUtils::Node* node, double score, int64_t rawCount) {
+void PlacementResult::updateJaccardPresenceScore(panmanUtils::Node* node, double score) {
     if (!node) return;
     
     const double TIED_THRESHOLD = 0.0001; // Define threshold for considering scores tied
@@ -649,21 +649,20 @@ void PlacementResult::updateJaccardPresenceScore(panmanUtils::Node* node, double
     if (score > bestJaccardPresenceScore + TIED_THRESHOLD) {
         // Found a new best Jaccard (Presence/Absence) score
         bestJaccardPresenceScore = score;
-        bestJaccardPresenceCount = rawCount;
         bestJaccardPresenceNode = node;
         
         // Reset tied nodes and add this one
         tiedJaccardPresenceNodes.clear();
         tiedJaccardPresenceNodes.push_back(node);
         
-        logging::debug("New best Jaccard (Presence) node: {} with score {:.6f} ({} raw matches)", 
-                     node->identifier, score, rawCount);
+        logging::debug("New best Jaccard (Presence) node: {} with score {:.6f}", 
+                     node->identifier, score);
                      
     } else if (std::abs(score - bestJaccardPresenceScore) <= TIED_THRESHOLD) {
         // Add to tied nodes
         tiedJaccardPresenceNodes.push_back(node);
-        logging::debug("Tied Jaccard (Presence) node: {} with score {:.6f} ({} raw matches)", 
-                     node->identifier, score, rawCount);
+        logging::debug("Tied Jaccard (Presence) node: {} with score {:.6f}", 
+                     node->identifier, score);
     }
 }
 
@@ -868,7 +867,7 @@ void placementTraversal(
     logging::info("Processing tree with {} nodes using {} threads", totalNodes, numThreads);
     
     std::ofstream countsFile("node_seed_counts.tsv");
-    countsFile << "node_id\tseed_count\tdeletions\tinsertions\tmodifications\ttotal_seed_count\tseed_matches\tweighted_seed_matches\n";
+    countsFile << "node_id\tseed_count\tdeletions\tinsertions\tmodifications\tdeletion_operations\tinsertion_operations\tmodification_operations\n";
 
     // Process each level in breadth-first order
     for (const auto& level : nodesByLevel) {
@@ -902,7 +901,6 @@ void placementTraversal(
                     std::vector<panmanUtils::Node*> localTiedRawSeedMatchNodes;
 
                     double localBestJaccardPresenceScore = 0.0;
-                    int64_t localBestJaccardPresenceCount = 0;
                     panmanUtils::Node* localBestJaccardPresenceNode = nullptr;
                     std::vector<panmanUtils::Node*> localTiedJaccardPresenceNodes;
 
@@ -951,33 +949,37 @@ void placementTraversal(
                                     const auto& parent_map = result.nodeSeedMap.at(node->parent->identifier);
                                     nodeScore.kmerSeedMap.reserve(parent_map.size());
                                     
-                                    // Inherit seeds from parent
-                                    for (const auto& entry : parent_map) {
-                                        nodeScore.kmerSeedMap.insert(entry);
-                                    }
-                                    
-                                    // Initialize scores from inherited seeds
-                                    for (const auto& pair : nodeScore.kmerSeedMap) {
-                                        const seeding::seed_t& inherited_seed = pair.second;
-                                        size_t inherited_hash = inherited_seed.hash;
+                                    // std::cerr << "These are the seeds in " << node->parent->identifier << ":" << std::endl;
+                                    // for (const auto& entry : parent_map) {
+                                    //     nodeScore.kmerSeedMap.insert(entry);
+                                    //     // std::cerr << "Seed Hash: " << entry.second.hash << ", Kmer: " << state.hashToKmer.at(entry.second.hash) << std::endl;
+                                    // }
+                                    // countsFile << node->parent->identifier << "\t" << nodeScore.kmerSeedMap.size() << "\n";
+                                    // // Initialize scores from inherited seeds
+                                    // for (const auto& pair : nodeScore.kmerSeedMap) {
+                                    //     const seeding::seed_t& inherited_seed = pair.second;
+                                    //     size_t inherited_hash = inherited_seed.hash;
                                         
-                                        nodeScore.currentGenomeUniqueSeedHashes.insert(inherited_hash); // For presence/absence Jaccard
-                                        nodeScore.currentGenomeSeedCounts[inherited_hash]++; // For weighted Jaccard and Cosine
-                                        uniqueSeedHashes.insert(inherited_hash); // For weighted Jaccard denominator
+                                    //     nodeScore.currentGenomeUniqueSeedHashes.insert(inherited_hash); // For presence/absence Jaccard
+                                    //     nodeScore.currentGenomeSeedCounts[inherited_hash]++; // For weighted Jaccard and Cosine
+                                    //     uniqueSeedHashes.insert(inherited_hash); // For weighted Jaccard denominator
 
-                                        auto readIt = state.seedFreqInReads.find(inherited_hash);
-                                        if (readIt != state.seedFreqInReads.end()) {
-                                            int64_t readCount = readIt->second;
-                                            nodeScore.hitsInThisGenome += readCount; // Used for weighted Jaccard numerator
-                                            nodeScore.currentJaccardNumerator += readCount; // Used for weighted Jaccard numerator
-                                            nodeScore.rawSeedMatchScore += readCount; // For raw seed match score
-                                            nodeScore.jaccardPresenceNumerator++; // For presence/absence Jaccard numerator
+                                    //     auto readIt = state.seedFreqInReads.find(inherited_hash);
+                                    //     if (readIt != state.seedFreqInReads.end()) {
+                                    //         int64_t readCount = readIt->second;
+                                    //         nodeScore.hitsInThisGenome += readCount; // Used for weighted Jaccard numerator
+                                    //         nodeScore.currentJaccardNumerator += readCount; // Used for weighted Jaccard numerator
+                                    //         nodeScore.rawSeedMatchScore += readCount; // For raw seed match score
+                                    //         nodeScore.jaccardPresenceNumerator++; // For presence/absence Jaccard numerator
                                             
-                                            auto [num_delta, den_delta] = getCosineDelta(false, true, inherited_hash, state.seedFreqInReads, nodeScore.currentGenomeSeedCounts);
-                                            nodeScore.currentCosineNumerator += num_delta;
-                                            nodeScore.currentCosineDenominator += den_delta;
-                                        }
-                                    }
+                                    //         auto [num_delta, den_delta] = getCosineDelta(false, true, inherited_hash, state.seedFreqInReads, nodeScore.currentGenomeSeedCounts);
+                                    //         nodeScore.currentCosineNumerator += num_delta;
+                                    //         nodeScore.currentCosineDenominator += den_delta;
+                                    //     }
+
+                                    // }
+
+
                                 }
                             }
                             
@@ -1022,6 +1024,9 @@ void placementTraversal(
                             size_t deletionCount = 0;
                             size_t insertionCount = 0;
                             size_t modificationCount = 0;
+                            std::vector<std::string> deletionOperations;
+                            std::vector<std::string> insertionOperations;
+                            std::vector<std::string> modificationOperations;
 
                             if (basePositions.size() > 0 && perPosMasks.size() > 0 && basePositions.size() == perPosMasks.size()) {
                                 for (size_t j = 0; j < basePositions.size(); j++) {
@@ -1089,11 +1094,17 @@ void placementTraversal(
                                             seeding::seed_t new_seed = createSeedFromDictionary(kmerStr, pos, pos + end_offset_val, params.k, params.s);
                                             size_t new_hash = new_seed.hash;
 
-                                            // Track operation type
+                                            // Track operation type and details
                                             if (value == 2) {
                                                 insertionCount++;
+                                                insertionOperations.push_back("pos:" + std::to_string(pos) + ",hash:" + std::to_string(new_hash) + ",kmer:" + kmerStr);
                                             } else if (value == 3) {
                                                 modificationCount++;
+                                                std::string oldKmerInfo = "<unknown>";
+                                                if (existed_before_mutation) {
+                                                    oldKmerInfo = "hash:" + std::to_string(current_seed_at_pos.hash);
+                                                }
+                                                modificationOperations.push_back("pos:" + std::to_string(pos) + ",old:" + oldKmerInfo + ",new:hash:" + std::to_string(new_hash) + ",kmer:" + kmerStr);
                                             }
 
                                             if (value == 3 && existed_before_mutation) { 
@@ -1510,7 +1521,6 @@ void placementTraversal(
                                         // Update best Jaccard (Presence/Absence) (Local)
                                          if (jaccardPresenceScore > localBestJaccardPresenceScore + TIED_THRESHOLD) {
                                             localBestJaccardPresenceScore = jaccardPresenceScore;
-                                            localBestJaccardPresenceCount = nodeScore.jaccardPresenceNumerator;
                                             localBestJaccardPresenceNode = node;
                                             localTiedJaccardPresenceNodes.clear();
                                             localTiedJaccardPresenceNodes.push_back(node);
@@ -1547,11 +1557,30 @@ void placementTraversal(
                                         localNodeSeedMaps.emplace_back(node->identifier, std::move(temp_map));
                                         
                                         // Prepare TSV output for batch writing (thread-local)
-                                        // Calculate additional metrics
-                                        int64_t totalSeedCount = nodeScore.kmerSeedMap.size(); // Use actual seed map size
+                                        std::string deletionOpsStr = deletionOperations.empty() ? "none" : "";
+                                        std::string insertionOpsStr = insertionOperations.empty() ? "none" : "";
+                                        std::string modificationOpsStr = modificationOperations.empty() ? "none" : "";
                                         
-                                        int64_t seedMatches = nodeScore.jaccardPresenceNumerator;
-                                        int64_t weightedSeedMatches = nodeScore.rawSeedMatchScore;
+                                        if (!deletionOperations.empty()) {
+                                            for (size_t i = 0; i < deletionOperations.size(); ++i) {
+                                                deletionOpsStr += deletionOperations[i];
+                                                if (i < deletionOperations.size() - 1) deletionOpsStr += ";";
+                                            }
+                                        }
+                                        
+                                        if (!insertionOperations.empty()) {
+                                            for (size_t i = 0; i < insertionOperations.size(); ++i) {
+                                                insertionOpsStr += insertionOperations[i];
+                                                if (i < insertionOperations.size() - 1) insertionOpsStr += ";";
+                                            }
+                                        }
+                                        
+                                        if (!modificationOperations.empty()) {
+                                            for (size_t i = 0; i < modificationOperations.size(); ++i) {
+                                                modificationOpsStr += modificationOperations[i];
+                                                if (i < modificationOperations.size() - 1) modificationOpsStr += ";";
+                                            }
+                                        }
                                         
                                         // Collect TSV line for batch writing
                                         std::ostringstream tsvLine;
@@ -1560,9 +1589,9 @@ void placementTraversal(
                                                << deletionCount << "\t"
                                                << insertionCount << "\t"
                                                << modificationCount << "\t"
-                                               << totalSeedCount << "\t"
-                                               << seedMatches << "\t"
-                                               << weightedSeedMatches << "\n";
+                                               << deletionOpsStr << "\t"
+                                               << insertionOpsStr << "\t"
+                                               << modificationOpsStr << "\n";
                                         localTsvOutputLines.push_back(tsvLine.str());
                                         
                                         nodesProcessed++;
@@ -1620,9 +1649,9 @@ void placementTraversal(
 
                         // Update Jaccard (Presence/Absence) Score (Global)
                         if (localBestJaccardPresenceNode) {
-                            result.updateJaccardPresenceScore(localBestJaccardPresenceNode, localBestJaccardPresenceScore, localBestJaccardPresenceCount);
+                            result.updateJaccardPresenceScore(localBestJaccardPresenceNode, localBestJaccardPresenceScore);
                             for (panmanUtils::Node* tied_node : localTiedJaccardPresenceNodes) {
-                                result.updateJaccardPresenceScore(tied_node, localBestJaccardPresenceScore, localBestJaccardPresenceCount);
+                                result.updateJaccardPresenceScore(tied_node, localBestJaccardPresenceScore);
                             }
                         }
                         
@@ -1661,52 +1690,12 @@ void placementTraversal(
         std::chrono::high_resolution_clock::now() - startTime).count();
     result.totalTimeSeconds = totalTime;
     
-    // Write simple placement result files
-    try {
-        // Write raw seed match results
-        std::ofstream rawFile("placement.raw.txt");
-        if (rawFile.is_open()) {
-            if (result.bestRawSeedMatchNode) {
-                rawFile << result.bestRawSeedMatchNode->identifier << "\t" << result.bestRawSeedMatchScore << std::endl;
-            } else {
-                rawFile << "None\t0" << std::endl;
-            }
-            rawFile.close();
-        }
-        
-        // Write weighted Jaccard results  
-        std::ofstream weightedFile("placement.weighted.txt");
-        if (weightedFile.is_open()) {
-            if (result.bestJaccardNode) {
-                weightedFile << result.bestJaccardNode->identifier << "\t" << result.bestJaccardScore << std::endl;
-            } else {
-                weightedFile << "None\t0.0" << std::endl;
-            }
-            weightedFile.close();
-        }
-        
-        // Write cosine similarity results
-        std::ofstream cosineFile("placement.cosine.txt");
-        if (cosineFile.is_open()) {
-            if (result.bestCosineNode) {
-                cosineFile << result.bestCosineNode->identifier << "\t" << result.bestCosineScore << std::endl;
-            } else {
-                cosineFile << "None\t0.0" << std::endl;
-            }
-            cosineFile.close();
-        }
-        
-        logging::debug("Written placement result files: placement.raw.txt, placement.weighted.txt, placement.cosine.txt");
-    } catch (const std::exception& e) {
-        logging::warn("Failed to write placement result files: {}", e.what());
-    }
-    
     // Log final results
     /* logging::info("Placement completed in {}s, processed {} nodes", 
                   static_cast<long long>(totalTime), 
                   static_cast<long long>(nodesProcessed.load())); */
-    // logging::info("Best node by weighted score: {}", 
-    //             result.bestWeightedNode ? result.bestWeightedNode->identifier : "None");
+    logging::info("Best node by weighted score: {}", 
+                result.bestWeightedNode ? result.bestWeightedNode->identifier : "None");
 } // End of placementTraversal
 
 // Add implementation of dumpSyncmerDetails function here
@@ -2138,7 +2127,7 @@ void place(
     }
     
     // Initialize state manager using the lighter, optimized version
-    // logging::info("Initializing StateManager (light) with k={}, s={}", params.k, params.s);
+    logging::info("Initializing StateManager (light) with k={}, s={}", params.k, params.s);
     auto stateManager = indexing::initializeStateManagerLight(T, T->root, params.k, params.s);
 
     // Initialize global placement state
@@ -2352,59 +2341,59 @@ void place(
         if (!placementFileName.empty()) {
             std::ofstream outFile(placementFileName);
             if (outFile.is_open()) {
-                outFile << "Placement Results:\n";
+                outFile << "Placement Results:\\n";
                 
-                outFile << "\nBest hit count: " << result.maxHitsInAnyGenome;
+                outFile << "\\nBest hit count: " << result.maxHitsInAnyGenome;
                 if (result.maxHitsNode) {
-                    outFile << " in node " << result.maxHitsNode->identifier << "\n";
+                    outFile << " in node " << result.maxHitsNode->identifier << "\\n";
                     if (result.tiedMaxHitsNodes.size() > 1) {
                         outFile << "Tied nodes (" << result.tiedMaxHitsNodes.size() << "): ";
                         for (auto* node : result.tiedMaxHitsNodes) {
                             outFile << node->identifier << " ";
                         }
-                        outFile << "\n";
+                        outFile << "\\n";
                     }
                 }
                 
-                outFile << "\nBest Jaccard similarity: " << result.bestJaccardScore;
+                outFile << "\\nBest Jaccard similarity: " << result.bestJaccardScore;
                 if (result.bestJaccardNode) {
-                    outFile << " in node " << result.bestJaccardNode->identifier << "\n";
+                    outFile << " in node " << result.bestJaccardNode->identifier << "\\n";
                     if (result.tiedJaccardNodes.size() > 1) {
                         outFile << "Tied nodes (" << result.tiedJaccardNodes.size() << "): ";
                         for (auto* node : result.tiedJaccardNodes) {
                             outFile << node->identifier << " ";
                         }
-                        outFile << "\n";
+                        outFile << "\\n";
                     }
                 }
                 
-                outFile << "\nBest Cosine similarity: " << result.bestCosineScore;
+                outFile << "\\nBest Cosine similarity: " << result.bestCosineScore;
                 if (result.bestCosineNode) {
-                    outFile << " in node " << result.bestCosineNode->identifier << "\n";
+                    outFile << " in node " << result.bestCosineNode->identifier << "\\n";
                     if (result.tiedCosineNodes.size() > 1) {
                         outFile << "Tied nodes (" << result.tiedCosineNodes.size() << "): ";
                         for (auto* node : result.tiedCosineNodes) {
                             outFile << node->identifier << " ";
                         }
-                        outFile << "\n";
+                        outFile << "\\n";
                     }
                 }
                 
-                outFile << "\nBest Weighted score: " << result.bestWeightedScore;
+                outFile << "\\nBest Weighted score: " << result.bestWeightedScore;
                 if (result.bestWeightedNode) {
-                    outFile << " in node " << result.bestWeightedNode->identifier << "\n";
+                    outFile << " in node " << result.bestWeightedNode->identifier << "\\n";
                     if (result.tiedWeightedNodes.size() > 1) {
                         outFile << "Tied nodes (" << result.tiedWeightedNodes.size() << "): ";
                         for (auto* node : result.tiedWeightedNodes) {
                             outFile << node->identifier << " ";
                         }
-                        outFile << "\n";
+                        outFile << "\\n";
                     }
                 }
                 
-                outFile << "\nPerformance metrics:";
-                outFile << "\nTotal reads processed: " << result.totalReadsProcessed;
-                outFile << "\nTotal time: " << result.totalTimeSeconds << " seconds\n";
+                outFile << "\\nPerformance metrics:";
+                outFile << "\\nTotal reads processed: " << result.totalReadsProcessed;
+                outFile << "\\nTotal time: " << result.totalTimeSeconds << " seconds\\n";
                 
                 outFile.close();
             }
@@ -2434,7 +2423,7 @@ void place(
                 read_seeds_log_file_correct << entry.first << "\t" << entry.second << "\t" << kmer_str << "\n"; 
             }
             read_seeds_log_file_correct.close(); 
-            // logging::info("Dumped read seed frequencies to read_seeds_debug.log");
+            logging::info("Dumped read seed frequencies to read_seeds_debug.log");
         } else {
             logging::warn("Could not open read_seeds_debug.log for writing.");
         }
@@ -2465,7 +2454,7 @@ void placeBatch(
     const float& score_proportion, 
     const int& max_tied_nodes,
     const std::string& indexPath,
-    const std::string& debug_node_id_param) {  
+    const std::string& debug_node_id_param) {  // Add indexPath parameter
     
     logging::debug("Starting batch placement with file: {}", batchFilePath);
     
@@ -2482,19 +2471,19 @@ void placeBatch(
     char lineBuffer[4096];
     while (fgets(lineBuffer, sizeof(lineBuffer), batchFilePtr)) {
         // Convert to std::string for easier handling
-        std::string line_str(lineBuffer);
+        std::string line_str(lineBuffer); // Renamed to avoid conflict with any other 'line' identifier
         
         // Remove trailing newline if present
-        if (!line_str.empty() && (line_str.back() == '\n' || line_str.back() == '\r')) {
+        if (!line_str.empty() && (line_str.back() == '\n' || line_str.back() == '\r')) { // Corrected single quotes for char literals
             line_str.pop_back();
         }
         
         // Skip empty lines and comments
-        if (line_str.empty() || line_str[0] == '#') continue;
+        if (line_str.empty() || line_str[0] == '#') continue; // Corrected single quotes for char literal
         
         // Parse line - format is: sample_name,reads1[,reads2]
         std::vector<std::string> parts;
-        boost::split(parts, line_str, boost::is_any_of(","));
+        boost::split(parts, line_str, boost::is_any_of(",")); // Ensured comma is part of string literal
         
         if (parts.size() < 2) {
             logging::warn("Invalid batch entry: {}", line_str);
@@ -2514,8 +2503,8 @@ void placeBatch(
         std::string outputFile = std::string(prefixBase) + "_" + sampleName + ".placement";
         
         try {
-            // Call the main place function with correct parameters
-            place(result, T, index, reads1Path, reads2Path, outputFile, indexPath, debug_node_id_param);
+            // Call the main place function, passing the indexPath and new debug_node_id_param
+            place(result, T, index, reads1Path, reads2Path, outputFile, indexPath, debug_node_id_param); // Pass it through
             
             // Log successful placement
             logging::debug("Completed placement for sample: {}", sampleName);
