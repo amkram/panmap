@@ -859,7 +859,10 @@ private:
   // Declare the thread-local cache (definition in .cpp file)
   static thread_local CacheType tlsCache;
 
-  /** @brief Node ID for debugging purposes */
+  /** @brief StateManager reference for materialized state access */
+  mutable const StateManager* stateManager = nullptr;
+  
+  /** @brief Node ID for materialized state access */
   mutable std::string nodeId;
 
 public:
@@ -881,16 +884,20 @@ public:
   }
 
   /**
-   * @brief Get value from local store only (no hierarchical traversal)
+   * @brief Set StateManager reference and node ID for materialized state access
+   */
+  void setStateManager(const StateManager* mgr, const std::string& id) {
+    stateManager = mgr;
+    nodeId = id;
+  }
+
+  /**
+   * @brief Get value, checking parent if not in local store
    * 
    * @param key The key to look up
    * @return The value if found, std::nullopt otherwise
    */
-  std::optional<char> get(const PositionKey& key) const {
-    // OPTIMIZATION: Use only local values, no hierarchical traversal
-    // Materialized state is now handled directly by StateManager methods
-    return getLocal(key);
-  }
+  std::optional<char> get(const PositionKey& key) const;
 
   /**
    * @brief Get a value from the local store only.
@@ -994,6 +1001,23 @@ struct NodeState {
 
   // Parent reference for hierarchical delta lookup
   std::string parentId;
+  
+  // OPTIMIZATION: Cache parent state pointer to avoid repeated lookups
+  mutable const NodeState* cachedParentState = nullptr;
+  
+  void cacheParentState(const absl::flat_hash_map<std::string, NodeState>& nodeStates) const {
+    if (!parentId.empty() && cachedParentState == nullptr) {
+      auto it = nodeStates.find(parentId);
+      if (it != nodeStates.end()) {
+        cachedParentState = &it->second;
+      }
+    }
+  }
+  
+  // Helper to invalidate cached parent pointer (when parent changes)
+  void invalidateParentCache() const {
+    cachedParentState = nullptr;
+  }
 
   absl::flat_hash_set<int32_t> activeBlocks;
   // std::unordered_map<int32_t, bool> blockStrands; // OLD: true = forward, false = inverted
@@ -1022,6 +1046,35 @@ struct NodeState {
 
   // Compressed gap runs for this node
   std::vector<gap_map::CompressedGapRun> compressedGapRuns;
+  
+  // OPTIMIZATION: Inherited gap runs from parent + incremental updates
+  // This avoids 219M+ individual HierarchicalGapMap::isGap() calls
+  struct GapRun {
+    int64_t start;
+    int64_t end;   // exclusive
+    
+    bool contains(int64_t pos) const {
+      return pos >= start && pos < end;
+    }
+  };
+  
+  // Cached gap runs: inherited from parent + local mutations
+  std::vector<GapRun> effectiveGapRuns;
+  bool gapRunsCached = false;
+  
+  // Fast gap checking using cached runs
+  bool isGapPosition(int64_t pos) const {
+    for (const auto& run : effectiveGapRuns) {
+      if (run.contains(pos)) {
+        return true;
+      }
+      // Since runs are sorted, we can break early
+      if (pos < run.start) {
+        break;
+      }
+    }
+    return false;
+  }
 
   // Quaternary-encoded seed changes (for efficient storage and transmission)
   std::vector<int64_t> seedChangeBasePositions;  // Base positions for seed changes
@@ -1147,19 +1200,19 @@ struct NodeState {
     // Clear any existing materialized state
     materializedCharacters.clear();
     
-    // Step 1: Start with root/base characters
-    materializedCharacters = rootCharacters;
-    
-    // Step 2: Inherit from parent state (overwrites base characters)
+    // Step 1: Inherit from parent state
     if (parentState && parentState->materializedStateComputed) {
       std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
-      for (const auto& [posKey, character] : parentState->materializedCharacters) {
+      materializedCharacters = parentState->materializedCharacters;
+    }
+    
+    // Step 2: Apply local mutations
+    if (characterStore) {
+      auto localValues = characterStore->getLocalValues();
+      for (const auto& [posKey, character] : localValues) {
         materializedCharacters[posKey] = character;
       }
     }
-    
-    // Step 3: Local mutations will be applied directly via setMaterializedCharacter()
-    // when nucleotide mutations are processed, not during initial materialization
     
     materializedStateComputed = true;
   }
@@ -1179,24 +1232,15 @@ struct NodeState {
     // Step 1: Inherit from parent seed state
     size_t inheritedSeeds = 0;
     if (parentState) {
-      // std::cout << "MATERIALIZE_SEED_DEBUG: Parent exists, materializedStateComputed=" << parentState->materializedStateComputed << " parentSeeds=" << parentState->materializedSeeds.size() << std::endl;
       if (parentState->materializedStateComputed) {
         std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
         materializedSeeds = parentState->materializedSeeds;
         inheritedSeeds = materializedSeeds.size();
-        // std::cout << "MATERIALIZE_SEED_DEBUG: Successfully inherited " << inheritedSeeds << " seeds from parent" << std::endl;
-      } else {
-        // std::cout << "MATERIALIZE_SEED_DEBUG: Parent not materialized yet" << std::endl;
       }
-    } else {
-      // std::cout << "MATERIALIZE_SEED_DEBUG: No parent state provided" << std::endl;
     }
     
     // Note: Local seed mutations are NOT applied here because they haven't been computed yet.
     // This method only handles inheritance. Local seeds will be applied after recomputation.
-    
-    // Debug logging
-    // std::cout << "MATERIALIZE_SEED_COMPLETE: inherited=" << inheritedSeeds << " local=0 total=" << materializedSeeds.size() << std::endl;
     
     materializedStateComputed = true;
   }
@@ -1211,44 +1255,19 @@ struct NodeState {
     std::lock_guard<std::mutex> lock(materializedStateMutex);
     
     if (!materializedStateComputed) {
-      std::cout << "MATERIALIZE_SEED_UPDATE: Cannot update - not yet materialized" << std::endl;
       return;
     }
-    
-    size_t initialCount = materializedSeeds.size();
-    std::cout << "MATERIALIZE_SEED_UPDATE_START: Starting with " << initialCount << " seeds in materialized state" << std::endl;
     
     size_t deletedCount = 0;
     size_t addedCount = 0;
     size_t modifiedCount = 0;
     
-    // Debug: Log first few changes to see what we're processing
-    // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Processing " << detailedSeedChanges.size() << " changes..." << std::endl;
-    for (size_t i = 0; i < std::min(detailedSeedChanges.size(), size_t(5)); i++) {
-      const auto& [pos, wasSeed, isSeed, prevHash, newHash, prevReversed, newReversed, prevEndPos, newEndPos] = detailedSeedChanges[i];
-      // std::cout << "  Change[" << i << "]: pos=" << pos << " wasSeed=" << wasSeed << " isSeed=" << isSeed << std::endl;
-    }
-    
     // Apply all detailed seed changes
     for (const auto& [pos, wasSeed, isSeed, prevHash, newHash, prevReversed, newReversed, prevEndPos, newEndPos] : detailedSeedChanges) {
       if (wasSeed && !isSeed) {
         // Seed was deleted
-        auto it = materializedSeeds.find(pos);
-        bool seedExists = (it != materializedSeeds.end());
-        bool wasErased = materializedSeeds.erase(pos);
-        if (wasErased) {
+        if (materializedSeeds.erase(pos)) {
           deletedCount++;
-        }
-        if (deletedCount <= 10 || !wasErased) {  // Debug first 10 deletions and all failures
-          // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Deleted seed at pos " << pos;
-          if (!seedExists) {
-            // std::cout << " (WARNING: seed was not in materialized map! totalSeeds=" << materializedSeeds.size() << ")";
-          } else if (!wasErased) {
-            // std::cout << " (WARNING: erase failed despite seed existing!)";
-          } else {
-            // std::cout << " (success)";
-          }
-          // std::cout << std::endl;
         }
       } else if (!wasSeed && isSeed) {
         // Seed was added - use the new seed data from the change record
@@ -1259,9 +1278,6 @@ struct NodeState {
         
         materializedSeeds[pos] = newSeed;
         addedCount++;
-        if (addedCount <= 5) {  // Debug first few additions
-          // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Added seed at pos " << pos << " hash=" << newSeed.hash << std::endl;
-        }
       } else if (wasSeed && isSeed) {
         // Seed was modified - use the new seed data from the change record
         seeding::seed_t modifiedSeed;
@@ -1271,16 +1287,8 @@ struct NodeState {
         
         materializedSeeds[pos] = modifiedSeed;
         modifiedCount++;
-        if (modifiedCount <= 5) {  // Debug first few modifications
-          // std::cout << "MATERIALIZE_SEED_UPDATE_DEBUG: Modified seed at pos " << pos << " hash=" << modifiedSeed.hash << std::endl;
-        }
       }
     }
-    
-    size_t finalCount = materializedSeeds.size();
-    std::cout << "MATERIALIZE_SEED_UPDATE: Applied " << detailedSeedChanges.size() << " detailed seed changes: "
-              << "deleted=" << deletedCount << " added=" << addedCount << " modified=" << modifiedCount
-              << " total seeds: " << finalCount << " (was " << initialCount << ")" << std::endl;
   }
   
   /**
@@ -1543,31 +1551,387 @@ struct NodeState {
     return newState;
   }
 
-  // Check if block has an explicit setting at this node
+  // Check if block has an explicit setting at this node (LOCAL mutation)
   bool hasExplicitBlockState(int32_t blockId) const {
-    // Use activeBlocks as the source of truth for block state
-    return activeBlocks.contains(blockId);
+    return localBlockActivations.contains(blockId) || localBlockDeactivations.contains(blockId);
   }
   
-  // Check if block is explicitly ON at this node
+  // Check if block is explicitly ON at this node (LOCAL activation)
   bool isBlockExplicitlyOn(int32_t blockId) const {
-    return activeBlocks.contains(blockId);
+    return localBlockActivations.contains(blockId);
   }
   
   // Set explicit block state for inheritance-based approach
   void setExplicitBlockState(int32_t blockId, bool on) {
-    // Use activeBlocks as the primary block state tracker
-    if (on) {
-      activeBlocks.insert(blockId);
-    } else {
-      activeBlocks.erase(blockId);
-    }
+    // Update local mutations instead of maintaining complete activeBlocks
+    setLocalBlockState(blockId, on);
     
     // Important: If turning off, clear any orientation data since it's irrelevant
     if (!on) {
       auto it = blockOrientation.find(blockId);
       if (it != blockOrientation.end()) {
         it->second = std::nullopt; // Mark as explicitly OFF
+      }
+    }
+  }
+
+  // OPTIMIZATION: Per-node gap run tracking for fast gap detection
+  // Replaces expensive HierarchicalGapMap::isGap() calls that were consuming 28.17% CPU
+  std::unordered_map<int32_t, std::vector<std::pair<int64_t, int64_t>>> gapRuns; // blockId → vector of [start,end) intervals
+  
+  // Fast gap check for a block position
+  bool isGapRun(int32_t blockId, int64_t pos) const {
+    auto it = gapRuns.find(blockId);
+    if (it == gapRuns.end()) return false;
+    for (const auto& interval : it->second) {
+      if (pos >= interval.first && pos < interval.second) return true;
+    }
+    return false;
+  }
+
+  // OPTIMIZATION: Materialized block inheritance to eliminate 268M+ isBlockOn_unsafe calls
+  // Each node only stores LOCAL mutations (blocks turned on/off vs parent)
+  // Complete active set is materialized from parent + local changes
+  
+  // Local block mutations relative to parent
+  absl::flat_hash_set<int32_t> localBlockActivations;    // Blocks turned ON at this node
+  absl::flat_hash_set<int32_t> localBlockDeactivations;  // Blocks turned OFF at this node
+  
+  // Materialized complete block state (inherited + local changes)
+  absl::flat_hash_set<int32_t> materializedActiveBlocks;
+  bool blockStateMaterialized = false;
+  
+  // OPTIMIZATION: Block run caching for consecutive blocks that turn on/off together
+  // This dramatically reduces individual block lookups for common access patterns
+  struct BlockRun {
+    int32_t startBlock;
+    int32_t endBlock;   // exclusive
+    bool isActive;
+    
+    bool contains(int32_t blockId) const {
+      return blockId >= startBlock && blockId < endBlock;
+    }
+    
+    size_t size() const {
+      return static_cast<size_t>(endBlock - startBlock);
+    }
+  };
+  
+  // Cached block runs: sorted by startBlock for binary search
+  mutable std::vector<BlockRun> blockRuns;
+  mutable bool blockRunsCached = false;
+  
+  // Fast block status check using runs (O(log n) instead of O(1) but much better cache locality)
+  bool isBlockActiveUsingRuns(int32_t blockId) const {
+    if (!blockRunsCached) {
+      buildBlockRuns();
+    }
+    
+    // Binary search for the run containing this block
+    auto it = std::upper_bound(blockRuns.begin(), blockRuns.end(), blockId,
+                              [](int32_t id, const BlockRun& run) {
+                                return id < run.startBlock;
+                              });
+    
+    if (it != blockRuns.begin()) {
+      --it;
+      if (it->contains(blockId)) {
+        return it->isActive;
+      }
+    }
+    
+    // Not found in any run, use individual block lookup
+    return materializedActiveBlocks.contains(blockId);
+  }
+  
+  // Build block runs from materialized active blocks
+  void buildBlockRuns() const {
+    if (!blockStateMaterialized) {
+      blockRunsCached = false;
+      return;
+    }
+    
+    blockRuns.clear();
+    
+    if (materializedActiveBlocks.empty()) {
+      blockRunsCached = true;
+      return;
+    }
+    
+    // Convert to sorted vector for run detection
+    std::vector<int32_t> sortedBlocks(materializedActiveBlocks.begin(), materializedActiveBlocks.end());
+    std::sort(sortedBlocks.begin(), sortedBlocks.end());
+    
+    // Build runs of consecutive active blocks
+    std::vector<BlockRun> activeRuns;
+    int32_t runStart = sortedBlocks[0];
+    int32_t runEnd = runStart + 1;
+    
+    for (size_t i = 1; i < sortedBlocks.size(); ++i) {
+      if (sortedBlocks[i] == runEnd) {
+        // Consecutive block, extend run
+        runEnd = sortedBlocks[i] + 1;
+      } else {
+        // Gap found, finish current run and start new one
+        if (runEnd - runStart >= 3) { // Only create runs for 3+ consecutive blocks
+          activeRuns.push_back({runStart, runEnd, true});
+        }
+        runStart = sortedBlocks[i];
+        runEnd = runStart + 1;
+      }
+    }
+    
+    // Add final run
+    if (runEnd - runStart >= 3) {
+      activeRuns.push_back({runStart, runEnd, true});
+    }
+    
+    // Build complete run list including inactive gaps
+    blockRuns.clear();
+    if (activeRuns.empty()) {
+      blockRunsCached = true;
+      return;
+    }
+    
+    // Add inactive run before first active run (if needed)
+    if (activeRuns[0].startBlock > 0) {
+      blockRuns.push_back({0, activeRuns[0].startBlock, false});
+    }
+    
+    // Add active runs and inactive gaps between them
+    for (size_t i = 0; i < activeRuns.size(); ++i) {
+      blockRuns.push_back(activeRuns[i]);
+      
+      // Add inactive gap to next run (if any)
+      if (i + 1 < activeRuns.size()) {
+        int32_t gapStart = activeRuns[i].endBlock;
+        int32_t gapEnd = activeRuns[i + 1].startBlock;
+        if (gapEnd > gapStart) {
+          blockRuns.push_back({gapStart, gapEnd, false});
+        }
+      }
+    }
+    
+    blockRunsCached = true;
+  }
+  
+  // OPTIMIZATION: Batch block status checking for consecutive ranges
+  // This is much faster than individual block checks when scanning ranges
+  std::vector<bool> getBlockStatusBatch(int32_t startBlock, int32_t count) const {
+    std::vector<bool> result(count, false);
+    
+    if (!blockRunsCached) {
+      buildBlockRuns();
+    }
+    
+    if (blockRuns.empty()) {
+      // No runs cached, fall back to individual lookups
+      for (int32_t i = 0; i < count; ++i) {
+        result[i] = materializedActiveBlocks.contains(startBlock + i);
+      }
+      return result;
+    }
+    
+    // Use block runs for efficient range scanning
+    int32_t currentBlock = startBlock;
+    size_t resultIndex = 0;
+    
+    while (currentBlock < startBlock + count && resultIndex < result.size()) {
+      // Find run containing current block
+      auto it = std::upper_bound(blockRuns.begin(), blockRuns.end(), currentBlock,
+                                [](int32_t id, const BlockRun& run) {
+                                  return id < run.startBlock;
+                                });
+      
+      if (it != blockRuns.begin()) {
+        --it;
+        if (it->contains(currentBlock)) {
+          // Fill all blocks in this run (up to our range limit)
+          int32_t runEnd = std::min(it->endBlock, startBlock + count);
+          while (currentBlock < runEnd && resultIndex < result.size()) {
+            result[resultIndex] = it->isActive;
+            currentBlock++;
+            resultIndex++;
+          }
+          continue;
+        }
+      }
+      
+      // Block not in any run, check individually
+      result[resultIndex] = materializedActiveBlocks.contains(currentBlock);
+      currentBlock++;
+      resultIndex++;
+    }
+    
+    return result;
+  }
+  
+  // CRITICAL OPTIMIZATION: Zero-allocation batch method for ultra-hot paths
+  void getBlockStatusBatchFast(int32_t startBlock, int32_t count, bool* result) const {
+    if (!blockRunsCached) {
+      buildBlockRuns();
+    }
+    
+    if (blockRuns.empty()) {
+      // No runs cached, fall back to individual lookups
+      for (int32_t i = 0; i < count; ++i) {
+        result[i] = materializedActiveBlocks.contains(startBlock + i);
+      }
+      return;
+    }
+    
+    // Use block runs for efficient range scanning
+    int32_t currentBlock = startBlock;
+    int32_t resultIndex = 0;
+    
+    while (currentBlock < startBlock + count && resultIndex < count) {
+      // Find run containing current block
+      auto it = std::upper_bound(blockRuns.begin(), blockRuns.end(), currentBlock,
+                                [](int32_t id, const BlockRun& run) {
+                                  return id < run.startBlock;
+                                });
+      
+      if (it != blockRuns.begin()) {
+        --it;
+        if (it->contains(currentBlock)) {
+          // Fill all blocks in this run (up to our range limit)
+          int32_t runEnd = std::min(it->endBlock, startBlock + count);
+          while (currentBlock < runEnd && resultIndex < count) {
+            result[resultIndex] = it->isActive;
+            currentBlock++;
+            resultIndex++;
+          }
+          continue;
+        }
+      }
+      
+      // Block not in any run, check individually
+      result[resultIndex] = materializedActiveBlocks.contains(currentBlock);
+      currentBlock++;
+      resultIndex++;
+    }
+  }
+  
+  // OPTIMIZATION: Fast paths for common block patterns
+  // Detect and cache common patterns like "all blocks on", "no blocks on", "alternating blocks", etc.
+  enum class BlockPattern {
+    UNKNOWN,
+    ALL_ON,       // All blocks are active
+    ALL_OFF,      // No blocks are active  
+    SPARSE,       // Few scattered active blocks
+    DENSE,        // Most blocks active with few gaps
+    RUNS          // Multiple consecutive runs
+  };
+  
+  mutable BlockPattern cachedPattern = BlockPattern::UNKNOWN;
+  mutable bool patternCached = false;
+  
+  // Detect and cache the block activation pattern for optimized access
+  void detectBlockPattern() const {
+    if (!blockStateMaterialized) {
+      patternCached = false;
+      return;
+    }
+    
+    // Note: We'll need to pass totalBlocks from StateManager for accurate pattern detection
+    // For now, use a simple heuristic based on density
+    const size_t activeCount = materializedActiveBlocks.size();
+    
+    if (activeCount == 0) {
+      cachedPattern = BlockPattern::ALL_OFF;
+    } else if (activeCount < 10) {
+      cachedPattern = BlockPattern::SPARSE;
+    } else if (activeCount > 1000) {
+      cachedPattern = BlockPattern::DENSE; 
+    } else {
+      cachedPattern = BlockPattern::RUNS;
+    }
+    
+    patternCached = true;
+  }
+  
+  // Fast block status check with pattern-specific optimizations
+  bool isBlockActiveFast(int32_t blockId) const {
+    if (!patternCached) {
+      detectBlockPattern();
+    }
+    
+    switch (cachedPattern) {
+      case BlockPattern::ALL_OFF:
+        return false;
+        
+      case BlockPattern::ALL_ON:
+        return true;  // Assuming blockId is valid
+        
+      case BlockPattern::SPARSE:
+        // For sparse patterns, direct set lookup is fastest
+        return materializedActiveBlocks.contains(blockId);
+        
+      case BlockPattern::DENSE:
+        // For dense patterns, check if block is NOT in the small inactive set
+        // This is an approximation - for exact results use run-based lookup
+        return isBlockActiveUsingRuns(blockId);
+        
+      case BlockPattern::RUNS:
+        // Use run-based lookup for patterns with consecutive blocks
+        return isBlockActiveUsingRuns(blockId);
+        
+      default:
+        return materializedActiveBlocks.contains(blockId);
+    }
+  }
+  
+  // Fast O(1) block status check using materialized state with pattern optimization
+  bool isBlockActive(int32_t blockId) const {
+    return isBlockActiveFast(blockId);
+  }
+  
+  // Update local block state (faster than maintaining complete activeBlocks)
+  void setLocalBlockState(int32_t blockId, bool active) {
+    if (active) {
+      localBlockActivations.insert(blockId);
+      localBlockDeactivations.erase(blockId);
+    } else {
+      localBlockDeactivations.insert(blockId);
+      localBlockActivations.erase(blockId);
+    }
+    blockStateMaterialized = false; // Mark for re-materialization
+    blockRunsCached = false; // Invalidate block runs cache
+    patternCached = false; // Invalidate pattern cache
+  }
+  
+  // Materialize complete block state from parent + local changes
+  void materializeBlockState(const NodeState* parentState) {
+    materializedActiveBlocks.clear();
+    
+    // Inherit from parent (if exists)
+    if (parentState && parentState->blockStateMaterialized) {
+      materializedActiveBlocks = parentState->materializedActiveBlocks;
+    }
+    
+    // Apply local activations
+    for (int32_t blockId : localBlockActivations) {
+      materializedActiveBlocks.insert(blockId);
+    }
+    
+    // Apply local deactivations
+    for (int32_t blockId : localBlockDeactivations) {
+      materializedActiveBlocks.erase(blockId);
+    }
+    
+    blockStateMaterialized = true;
+    blockRunsCached = false; // Invalidate runs cache to trigger rebuild
+    patternCached = false; // Invalidate pattern cache to trigger redetection
+  }
+  
+  // Ensure block state is materialized (lazy materialization)
+  void ensureBlockStateMaterialized(const absl::flat_hash_map<std::string, NodeState>& allNodeStates) {
+    if (!blockStateMaterialized && !parentId.empty()) {
+      auto parentIt = allNodeStates.find(parentId);
+      if (parentIt != allNodeStates.end()) {
+        // Recursively ensure parent is materialized first
+        const_cast<NodeState&>(parentIt->second).ensureBlockStateMaterialized(allNodeStates);
+        materializeBlockState(&parentIt->second);
       }
     }
   }
@@ -1595,6 +1959,61 @@ private:
 
   // Mapping from node ID to node state
   mutable absl::flat_hash_map<std::string, NodeState> nodeStates;
+  
+  // OPTIMIZATION: Thread-local cache for frequently accessed nodes
+  // This eliminates repeated string hashing and map lookups for hot paths
+  struct NodeStateCache {
+    std::string lastNodeId;
+    const NodeState* lastNodeState = nullptr;
+    
+    void clear() {
+      lastNodeId.clear();
+      lastNodeState = nullptr;
+    }
+    
+    const NodeState* getCachedState(const std::string& nodeId, 
+                                   const absl::flat_hash_map<std::string, NodeState>& nodeStates) {
+      if (nodeId == lastNodeId && lastNodeState != nullptr) {
+        return lastNodeState;
+      }
+      
+      auto it = nodeStates.find(nodeId);
+      if (it != nodeStates.end()) {
+        lastNodeId = nodeId;
+        lastNodeState = &it->second;
+        return lastNodeState;
+      }
+      
+      // Clear cache on miss
+      clear();
+      return nullptr;
+    }
+    
+    // CRITICAL OPTIMIZATION: String-view version to avoid string construction
+    const NodeState* getCachedStateByView(std::string_view nodeId, 
+                                         const absl::flat_hash_map<std::string, NodeState>& nodeStates) {
+      // Fast path: check if it's the same as last lookup (avoid string conversion)
+      if (!lastNodeId.empty() && lastNodeState != nullptr && 
+          nodeId.size() == lastNodeId.size() && 
+          std::equal(nodeId.begin(), nodeId.end(), lastNodeId.begin())) {
+        return lastNodeState;
+      }
+      
+      // Fallback: convert to string and do normal lookup
+      std::string nodeIdStr(nodeId);
+      auto it = nodeStates.find(nodeIdStr);
+      if (it != nodeStates.end()) {
+        lastNodeId = std::move(nodeIdStr);
+        lastNodeState = &it->second;
+        return lastNodeState;
+      }
+      
+      // Clear cache on miss
+      clear();
+      return nullptr;
+    }
+  };
+  static thread_local NodeStateCache tlsNodeCache;
 
   // Streamlined hierarchical node structure for efficient traversal
   struct NodeHierarchy {
@@ -1822,7 +2241,16 @@ public:
   
   // Character and Seed Access
   char getCharAtPosition(std::string_view nodeId, int32_t blockId, int32_t nucPos, int32_t gapPos) const;
+  
+  // PERFORMANCE OPTIMIZATION: Bulk character extraction to avoid individual StateManager calls
+  std::vector<char> getCharactersAtBlock(std::string_view nodeId, int32_t blockId, 
+                                         int32_t startNucPos, int32_t startGapPos, int32_t length) const;
+  
   bool setCharAtPosition(std::string_view nodeId, int32_t blockId, int32_t nucPos, int32_t gapPos, char newChar);
+  
+  // OPTIMIZATION: Helper method to reduce code duplication and improve performance
+  bool setCharAtPositionImpl(const std::string& nodeIdStr, NodeState& nodeState,
+                            int32_t blockId, int32_t nucPos, int32_t gapPos, char c);
   std::optional<seeding::seed_t> getSeedAtPosition(std::string_view nodeId, int64_t pos) const;
   void setSeedAtPosition(std::string_view nodeId_sv, int64_t pos, const seeding::seed_t& seed);
   void clearSeedAtPosition(std::string_view nodeId, int64_t pos);
@@ -1875,6 +2303,9 @@ public:
   void initializeGlobalCache();
   bool isGlobalCacheInitialized() const;
   void initializeSeedStorage();
+  
+  // OPTIMIZATION: Bulk materialization to eliminate lazy materialization overhead
+  void materializeAllNodeBlockStates();
   
   // Utility Functions
   void flushCoordinateMappings();

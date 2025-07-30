@@ -339,7 +339,7 @@ std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path) {
       
       // Check optional fields if they're expected to be set
       if (root.hasNodePathInfo() && root.getNodePathInfo().size() == 0) {
-        logging::warn("Index has empty nodePathInfo list");
+        logging::info("Index has empty nodePathInfo (expected with on-demand inheritance)");
       }
       
       if (root.hasBlockInfo() && root.getBlockInfo().size() == 0) {
@@ -1284,45 +1284,27 @@ int main(int argc, char *argv[]) {
           placement::place(result, &T, index_input, reads1, reads2,
                          placementFileName, effective_index_path, debug_specific_node_id);
 
-
-          /* @Alan this is the end of placement
-            -> next step is pass seeds of target node to Nico's alignment code
-            -> and genotyping
-
-            placementResult should have nodeSeedMap[targetId] with the target seed set
-            
-            TODO: I'm not sure k-mer end positions are correct yet
-          */
-
-
+          // ---> Add call to dump placement summary <--- 
           std::string placementSummaryFileName = prefix + ".placement.summary.md";
           placement::dumpPlacementSummary(result, placementSummaryFileName);
+          // ---> End summary dump call <--- 
 
-          // Report the top 3 metrics as requested
-          msg("=== TOP PLACEMENT RESULTS ===");
-          
-          // 1. Raw number of matches (set, no frequency) - using raw count
-          msg("Top by raw seed matches (unique count): node {} with {} matches (Jaccard score {:.4f})",
-              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", 
-              result.bestJaccardPresenceCount,
-              result.bestJaccardPresenceScore);
-          
-          // 2. Number of matches scaled by read frequency 
-          msg("Top by weighted seed matches (frequency-scaled): node {} with score {}",
-              result.bestRawSeedMatchNode ? result.bestRawSeedMatchNode->identifier : "none", 
-              result.bestRawSeedMatchScore);
-          
-          // 3. Cosine similarity
-          msg("Top by cosine similarity: node {} with score {:.4f}",
-              result.bestCosineNode ? result.bestCosineNode->identifier : "none", 
-              result.bestCosineScore);
-          
-          msg("=== ADDITIONAL METRICS ===");
+          // Get placement results for raw seed matches
+          panmanUtils::Node *bestRawMatchNode = result.bestRawSeedMatchNode;
+          int64_t bestRawMatchScore = result.bestRawSeedMatchScore;
+
+          msg("Best raw seed match: node {} with score {} (sum of read frequencies for matched seeds)",
+              bestRawMatchNode ? bestRawMatchNode->identifier : "none", bestRawMatchScore);
+
+          // Log all other best scores to console
+          msg("Best Jaccard (Presence/Absence): node {} with score {:.4f}",
+              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", result.bestJaccardPresenceScore);
           msg("Best Weighted Jaccard: node {} with score {:.4f}",
-              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore);
+              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore); // bestJaccardScore is Weighted Jaccard
+          msg("Best Cosine Similarity: node {} with score {:.4f}",
+              result.bestCosineNode ? result.bestCosineNode->identifier : "none", result.bestCosineScore);
           msg("Overall Best Weighted Score (Jaccard*scale + Cosine*(1-scale)): node {} with score {:.4f}",
               result.bestWeightedNode ? result.bestWeightedNode->identifier : "none", result.bestWeightedScore);
-          
         }
         
         // Validate the loaded index
