@@ -21,6 +21,7 @@ void updateGapMapStep(
 
 void updateGapMap(
   panmanUtils::Node *node,
+  size_t dfsIndex,
   std::map<uint64_t, uint64_t>& gapMap,
   const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
@@ -44,6 +45,13 @@ void makeCoordIndex(
 uint64_t degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint64_t>& degapCoordsIndex);
 
 uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64_t>& regapCoordsIndex);
+
+struct IteratorComparator {
+  bool operator()(const std::map<uint64_t, uint64_t>::iterator& lhs,
+                  const std::map<uint64_t, uint64_t>::iterator& rhs) const {
+      return lhs->first < rhs->first;
+  }
+};
 
 class mgsrIndexBuilder {
   public:
@@ -94,6 +102,7 @@ class mgsrIndexBuilder {
 
     std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRanges(
       panmanUtils::Node* node,
+      size_t dfsIndex,
       const panmapUtils::BlockSequences& blockSequences,
       const panmapUtils::GlobalCoords& globalCoords,
       std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
@@ -104,6 +113,67 @@ class mgsrIndexBuilder {
       std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord
     );
 };
+
+class mgsrIndexReader {
+  public:
+    ::capnp::PackedFdMessageReader reader;
+    MGSRIndex::Reader indexReader;
+    capnp::List<SeedInfo>::Reader seedInfos;
+    capnp::List<NodeChanges>::Reader perNodeChanges;
+
+    panmanUtils::Tree *T;
+
+    mgsrIndexReader(panmanUtils::Tree* tree, const std::string& path)
+        : mgsrIndexReader(tree, open_file(path)) {}
+
+  private:
+
+    mgsrIndexReader(panmanUtils::Tree* tree, int fd)
+    : reader(fd),
+      indexReader(reader.getRoot<MGSRIndex>()),
+      seedInfos(indexReader.getSeedInfo()),
+      perNodeChanges(indexReader.getPerNodeChanges()),
+      T(tree)
+    {}
+
+    int open_file(const std::string& path);
+};
+
+
+
+class mgsrPlacer {
+  public:
+    mgsrIndexReader indexReader;
+    
+    panmanUtils::Tree *T;
+    
+    // dynamic objects
+    std::map<uint64_t, uint64_t> degapCoordIndex;
+    std::map<uint64_t, uint64_t> regapCoordIndex;
+    std::map<uint64_t, uint64_t> positionMap;
+    std::unordered_map<size_t, std::set<std::map<uint64_t, uint64_t>::iterator, IteratorComparator>> hashToPositionMap;
+
+    mgsrPlacer(panmanUtils::Tree* tree, const std::string& path)
+      : indexReader(tree, path),
+        T(tree) {
+    }
+
+    void initialize();
+
+    void placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIndex);
+    void placeReads();
+
+    void addSeedAtPosition(uint64_t uniqueKminmerIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks);
+    void addSeedAtPosition(uint64_t uniqueKminmerIndex);
+    void delSeedAtPosition(uint64_t pos, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks);
+    void delSeedAtPosition(uint64_t pos);
+
+
+
+
+  private:
+};
+
 
 
 // end of namespace mgsr
