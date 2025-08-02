@@ -164,6 +164,11 @@ void getSequenceFromReference(
       int length = nucMutation.mutInfo >> 4;
       for (int i = 0; i < length; i++) {
         panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
+        if (pos.nucPosition == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) {
+          continue;
+        } else if (pos.nucPosition >= sequence[pos.primaryBlockId].size()) {
+          continue;
+        }
         int newNucCode = (nucMutation.nucs >> (4*(5-i))) & 0xF;
         char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
         pos.setSequenceBase(sequence, newNuc);
@@ -195,7 +200,7 @@ std::string getStringFromSequence(
           // Main nuc
           if(sequence[i][j].first != '-' && sequence[i][j].first != 'x') {
             seqString += sequence[i][j].first;
-          } else if(aligned && sequence[i][j].first != 'x') {
+          } else if (aligned && sequence[i][j].first != 'x') {
             seqString += '-';
           }
         }
