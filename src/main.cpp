@@ -102,6 +102,9 @@ Other options:
 
 Placement-per-read options:
   --place-per-read                       Place reads per read (panmama)
+  --primer-depth <path>                  Path to primer depth file.
+  --fast-mode                            Fast mode for scoring.
+  -l <int>                               length of kminmer [default: 3]
   --maximum-gap <int>                   Maximum gap between matches. [default: 10]
   --minimum-count <int>                 Minimum count of seeds in a match. [default: 0]
   --minimum-score <int>                 Minimum score of seeds in a match. [default: 0]
@@ -402,6 +405,9 @@ int main(int argc, const char** argv) {
       std::string refFileName = args["--ref-file"] ? args["--ref-file"].asString() : "";
       callVariantsFromSAM(samFileName, refFileName, mutMat, prefix);
     } else if (placement_per_read) {
+      bool fast_mode                = args["--fast-mode"] && args["--fast-mode"].isBool() ? args["--fast-mode"].asBool() : false;
+      std::string primerDepthFile   = args["--primer-depth"] ? args["--primer-depth"].asString() : "";
+      int kminmerLength             = args["-l"] ? std::stoi(args["-l"].asString()) : 3;
       int maximumGap                = args["--maximum-gap"] ? std::stoi(args["--maximum-gap"].asString()) : 10;
       int minimumCount              = args["--minimum-count"] ? std::stoi(args["--minimum-count"].asString()) : 0;
       int minimumScore              = args["--minimum-score"] ? std::stoi(args["--minimum-score"].asString()) : 0;
@@ -424,7 +430,8 @@ int main(int argc, const char** argv) {
       bool save_kminmer_binary_coverage = args["--save-kminmer-binary-coverage"] && args["--save-kminmer-binary-coverage"].isBool() ? args["--save-kminmer-binary-coverage"].asBool() : false;
       double minimumKminmerCoverage     = args["--minimum-kminmer-coverage"] ? std::stod(args["--minimum-kminmer-coverage"].asString()) : 0.2;
 
-      log(prefix, "Starting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
+      log(prefix, "\nkminmerLength: " + std::to_string(kminmerLength) +
+        "\nStarting placement per read...\nmaximum-gap: " + std::to_string(maximumGap) +
         "\nminimum-count: " + std::to_string(minimumCount) +
         "\nminimum-score: " + std::to_string(minimumScore) +
         "\nerror-rate: " + std::to_string(errorRate) +
@@ -446,11 +453,11 @@ int main(int argc, const char** argv) {
 
       bool rescueDuplicates = rescueDuplicatesThreshold > 0;
       pmi::place_per_read(
-        T, index_input, reads1, reads2, maximumGap, minimumCount, minimumScore,
+        T, index_input, reads1, reads2, primerDepthFile, kminmerLength, maximumGap, minimumCount, minimumScore,
         errorRate, redoReadThreshold, recalculateScore, rescueDuplicates,
         rescueDuplicatesThreshold, excludeDuplicatesThreshold, preEMFilterMethod, minimumKminmerCoverage,
         preEMFilterNOrder, preEMFilterMBCNum, emFilterRound, checkFrequency, removeIteration, insigProp, roundsRemove,
-        removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage);
+        removeThreshold, leafNodesOnly, callSubconsensus, prefix, save_kminmer_binary_coverage, fast_mode);
     } else {
       if (!refNode.empty() && T->allNodes.find(refNode) == T->allNodes.end()) {
         std::cerr << "Reference node (" << refNode << ") specified but not found in the pangenome." << std::endl;

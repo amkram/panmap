@@ -10,8 +10,15 @@ extern "C" {
 
 //samAlignment is sorted at the end
 
-void addSeeds(std::vector<seeding::seed>& fwdmatchingSeeds,std::vector<seeding::seed>& bwdmatchingSeeds, const std::vector<uint32_t>& positions, 
-              const seeding::seed& curSeed, bool reverseCondition, int k, int readlen) {
+void addSeeds(
+  std::vector<seeding::seed>& fwdmatchingSeeds,
+  std::vector<seeding::seed>& bwdmatchingSeeds,
+  const std::vector<uint32_t>& positions, 
+  const seeding::seed& curSeed,
+  bool reverseCondition,
+  int k,
+  int readlen
+) {
     for (uint32_t rpos : positions) {
         seed thisSeed;
         thisSeed.reversed = curSeed.reversed == reverseCondition;
