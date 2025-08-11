@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-static void compareBruteForce(
+static void compareBruteForceBuild(
   panmanUtils::Tree *T,
   panmanUtils::Node *node,
   const panmapUtils::BlockSequences& blockSequences,
@@ -371,6 +371,139 @@ static void compareBruteForce(
 
   std::cout << "         " << node->identifier << " states passed brute force check" << std::endl;
   
+}
+
+static void compareBruteForcePlace(
+  panmanUtils::Tree *T,
+  panmanUtils::Node *node,
+  const panmapUtils::GlobalCoords& globalCoords,
+  const std::map<uint64_t, uint64_t>& gapMap,
+  const std::map<uint64_t, uint64_t>& degapCoordIndex,
+  const std::map<uint64_t, uint64_t>& regapCoordIndex,
+  const std::map<uint64_t, uint64_t>& positionMap,
+  const std::unordered_map<size_t, std::set<std::map<uint64_t, uint64_t>::iterator, mgsr::IteratorComparator>>& hashToPositionMap,
+  const ::capnp::List<SeedInfo>::Reader& seedInfos,
+  int k, int s, int t, int l, bool open
+) {
+  std::cout << "Checking " << node->identifier << " states with brute force at placement... " << std::flush;
+  // check sequence object
+  std::vector<std::vector<std::pair<char, std::vector<char>>>> sequenceBruteForce;
+  std::vector<bool> blockExistsBruteForce;
+  std::vector<bool> blockStrandBruteForce;
+  std::unordered_map<int, int> blockLengthsBruteForce;
+  panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
+
+  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, true);
+  std::vector<std::pair<uint64_t, uint64_t>> gapMapBruteForce;
+  // checking gap map with brute force
+  for (uint64_t i = 0; i < gappedSequenceBruteForce.size(); i++) {
+    char nuc = gappedSequenceBruteForce[i];
+    if (nuc == '-') {
+      if (!gapMapBruteForce.empty() && gapMapBruteForce.back().second + 1 == i) {
+        ++gapMapBruteForce.back().second;
+      } else {
+        gapMapBruteForce.emplace_back(i, i);
+      }
+    }
+  }
+  
+  if (gapMapBruteForce.size() != gapMap.size()) {
+    std::cout << "Gap map size mismatch: dynamic " << gapMap.size() << " != brute force " << gapMapBruteForce.size() << std::endl;
+    std::cout << "Dynamic gap map:";
+    for (const auto& [a, b] : gapMap) {
+      std::cout << "(" << a << "," << b << ") ";
+    }
+    std::cout << std::endl;
+    std::cout << "Brute force gap map:";
+    for (const auto& [a, b] : gapMapBruteForce) {
+      std::cout << "(" << a << "," << b << ") ";
+    }
+    std::cout << std::endl;
+    std::exit(1);
+  }
+
+  size_t gapMapIndex = 0;
+  for (const auto& [a, b] : gapMap) {
+    if (a == gapMapBruteForce[gapMapIndex].first && b == gapMapBruteForce[gapMapIndex].second) {
+      ++gapMapIndex;
+    } else {
+      std::cout << "Gap map mismatch at gap map index " << gapMapIndex << " dynamic " << a << " " << b << " != brute force " << gapMapBruteForce[gapMapIndex].first << " " << gapMapBruteForce[gapMapIndex].second << std::endl;
+      std::cout << "Dynamic gap map:";
+      for (const auto& [a, b] : gapMap) {
+        std::cout << "(" << a << "," << b << ") ";
+      }
+      std::cout << std::endl;
+      std::cout << "Brute force gap map:";
+      for (const auto& [a, b] : gapMapBruteForce) {
+        std::cout << "(" << a << "," << b << ") ";
+      }
+      std::cout << std::endl;
+      std::exit(1);
+    }
+  }
+  
+  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
+  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
+  // check k-min-mers
+  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
+  if (syncmersBruteForce.size() >= l) {
+    size_t forwardRolledHash = 0;
+    size_t reverseRolledHash = 0;
+  
+    // first kminmer
+    for (size_t i = 0; i < l; ++i) {
+      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmersBruteForce[i]);
+      reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmersBruteForce[l-i-1]);
+    }
+  
+    if (forwardRolledHash != reverseRolledHash) {
+      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+      kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[0]), std::get<3>(syncmersBruteForce[l-1])+k-1, reverseRolledHash < forwardRolledHash);
+    }
+  
+    // rest of kminmers
+    for (uint64_t i = 1; i < syncmersBruteForce.size()-l+1; ++i) {
+      if (!std::get<2>(syncmersBruteForce[i-1]) || !std::get<2>(syncmersBruteForce[i+l-1])) {
+        std::cout << "invalid syncmer" << std::endl;
+        exit(0);
+      }
+      const size_t& prevSyncmerHash = std::get<0>(syncmersBruteForce[i-1]);
+      const size_t& nextSyncmerHash = std::get<0>(syncmersBruteForce[i+l-1]);
+      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
+      reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
+  
+      if (forwardRolledHash != reverseRolledHash) {
+        size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+        kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[i]), std::get<3>(syncmersBruteForce[i+l-1])+k-1, reverseRolledHash < forwardRolledHash);
+      }
+    }
+  }
+
+  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteDynamic;
+  for (const auto& [pos, infoIndex] : positionMap) {
+    kminmersBruteDynamic.emplace_back(
+      seedInfos[infoIndex].getHash(),
+      mgsr::degapGlobal(seedInfos[infoIndex].getStartPos(), degapCoordIndex),
+      mgsr::degapGlobal(seedInfos[infoIndex].getEndPos(), degapCoordIndex),
+      seedInfos[infoIndex].getIsReverse()
+    );
+  }
+
+  if (kminmersBruteDynamic.size() != kminmersBruteForce.size()) {
+    std::cout << "K-min-mer count mismatch: dynamic " << kminmersBruteDynamic.size() << " != brute force " << kminmersBruteForce.size() << std::endl;
+    std::exit(1);
+  }
+
+  for (size_t i = 0; i < kminmersBruteDynamic.size(); i++) {
+    const auto& [hash, startPos, endPos, isReverse] = kminmersBruteDynamic[i];
+    const auto& [hashBruteForce, startPosBruteForce, endPosBruteForce, isReverseBruteForce] = kminmersBruteForce[i];
+    if (hash != hashBruteForce || startPos != startPosBruteForce || endPos != endPosBruteForce || isReverse != isReverseBruteForce) {
+      std::cout << "K-min-mer mismatch at " << i << "th k-min-mer: dynamic (" << hash << ", " << startPos << ", " << endPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << endPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
+      std::exit(1);
+    }
+  }
+
+  std::cout << "passed" << std::endl;
 }
 
 static void applyMutations (
@@ -1431,7 +1564,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   }
   
   // compare with brute force for debugging
-  // compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, uniqueKminmers, kminmerToUniqueIndex, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
+  // compareBruteForceBuild(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, uniqueKminmers, kminmerToUniqueIndex, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
 
 
   revertGapMapInversions(gapRunBlockInversionBacktracks, gapMap);
@@ -1569,6 +1702,7 @@ void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t uniqueKminmerIndex, std::vecto
     auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
     oldHashToPositionIt->second.erase(posMapIt);
     if (oldHashToPositionIt->second.empty()) hashToPositionMap.erase(oldHashToPositionIt);
+    posMapIt->second = uniqueKminmerIndex;
     hashToPositionMap[newHash].insert(posMapIt);
   } else {
     posMapIt = positionMap.emplace(pos, uniqueKminmerIndex).first;
@@ -1587,6 +1721,7 @@ void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t uniqueKminmerIndex) {
     auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
     oldHashToPositionIt->second.erase(posMapIt);
     if (oldHashToPositionIt->second.empty()) hashToPositionMap.erase(oldHashToPositionIt);
+    posMapIt->second = uniqueKminmerIndex;
     hashToPositionMap[newHash].insert(posMapIt);
   } else {
     posMapIt = positionMap.emplace(pos, uniqueKminmerIndex).first;
@@ -1662,7 +1797,6 @@ void mgsr::mgsrPlacer::updateGapMap(uint64_t currentDfsIndex, const panmapUtils:
 
 
 void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIndex, const panmapUtils::GlobalCoords& globalCoords) {
-  
   std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
   updateSeeds(dfsIndex, seedBacktracks);
 
@@ -1674,11 +1808,12 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIn
   std::map<uint64_t, uint64_t> regapCoordIndex;
   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
 
+  // compareBruteForcePlace(T, node, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, positionMap, hashToPositionMap, indexReader.seedInfos, indexReader.indexReader.getK(), indexReader.indexReader.getS(), indexReader.indexReader.getT(), indexReader.indexReader.getL(), indexReader.indexReader.getOpen());
 
   revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
-
-
+  
+  std::cout << "\rdfsIndex: " << dfsIndex << std::flush;
   for (panmanUtils::Node *child : node->children) {
     dfsIndex++;
     placeReadsHelper(child, dfsIndex, globalCoords);
