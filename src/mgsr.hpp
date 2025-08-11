@@ -35,11 +35,16 @@ void invertGapMap(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
 );
 
+void revertGapMapInversions(
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks,
+  std::map<uint64_t, uint64_t>& gapMap
+);
+
 void makeCoordIndex(
   std::map<uint64_t, uint64_t>& degapCoordIndex,
   std::map<uint64_t, uint64_t>& regapCoordIndex,
   const std::map<uint64_t, uint64_t>& gapMap,
-  const panmapUtils::GlobalCoords& globalCoords
+  uint64_t lastScalarCoord
 );
 
 uint64_t degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint64_t>& degapCoordsIndex);
@@ -148,8 +153,7 @@ class mgsrPlacer {
     panmanUtils::Tree *T;
     
     // dynamic objects
-    std::map<uint64_t, uint64_t> degapCoordIndex;
-    std::map<uint64_t, uint64_t> regapCoordIndex;
+    std::map<uint64_t, uint64_t> gapMap;
     std::map<uint64_t, uint64_t> positionMap;
     std::unordered_map<size_t, std::set<std::map<uint64_t, uint64_t>::iterator, IteratorComparator>> hashToPositionMap;
 
@@ -160,9 +164,11 @@ class mgsrPlacer {
 
     void initialize();
 
-    void placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIndex);
+    void placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIndex, const panmapUtils::GlobalCoords& globalCoords);
     void placeReads();
 
+    void updateSeeds(uint64_t currentDfsIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks);
+    void updateGapMap(uint64_t currentDfsIndex, const panmapUtils::GlobalCoords& globalCoords, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks);
     void addSeedAtPosition(uint64_t uniqueKminmerIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks);
     void addSeedAtPosition(uint64_t uniqueKminmerIndex);
     void delSeedAtPosition(uint64_t pos, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks);

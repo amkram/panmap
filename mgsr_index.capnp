@@ -21,6 +21,7 @@ struct NodeChanges {
   seedInsubIndices @1 :List(UInt32);
   seedDeletions @2 :List(UInt32);
   coordDeltas @3 :List(CoordDelta);
+  invertedBlocks @4 :List(UInt32);
 }
 
 struct MGSRIndex {
