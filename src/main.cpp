@@ -1082,10 +1082,8 @@ int main(int argc, char *argv[]) {
     // mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
     // mgsrIndexBuilder.buildIndex();
     // mgsrIndexBuilder.writeIndex("test.pmai");
-    
-    mgsr::mgsrPlacer mgsrPlacer(&T, "sars_20000.pmai");
-    std::cout << mgsrPlacer.indexReader.seedInfos.size() << std::endl;
-    std::cout << mgsrPlacer.indexReader.perNodeChanges.size() << std::endl;
+
+    mgsr::mgsrPlacer mgsrPlacer(&T, "rsv_4000.pmai");
     mgsrPlacer.placeReads();
 
     exit(0);

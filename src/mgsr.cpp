@@ -6,6 +6,9 @@
 #include "seeding.hpp"
 #include <fcntl.h>
 #include <unistd.h>
+#include <tbb/parallel_sort.h>
+#include <tbb/parallel_for.h>
+#include <tbb/global_control.h>
 
 static void compareBruteForceBuild(
   panmanUtils::Tree *T,
@@ -652,6 +655,207 @@ static void applyMutations (
       if (curNucRange.first != -1) {
         gapRunUpdates.emplace_back(false, std::make_pair((uint64_t)curNucRange.first, (uint64_t)curNucRange.second));
       }
+    }
+  }
+}
+
+template <typename T>
+static void inline perfect_shuffle(std::vector<T>& v) {
+  int n = v.size();
+
+  std::vector<T> canvas(n);
+
+  for (int i = 0; i < n / 2; i++) {
+    canvas[i*2] = v[i];
+    canvas[i*2+1] = v[i + n/2];
+  }
+
+  v = std::move(canvas);
+}
+
+void mgsr::seedmersFromFastq(
+  const std::string& readPath1, const std::string& readPath2,
+  std::vector<mgsr::Read>& reads,
+  std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint64_t>>>>& seedmerToReads,
+  std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
+  int k, int s, int t, int l, bool open, bool fast_mode
+) {
+  std::vector<std::string> readSequences;
+  FILE *fp;
+  kseq_t *seq;
+  fp = fopen(readPath1.c_str(), "r");
+  if(!fp){
+    std::cerr << "Error: File " << readPath1 << " not found" << std::endl;
+    exit(0);
+  }
+  seq = kseq_init(fileno(fp));
+  int line;
+  while ((line = kseq_read(seq)) >= 0) {
+    readSequences.push_back(seq->seq.s);
+  }
+  if (readPath2.size() > 0) {
+    fp = fopen(readPath2.c_str(), "r");
+    if(!fp){
+      std::cerr << "Error: File " << readPath2 << " not found" << std::endl;
+      exit(0);
+    }
+    seq = kseq_init(fileno(fp));
+
+    line = 0;
+    int forwardReads = readSequences.size();
+    while ((line = kseq_read(seq)) >= 0) {
+      readSequences.push_back(seq->seq.s);
+    }
+
+    if (readSequences.size() != forwardReads*2){
+      std::cerr << "Error: File " << readPath2 << " does not contain the same number of reads as " << readPath1 << std::endl;
+      exit(0);
+    }
+    
+    //Shuffle reads together, so that pairs are next to eatch other
+    perfect_shuffle(readSequences);
+  }
+
+  // index duplicate reads
+  std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
+  for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
+  tbb::parallel_sort(sortedReadSequencesIndices.begin(), sortedReadSequencesIndices.end(), [&readSequences](size_t i1, size_t i2) {
+    return readSequences[i1] < readSequences[i2];
+  });
+
+  // index duplicate reads
+  std::vector<std::pair<std::string, std::vector<size_t>>> dupReadsIndex;
+  std::string prevSeq = readSequences[sortedReadSequencesIndices[0]];
+  dupReadsIndex.emplace_back(std::make_pair(prevSeq, std::vector<size_t>{0}));
+  for (size_t i = 1; i < sortedReadSequencesIndices.size(); ++i) {
+    std::string currSeq = readSequences[sortedReadSequencesIndices[i]];
+    if (currSeq == prevSeq) {
+      dupReadsIndex.back().second.push_back(i);
+    } else {
+      dupReadsIndex.emplace_back(std::make_pair(currSeq, std::vector<size_t>{i}));
+    }
+    prevSeq = std::move(currSeq);
+  }
+
+  // seedmers for each unique read sequence
+  size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+  std::vector<mgsr::Read> uniqueReadSeedmers(dupReadsIndex.size());
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, dupReadsIndex.size(), dupReadsIndex.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range){
+    for (size_t i = range.begin(); i < range.end(); ++i) {
+      const auto& seq = dupReadsIndex[i].first;
+      const auto& syncmers = seeding::rollingSyncmers(seq, k, s, open, t, false);
+      mgsr::Read& curRead = uniqueReadSeedmers[i];
+      if (syncmers.size() < l) continue;
+
+      size_t forwardRolledHash = 0;
+      size_t reverseRolledHash = 0;
+      // first kminmer
+      for (size_t i = 0; i < l; ++i) {
+        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmers[i]);
+        reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ std::get<0>(syncmers[l-i-1]);
+      }
+
+      uint64_t iorder = 0;
+      if (forwardRolledHash != reverseRolledHash) {
+        size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+        curRead.uniqueSeedmers.emplace(minHash, std::vector<uint64_t>{iorder << 9});
+        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+          minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+        ++iorder;
+      }
+
+      // rest of kminmer
+      for (uint64_t i = 1; i < syncmers.size()-l+1; ++i) {
+        if (!std::get<2>(syncmers[i-1]) || !std::get<2>(syncmers[i+l-1])) {
+          std::cout << "invalid syncmer" << std::endl;
+          exit(0);
+        }
+        const size_t& prevSyncmerHash = std::get<0>(syncmers[i-1]);
+        const size_t& nextSyncmerHash = std::get<0>(syncmers[i+l-1]);
+        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
+        reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
+
+        if (forwardRolledHash != reverseRolledHash) {
+          size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+          auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
+          if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
+            curRead.uniqueSeedmers.emplace(minHash, std::vector<uint64_t>{iorder << 9});
+            curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+              minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+            ++iorder;
+          } else {
+            uniqueSeedmersIt->second.push_back(iorder << 9);
+            curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+              uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+            ++iorder;
+          }
+        }
+      }
+    }
+  });
+  std::vector<size_t> sortedUniqueReadSeedmersIndices(uniqueReadSeedmers.size());
+  for (size_t i = 0; i < uniqueReadSeedmers.size(); ++i) sortedUniqueReadSeedmersIndices[i] = i;
+  tbb::parallel_sort(sortedUniqueReadSeedmersIndices.begin(), sortedUniqueReadSeedmersIndices.end(), [&uniqueReadSeedmers, fast_mode](size_t i1, size_t i2) {
+    const auto& lhs = uniqueReadSeedmers[i1].seedmersList;
+    const auto& rhs = uniqueReadSeedmers[i2].seedmersList;
+    
+    // First, compare the sizes of the seedmersList
+    if (lhs.size() != rhs.size()) {
+      return lhs.size() < rhs.size();
+    }
+    
+    // If sizes are equal, compare hash values first
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i].hash != rhs[i].hash) {
+        return lhs[i].hash < rhs[i].hash;
+      }
+    }
+    
+    // If all hash values are equal, compare other fields
+    return std::lexicographical_compare(
+      lhs.begin(), lhs.end(),
+      rhs.begin(), rhs.end(),
+      [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
+        if (!fast_mode) {
+          if (a.begPos != b.begPos) return a.begPos < b.begPos;
+          if (a.endPos != b.endPos) return a.endPos < b.endPos;
+        }
+        if (a.rev != b.rev) return a.rev < b.rev;
+        return a.iorder < b.iorder;
+      }
+    );
+  });
+
+  reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[0]]));
+  readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
+  for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[0]].second) {
+    readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
+  }
+
+  for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
+    const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
+
+    if (!(currSeedmers.seedmersList.size() == reads.back().seedmersList.size() && 
+          std::equal(currSeedmers.seedmersList.begin(), currSeedmers.seedmersList.end(), reads.back().seedmersList.begin(), reads.back().seedmersList.end(),
+                     [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
+                         if (fast_mode) {
+                          return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
+                         } else {
+                           return a.hash == b.hash && a.begPos == b.begPos && a.endPos == b.endPos && a.rev == b.rev && a.iorder == b.iorder;
+                         }
+                     }))) {
+      reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]]));
+      readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
+    }
+    for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[i]].second) {
+      readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
+    }
+  }
+
+  for (uint32_t i = 0; i < reads.size(); ++i) {
+    reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
+    for (const auto& seedmer : reads[i].uniqueSeedmers) {
+      seedmerToReads[seedmer.first].push_back(std::make_pair(i, std::move(seedmer.second)));
     }
   }
 }
