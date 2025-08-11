@@ -121,6 +121,10 @@ class mgsrIndexBuilder {
 
 class mgsrIndexReader {
   public:
+    ::capnp::ReaderOptions readerOptions {
+      .traversalLimitInWords = std::numeric_limits<uint64_t>::max(),
+      .nestingLimit = 1024
+    };
     ::capnp::PackedFdMessageReader reader;
     MGSRIndex::Reader indexReader;
     capnp::List<SeedInfo>::Reader seedInfos;
@@ -134,7 +138,7 @@ class mgsrIndexReader {
   private:
 
     mgsrIndexReader(panmanUtils::Tree* tree, int fd)
-    : reader(fd),
+    : reader(fd, readerOptions),
       indexReader(reader.getRoot<MGSRIndex>()),
       seedInfos(indexReader.getSeedInfo()),
       perNodeChanges(indexReader.getPerNodeChanges()),
