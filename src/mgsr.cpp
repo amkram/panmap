@@ -866,11 +866,25 @@ void mgsr::invertGapMap(
   }
 }
 
+void mgsr::revertGapMapInversions(
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks,
+  std::map<uint64_t, uint64_t>& gapMap
+) {
+  for (auto it = gapMapBlocksBacktracks.rbegin(); it != gapMapBlocksBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
+}
+
 void mgsr::makeCoordIndex(
   std::map<uint64_t, uint64_t>& degapCoordIndex,
   std::map<uint64_t, uint64_t>& regapCoordIndex,
   const std::map<uint64_t, uint64_t>& gapMap,
-  const panmapUtils::GlobalCoords& globalCoords
+  uint64_t lastScalarCoord
 ) {
   uint64_t totalGapSize = 0;
   if (gapMap.empty() || gapMap.begin()->first > 0) {
@@ -881,7 +895,7 @@ void mgsr::makeCoordIndex(
     uint64_t gapStart = gap.first;
     uint64_t gapEnd = gap.second;
     uint64_t gapSize = gapEnd - gapStart + 1;
-    if (gapEnd == (uint64_t)globalCoords.lastScalarCoord) break;
+    if (gapEnd == lastScalarCoord) break;
     totalGapSize += gapSize;
     degapCoordIndex[gapEnd+1] = totalGapSize;
     regapCoordIndex[gapEnd+1-totalGapSize] = totalGapSize;
@@ -1188,7 +1202,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   // // not really needed for building the index... But do need to keep it for debugging and comparing with brute force
   // std::map<uint64_t, uint64_t> degapCoordIndex;
   // std::map<uint64_t, uint64_t> regapCoordIndex;
-  // makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, globalCoords);
+  // makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
 
 
 
@@ -1409,19 +1423,18 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       coordDeltaBuilder[i].getEndPos().setValue(range.second);
     }
   }
+
+  // adding inverted blocks to index
+  capnp::List<uint32_t>::Builder invertedBlocksBuilder = curNodeChanges.initInvertedBlocks(invertedBlocksVec.size());
+  for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
+    invertedBlocksBuilder.set(i, invertedBlocksVec[i]);
+  }
   
   // compare with brute force for debugging
   // compareBruteForce(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, uniqueKminmers, kminmerToUniqueIndex, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
 
 
-  for (auto it = gapRunBlockInversionBacktracks.rbegin(); it != gapRunBlockInversionBacktracks.rend(); ++it) {
-    const auto& [del, range] = *it;
-    if (del) {
-      gapMap.erase(range.first);
-    } else {
-      gapMap[range.first] = range.second;
-    }
-  }
+  revertGapMapInversions(gapRunBlockInversionBacktracks, gapMap);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunBlockInversionBacktracks); // gapRunBlockInversionBacktracks is no longer needed... clear memory
 
   // update delayed block states
@@ -1537,6 +1550,15 @@ void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path) {
   std::cout << "Index written to " << path << std::endl;
 }
 
+int mgsr::mgsrIndexReader::open_file(const std::string& path) {
+  int fd = open(path.c_str(), O_RDONLY);
+  if (fd == -1) {
+    std::cerr << "Error: failed to open file " << path << std::endl;
+    std::exit(1);
+  }
+  return fd;
+}
+
 void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t uniqueKminmerIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks) {
   uint32_t pos = indexReader.seedInfos[uniqueKminmerIndex].getStartPos();
   auto posMapIt = positionMap.find(pos);
@@ -1593,22 +1615,73 @@ void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t pos) {
   positionMap.erase(posMapIt);
 }
 
-void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIndex) {
-
-  capnp::List<CoordDelta>::Reader coordDeltas = indexReader.perNodeChanges[dfsIndex].getCoordDeltas();
-
-  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
-  for (uint32_t seedInsubSeedIndex : indexReader.perNodeChanges[dfsIndex].getSeedInsubIndices()) {
+void mgsr::mgsrPlacer::updateSeeds(uint64_t currentDfsIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks) {
+  for (uint32_t seedInsubSeedIndex : indexReader.perNodeChanges[currentDfsIndex].getSeedInsubIndices()) {
     addSeedAtPosition(seedInsubSeedIndex, seedBacktracks);
   }
 
-  for (uint32_t deletedPos : indexReader.perNodeChanges[dfsIndex].getSeedDeletions()) {
+  for (uint32_t deletedPos : indexReader.perNodeChanges[currentDfsIndex].getSeedDeletions()) {
     delSeedAtPosition(deletedPos, seedBacktracks);
   }
+}
+
+void mgsr::mgsrPlacer::updateGapMap(uint64_t currentDfsIndex, const panmapUtils::GlobalCoords& globalCoords, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks) {
+  for (const auto& coordDelta : indexReader.perNodeChanges[currentDfsIndex].getCoordDeltas()) {
+    const uint32_t& pos = coordDelta.getPos();
+    const auto& endPos = coordDelta.getEndPos();
+    switch (endPos.which()) {
+      case CoordDelta::EndPos::VALUE: {
+        auto gapMapIt = gapMap.find(pos);
+        if (gapMapIt != gapMap.end()) {
+          gapMapBacktracks.emplace_back(false, std::make_pair(pos, gapMapIt->second));
+          gapMapIt->second = endPos.getValue();
+        } else {
+          gapMapBacktracks.emplace_back(true, std::make_pair(pos, endPos.getValue()));
+          gapMap[pos] = endPos.getValue();
+        }
+        break;
+      }
+      case CoordDelta::EndPos::NONE: {
+        gapMapBacktracks.emplace_back(false, std::make_pair(pos, gapMap[pos]));
+        gapMap.erase(pos);
+        break;
+      }
+      default:
+        std::cerr << "Error: unknown endPos type" << std::endl;
+        std::exit(1);
+    }
+  }
+
+  for (const auto& invertedBlock : indexReader.perNodeChanges[currentDfsIndex].getInvertedBlocks()) {
+    uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(invertedBlock);
+    uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(invertedBlock);
+    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> tmpGapMapUpdates;
+    invertGapMap(gapMap, {beg, end}, gapMapBlocksBacktracks, tmpGapMapUpdates);
+  }
+}
+
+
+void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIndex, const panmapUtils::GlobalCoords& globalCoords) {
+  
+  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
+  updateSeeds(dfsIndex, seedBacktracks);
+
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
+  updateGapMap(dfsIndex, globalCoords, gapMapBacktracks, gapMapBlocksBacktracks);
+
+  std::map<uint64_t, uint64_t> degapCoordIndex;
+  std::map<uint64_t, uint64_t> regapCoordIndex;
+  makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
+
+
+  revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
+
 
   for (panmanUtils::Node *child : node->children) {
     dfsIndex++;
-    placeReadsHelper(child, dfsIndex);
+    placeReadsHelper(child, dfsIndex, globalCoords);
   }
 
   // backtrack
@@ -1619,9 +1692,24 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, uint64_t& dfsIn
       addSeedAtPosition(uniqueKminmerIndex);
     }
   }
+
+  for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
 }
 
 void mgsr::mgsrPlacer::placeReads() {
+  panmapUtils::BlockSequences blockSequences(T);
+  panmapUtils::GlobalCoords globalCoords(blockSequences.sequence);
+
+  gapMap.clear();
+  gapMap.insert(std::make_pair(0, globalCoords.lastScalarCoord));
+
   uint64_t dfsIndex = 0;
-  placeReadsHelper(T->root, dfsIndex);
+  placeReadsHelper(T->root, dfsIndex, globalCoords);
 }

@@ -1076,12 +1076,17 @@ int main(int argc, char *argv[]) {
                   reindex ? "Reindex flag set" : "No existing index found");
     }
 
-    int mgsr_t = 0;
-    int mgsr_l = 3;
-    bool open = false;
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
-    mgsrIndexBuilder.buildIndex();
-    mgsrIndexBuilder.writeIndex("test.pmai");
+    // int mgsr_t = 0;
+    // int mgsr_l = 3;
+    // bool open = false;
+    // mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
+    // mgsrIndexBuilder.buildIndex();
+    // mgsrIndexBuilder.writeIndex("test.pmai");
+    mgsr::mgsrPlacer mgsrPlacer(&T, "rsv_4000.pmai");
+    std::cout << mgsrPlacer.indexReader.seedInfos.size() << std::endl;
+    std::cout << mgsrPlacer.indexReader.perNodeChanges.size() << std::endl;
+    mgsrPlacer.placeReads();
+
     exit(0);
 
     // Build index if needed
