@@ -481,7 +481,7 @@ void clearBlockBaseCounts(
       break;
     }
 
-    coord = globalCoords.stepRightCoordinate(coord);
+    globalCoords.stepRightCoordinate(coord);
     if (coord == std::make_tuple(-1, -1, -1)) {
       logging::err("stepRight returned -1, -1, -1");
       std::exit(1);
@@ -1090,9 +1090,9 @@ void buildMutationMatricesHelper_test(
 
         if (coord == end) break;
         if (blockSequences.getBlockStrand(blockId)) {
-          coord = globalCoords.stepRightCoordinate(coord);
+          globalCoords.stepRightCoordinate(coord);
         } else {
-          coord = globalCoords.stepLeftCoordinate(coord);
+          globalCoords.stepLeftCoordinate(coord);
         }
       }
 
@@ -1129,7 +1129,7 @@ void buildMutationMatricesHelper_test(
         }
 
         if (coord == end) break;
-        coord = globalCoords.stepRightCoordinate(coord);
+        globalCoords.stepRightCoordinate(coord);
 
       }
     }
@@ -1325,7 +1325,7 @@ void genotyping::fillMutationMatricesFromTree_test(
   std::vector<bool> oldBlockStrand(blockSequences.numBlocks(), true);
 
   // initialize globalCoords to converted 3d to 1d coordinates -> for general coordinate conversion
-  panmapUtils::GlobalCoords globalCoords(blockSequences.sequence);
+  panmapUtils::GlobalCoords globalCoords(blockSequences);
 
   // initialize gapMap to be all gaps -> for counting indels
   std::map<int64_t, int64_t> gapMap{{0, globalCoords.lastScalarCoord}};
