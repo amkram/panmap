@@ -51,12 +51,43 @@ uint64_t degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint6
 
 uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64_t>& regapCoordsIndex);
 
+
 struct IteratorComparator {
   bool operator()(const std::map<uint64_t, uint64_t>::iterator& lhs,
                   const std::map<uint64_t, uint64_t>::iterator& rhs) const {
       return lhs->first < rhs->first;
   }
 };
+
+struct readSeedmer {
+  const size_t hash;
+  const uint32_t begPos;
+  const uint32_t endPos;
+  const bool rev;
+  const uint32_t iorder;
+};
+
+struct SeedmerState {
+  bool match;
+  bool rev;
+  bool inChain;
+};
+
+class Read {
+  public:
+    std::vector<readSeedmer> seedmersList;
+    std::vector<SeedmerState> seedmerStates;
+    std::unordered_map<size_t, std::vector<uint64_t>> uniqueSeedmers;
+};
+
+void seedmersFromFastq(
+  const std::string& readPath1, const std::string& readPath2,
+  std::vector<Read>& reads,
+  std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint64_t>>>>& seedmerToReads,
+  std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
+  int k, int s, int t, int l, bool open, bool fast_mode
+);
+
 
 class mgsrIndexBuilder {
   public:
