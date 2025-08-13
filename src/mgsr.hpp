@@ -127,8 +127,8 @@ class mgsrIndexBuilder {
     void buildIndexHelper(
       panmanUtils::Node *node,
       panmapUtils::BlockSequences &blockSequences,
-      std::vector<bool> &blockExistsDelayed,
-      std::vector<bool> &blockStrandDelayed,
+      std::vector<char> &blockExistsDelayed,
+      std::vector<char> &blockStrandDelayed,
       panmapUtils::GlobalCoords &globalCoords,
       std::map<uint64_t, uint64_t> &gapMap,
       std::unordered_set<uint64_t> &invertedBlocks,
