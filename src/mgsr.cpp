@@ -565,10 +565,10 @@ static void applyMutations (
 
     if (blockStrand[blockId]) {
       // forward strand
-      localMutationRanges.emplace_back(std::make_pair(globalCoords.getBlockStartCoord(blockId), globalCoords.getBlockEndCoord(blockId)));
+      localMutationRanges.emplace_back(std::make_pair(globalCoords.blockEdgeCoords[blockId].start, globalCoords.blockEdgeCoords[blockId].end));
     } else {
       // reversed strand
-      localMutationRanges.emplace_back(std::make_pair(globalCoords.getBlockEndCoord(blockId), globalCoords.getBlockStartCoord(blockId)));
+      localMutationRanges.emplace_back(std::make_pair(globalCoords.blockEdgeCoords[blockId].end, globalCoords.blockEdgeCoords[blockId].start));
     }
   }
 
@@ -622,6 +622,7 @@ static void applyMutations (
     }
   }
 
+
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     if (oldExists && !newExists) {
       // on to off -> block range to all gaps
@@ -630,8 +631,8 @@ static void applyMutations (
       gapRunUpdates.emplace_back(true, std::make_pair(beg, end));
     } else if (!oldExists && newExists) {
       // off to on -> recompute across entire block
-      panmapUtils::Coordinate coord = globalCoords.getBlockStartCoord(blockId);
-      panmapUtils::Coordinate end = globalCoords.getBlockEndCoord(blockId);
+      panmapUtils::Coordinate coord = globalCoords.blockEdgeCoords[blockId].start;
+      panmapUtils::Coordinate end = globalCoords.blockEdgeCoords[blockId].end;
       std::pair<int64_t, int64_t> curNucRange = {-1, -1};
       std::vector<std::pair<int64_t, int64_t>> nucRanges;
       while (true) {
@@ -1317,7 +1318,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
       }
       
       if (!blockExists[curBegCoord.primaryBlockId]) {
-        curBegCoord = globalCoords.getBlockStartCoord(curBegCoord.primaryBlockId);
+        curBegCoord = globalCoords.blockEdgeCoords[curBegCoord.primaryBlockId].start;
         continue;
       }
       if (!newSyncmerRanges.empty() 
@@ -1381,7 +1382,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
       }
       
       if (!blockExists[curEndCoord.primaryBlockId]) {
-        curEndCoord = globalCoords.getBlockEndCoord(curEndCoord.primaryBlockId);
+        curEndCoord = globalCoords.blockEdgeCoords[curEndCoord.primaryBlockId].end;
         continue;
       }
       if (localMutationRangeIndex != mergedLocalMutationRanges.size() - 1
@@ -1437,7 +1438,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         if (curCoord.primaryBlockId == curEndCoord.primaryBlockId) {
           break;
         }
-        curCoord = globalCoords.stepForwardScalar(globalCoords.getBlockEndCoord(curCoord.primaryBlockId), blockStrand);
+        curCoord = globalCoords.stepForwardScalar(globalCoords.blockEdgeCoords[curCoord.primaryBlockId].end, blockStrand);
         continue;
       }
       
@@ -1590,7 +1591,13 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   // for computing new k-min-mers
   std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, uint64_t>> refOnKminmersChangeRecord;
 
+  blockMutationRecord.reserve(node->blockMutation.size());
+  nucMutationRecord.reserve(node->nucMutation.size() * 6);
+  gapRunUpdates.reserve(node->nucMutation.size() * 6 + node->blockMutation.size() * 10);
   applyMutations(node, dfsIndex, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, blockExistsDelayed, blockStrandDelayed);
+  blockMutationRecord.shrink_to_fit();
+  nucMutationRecord.shrink_to_fit();
+  gapRunUpdates.shrink_to_fit();
 
   updateGapMap(node, dfsIndex, gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunUpdates); // gapRunUpdates is no longer needed... clear memory
