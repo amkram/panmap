@@ -32,8 +32,8 @@ static void compareBruteForceBuild(
 
   // check sequence object
   std::vector<std::vector<std::pair<char, std::vector<char>>>> sequenceBruteForce;
-  std::vector<bool> blockExistsBruteForce;
-  std::vector<bool> blockStrandBruteForce;
+  std::vector<char> blockExistsBruteForce;
+  std::vector<char> blockStrandBruteForce;
   std::unordered_map<int, int> blockLengthsBruteForce;
   panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
 
@@ -89,8 +89,8 @@ static void compareBruteForceBuild(
 
   // check block sequence objects and coordinates
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequenceDynamic = blockSequences.sequence;
-  const std::vector<bool>& blockExistsDynamic = blockSequences.blockExists;
-  const std::vector<bool>& blockStrandDynamic = blockSequences.blockStrand;
+  const std::vector<char>& blockExistsDynamic = blockSequences.blockExists;
+  const std::vector<char>& blockStrandDynamic = blockSequences.blockStrand;
   if (sequenceDynamic.size() != sequenceBruteForce.size()) {
     std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic.size() << " != brute force " << sequenceBruteForce.size() << std::endl;
     std::exit(1);
@@ -391,8 +391,8 @@ static void compareBruteForcePlace(
   std::cout << "Checking " << node->identifier << " states with brute force at placement... " << std::flush;
   // check sequence object
   std::vector<std::vector<std::pair<char, std::vector<char>>>> sequenceBruteForce;
-  std::vector<bool> blockExistsBruteForce;
-  std::vector<bool> blockStrandBruteForce;
+  std::vector<char> blockExistsBruteForce;
+  std::vector<char> blockStrandBruteForce;
   std::unordered_map<int, int> blockLengthsBruteForce;
   panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
 
@@ -520,11 +520,11 @@ static void applyMutations (
   std::vector<std::tuple<panmapUtils::Coordinate, char, char>>& nucMutationRecord,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapRunUpdates,
   std::vector<std::pair<uint64_t, bool>>& invertedBlocksBacktracks,
-  const std::vector<bool>& oldBlockExists,
-  const std::vector<bool>& oldBlockStrand
+  const std::vector<char>& oldBlockExists,
+  const std::vector<char>& oldBlockStrand
 ) {
-  std::vector<bool>& blockExists = blockSequences.blockExists;
-  std::vector<bool>& blockStrand = blockSequences.blockStrand;
+  std::vector<char>& blockExists = blockSequences.blockExists;
+  std::vector<char>& blockStrand = blockSequences.blockStrand;
   std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
   
   // process block mutations
@@ -1253,8 +1253,8 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     return newSyncmerRanges;
   }
 
-  const std::vector<bool>& blockExists = blockSequences.blockExists;
-  const std::vector<bool>& blockStrand = blockSequences.blockStrand;
+  const std::vector<char>& blockExists = blockSequences.blockExists;
+  const std::vector<char>& blockStrand = blockSequences.blockStrand;
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
   std::sort(localMutationRanges.begin(), localMutationRanges.end(), [&globalCoords, &blockStrand](const auto& a, const auto& b) {
@@ -1299,7 +1299,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
       }
       if (leftGapMapIt == gapMap.begin()) {
         if (curBegScalar - 1 > leftGapMapIt->second) {
-          curBegCoord = globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
+          globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
         } else if (curBegScalar >= leftGapMapIt->first) {
           if (leftGapMapIt->first == 0) {
             break;
@@ -1309,7 +1309,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
           }
         }
       } else if (curBegScalar - 1 > leftGapMapIt->second) {
-        curBegCoord = globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
+        globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
       } else {
         curBegScalar = leftGapMapIt->first - 1;
         curBegCoord = globalCoords.getCoordFromScalar(curBegScalar, blockStrand[curBegCoord.primaryBlockId]);
@@ -1377,9 +1377,9 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, blockStrand[curEndCoord.primaryBlockId]);
         rightGapMapIt = std::next(rightGapMapIt);
       } else {
-        curEndCoord = globalCoords.stepForwardScalar(curEndCoord, blockStrand);
+        globalCoords.stepForwardScalar(curEndCoord, blockStrand);
       }
-      // curEndCoord = globalCoords.stepForwardScalar(curEndCoord, blockStrand);
+      
       if (!blockExists[curEndCoord.primaryBlockId]) {
         curEndCoord = globalCoords.getBlockEndCoord(curEndCoord.primaryBlockId);
         continue;
@@ -1455,7 +1455,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         seedsToDelete.push_back(curScalarCoord);
       }
       if (curCoord == curEndCoord) break;
-      curCoord = globalCoords.stepForwardScalar(curCoord, blockStrand);
+      globalCoords.stepForwardScalar(curCoord, blockStrand);
     }
 
     if (i == newSyncmerRanges.size() - 1 && offsetsToDelete != -1) {
@@ -1564,8 +1564,8 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
 void mgsr::mgsrIndexBuilder::buildIndexHelper(
   panmanUtils::Node *node,
   panmapUtils::BlockSequences &blockSequences,
-  std::vector<bool> &blockExistsDelayed,
-  std::vector<bool> &blockStrandDelayed,
+  std::vector<char> &blockExistsDelayed,
+  std::vector<char> &blockStrandDelayed,
   panmapUtils::GlobalCoords &globalCoords,
   std::map<uint64_t, uint64_t> &gapMap,
   std::unordered_set<uint64_t> &invertedBlocks,
@@ -1920,8 +1920,8 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
   refOnKminmers.resize(globalCoords.lastScalarCoord + 1);
 
-  std::vector<bool> blockExistsDelayed = blockSequences.blockExists;
-  std::vector<bool> blockStrandDelayed = blockSequences.blockStrand;
+  std::vector<char> blockExistsDelayed = blockSequences.blockExists;
+  std::vector<char> blockStrandDelayed = blockSequences.blockStrand;
 
   std::map<uint64_t, uint64_t> gapMap{{0, globalCoords.lastScalarCoord}};
   std::unordered_set<uint64_t> invertedBlocks;
