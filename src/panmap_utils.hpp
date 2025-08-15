@@ -170,9 +170,38 @@ struct Coordinate {
     bool operator==(const Coordinate& other) const {
         return nucPosition == other.nucPosition &&
                nucGapPosition == other.nucGapPosition &&
-               primaryBlockId == other.primaryBlockId &&
-               secondaryBlockId == other.secondaryBlockId;
+               primaryBlockId == other.primaryBlockId;
     }
+
+    bool operator<(const Coordinate& other) const {
+      if (primaryBlockId != other.primaryBlockId) return primaryBlockId < other.primaryBlockId;
+      if (nucPosition != other.nucPosition)       return nucPosition < other.nucPosition;
+
+      if (nucGapPosition != other.nucGapPosition) {
+        auto adjustGap = [](int32_t gap) { return gap == -1 ? INT32_MAX : gap; };
+        return adjustGap(nucGapPosition) < adjustGap(other.nucGapPosition);
+      }
+
+      return false;
+    }
+
+    bool operator!=(const Coordinate& other) const {
+      return !(*this == other);
+    }
+    
+    bool operator<=(const Coordinate& other) const {
+      return *this < other || *this == other;
+    }
+    
+    bool operator>(const Coordinate& other) const {
+      return !(*this <= other);
+    }
+    
+    bool operator>=(const Coordinate& other) const {
+      return !(*this < other);
+    }
+
+
 };
 
 struct NewSyncmerRange {
@@ -537,6 +566,10 @@ struct GlobalCoords {
       return forwardCoord;
     }
     return scalarToCoord[getBlockStartScalar(forwardCoord.primaryBlockId) + getBlockEndScalar(forwardCoord.primaryBlockId) - scalar];
+  }
+
+  uint32_t getBlockIdFromScalar(uint64_t scalar) const {
+    return scalarToCoord[scalar].primaryBlockId;
   }
 
   std::tuple<int64_t, int64_t, int64_t> getTupleFromScalar(uint64_t scalar, bool blockStrand = true) const {

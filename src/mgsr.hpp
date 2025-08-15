@@ -139,6 +139,8 @@ class mgsrIndexBuilder {
       panmanUtils::Node* node,
       size_t dfsIndex,
       const panmapUtils::BlockSequences& blockSequences,
+      const std::vector<char>& blockExistsDelayed,
+      const std::vector<char>& blockStrandDelayed,
       const panmapUtils::GlobalCoords& globalCoords,
       const std::map<uint64_t, uint64_t>& gapMap,
       std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
