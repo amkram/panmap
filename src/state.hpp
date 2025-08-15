@@ -1231,11 +1231,17 @@ struct NodeState {
     
     // Step 1: Inherit from parent seed state
     size_t inheritedSeeds = 0;
+    size_t invalidatedSeeds = 0;
     if (parentState) {
       if (parentState->materializedStateComputed) {
         std::lock_guard<std::mutex> parentLock(parentState->materializedStateMutex);
         materializedSeeds = parentState->materializedSeeds;
         inheritedSeeds = materializedSeeds.size();
+        
+        // Step 2: GAP-AWARE SEED INVALIDATION
+        // Check inherited seeds for gap positions and invalidate them
+        // NOTE: This requires access to StateManager to extract k-mers, which we don't have here.
+        // This validation will be moved to the calling code in StateManager.
       }
     }
     
@@ -1506,6 +1512,7 @@ struct NodeState {
         gapMap(std::move(other.gapMap)),
         characterStore(std::move(other.characterStore)),
         compressedGapRuns(std::move(other.compressedGapRuns)),
+  baselineRefInitializedBlocks(std::move(other.baselineRefInitializedBlocks)),
         seedChangeBasePositions(std::move(other.seedChangeBasePositions)),
         seedChangeBitMasks(std::move(other.seedChangeBitMasks)) {
     // No mutexes to worry about anymore
@@ -1522,6 +1529,7 @@ struct NodeState {
       gapMap = std::move(other.gapMap);
       characterStore = std::move(other.characterStore);
       compressedGapRuns = std::move(other.compressedGapRuns);
+  baselineRefInitializedBlocks = std::move(other.baselineRefInitializedBlocks);
       seedChangeBasePositions = std::move(other.seedChangeBasePositions);
       seedChangeBitMasks = std::move(other.seedChangeBitMasks);
       // No mutexes to worry about anymore
@@ -1545,6 +1553,7 @@ struct NodeState {
     newState.gapMap = gapMap;
     newState.characterStore = characterStore;
     newState.compressedGapRuns = compressedGapRuns;
+  newState.baselineRefInitializedBlocks = baselineRefInitializedBlocks;
     newState.seedChangeBasePositions = seedChangeBasePositions;
     newState.seedChangeBitMasks = seedChangeBitMasks;
 
@@ -1592,6 +1601,11 @@ struct NodeState {
   // OPTIMIZATION: Materialized block inheritance to eliminate 268M+ isBlockOn_unsafe calls
   // Each node only stores LOCAL mutations (blocks turned on/off vs parent)
   // Complete active set is materialized from parent + local changes
+  
+  // Per-lineage baseline reference initialization flags: mark blocks when they first
+  // transition from OFF (in parent) to ON (in this node) along the lineage. This is
+  // a lightweight marker (no sequence copying) and is inherited by descendants.
+  absl::flat_hash_set<int32_t> baselineRefInitializedBlocks;
   
   // Local block mutations relative to parent
   absl::flat_hash_set<int32_t> localBlockActivations;    // Blocks turned ON at this node
@@ -1907,6 +1921,7 @@ struct NodeState {
     // Inherit from parent (if exists)
     if (parentState && parentState->blockStateMaterialized) {
       materializedActiveBlocks = parentState->materializedActiveBlocks;
+  baselineRefInitializedBlocks = parentState->baselineRefInitializedBlocks;
     }
     
     // Apply local activations
