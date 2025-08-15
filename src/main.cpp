@@ -41,11 +41,15 @@
 
 #include "genotyping.hpp"
 #include "index.capnp.h"
+#include "mgsr_index.capnp.h"
 #include "indexing.hpp"
 #include "logging.hpp"
 #include "panman.hpp"
 #include "placement.hpp"
 #include "timing.hpp"
+#include "seeding.hpp"
+#include "mgsr.hpp"
+#include "panmap_utils.hpp"
 
 using namespace logging;
 namespace po = boost::program_options;
@@ -1071,6 +1075,18 @@ int main(int argc, char *argv[]) {
       logging::debug("DEBUG-INDEX: Will build new index. Reason: {}", 
                   reindex ? "Reindex flag set" : "No existing index found");
     }
+
+    int mgsr_t = 0;
+    int mgsr_l = 3;
+    bool open = false;
+    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
+    mgsrIndexBuilder.buildIndex();
+    mgsrIndexBuilder.writeIndex("test.pmai");
+
+    // mgsr::mgsrPlacer mgsrPlacer(&T, "rsv_4000.pmai");
+    // mgsrPlacer.placeReads();
+
+    exit(0);
 
     // Build index if needed
     if (build) {
