@@ -26,6 +26,8 @@ KSEQ_INIT(int, read)
 
 #include <absl/container/flat_hash_map.h>
 
+
+
 namespace {
 
 // Helper to get the complement of a base (case-insensitive)
@@ -78,6 +80,39 @@ inline bool isReverseComplementPalindrome(std::string_view kmer) {
 
 namespace seeding
 {
+
+struct rsyncmer_t {
+  size_t hash;
+  uint64_t endPos;
+  bool isReverse;
+
+  rsyncmer_t(size_t hash, uint64_t endPos, bool isReverse) : hash(hash), endPos(endPos), isReverse(isReverse) {}
+  rsyncmer_t() : hash(0), endPos(0), isReverse(false) {}
+};
+
+
+struct rkminmer_t {
+  size_t hash;
+  uint64_t endPos;
+  bool isReverse;
+
+  rkminmer_t(size_t hash, uint64_t endPos, bool isReverse) : hash(hash), endPos(endPos), isReverse(isReverse) {}
+  rkminmer_t() : hash(0), endPos(0), isReverse(false) {}
+};
+
+struct uniqueKminmer_t {
+  uint64_t startPos;
+  uint64_t endPos;
+  size_t hash;
+  bool isReverse;
+
+  uniqueKminmer_t(uint64_t startPos, uint64_t endPos, size_t hash, bool isReverse) : startPos(startPos), endPos(endPos), hash(hash), isReverse(isReverse) {}
+  uniqueKminmer_t() : startPos(0), endPos(0), hash(0), isReverse(false) {}
+
+  bool operator==(const uniqueKminmer_t& other) const {
+    return startPos == other.startPos && endPos == other.endPos && hash == other.hash && isReverse == other.isReverse;
+  }
+};
 
 // A syncmer seed, defined within a single sequence
 struct seed_t {
@@ -813,3 +848,25 @@ struct SeedChange {
 };
 
 } // namespace seeding
+
+namespace std {
+  template <>
+  struct hash<seeding::uniqueKminmer_t> {
+    size_t operator()(const seeding::uniqueKminmer_t& kminmer) const {
+      // Combine hashes of all member variables, including the new 'startPos'.
+      size_t h1 = std::hash<uint64_t>{}(kminmer.startPos); // Hash for startPos
+      size_t h2 = std::hash<uint64_t>{}(kminmer.endPos);
+      size_t h3 = std::hash<size_t>{}(kminmer.hash);
+      size_t h4 = std::hash<bool>{}(kminmer.isReverse);
+  
+      // A common pattern for combining hashes.
+      // Ensure all member hashes are combined.
+      size_t seed = 0;
+      seed ^= h1 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+      seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+      seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+      seed ^= h4 + 0x9e3779b9 + (seed << 6) + (seed >> 2); // Include h4
+      return seed;
+    }
+  };
+}

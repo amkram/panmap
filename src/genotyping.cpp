@@ -387,8 +387,8 @@ static int getIndexFromNucleotide(char nuc) {
 static void initializeSequence(
   panmanUtils::Tree *tree,
   std::vector<std::vector<std::pair<char, std::vector<char>>>> &sequence,
-  std::vector<bool> &blockExists,
-  std::vector<bool> &blockStrand
+  std::vector<char> &blockExists,
+  std::vector<char> &blockStrand
 ) {
   sequence.resize(tree->blocks.size() + 1);
   blockExists.resize(tree->blocks.size() + 1, false);
@@ -481,7 +481,7 @@ void clearBlockBaseCounts(
       break;
     }
 
-    coord = globalCoords.stepRight(coord);
+    globalCoords.stepRightCoordinate(coord);
     if (coord == std::make_tuple(-1, -1, -1)) {
       logging::err("stepRight returned -1, -1, -1");
       std::exit(1);
@@ -493,8 +493,8 @@ static void applyMutations(
     panmanUtils::Tree *tree,
     panmanUtils::Node *node,
     panmapUtils::BlockSequences &blockSequences,
-    std::vector<bool> &oldBlockExists,
-    std::vector<bool> &oldBlockStrand,
+    std::vector<char> &oldBlockExists,
+    std::vector<char> &oldBlockStrand,
     std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> &blockMutationRecord,
     std::vector<std::tuple<panmapUtils::Coordinate, char, char>> &nucMutationRecord,
     std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> &gapRunUpdates,
@@ -508,8 +508,8 @@ static void applyMutations(
     const panmapUtils::GlobalCoords &globalCoords,
     const std::vector<std::pair<int64_t, int64_t>> &blockRanges
 ) {
-  std::vector<bool>& blockExists = blockSequences.blockExists;
-  std::vector<bool>& blockStrand = blockSequences.blockStrand;
+  std::vector<char>& blockExists = blockSequences.blockExists;
+  std::vector<char>& blockStrand = blockSequences.blockStrand;
 
   std::vector<std::vector<std::pair<char, std::vector<char>>>> &sequence = blockSequences.sequence;
   for (const auto& blockMutation : node->blockMutation) {
@@ -956,15 +956,15 @@ static boost::icl::interval_set<int64_t> gapMapToNucRunSet(const std::map<int64_
 
 void undoMutations(
   panmapUtils::BlockSequences &blockSequences,
-  std::vector<bool> &oldBlockExists,
-  std::vector<bool> &oldBlockStrand,
+  std::vector<char> &oldBlockExists,
+  std::vector<char> &oldBlockStrand,
   std::unordered_set<int64_t> &invertedBlocks,
   const std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> &blockMutationRecord,
   const std::vector<std::tuple<panmapUtils::Coordinate, char, char>> &nucMutationRecord,
   const std::vector<std::pair<int64_t, bool>> &invertedBlocksBacktracks
 ) {
-  std::vector<bool>& blockExists = blockSequences.blockExists;
-  std::vector<bool>& blockStrand = blockSequences.blockStrand;
+  std::vector<char>& blockExists = blockSequences.blockExists;
+  std::vector<char>& blockStrand = blockSequences.blockStrand;
 
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     blockExists[blockId] = oldExists;
@@ -991,8 +991,8 @@ void buildMutationMatricesHelper_test(
   panmanUtils::Tree *tree,
   panmanUtils::Node *node,
   panmapUtils::BlockSequences &blockSequences,
-  std::vector<bool> &oldBlockExists,
-  std::vector<bool> &oldBlockStrand,
+  std::vector<char> &oldBlockExists,
+  std::vector<char> &oldBlockStrand,
   std::map<int64_t, int64_t> &gapMap,
   std::unordered_set<int64_t> &invertedBlocks,
   std::vector<int64_t> &parentBaseCounts,
@@ -1003,11 +1003,11 @@ void buildMutationMatricesHelper_test(
   const panmapUtils::GlobalCoords &globalCoords,
   const std::vector<std::pair<int64_t, int64_t>> &blockRanges
 ) {
-  // for checking with brute force. DELETE THESE AFTER CONFIRMING EVERYTHING WORKS CORRECTLY!!!!!! ----------------------------
-  panmapUtils::BlockSequences oldBlockSequences = blockSequences;
-  std::vector<int64_t> oldParentBaseCounts = parentBaseCounts;
-  std::vector<std::vector<int64_t>> oldSubCount = subCount;
-  // ------------------------------------------------------------------------------------------------
+  // // for checking with brute force. DELETE THESE AFTER CONFIRMING EVERYTHING WORKS CORRECTLY!!!!!! ----------------------------
+  // panmapUtils::BlockSequences oldBlockSequences = blockSequences;
+  // std::vector<int64_t> oldParentBaseCounts = parentBaseCounts;
+  // std::vector<std::vector<int64_t>> oldSubCount = subCount;
+  // // ------------------------------------------------------------------------------------------------
 
 
   std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> blockMutationRecord;
@@ -1090,9 +1090,9 @@ void buildMutationMatricesHelper_test(
 
         if (coord == end) break;
         if (blockSequences.getBlockStrand(blockId)) {
-          coord = globalCoords.stepRight(coord);
+          globalCoords.stepRightCoordinate(coord);
         } else {
-          coord = globalCoords.stepLeft(coord);
+          globalCoords.stepLeftCoordinate(coord);
         }
       }
 
@@ -1129,7 +1129,7 @@ void buildMutationMatricesHelper_test(
         }
 
         if (coord == end) break;
-        coord = globalCoords.stepRight(coord);
+        globalCoords.stepRightCoordinate(coord);
 
       }
     }
@@ -1321,11 +1321,11 @@ void genotyping::fillMutationMatricesFromTree_test(
   logging::info("Building mutation matrices from tree...");
 
   panmapUtils::BlockSequences blockSequences(tree);
-  std::vector<bool> oldBlockExists(blockSequences.numBlocks(), false);
-  std::vector<bool> oldBlockStrand(blockSequences.numBlocks(), true);
+  std::vector<char> oldBlockExists(blockSequences.numBlocks(), false);
+  std::vector<char> oldBlockStrand(blockSequences.numBlocks(), true);
 
   // initialize globalCoords to converted 3d to 1d coordinates -> for general coordinate conversion
-  panmapUtils::GlobalCoords globalCoords(blockSequences.sequence);
+  panmapUtils::GlobalCoords globalCoords(blockSequences);
 
   // initialize gapMap to be all gaps -> for counting indels
   std::map<int64_t, int64_t> gapMap{{0, globalCoords.lastScalarCoord}};

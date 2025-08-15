@@ -3,11 +3,24 @@
 
 namespace panmapUtils {
 
+std::string seedChangeTypeToString(seedChangeType changeType) {
+  switch (changeType) {
+    case seedChangeType::ADD:
+      return "ADD";
+    case seedChangeType::DEL:
+      return "DEL";
+    case seedChangeType::SUB:
+      return "SUB";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 void getSequenceFromReference(
   panmanUtils::Tree* tree,
   std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
-  std::vector<bool>& blockExists,
-  std::vector<bool>& blockStrand,
+  std::vector<char>& blockExists,
+  std::vector<char>& blockStrand,
   std::unordered_map<int, int>& blockLengths,
   std::string reference
 ) {
@@ -28,7 +41,7 @@ void getSequenceFromReference(
   std::reverse(pathFromRoot.begin(), pathFromRoot.end());
 
   // get block sequence (blockSequence[i] = true if block i is on on the reference node)
-  std::vector<bool> blockSequence(tree->blocks.size() + 1, false);
+  std::vector<char> blockSequence(tree->blocks.size() + 1, false);
   for (auto node : pathFromRoot) {
     for (const auto& blockMutation : node->blockMutation) {
       int32_t blockId = blockMutation.primaryBlockId;
@@ -151,6 +164,11 @@ void getSequenceFromReference(
       int length = nucMutation.mutInfo >> 4;
       for (int i = 0; i < length; i++) {
         panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
+        if (pos.nucPosition == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) {
+          continue;
+        } else if (pos.nucPosition >= sequence[pos.primaryBlockId].size()) {
+          continue;
+        }
         int newNucCode = (nucMutation.nucs >> (4*(5-i))) & 0xF;
         char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
         pos.setSequenceBase(sequence, newNuc);
@@ -159,12 +177,13 @@ void getSequenceFromReference(
   }
 }
 
-std::string getStringFromReference(panmanUtils::Tree* tree, std::string reference, bool aligned) {
-  std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
-  std::unordered_map<int, int> blockLengths;
-  std::vector<bool> blockExists;
-  std::vector<bool> blockStrand;
-  getSequenceFromReference(tree, sequence, blockExists, blockStrand, blockLengths, reference);
+std::string getStringFromSequence(
+  const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
+  const std::unordered_map<int, int>& blockLengths,
+  const std::vector<char>& blockExists,
+  const std::vector<char>& blockStrand,
+  bool aligned
+) {
   std::string seqString;
   for (size_t i = 0; i < blockExists.size(); i++) {
     if (blockExists[i]) {
@@ -181,7 +200,7 @@ std::string getStringFromReference(panmanUtils::Tree* tree, std::string referenc
           // Main nuc
           if(sequence[i][j].first != '-' && sequence[i][j].first != 'x') {
             seqString += sequence[i][j].first;
-          } else if(aligned && sequence[i][j].first != 'x') {
+          } else if (aligned && sequence[i][j].first != 'x') {
             seqString += '-';
           }
         }
@@ -205,9 +224,19 @@ std::string getStringFromReference(panmanUtils::Tree* tree, std::string referenc
         }
       }
     } else if (aligned){
-      seqString.append(blockLengths[i], '-');
+      seqString.append(blockLengths.at(i), '-');
     }
   }
+  return seqString;
+}
+
+std::string getStringFromReference(panmanUtils::Tree* tree, std::string reference, bool aligned) {
+  std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
+  std::unordered_map<int, int> blockLengths;
+  std::vector<char> blockExists;
+  std::vector<char> blockStrand;
+  getSequenceFromReference(tree, sequence, blockExists, blockStrand, blockLengths, reference);
+  std::string seqString = getStringFromSequence(sequence, blockLengths, blockExists, blockStrand, aligned);
   return seqString;
 }
 
