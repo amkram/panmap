@@ -46,8 +46,6 @@
 #include "panman.hpp"
 #include "placement.hpp"
 #include "timing.hpp"
-#include "seeding.hpp"
-#include "panmap_utils.hpp"
 
 using namespace logging;
 namespace po = boost::program_options;
@@ -212,7 +210,7 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
                          " (errno=" + std::to_string(errno) + ": " + 
                          std::strerror(errno) + ")";
       logging::err("{}", error);
-    close(fd);
+      close(fd);
       throw std::runtime_error(error);
     }
     
@@ -264,7 +262,7 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
   } catch (const std::exception& e) {
     // Clean up temporary file on error
     if (fd != -1) {
-    close(fd);
+      close(fd);
     }
     if (boost::filesystem::exists(tempPath)) {
       boost::filesystem::remove(tempPath);
@@ -341,7 +339,7 @@ std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path) {
       
       // Check optional fields if they're expected to be set
       if (root.hasNodePathInfo() && root.getNodePathInfo().size() == 0) {
-        logging::info("Index has empty nodePathInfo (expected with on-demand inheritance)");
+        logging::warn("Index has empty nodePathInfo list");
       }
       
       if (root.hasBlockInfo() && root.getBlockInfo().size() == 0) {
@@ -1226,9 +1224,6 @@ int main(int argc, char *argv[]) {
         
         // Let's check for critical fields
         uint32_t k = index_input.getK();
-        uint32_t s = index_input.getS();
-        bool open = index_input.getOpen();
-        uint32_t t = index_input.getT();
         size_t nodeCount = index_input.getPerNodeSeedMutations().size();
         logging::debug("DEBUG-PLACE: Index contains k={}, nodes={}", k, nodeCount);
         
@@ -1281,8 +1276,10 @@ int main(int argc, char *argv[]) {
             return 0;
           }
 
-          // Initialize placement variables and read information needed for alignment
+          // Initialize placement variables
           placement::PlacementResult result;
+          
+          // Initialize required vectors for placement
           std::vector<std::vector<seeding::seed_t>> readSeeds;
           std::vector<std::string> readSequences;
           std::vector<std::string> readNames;
@@ -1291,77 +1288,10 @@ int main(int argc, char *argv[]) {
           std::string placementFileName = prefix + ".placement.tsv";
           // Perform placement - keep inMessage alive during the whole process
           placement::place(result, &T, index_input, reads1, reads2,
-                          readSeeds, readSequences, readNames, readQuals,
+                         readSeeds, readSequences, readNames, readQuals,
                          placementFileName, effective_index_path, debug_specific_node_id);
 
-          /* @Alan this is the end of placement
-            -> next step is pass seeds of target node to Nico's alignment code
-            -> and genotyping
-
-            placementResult should have nodeSeedMap[targetId] with the target seed set
-            
-            TODO: I'm not sure k-mer end positions are correct yet
-          */
-          
-
-          std::string bestMatchSequence = panmapUtils::getStringFromReference(&T, result.bestJaccardPresenceNode->identifier, false);
-          logging::info("Best match sequence built for {} with length {}", result.bestJaccardPresenceNode->identifier, bestMatchSequence.size());
-
-
-          
-          std::vector<std::tuple<size_t, bool, bool, int64_t>> refSyncmers;
-          std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> seedToRefPositions;
-          bool shortenSyncmers = false;
-          
-          if (k > 28 && !shortenSyncmers) {
-            logging::warn("k > 28, setting k = 19, s = 10, t = 0, open = {} for minimap alignment", open);
-            int k_minimap = 28;
-            int s_minimap = 15;
-            bool open_minimap = open;
-            int t_minimap = 0;
-            seeding::recalculateReadSeeds(k_minimap, s_minimap, open_minimap, t_minimap, readSequences, readSeeds);
-            refSyncmers = seeding::rollingSyncmers(bestMatchSequence, k_minimap, s_minimap, open_minimap, t_minimap, false);
-          } else {
-            refSyncmers = seeding::rollingSyncmers(bestMatchSequence, k, s, open, t, false);
-          }
-
-          // going to build ref seed from scratch for now until Alex corrects k-mer end positions.
-          for (const auto &[kmerHash, isReverse, isSyncmer, startPos] : refSyncmers) {
-            if (!isSyncmer) {
-              continue;
-            }
-            if (seedToRefPositions.find(kmerHash) == seedToRefPositions.end()) {
-              seedToRefPositions[kmerHash] = std::make_pair(std::vector<uint32_t>(), std::vector<uint32_t>());
-            }
-            if (isReverse) {
-              seedToRefPositions[kmerHash].second.push_back(startPos);
-            } else {
-              seedToRefPositions[kmerHash].first.push_back(startPos);
-            }
-          }
-
-          bool pairedEndReads = reads1.size() > 0 && reads2.size() > 0;
-          std::vector<char *> samAlignments;
-          std::string samHeader;
-          if (k > 28) {
-            if (shortenSyncmers) {
-              createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, 28, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
-            } else {
-              createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, 19, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
-            }
-          } else {
-            createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, k, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
-          }
-
-          sam_hdr_t *header;
-          bam1_t **bamRecords;
-          createBam(samAlignments, samHeader, bamFileName, header, bamRecords);
-
-          createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName);
-
-          createVcfWithMutationMatrices(prefix, mpileupFileName, mutMat, vcfFileName, 0.0011);
-
-          // ---> Add call to dump placement summary <---
+          // ---> Add call to dump placement summary <--- 
           std::string placementSummaryFileName = prefix + ".placement.summary.md";
           placement::dumpPlacementSummary(result, placementSummaryFileName);
           // ---> End summary dump call <--- 
