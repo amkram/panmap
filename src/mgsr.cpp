@@ -570,6 +570,7 @@ static void applyMutations (
         invertedBlocksBacktracks.emplace_back(blockId, true);
       }
     } else if (isInversion) {
+      if (dfsIndex >= 0) std::cout << node->identifier << " block " << blockId << " inversion" << std::endl;
       blockStrand[blockId] = !blockStrand[blockId];
       if (!blockStrand[blockId]) {
         invertedBlocks.insert(blockId);
@@ -1295,18 +1296,29 @@ void mgsr::makeCoordIndex(
 //     return globalCoords.getScalarFromCoord(a.first, blockStrand[a.first.primaryBlockId]) < globalCoords.getScalarFromCoord(b.first, blockStrand[b.first.primaryBlockId]);
 //   });
 
+
 //   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> mergedLocalMutationRanges{localMutationRanges.front()};
 //   for (size_t i = 1; i < localMutationRanges.size(); ++i) {
 //     const auto& [curBeg, curEnd] = mergedLocalMutationRanges.back();
 //     const auto& [nextBeg, nextEnd] = localMutationRanges[i];
+//     if (false) {
+//       std::cout << "[" << node->identifier << "] processing localMutationRanges[" << i << "]: " << curBeg << " | " << globalCoords.getScalarFromCoord(curBeg, blockStrand[curBeg.primaryBlockId]) << " | " << curEnd << " | " << globalCoords.getScalarFromCoord(curEnd, blockStrand[curEnd.primaryBlockId]) << std::endl;
+//       std::cout << "\tnext range: " << nextBeg << " | " << globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId]) << " | " << nextEnd << " | " << globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextEnd.primaryBlockId]) << std::endl;
+//     }
     
 //     // check if the current range and the next range are adjacent on their global scalar coordinates
-//     if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId]) + 1 >= globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
-//       if (globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextBeg.primaryBlockId]) > globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId])) {
+//     if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curEnd.primaryBlockId]) + 1 >= globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
+//       if (globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextEnd.primaryBlockId]) > globalCoords.getScalarFromCoord(curEnd, blockStrand[curEnd.primaryBlockId])) {
 //         mergedLocalMutationRanges.back().second = nextEnd;
+//         if (false) {
+//           std::cout << "\t\tThey are adjacent or overlap... merging... now range is: " << curBeg << " | " << globalCoords.getScalarFromCoord(curBeg, blockStrand[curBeg.primaryBlockId]) << " | " << nextEnd << " | " << globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextEnd.primaryBlockId]) << std::endl;
+//         }
 //       }
 //     } else {
 //       mergedLocalMutationRanges.emplace_back(nextBeg, nextEnd);
+//       if (false) {
+//         std::cout << "\t\tThey are not adjacent nor overlapping... adding new range: " << nextBeg << " | " << globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId]) << " | " << nextEnd << " | " << globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextEnd.primaryBlockId]) << std::endl;
+//       }
 //     }
 //   }
 
@@ -1321,6 +1333,11 @@ void mgsr::makeCoordIndex(
 //     auto syncmerRangeEndCoord = curEndCoord;
 //     auto leftGapMapIt = gapMap.lower_bound(globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]));
 //     auto rightGapMapIt = gapMap.lower_bound(globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]));
+//     if (false) {
+//       std::cout << "[" << node->identifier << "] processing newSyncmerRange (" << localMutationRangeIndex << "): " << curBegCoord << " | " << globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) << " | " << curEndCoord << " | " << globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]) << std::endl;
+//       std::cout << "  leftGapMapIt: " << (leftGapMapIt == gapMap.end() ? "end" : std::to_string(leftGapMapIt->first) + " | " + std::to_string(leftGapMapIt->second)) << std::endl;
+//       std::cout << "  rightGapMapIt: " << (rightGapMapIt == gapMap.end() ? "end" : std::to_string(rightGapMapIt->first) + " | " + std::to_string(rightGapMapIt->second)) << std::endl;
+//     }
 
 //     // expand to the left... if reach newSyncmerRanges.back(), merge
 //     bool reachedEnd = false;
@@ -1446,7 +1463,9 @@ void mgsr::makeCoordIndex(
 //         syncmerRangeEndCoord = curEndCoord;
 //       }
 //     }
-
+//     if (false) {
+//       std::cout << "    adding newSyncmerRange: " << syncmerRangeBegCoord << " | " << globalCoords.getScalarFromCoord(syncmerRangeBegCoord, blockStrand[syncmerRangeBegCoord.primaryBlockId]) << " | " << syncmerRangeEndCoord << " | " << globalCoords.getScalarFromCoord(syncmerRangeEndCoord, blockStrand[syncmerRangeEndCoord.primaryBlockId]) << std::endl;
+//     }
 //     newSyncmerRanges.emplace_back(syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint64_t>(), std::vector<uint64_t>());
 //     curSyncmerRange = newSyncmerRanges.back();
 //     if (reachedEnd) {
@@ -1461,7 +1480,9 @@ void mgsr::makeCoordIndex(
 //     panmapUtils::NewSyncmerRange& syncmerRange = newSyncmerRanges[i];
 //     panmapUtils::Coordinate curCoord = syncmerRange.begCoord;
 //     panmapUtils::Coordinate curEndCoord = syncmerRange.endCoord;
-    
+//     if (false) {
+//       std::cout << "[" << node->identifier << "] processing newSyncmerRange " << i << ": " << syncmerRange.begCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.begCoord, blockStrand[syncmerRange.begCoord.primaryBlockId]) << " | " << syncmerRange.endCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.endCoord, blockStrand[syncmerRange.endCoord.primaryBlockId]) << std::endl;
+//     }
 //     std::string& localRangeSeq = syncmerRange.localRangeSeq;
 //     std::vector<uint64_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
 //     std::vector<uint64_t>& seedsToDelete = syncmerRange.seedsToDelete;
@@ -1508,23 +1529,26 @@ void mgsr::makeCoordIndex(
 //         }
 //       }
 //     }
-//     std::cout << node->identifier << " newSyncmerRange " << i << ": " << syncmerRange.begCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.begCoord, blockStrand[syncmerRange.begCoord.primaryBlockId]) << " | " << syncmerRange.endCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.endCoord, blockStrand[syncmerRange.endCoord.primaryBlockId]) << std::endl;
-//     std::cout << "\tlocalRangeSeq: " << localRangeSeq << std::endl;
-//     std::cout << "\tlocalRangeCoordToGlobalScalarCoords: ";
-//     for (size_t j = 0; j < localRangeCoordToGlobalScalarCoords.size(); j++) {
-//       std::cout << "(" << j << ", " << localRangeCoordToGlobalScalarCoords[j] << ") ";
+//     if (false) {
+//       std::cout << node->identifier << " newSyncmerRange " << i << ": " << syncmerRange.begCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.begCoord, blockStrand[syncmerRange.begCoord.primaryBlockId]) << " | " << syncmerRange.endCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.endCoord, blockStrand[syncmerRange.endCoord.primaryBlockId]) << std::endl;
+//       std::cout << "\toriginal recomp range: " << syncmerRange.begCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.begCoord, blockStrand[syncmerRange.begCoord.primaryBlockId]) << " | " << syncmerRange.endCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.endCoord, blockStrand[syncmerRange.endCoord.primaryBlockId]) << std::endl;
+//       std::cout << "\tlocalRangeSeq: " << localRangeSeq << std::endl;
+//       std::cout << "\tlocalRangeCoordToGlobalScalarCoords: ";
+//       for (size_t j = 0; j < localRangeCoordToGlobalScalarCoords.size(); j++) {
+//         std::cout << "(" << j << ", " << localRangeCoordToGlobalScalarCoords[j] << ") ";
+//       }
+//       std::cout << std::endl;
+//       std::cout << "\tlocalRangeCoordToBlockId: ";
+//       for (size_t j = 0; j < localRangeCoordToBlockId.size(); j++) {
+//         std::cout << "(" << j << ", " << localRangeCoordToBlockId[j] << ") ";
+//       }
+//       std::cout << std::endl;
+//       std::cout << "\tseedsToDelete: ";
+//       for (const auto& seed : seedsToDelete) {
+//         std::cout << seed << " ";
+//       }
+//       std::cout << std::endl;
 //     }
-//     std::cout << std::endl;
-//     std::cout << "\tlocalRangeCoordToBlockId: ";
-//     for (size_t j = 0; j < localRangeCoordToBlockId.size(); j++) {
-//       std::cout << "(" << j << ", " << localRangeCoordToBlockId[j] << ") ";
-//     }
-//     std::cout << std::endl;
-//     std::cout << "\tseedsToDelete: ";
-//     for (const auto& seed : seedsToDelete) {
-//       std::cout << seed << " ";
-//     }
-//     std::cout << std::endl;
 //   }
 //   return newSyncmerRanges;
 // }
@@ -1559,8 +1583,8 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     const auto& [nextBeg, nextEnd] = localMutationRanges[i];
     
     // check if the current range and the next range are adjacent on their global scalar coordinates
-    if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId]) + 1 >= globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
-      if (globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextBeg.primaryBlockId]) > globalCoords.getScalarFromCoord(curEnd, blockStrand[curBeg.primaryBlockId])) {
+    if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curEnd.primaryBlockId]) + 1 >= globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
+      if (globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextEnd.primaryBlockId]) > globalCoords.getScalarFromCoord(curEnd, blockStrand[curEnd.primaryBlockId])) {
         mergedLocalMutationRanges.back().second = nextEnd;
       }
     } else {
@@ -1715,7 +1739,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     localMutationRangeIndex++;
   }
 
-  if (false) {
+  if (dfsIndex >= 999999) {
     std::cout << "[" << node->identifier << " | " << dfsIndex << "] gapMap: ";
     for (const auto& [beg, end] : gapMap) {
       std::cout << "(" << beg << "," << end << ") ";
@@ -1730,7 +1754,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     const auto curCoordScalar = globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]);
     const auto curEndCoordScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
     auto curCoordGapMapIt = gapMap.lower_bound(curCoordScalar);
-    if (false) {
+    if (dfsIndex >= 999999) {
       std::cout << "\t[" << node->identifier << " | " << dfsIndex << "] Processing syncmer range " << i << ": "
                 << curBegCoord << " | " << curCoordScalar << " to " << curEndCoord << " | " << curEndCoordScalar
                 << "... curCoordGapMapIt: " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
@@ -1739,22 +1763,22 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     // if startChar == '-', it means the start position is in the first gap run group and if the first gap run extends to the end of the genome, then we can skip this syncmer range
     const char startChar = blockSequences.getSequenceBase(curCoord);
     if (startChar == '-') {
-      if (false) std::cout << "\t\tStart char is gap... " << std::flush;
+      if (dfsIndex >= 999999) std::cout << "\t\tStart char is gap... " << std::flush;
       const auto curBlockId = curCoord.primaryBlockId;
       if (gapMap.begin()->second == globalCoords.lastScalarCoord) {
-        if (false) std::cout << "gap run ends at the end of the genome... skipping" << std::endl;
+        if (dfsIndex >= 999999) std::cout << "gap run ends at the end of the genome... skipping" << std::endl;
         continue;
       } else if (!(blockExistsDelayed[curBlockId] && blockExists[curBlockId] && blockStrandDelayed[curBlockId] != blockStrand[curBlockId])) {
-        if (false) std::cout << "no inversion detected... jumping over the gap run... block direction is " << (blockStrand[curBlockId] ? "forward..." : "reverse...") << std::flush;
+        if (dfsIndex >= 999999) std::cout << "no inversion detected... jumping over the gap run... block direction is " << (blockStrand[curBlockId] ? "forward..." : "reverse...") << std::flush;
         curCoord = globalCoords.getCoordFromScalar(gapMap.begin()->second + 1);
         if (!blockStrand[curCoord.primaryBlockId]) {
           curCoord = globalCoords.getCoordFromScalar(gapMap.begin()->second + 1, false);
         }
         curBegCoord = curCoord;
-        if (false) std::cout << "curBegCoord is now " << curBegCoord << " | " << globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) << std::endl;
+        if (dfsIndex >= 999999) std::cout << "curBegCoord is now " << curBegCoord << " | " << globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) << std::endl;
       }
     } else {
-      if (false) std::cout << "\t\tStart char is non-gap... simply proceed to while loop" << std::endl;
+      if (dfsIndex >= 999999) std::cout << "\t\tStart char is non-gap... simply proceed to while loop" << std::endl;
     }
 
     std::string& localRangeSeq = syncmerRange.localRangeSeq;
@@ -1769,35 +1793,35 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     bool recomputeInProgress = false;
     while (true) {
       const auto curBlockId = curCoord.primaryBlockId;
-      if (false) std::cout << "\t\tcurCoord at the beginning of the while loop: " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << "... curCoordGapMapIt: " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
+      if (dfsIndex >= 999999) std::cout << "\t\tcurCoord at the beginning of the while loop: " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << "... curCoordGapMapIt: " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
       if (curCoordGapMapIt == gapMap.end()) {
         // do nothing... Current and all subsequent positions are non-gap
-        if (false) std::cout << "\t\tAt the end of gapMap... do nothing " << std::endl;
+        if (dfsIndex >= 999999) std::cout << "\t\tAt the end of gapMap... do nothing " << std::endl;
       } else if (recomputeBlock || (blockExistsDelayed[curBlockId] && blockExists[curBlockId] && blockStrandDelayed[curBlockId] != blockStrand[curBlockId])) {
         // need to recompute this whole block
-        if (false) std::cout << "\t\tNeed to recompute this whole block... " << std::flush;
+        if (dfsIndex >= 999999) std::cout << "\t\tNeed to recompute this whole block... " << std::flush;
         if (!recomputeInProgress) {
-          if (false) std::cout << "recomputeInProgress is false... " << std::flush;
+          if (dfsIndex >= 999999) std::cout << "recomputeInProgress is false... " << std::flush;
           if (curCoord != curBegCoord) {
-            if (false) std::cout << "curCoord != curBegCoord... " << std::flush;
+            if (dfsIndex >= 999999) std::cout << "curCoord != curBegCoord... " << std::flush;
             if (blockStrand[curBlockId]) {
               curCoord = globalCoords.blockEdgeCoords[curBlockId].start;
-              if (false) std::cout << "block strand is forward... take the first coord of current block to be curCoord: " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
+              if (dfsIndex >= 999999) std::cout << "block strand is forward... take the first coord of current block to be curCoord: " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
             } else {
               curCoord = globalCoords.blockEdgeCoords[curBlockId].end;
-              if (false) std::cout << "block strand is reverse... take the last coord of current block to be curCoord: " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
+              if (dfsIndex >= 999999) std::cout << "block strand is reverse... take the last coord of current block to be curCoord: " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
             }
           } else {
-            if (false) std::cout << "curCoord == curBegCoord... do nothing and start at curCoord" << std::endl;
+            if (dfsIndex >= 999999) std::cout << "curCoord == curBegCoord... do nothing and start at curCoord" << std::endl;
           }
           recomputeInProgress = true;
         } else {
-          if (false) std::cout << "recomputeInProgress is true... do nothing" << std::endl;
+          if (dfsIndex >= 999999) std::cout << "recomputeInProgress is true... do nothing" << std::endl;
         }
       }
       
       if (!blockExists[curCoord.primaryBlockId]) {
-        if (false) std::cout << "\t\tcurrrent block is off... shouldn't be happening... " << std::flush;
+        if (dfsIndex >= 999999) std::cout << "\t\tcurrrent block is off... shouldn't be happening... " << std::flush;
         if (curCoord.primaryBlockId == curEndCoord.primaryBlockId) {
           break;
         }
@@ -1808,51 +1832,66 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
       const auto curScalarCoord = globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]);
 
       char curNuc = blockSequences.getSequenceBase(curCoord);
-      if (false) std::cout << "\t\tNow curCoord: " << curCoord << " | " << curScalarCoord << "... curCoordGapMapIt: " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
+      if (dfsIndex >= 999999) std::cout << "\t\tNow curCoord: " << curCoord << " | " << curScalarCoord << "... curCoordGapMapIt: " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
 
       if (curNuc != '-') {
         if (!blockStrand[curCoord.primaryBlockId]) curNuc = panmanUtils::getComplementCharacter(curNuc);
         localRangeSeq += curNuc;
         localRangeCoordToGlobalScalarCoords.push_back(curScalarCoord);
         localRangeCoordToBlockId.push_back(curCoord.primaryBlockId);
-        if (false) std::cout << "\t\tcurNuc (" << curNuc << ") is non-gap... add to localRangeSeq...  local scalar coord: " << localRangeSeq.size() - 1 << ", global scalar coord: " << curScalarCoord << std::endl;
+        if (dfsIndex >= 999999) std::cout << "\t\tcurNuc (" << curNuc << ") is non-gap... add to localRangeSeq...  local scalar coord: " << localRangeSeq.size() - 1 << ", global scalar coord: " << curScalarCoord << std::endl;
       } else if (refOnSyncmers[curScalarCoord].has_value()) {
         blockOnSyncmers[curCoord.primaryBlockId].erase(curScalarCoord);
         if (blockOnSyncmers[curCoord.primaryBlockId].empty()) blockOnSyncmers.erase(curCoord.primaryBlockId);
         blockOnSyncmersChangeRecord.emplace_back(curCoord.primaryBlockId, curScalarCoord, panmapUtils::seedChangeType::DEL);
         seedsToDelete.push_back(curScalarCoord);
-        if (false) std::cout << "\t\tcurNuc (" << curNuc << ") is gap and was a seed... delete pos " << curScalarCoord << " from blockOnSyncmers..." << std::endl;
+        if (dfsIndex >= 999999) std::cout << "\t\tcurNuc (" << curNuc << ") is gap and was a seed... delete pos " << curScalarCoord << " from blockOnSyncmers..." << std::endl;
       }
       if (curCoord == curEndCoord)  {
-        if (false) std::cout << "\t\tcurCoord == curEndCoord... break out of the while loop" << std::endl;
+        if (dfsIndex >= 999999) std::cout << "\t\tcurCoord == curEndCoord... break out of the while loop" << std::endl;
         break;
       }
-      if (curCoordGapMapIt != gapMap.end() && curScalarCoord == curCoordGapMapIt->first - 1) {
+      if (recomputeInProgress) {
+        globalCoords.stepForwardScalar(curCoord, blockStrand);
+        if (dfsIndex >= 999999) std::cout << "\t\trecomputeInProgress is true... step right to " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
+        if (curBlockId != curCoord.primaryBlockId) {
+          if (dfsIndex >= 999999) std::cout << "\t\tstepped into a new block... reset recomputeBlock and recomputeInProgress to false and walk to the correct curCoordGapMapIt" << std::endl;
+          recomputeBlock = false;
+          recomputeInProgress = false;
+          if (curCoordGapMapIt != gapMap.end()) {
+            while (curCoordGapMapIt != gapMap.end() && !((std::prev(curCoordGapMapIt)->second < globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId])) && (globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) < curCoordGapMapIt->first))) {
+              if (dfsIndex >= 999999) std::cout << "\t\tcurCoordGapMapIt: " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << " is updated to " << std::flush;
+              ++curCoordGapMapIt;
+              if (dfsIndex >= 999999) std::cout << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
+            }
+          }
+        }
+      } else if (curCoordGapMapIt != gapMap.end() && curScalarCoord == curCoordGapMapIt->first - 1) {
         // over gap run 
-        if (false) std::cout << "\t\tNext position " << curScalarCoord + 1 << " will reach gap run " << curCoordGapMapIt->first << " - " << curCoordGapMapIt->second << "..." << std::endl;
+        if (dfsIndex >= 999999) std::cout << "\t\tNext position " << curScalarCoord + 1 << " will reach gap run " << curCoordGapMapIt->first << " - " << curCoordGapMapIt->second << "..." << std::endl;
         if (curCoordGapMapIt->second == globalCoords.lastScalarCoord) {
-          if (false) std::cout << "and it's the last position... break out of the while loop" << std::endl;
+          if (dfsIndex >= 999999) std::cout << "and it's the last position... break out of the while loop" << std::endl;
           break;
         } else {
           curCoord = globalCoords.getCoordFromScalar(curCoordGapMapIt->second + 1);
           if (!blockStrand[curCoord.primaryBlockId]) {
             curCoord = globalCoords.getCoordFromScalar(curCoordGapMapIt->second + 1, false);
           }
-          if (false) std::cout << "\t\tjumped to the next nuc position " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
+          if (dfsIndex >= 999999) std::cout << "\t\tjumped to the next nuc position " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
           if (recomputeBlock && curBlockId != curBegCoord.primaryBlockId) {
-            if (false) std::cout << "\t\trecomputeBlock is true and curBlockId != curBegCoord.primaryBlockId... reset recomputeBlock and recomputeInProgress to false" << std::endl;
+            if (dfsIndex >= 999999) std::cout << "\t\trecomputeBlock is true and curBlockId != curBegCoord.primaryBlockId... reset recomputeBlock and recomputeInProgress to false" << std::endl;
             recomputeBlock = false;
             recomputeInProgress = false;
           }
           ++curCoordGapMapIt;
-          if (false) std::cout << "\t\tcurCoordGapMapIt is now " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
+          if (dfsIndex >= 999999) std::cout << "\t\tcurCoordGapMapIt is now " << (curCoordGapMapIt == gapMap.end() ? "end" : std::to_string(curCoordGapMapIt->first) + "-" + std::to_string(curCoordGapMapIt->second)) << std::endl;
         }
       } else {
-        if (false) std::cout << "\t\tNext position " << curScalarCoord + 1 << " does not reach gap run... step forward" << std::endl;
+        if (dfsIndex >= 999999) std::cout << "\t\tNext position " << curScalarCoord + 1 << " does not reach gap run... step forward" << std::endl;
         globalCoords.stepForwardScalar(curCoord, blockStrand);
-        if (false) std::cout << "\t\tcurCoord is now " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
+        if (dfsIndex >= 999999) std::cout << "\t\tcurCoord is now " << curCoord << " | " << globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]) << std::endl;
         if (recomputeBlock && curBlockId != curBegCoord.primaryBlockId) {
-          if (false) std::cout << "\t\trecomputeBlock is true and curBlockId != curBegCoord.primaryBlockId... reset recomputeBlock and recomputeInProgress to false" << std::endl;
+          if (dfsIndex >= 999999) std::cout << "\t\trecomputeBlock is true and curBlockId != curBegCoord.primaryBlockId... reset recomputeBlock and recomputeInProgress to false" << std::endl;
           recomputeBlock = false;
           recomputeInProgress = false;
         }
@@ -1871,7 +1910,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         }
       }
     }
-    if (false) {
+    if (dfsIndex >= 999999) {
       std::cout << node->identifier << " newSyncmerRange " << i << ": " << syncmerRange.begCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.begCoord, blockStrand[syncmerRange.begCoord.primaryBlockId]) << " | " << syncmerRange.endCoord << " | " << globalCoords.getScalarFromCoord(syncmerRange.endCoord, blockStrand[syncmerRange.endCoord.primaryBlockId]) << std::endl;
       std::cout << "\tlocalRangeSeq: " << localRangeSeq << std::endl;
       std::cout << "\tlocalRangeCoordToGlobalScalarCoords: ";
@@ -1991,6 +2030,13 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   std::unordered_set<uint64_t> &invertedBlocks,
   uint64_t &dfsIndex
 ) {
+  if (false) {
+    std::cout << node->identifier << " parent (" << node->parent->identifier << ") syncmers: ";
+    for (const auto& pos : refOnSyncmersMap) {
+      std::cout << "(" << pos << ", " << refOnSyncmers[pos].value().hash << ", " << refOnSyncmers[pos].value().endPos << ", " << refOnSyncmers[pos].value().isReverse << ") ";
+    }
+    std::cout << std::endl;
+  }
   // record old and new block and nuc states for backtracking and calculating gaps
   std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> blockMutationRecord;
   std::vector<std::tuple<panmapUtils::Coordinate, char, char>> nucMutationRecord;
@@ -2037,12 +2083,12 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     invertGapMap(gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
-  // // not really needed for building the index... But do need to keep it for debugging and comparing with brute force
-  // std::map<uint64_t, uint64_t> degapCoordIndex;
-  // std::map<uint64_t, uint64_t> regapCoordIndex;
-  // if (dfsIndex >= 0 && node->children.empty()) {
-  //   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
-  // }
+  // not really needed for building the index... But do need to keep it for debugging and comparing with brute force
+  std::map<uint64_t, uint64_t> degapCoordIndex;
+  std::map<uint64_t, uint64_t> regapCoordIndex;
+  if (dfsIndex >= 0) {
+    makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
+  }
 
 
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges = computeNewSyncmerRanges(node, dfsIndex, blockSequences,  blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, localMutationRanges, blockOnSyncmersChangeRecord);
@@ -2091,9 +2137,9 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   }
 
   for (uint32_t pos : potentialSyncmerDeletions) {
-    if (false) std::cout << "Potential syncmer deletion: " << pos << "..." << std::flush;
+    if (dfsIndex >= 999999) std::cout << "Potential syncmer deletion: " << pos << "..." << std::flush;
     if (refOnSyncmers[pos].has_value()) {
-      if (false) std::cout << "position has a syncmer... delete it" << std::endl;
+      if (dfsIndex >= 999999) std::cout << "position has a syncmer... delete it" << std::endl;
       refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
       refOnSyncmers[pos] = std::nullopt;
       const auto blockId = globalCoords.getBlockIdFromScalar(pos);
@@ -2102,17 +2148,17 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
       refOnSyncmersMap.erase(pos);
     } else {
-      if (false) std::cout << std::endl;
+      if (dfsIndex >= 999999) std::cout << std::endl;
     }
   }
 
-  if (false) std::cout << node->identifier << " deleted syncmers because of block turning off: " << std::endl;
+  if (dfsIndex >= 999999) std::cout << node->identifier << " deleted syncmers because of block turning off: " << std::endl;
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     if (oldExists && !newExists) {
-      if (false) std::cout << "\tblock " << blockId << ": ";
+      if (dfsIndex >= 999999) std::cout << "\tblock " << blockId << ": ";
       if (blockOnSyncmers.find(blockId) != blockOnSyncmers.end()) {
         for (uint64_t pos : blockOnSyncmers[blockId]) {
-          if (false) std::cout << pos << " " << std::flush;
+          if (dfsIndex >= 999999) std::cout << pos << " " << std::flush;
           refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
           blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
 
@@ -2121,7 +2167,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
         }
         blockOnSyncmers.erase(blockId);
       }
-      if (false) std::cout << std::endl;
+      if (dfsIndex >= 999999) std::cout << std::endl;
     }
   }
 
@@ -2288,16 +2334,34 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
     invertedBlocksBuilder.set(i, invertedBlocksVec[i]);
   }
-  
-  // // compare with brute force for debugging
-  // if (dfsIndex >= 0 && node->children.empty()) {
-  //   compareBruteForceBuild(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, uniqueKminmers, kminmerToUniqueIndex, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
-  // }
+
+  if (false) {
+    std::cout << node->identifier << " syncmer changes: " << std::endl;
+    for (const auto& [pos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
+      switch (changeType) {
+        case panmapUtils::seedChangeType::ADD:
+          std::cout << "(" << pos << ", " << "ADD" << ", " << rsyncmer.hash << ", " << rsyncmer.endPos << ", " << rsyncmer.isReverse << ")\n";
+          break;
+        case panmapUtils::seedChangeType::DEL:
+          std::cout << "(" << pos << ", " << "DEL" << ", " << rsyncmer.hash << ", " << rsyncmer.endPos << ", " << rsyncmer.isReverse << ")\n";
+          break;
+        case panmapUtils::seedChangeType::SUB:
+          std::cout << "(" << pos << ", " << "SUB" << ", " << rsyncmer.hash << ", " << rsyncmer.endPos << ", " << rsyncmer.isReverse << ")\n";
+          break;
+      }
+    }
+    std::cout << std::endl;
+  }
+  // compare with brute force for debugging
+  if (dfsIndex >= 0) {
+
+    compareBruteForceBuild(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, uniqueKminmers, kminmerToUniqueIndex, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
+  }
 
   if (false) {
     std::cout << node->identifier << " correct syncmers: ";
     for (const auto& pos : refOnSyncmersMap) {
-      std::cout << "(" << pos << ", " << refOnSyncmers[pos].value().hash << ") ";
+      std::cout << "(" << pos << ", " << refOnSyncmers[pos].value().hash << ", " << refOnSyncmers[pos].value().endPos << ", " << refOnSyncmers[pos].value().isReverse << ") ";
     }
     std::cout << std::endl; 
   }
