@@ -18,8 +18,8 @@ std::string seedChangeTypeToString(seedChangeType changeType);
 void getSequenceFromReference(
   panmanUtils::Tree* tree,
   std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
-  std::vector<bool>& blockExists,
-  std::vector<bool>& blockStrand,
+  std::vector<char>& blockExists,
+  std::vector<char>& blockStrand,
   std::unordered_map<int, int>& blockLengths,
   std::string reference
 );
@@ -27,8 +27,8 @@ void getSequenceFromReference(
 std::string getStringFromSequence(
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
   const std::unordered_map<int, int>& blockLengths,
-  const std::vector<bool>& blockExists,
-  const std::vector<bool>& blockStrand,
+  const std::vector<char>& blockExists,
+  const std::vector<char>& blockStrand,
   bool aligned
 );
 
@@ -68,6 +68,7 @@ struct Coordinate {
 
     // Create a Coordinate copying a NucMut
     Coordinate(const panmanUtils::NucMut& nm) : Coordinate(nm, 0) {}
+
 
     // custom print operator
     friend std::ostream& operator<<(std::ostream& os, const Coordinate& coord) {
@@ -169,9 +170,38 @@ struct Coordinate {
     bool operator==(const Coordinate& other) const {
         return nucPosition == other.nucPosition &&
                nucGapPosition == other.nucGapPosition &&
-               primaryBlockId == other.primaryBlockId &&
-               secondaryBlockId == other.secondaryBlockId;
+               primaryBlockId == other.primaryBlockId;
     }
+
+    bool operator<(const Coordinate& other) const {
+      if (primaryBlockId != other.primaryBlockId) return primaryBlockId < other.primaryBlockId;
+      if (nucPosition != other.nucPosition)       return nucPosition < other.nucPosition;
+
+      if (nucGapPosition != other.nucGapPosition) {
+        auto adjustGap = [](int32_t gap) { return gap == -1 ? INT32_MAX : gap; };
+        return adjustGap(nucGapPosition) < adjustGap(other.nucGapPosition);
+      }
+
+      return false;
+    }
+
+    bool operator!=(const Coordinate& other) const {
+      return !(*this == other);
+    }
+    
+    bool operator<=(const Coordinate& other) const {
+      return *this < other || *this == other;
+    }
+    
+    bool operator>(const Coordinate& other) const {
+      return !(*this <= other);
+    }
+    
+    bool operator>=(const Coordinate& other) const {
+      return !(*this < other);
+    }
+
+
 };
 
 struct NewSyncmerRange {
@@ -192,8 +222,9 @@ struct BlockSequences {
   // uint64_t lastBlockOn;
   // Coordinate firstNucCoordinate;
   // Coordinate lastNucCoordinate;
-  std::vector<bool> blockExists;
-  std::vector<bool> blockStrand;
+  std::vector<char> blockExists;
+  std::vector<char> blockStrand;
+  uint64_t totalLength;
   
   BlockSequences() {}
 
@@ -201,6 +232,7 @@ struct BlockSequences {
     sequence.resize(tree->blocks.size() + 1);
     blockExists.resize(tree->blocks.size() + 1, false);
     blockStrand.resize(tree->blocks.size() + 1, true);
+    totalLength = 0;
 
     int32_t maxBlockId = 0;
 
@@ -224,6 +256,7 @@ struct BlockSequences {
           // len++;
           const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
           sequence[primaryBlockId].push_back({nucleotide, {}});
+          totalLength++;
         }
 
         if(endFlag) {
@@ -248,6 +281,7 @@ struct BlockSequences {
         int len = curGap.nucGapLength[j];
         int pos = curGap.nucPosition[j];
         sequence[primaryBId][pos].second.resize(len, '-');
+        totalLength += len;
       }
     }
   }
@@ -346,15 +380,24 @@ struct BlockSequences {
   }
 };
 
+struct BlockEdgeCoord {
+  Coordinate start;
+  Coordinate end;
+};
+
 struct GlobalCoords {
   std::vector<std::vector<std::pair<int64_t, std::vector<int64_t>>>> globalCoords;
+  std::vector<Coordinate> scalarToCoord;
+  std::vector<BlockEdgeCoord> blockEdgeCoords;
   std::tuple<int64_t, int64_t, int64_t> firstTupleCoord;
-  Coordinate firstCoord;
   std::tuple<int64_t, int64_t, int64_t> lastTupleCoord;
+  Coordinate firstCoord;
   Coordinate lastCoord;
   int64_t lastScalarCoord;
 
-  GlobalCoords(const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence) {
+  GlobalCoords(const BlockSequences& blockSequences) {
+    const auto& sequence = blockSequences.sequence;
+    scalarToCoord.reserve(blockSequences.totalLength);
     int64_t curScalarCoord = 0;
     globalCoords.resize(sequence.size());
     for (size_t i = 0; i < sequence.size(); i++) {
@@ -364,6 +407,7 @@ struct GlobalCoords {
         globalCoords[i][j].second.resize(sequence[i][j].second.size());
         for (size_t k = 0; k < sequence[i][j].second.size(); k++) {
           globalCoords[i][j].second[k] = curScalarCoord;
+          scalarToCoord.emplace_back(j, k, i, -1);
           curScalarCoord++;
         }
         
@@ -373,6 +417,7 @@ struct GlobalCoords {
           globalCoords[i][j].first = -1;
         } else {
           globalCoords[i][j].first = curScalarCoord;
+          scalarToCoord.emplace_back(j, -1, i, -1);
           curScalarCoord++;
         }
       }
@@ -399,6 +444,12 @@ struct GlobalCoords {
       // first block's first nuc gap is not empty, take the first gap nuc
       firstTupleCoord = std::make_tuple(0, 0, 0);
       firstCoord = Coordinate(0, 0, 0, -1);
+    }
+
+    blockEdgeCoords.resize(sequence.size());
+    for (size_t i = 0; i < sequence.size(); i++) {
+      blockEdgeCoords[i].start = getBlockStartCoord(i);
+      blockEdgeCoords[i].end = getBlockEndCoord(i);
     }
 
     // sanity check
@@ -494,28 +545,58 @@ struct GlobalCoords {
   }
 
   int64_t getScalarFromCoord(const Coordinate& coord, bool blockStrand = true) const {
+    const auto& nucPosInfo = globalCoords[coord.primaryBlockId][coord.nucPosition];
     if (coord.nucGapPosition == -1) {
-      if (!blockStrand) {
-        return getBlockStartScalar(coord.primaryBlockId) + getBlockEndScalar(coord.primaryBlockId) - globalCoords[coord.primaryBlockId][coord.nucPosition].first;
-      }
-      return globalCoords[coord.primaryBlockId][coord.nucPosition].first;
+      return blockStrand ? nucPosInfo.first :
+                           getBlockStartScalar(coord.primaryBlockId) + getBlockEndScalar(coord.primaryBlockId) - nucPosInfo.first;
     }
 
-    if (!blockStrand) {
-      return getBlockStartScalar(coord.primaryBlockId) + getBlockEndScalar(coord.primaryBlockId) - globalCoords[coord.primaryBlockId][coord.nucPosition].second[coord.nucGapPosition];
-    }
-    return globalCoords[coord.primaryBlockId][coord.nucPosition].second[coord.nucGapPosition];
+    const int64_t gapPosScalar = nucPosInfo.second[coord.nucGapPosition];
+    return blockStrand ? gapPosScalar :
+                         getBlockStartScalar(coord.primaryBlockId) + getBlockEndScalar(coord.primaryBlockId) - gapPosScalar;
   }
 
-  std::tuple<int64_t, int64_t, int64_t> stepRightCoordinate(const std::tuple<int64_t, int64_t, int64_t> &coord) const {
+  Coordinate getCoordFromScalar(uint64_t scalar, bool blockStrand = true) const {
+    if (scalar >= scalarToCoord.size()) {
+      std::cerr << "In getCoordFromScalar(), scalar " << scalar << " is out of range" << std::endl;
+      exit(1);
+    }
+    Coordinate forwardCoord = scalarToCoord[scalar];
+    if (blockStrand) {
+      return forwardCoord;
+    }
+    return scalarToCoord[getBlockStartScalar(forwardCoord.primaryBlockId) + getBlockEndScalar(forwardCoord.primaryBlockId) - scalar];
+  }
+
+  uint32_t getBlockIdFromScalar(uint64_t scalar) const {
+    return scalarToCoord[scalar].primaryBlockId;
+  }
+
+  std::tuple<int64_t, int64_t, int64_t> getTupleFromScalar(uint64_t scalar, bool blockStrand = true) const {
+    if (scalar >= scalarToCoord.size()) {
+      std::cerr << "In getTupleFromScalar(), scalar " << scalar << " is out of range" << std::endl;
+      exit(1);
+    }
+    Coordinate forwardCoord = scalarToCoord[scalar];
+    if (blockStrand) {
+      return std::make_tuple(forwardCoord.primaryBlockId, forwardCoord.nucPosition, forwardCoord.nucGapPosition);
+    }
+
+    Coordinate reverseCoord = scalarToCoord[getBlockStartScalar(forwardCoord.primaryBlockId) + getBlockEndScalar(forwardCoord.primaryBlockId) - scalar];
+    return std::make_tuple(reverseCoord.primaryBlockId, reverseCoord.nucPosition, reverseCoord.nucGapPosition);
+  }
+
+ void stepRightCoordinate(std::tuple<int64_t, int64_t, int64_t> &coord) const {
     const auto& [blockId, nucPos, nucGapPos] = coord;
     if (coord == lastTupleCoord) {
-      return std::make_tuple(-1, -1, -1);
+      coord = std::make_tuple(-1, -1, -1);
+      return;
     }
 
     if (coord == getBlockEndTuple(blockId)) {
       // go to the next block
-      return getBlockStartTuple(blockId + 1);
+      coord = getBlockStartTuple(blockId + 1);
+      return;
     }
 
     // not end of block
@@ -523,34 +604,35 @@ struct GlobalCoords {
       // cur coord is a main nuc, step right to the next main nuc
       if (globalCoords[blockId][nucPos + 1].second.empty()) {
         // next main nuc has no gap nucs -> return the main nuc
-        return std::make_tuple(blockId, nucPos + 1, -1);
+        coord = std::make_tuple(blockId, nucPos + 1, -1);
       } else {
         // next main nuc has gap nucs -> return the first gap nuc
-        return std::make_tuple(blockId, nucPos + 1, 0);
+        coord = std::make_tuple(blockId, nucPos + 1, 0);
       }
 
     } else {
       // cur coord is at a gap nuc
       if (nucGapPos == globalCoords[blockId][nucPos].second.size() - 1) {
         // cur gap nuc is the last gap nuc -> return the main nuc
-        return std::make_tuple(blockId, nucPos, -1);
+        coord = std::make_tuple(blockId, nucPos, -1);
       } else {
         // cur gap nuc is not the last gap nuc -> return the next gap nuc
-        return std::make_tuple(blockId, nucPos, nucGapPos + 1);
+        coord = std::make_tuple(blockId, nucPos, nucGapPos + 1);
       }
     }
-    return std::make_tuple(-1, -1, -1);
   }
 
-  std::tuple<int64_t, int64_t, int64_t> stepLeftCoordinate(const std::tuple<int64_t, int64_t, int64_t> &coord) const {
+  void stepLeftCoordinate(std::tuple<int64_t, int64_t, int64_t> &coord) const {
     const auto& [blockId, nucPos, nucGapPos] = coord;
     if (coord == firstTupleCoord) {
-      return std::make_tuple(-1, -1, -1);
+      coord = std::make_tuple(-1, -1, -1);
+      return;
     }
 
     if (coord == getBlockStartTuple(blockId)) {
       // go to the previous block
-      return getBlockEndTuple(blockId - 1);
+      coord = getBlockEndTuple(blockId - 1);
+      return;
     }
 
     // not start of block
@@ -558,153 +640,167 @@ struct GlobalCoords {
       // cur coord is a main nuc
       if (globalCoords[blockId][nucPos].second.empty()) {
         // cur coord has no gap nucs, return the previous main nuc
-        return std::make_tuple(blockId, nucPos - 1, -1);
+        coord = std::make_tuple(blockId, nucPos - 1, -1);
       } else {
         // cur coord has gap nucs, return the last gap nuc
-        return std::make_tuple(blockId, nucPos, globalCoords[blockId][nucPos].second.size() - 1);
+        coord = std::make_tuple(blockId, nucPos, globalCoords[blockId][nucPos].second.size() - 1);
       }
     } else {
       // cur coord is at a gap nuc
       if (nucGapPos == 0) {
         // cur gap coord is the first gap nuc, return the previous main nuc
-        return std::make_tuple(blockId, nucPos - 1, -1);
+        coord = std::make_tuple(blockId, nucPos - 1, -1);
       } else {
         // cur gap coord is not the first gap nuc, return the previous gap nuc
-        return std::make_tuple(blockId, nucPos, nucGapPos - 1);
+        coord = std::make_tuple(blockId, nucPos, nucGapPos - 1);
       }
     }
-    return std::make_tuple(-1, -1, -1);
   }
 
-  Coordinate stepRightCoordinate(const Coordinate &coord) const {
+  void stepRightCoordinate(Coordinate &coord) const {
     if (coord == lastCoord) {
-      return Coordinate(-1, -1, -1, -1);
+      coord = Coordinate(-1, -1, -1, -1);
+      return;
     }
 
-    if (coord == getBlockEndCoord(coord.primaryBlockId)) {
+    if (coord == blockEdgeCoords[coord.primaryBlockId].end) {
       // go to the next block
-      return getBlockStartCoord(coord.primaryBlockId + 1);
+      coord = blockEdgeCoords[coord.primaryBlockId + 1].start;
+      return;
     }
 
     // not end of block
     if (coord.nucGapPosition == -1) {
       // cur coord is a main nuc, step right to the next main nuc
-      if (globalCoords[coord.primaryBlockId][coord.nucPosition + 1].second.empty()) {
-        // next main nuc has no gap nucs -> return the main nuc
-        return Coordinate(coord.nucPosition + 1, -1, coord.primaryBlockId, coord.secondaryBlockId);
-      } else {
-        // next main nuc has gap nucs -> return the first gap nuc
-        return Coordinate(coord.nucPosition + 1, 0, coord.primaryBlockId, coord.secondaryBlockId);
+      coord.nucPosition++;
+      const auto& nextNucGaps = globalCoords[coord.primaryBlockId][coord.nucPosition].second;
+      if (!nextNucGaps.empty()) {
+        // next main nuc has gap nucs -> step to the first gap nuc
+        coord.nucGapPosition = 0;
       }
-
     } else {
       // cur coord is at a gap nuc
-      if (coord.nucGapPosition == globalCoords[coord.primaryBlockId][coord.nucPosition].second.size() - 1) {
-        // cur gap nuc is the last gap nuc -> return the main nuc
-        return Coordinate(coord.nucPosition, -1, coord.primaryBlockId, coord.secondaryBlockId);
+      const auto& currentNucGaps = globalCoords[coord.primaryBlockId][coord.nucPosition].second;
+      if (coord.nucGapPosition == currentNucGaps.size() - 1) {
+        // cur gap nuc is the last gap nuc -> step to the main nuc
+        coord.nucGapPosition = -1;
       } else {
-        // cur gap nuc is not the last gap nuc -> return the next gap nuc
-        return Coordinate(coord.nucPosition, coord.nucGapPosition + 1, coord.primaryBlockId, coord.secondaryBlockId);
+        // cur gap nuc is not the last gap nuc -> step to the next gap nuc
+        coord.nucGapPosition++;
       }
     }
-    return Coordinate(-1, -1, -1, -1);
   }
 
-  Coordinate stepLeftCoordinate(const Coordinate &coord) const {
+  void stepLeftCoordinate(Coordinate &coord) const {
     if (coord == firstCoord) {
-      return Coordinate(-1, -1, -1, -1);
+      coord = Coordinate(-1, -1, -1, -1);
+      return;
     }
 
-    if (coord == getBlockStartCoord(coord.primaryBlockId)) {
+    if (coord == blockEdgeCoords[coord.primaryBlockId].start) {
       // go to the previous block
-      return getBlockEndCoord(coord.primaryBlockId - 1);
+      coord = blockEdgeCoords[coord.primaryBlockId - 1].end;
+      return;
     }
 
     // not start of block
     if (coord.nucGapPosition == -1) {
       // cur coord is a main nuc
-      if (globalCoords[coord.primaryBlockId][coord.nucPosition].second.empty()) {
+      const auto& currentNucGaps = globalCoords[coord.primaryBlockId][coord.nucPosition].second;
+      if (currentNucGaps.empty()) {
         // cur coord has no gap nucs, return the previous main nuc
-        return Coordinate(coord.nucPosition - 1, -1, coord.primaryBlockId, coord.secondaryBlockId);
+        coord.nucPosition--;
       } else {
         // cur coord has gap nucs, return the last gap nuc
-        return Coordinate(coord.nucPosition, globalCoords[coord.primaryBlockId][coord.nucPosition].second.size() - 1, coord.primaryBlockId, coord.secondaryBlockId);
+        coord.nucGapPosition = globalCoords[coord.primaryBlockId][coord.nucPosition].second.size() - 1;
       }
     } else {
       // cur coord is at a gap nuc
       if (coord.nucGapPosition == 0) {
         // cur gap coord is the first gap nuc, return the previous main nuc
-        return Coordinate(coord.nucPosition - 1, -1, coord.primaryBlockId, coord.secondaryBlockId);
+        coord.nucPosition--;
+        coord.nucGapPosition = -1;
       } else {
         // cur gap coord is not the first gap nuc, return the previous gap nuc
-        return Coordinate(coord.nucPosition, coord.nucGapPosition - 1, coord.primaryBlockId, coord.secondaryBlockId);
-      }
-    }
-    return Coordinate(-1, -1, -1, -1);
-  }
-
-  Coordinate stepForwardScalar(const Coordinate &coord, const std::vector<bool>& blockStrand) const {
-    if (blockStrand[coord.primaryBlockId]) {
-      Coordinate nextCoord = stepRightCoordinate(coord);
-      if (nextCoord.primaryBlockId == coord.primaryBlockId) {
-        return nextCoord; // still in the same block return the next coord
-      } else if (nextCoord.primaryBlockId == coord.primaryBlockId + 1) {
-        if (blockStrand[nextCoord.primaryBlockId]) {
-          return nextCoord; // next block is on the forward strand, return the next coord (first coord) of the next block
-        } else {
-          return getBlockEndCoord(nextCoord.primaryBlockId); // next block is on the reverse strand, return the last coord of the next block
-        }
-      } else {
-        std::cerr << "stepping right over more than one block from " << coord.primaryBlockId << " to " << nextCoord.primaryBlockId << std::endl;
-        std::exit(1);
-      }
-    } else {
-      Coordinate nextCoord = stepLeftCoordinate(coord);
-      if (nextCoord.primaryBlockId == coord.primaryBlockId) {
-        return nextCoord; // still in the same block return the next coord
-      } else if (nextCoord.primaryBlockId == coord.primaryBlockId - 1) {
-        if (blockStrand[coord.primaryBlockId + 1]) {
-          return getBlockStartCoord(coord.primaryBlockId + 1); // next block is on the forward strand, return the first coord of the next block
-        } else {
-          return getBlockEndCoord(coord.primaryBlockId + 1); // next block is on the reverse strand, return the last coord of the next block
-        }
-      } else {
-        std::cerr << "stepping left over more than one block from " << coord.primaryBlockId << " to " << nextCoord.primaryBlockId << std::endl;
-        std::exit(1);
+        coord.nucGapPosition--;
       }
     }
   }
 
-  Coordinate stepBackwardScalar(const Coordinate &coord, const std::vector<bool>& blockStrand) const {
-    if (blockStrand[coord.primaryBlockId]) {
-      Coordinate nextCoord = stepLeftCoordinate(coord);
-      if (nextCoord.primaryBlockId == coord.primaryBlockId) {
-        return nextCoord; // still in the same block return the next coord
-      } else if (nextCoord.primaryBlockId == coord.primaryBlockId - 1) {
-        if (blockStrand[nextCoord.primaryBlockId]) {
-          return nextCoord; // previous block is on the forward strand, return the next coord (last coord) of the previous block
-        } else {
-          return getBlockStartCoord(nextCoord.primaryBlockId); // previous block is on the reverse strand, return the first coord of the previous block
+  void stepForwardScalar(Coordinate &coord, const std::vector<char>& blockStrand) const {
+    const int64_t originalBlockId = coord.primaryBlockId;
+    if (blockStrand[originalBlockId]) {
+      stepRightCoordinate(coord);
+      if (coord.primaryBlockId == originalBlockId) {
+        return;
+      } else if (coord.primaryBlockId == originalBlockId + 1) {
+        if (!blockStrand[coord.primaryBlockId]) {
+          coord = blockEdgeCoords[coord.primaryBlockId].end;
         }
+        return;
       } else {
-        std::cerr << "stepping left over more than one block from " << coord.primaryBlockId << " to " << nextCoord.primaryBlockId << std::endl;
+        std::cerr << "stepping right over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
         std::exit(1);
       }
     } else {
-      Coordinate nextCoord = stepRightCoordinate(coord);
-      if (nextCoord.primaryBlockId == coord.primaryBlockId) {
-        return nextCoord; // still in the same block return the next coord
-      } else if (nextCoord.primaryBlockId == coord.primaryBlockId + 1) {
-        if (blockStrand[coord.primaryBlockId - 1]) {
-          return getBlockEndCoord(coord.primaryBlockId - 1); // previous block is on the forward strand, return the last coord of the previous block
+      stepLeftCoordinate(coord);
+      if (coord.primaryBlockId == originalBlockId) {
+        return;
+      } else if (coord.primaryBlockId == originalBlockId - 1) {
+        if (blockStrand[originalBlockId + 1]) {
+          coord = blockEdgeCoords[originalBlockId + 1].start;
         } else {
-          return getBlockStartCoord(coord.primaryBlockId - 1); // previous block is on the reverse strand, return the first coord of the previous block
+          coord = blockEdgeCoords[originalBlockId + 1].end;
         }
+        return;
       } else {
-        std::cerr << "stepping right over more than one block from " << coord.primaryBlockId << " to " << nextCoord.primaryBlockId << std::endl;
+        std::cerr << "stepping left over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
         std::exit(1);
       }
     }
+  }
+
+  Coordinate stepForwardScalar(const Coordinate &coord, const std::vector<char>& blockStrand) const {
+    Coordinate nextCoord = coord;
+    stepForwardScalar(nextCoord, blockStrand);
+    return nextCoord;
+  }
+
+  void stepBackwardScalar(Coordinate &coord, const std::vector<char>& blockStrand) const {
+    const int64_t originalBlockId = coord.primaryBlockId;
+    if (blockStrand[originalBlockId]) {
+      stepLeftCoordinate(coord);
+      if (coord.primaryBlockId == originalBlockId) {
+        return;
+      } else if (coord.primaryBlockId == originalBlockId - 1) {
+        if (!blockStrand[coord.primaryBlockId]) {
+          coord = blockEdgeCoords[coord.primaryBlockId].start;
+        }
+      } else {
+        std::cerr << "stepping left over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
+        std::exit(1);
+      }
+    } else {
+      stepRightCoordinate(coord);
+      if (coord.primaryBlockId == originalBlockId) {
+        return;
+      } else if (coord.primaryBlockId == originalBlockId + 1) {
+        if (blockStrand[originalBlockId - 1]) {
+          coord = blockEdgeCoords[originalBlockId - 1].end;
+        } else {
+          coord = blockEdgeCoords[originalBlockId - 1].start;
+        }
+      } else {
+        std::cerr << "stepping right over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
+        std::exit(1);
+      }
+    }
+  }
+
+  Coordinate stepBackwardScalar(const Coordinate &coord, const std::vector<char>& blockStrand) const {
+    Coordinate nextCoord = coord;
+    stepBackwardScalar(nextCoord, blockStrand);
+    return nextCoord;
   }
 };
 

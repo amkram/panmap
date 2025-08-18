@@ -99,8 +99,7 @@ class mgsrIndexBuilder {
 
     // tree pointer
     panmanUtils::Tree *T;
-
-
+  
     // syncmer and k-min-mer objects
     std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
     std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
@@ -128,19 +127,34 @@ class mgsrIndexBuilder {
     void buildIndexHelper(
       panmanUtils::Node *node,
       panmapUtils::BlockSequences &blockSequences,
-      std::vector<bool> &blockExistsDelayed,
-      std::vector<bool> &blockStrandDelayed,
+      std::vector<char> &blockExistsDelayed,
+      std::vector<char> &blockStrandDelayed,
       panmapUtils::GlobalCoords &globalCoords,
       std::map<uint64_t, uint64_t> &gapMap,
       std::unordered_set<uint64_t> &invertedBlocks,
       uint64_t &dfsIndex
     );
 
-    std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRanges(
+    std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRangesJump(
       panmanUtils::Node* node,
       size_t dfsIndex,
       const panmapUtils::BlockSequences& blockSequences,
+      const std::vector<char>& blockExistsDelayed,
+      const std::vector<char>& blockStrandDelayed,
       const panmapUtils::GlobalCoords& globalCoords,
+      const std::map<uint64_t, uint64_t>& gapMap,
+      std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
+      std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>>& blockOnSyncmersBacktracks
+    );
+
+    std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRangesWalk(
+      panmanUtils::Node* node,
+      size_t dfsIndex,
+      const panmapUtils::BlockSequences& blockSequences,
+      const std::vector<char>& blockExistsDelayed,
+      const std::vector<char>& blockStrandDelayed,
+      const panmapUtils::GlobalCoords& globalCoords,
+      const std::map<uint64_t, uint64_t>& gapMap,
       std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
       std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>>& blockOnSyncmersBacktracks
     );
