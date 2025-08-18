@@ -191,6 +191,8 @@ std::pair<size_t, size_t> hashSeq(const std::string& s) {
 
 std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(const std::string& seq, int k, int s, bool open, int t, bool returnAll) {
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmers;
+  if (seq.size() < k) return syncmers;
+  syncmers.reserve(seq.size() - k + 1);
 
   const size_t max_size_t = std::numeric_limits<size_t>::max();
   size_t forwardKmerHash = 0, reverseKmerHash = 0;
@@ -361,7 +363,7 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(const std::
       }
     }
   }
-
+  syncmers.shrink_to_fit();
   return syncmers;
 }
 
