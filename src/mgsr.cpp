@@ -1295,7 +1295,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     return globalCoords.getScalarFromCoord(a.first, blockStrand[a.first.primaryBlockId]) < globalCoords.getScalarFromCoord(b.first, blockStrand[b.first.primaryBlockId]);
   });
 
-
   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> mergedLocalMutationRanges{localMutationRanges.front()};
   for (size_t i = 1; i < localMutationRanges.size(); ++i) {
     const auto& [curBeg, curEnd] = mergedLocalMutationRanges.back();
@@ -1320,6 +1319,8 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     auto [curBegCoord, curEndCoord] = mergedLocalMutationRanges[localMutationRangeIndex];
     auto syncmerRangeBegCoord = curBegCoord;
     auto syncmerRangeEndCoord = curEndCoord;
+    auto curBegScalarTest = globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
+    auto curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
     auto leftGapMapIt = gapMap.lower_bound(globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]));
     auto rightGapMapIt = gapMap.lower_bound(globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]));
 
@@ -1335,19 +1336,29 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
       if (leftGapMapIt == gapMap.begin()) {
         if (curBegScalar - 1 > leftGapMapIt->second) {
           globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
+          --curBegScalarTest;
         } else if (curBegScalar >= leftGapMapIt->first) {
           if (leftGapMapIt->first == 0) {
             break;
           } else {
             curBegScalar = leftGapMapIt->first - 1;
-            curBegCoord = globalCoords.getCoordFromScalar(curBegScalar, blockStrand[curBegCoord.primaryBlockId]);
+            curBegScalarTest = leftGapMapIt->first - 1;
+            curBegCoord = globalCoords.getCoordFromScalar(curBegScalar);
+            if (!blockStrand[curBegCoord.primaryBlockId]) {
+              curBegCoord = globalCoords.getCoordFromScalar(curBegScalar, false);
+            }
           }
         }
       } else if (curBegScalar - 1 > leftGapMapIt->second) {
         globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
+        --curBegScalarTest;
       } else {
         curBegScalar = leftGapMapIt->first - 1;
-        curBegCoord = globalCoords.getCoordFromScalar(curBegScalar, blockStrand[curBegCoord.primaryBlockId]);
+        curBegScalarTest = leftGapMapIt->first - 1;
+        curBegCoord = globalCoords.getCoordFromScalar(curBegScalar);
+        if (!blockStrand[curBegCoord.primaryBlockId]) {
+          curBegCoord = globalCoords.getCoordFromScalar(curBegScalar, false);
+        }
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
       }
       
@@ -1357,6 +1368,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
       ) {
         // reached current newSyncmerRange... merge
         curBegCoord = curSyncmerRange.begCoord;
+        curBegScalarTest = globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
         syncmerRangeBegCoord = curBegCoord;
         newSyncmerRanges.pop_back();
         break;
@@ -1364,6 +1376,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
 
       if (!blockExists[curBegCoord.primaryBlockId]) {
         curBegCoord = globalCoords.blockEdgeCoords[curBegCoord.primaryBlockId].start;
+        curBegScalarTest = globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
         continue;
       }
 
@@ -1376,7 +1389,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
 
     // expand to the right... if reach mergedLocalMutationRanges[localMutationRangeIndex + 1], merge
     offset = 0;
-    auto curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
     if (rightGapMapIt == gapMap.begin()) {
       rightGapMapIt = gapMap.begin();
     } else if (rightGapMapIt == gapMap.end()) {
@@ -1386,7 +1398,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     }
 
     while (offset < k - 1) {
-      curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
       if (curEndScalar == globalCoords.lastScalarCoord) {
         reachedEnd = true;
         break;
@@ -1396,7 +1407,10 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         auto lastGapMapIt = std::prev(gapMap.end());
         if (curEndScalar <= lastGapMapIt->second && lastGapMapIt->second != globalCoords.lastScalarCoord) {
           curEndScalar = lastGapMapIt->second + 1;
-          curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, blockStrand[curEndCoord.primaryBlockId]);
+          curEndCoord = globalCoords.getCoordFromScalar(curEndScalar);
+          if (!blockStrand[curEndCoord.primaryBlockId]) {
+            curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, false);
+          }
         }
       } else if ((curEndScalar >= rightGapMapIt->first && curEndScalar <= rightGapMapIt->second) || curEndScalar + 1 >= rightGapMapIt->first) {
         if (rightGapMapIt->second == globalCoords.lastScalarCoord) {
@@ -1405,6 +1419,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
             break;
           } else {
             curEndCoord = mergedLocalMutationRanges[localMutationRangeIndex + 1].second;
+            curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
             syncmerRangeEndCoord = curEndCoord;
             localMutationRangeIndex++;
             offset = 0;
@@ -1412,14 +1427,19 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
           }
         }
         curEndScalar = rightGapMapIt->second + 1;
-        curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, blockStrand[curEndCoord.primaryBlockId]);
+        curEndCoord = globalCoords.getCoordFromScalar(curEndScalar);
+        if (!blockStrand[curEndCoord.primaryBlockId]) {
+          curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, false);
+        }
         rightGapMapIt = std::next(rightGapMapIt);
       } else {
         globalCoords.stepForwardScalar(curEndCoord, blockStrand);
+        ++curEndScalar;
       }
       
       if (!blockExists[curEndCoord.primaryBlockId]) {
         curEndCoord = globalCoords.blockEdgeCoords[curEndCoord.primaryBlockId].end;
+        curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
         continue;
       }
       if (localMutationRangeIndex != mergedLocalMutationRanges.size() - 1
