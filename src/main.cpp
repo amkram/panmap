@@ -1079,14 +1079,43 @@ int main(int argc, char *argv[]) {
     int mgsr_t = 0;
     int mgsr_l = 3;
     bool open = false;
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
+    bool use_raw_seeds = true; // true for panmap, false for panmama
+    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l, open, use_raw_seeds);
     mgsrIndexBuilder.buildIndex();
-    mgsrIndexBuilder.writeIndex("test.pmai");
+    
+    // Log unique seed/k-mer count
+    if (use_raw_seeds) {
+      msg("Built raw seeds index with {} unique seeds", mgsrIndexBuilder.uniqueSyncmers.size());
+    } else {
+      msg("Built k-minmers index with {} unique k-minmers", mgsrIndexBuilder.uniqueKminmers.size());
+    }
+    
+    // Generate index filename based on input panman file and seed type
+    std::string extension = use_raw_seeds ? ".pmi" : ".pmai";
+    std::string index_filename = guide + extension;
+    mgsrIndexBuilder.writeIndex(index_filename);
 
-    // mgsr::mgsrPlacer mgsrPlacer(&T, "rsv_4000.pmai");
-    // mgsrPlacer.placeReads();
+    // Prepare MGSRIndex reader for placement
+    int fd_mgsr = ::open(index_filename.c_str(), O_RDONLY);
+    if (fd_mgsr < 0) {
+      throw std::runtime_error("Failed to open MGSR index file: " + index_filename);
+    }
+    ::capnp::ReaderOptions opts; opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max(); opts.nestingLimit = 1024;
+    ::capnp::PackedFdMessageReader mgsrMsg(fd_mgsr, opts);
+    ::MGSRIndex::Reader mgsrIndexRoot = mgsrMsg.getRoot<MGSRIndex>();
 
-    exit(0);
+    // Run placement using new MGSR index format
+    placement::PlacementResult result;
+    std::vector<std::vector<seeding::seed_t>> readSeeds;
+    std::vector<std::string> readSequences;
+    std::vector<std::string> readNames;
+    std::vector<std::string> readQuals;
+    std::string placementFileName = guide + ".placement.tsv";
+    placement::place(result, &T, mgsrIndexRoot, reads1, reads2,
+                     readSeeds, readSequences, readNames, readQuals,
+                     placementFileName, index_filename, "");
+    
+    return 0;
 
     // Build index if needed
     if (build) {
@@ -1235,13 +1264,12 @@ int main(int argc, char *argv[]) {
       // Scope to ensure inMessage stays alive as long as index_input is used
       {
         // Extract the root from the message - this reader depends on inMessage staying alive!
-        Index::Reader index_input = inMessage->getRoot<Index>();
-        logging::debug("DEBUG-PLACE: Successfully extracted root from inMessage");
+  MGSRIndex::Reader mgsrIndexInput = inMessage->getRoot<MGSRIndex>();
+  logging::debug("DEBUG-PLACE: Loaded MGSR index root");
         
-        // Let's check for critical fields
-        uint32_t k = index_input.getK();
-        size_t nodeCount = index_input.getPerNodeSeedMutations().size();
-        logging::debug("DEBUG-PLACE: Index contains k={}, nodes={}", k, nodeCount);
+  uint32_t k = mgsrIndexInput.getK();
+  size_t seedCount = mgsrIndexInput.getSeedInfo().size();
+  logging::debug("DEBUG-PLACE: MGSR index k={}, seeds={} (k-minmers or raw seeds)", k, seedCount);
         
         if (genotype_from_sam) {
           msg("Genotyping from SAM file");
@@ -1277,7 +1305,7 @@ int main(int argc, char *argv[]) {
             try {
               msg("=== Starting Batch Placement ===");
               // Process batch file - keep inMessage alive during the whole process
-              placement::placeBatch(&T, index_input, batchFilePath, prefix,
+              placement::placeBatch(&T, mgsrIndexInput, batchFilePath, prefix,
                                     refFileName, samFileName, bamFileName,
                                     mpileupFileName, vcfFileName, aligner, refNode,
                                     vm.count("save-jaccard") > 0, vm.count("time") > 0,
@@ -1303,14 +1331,9 @@ int main(int argc, char *argv[]) {
 
           std::string placementFileName = prefix + ".placement.tsv";
           // Perform placement - keep inMessage alive during the whole process
-          placement::place(result, &T, index_input, reads1, reads2,
+          placement::place(result, &T, mgsrIndexInput, reads1, reads2,
                          readSeeds, readSequences, readNames, readQuals,
                          placementFileName, effective_index_path, debug_specific_node_id);
-
-          // ---> Add call to dump placement summary <--- 
-          std::string placementSummaryFileName = prefix + ".placement.summary.md";
-          placement::dumpPlacementSummary(result, placementSummaryFileName);
-          // ---> End summary dump call <--- 
 
           // Get placement results for raw seed matches
           panmanUtils::Node *bestRawMatchNode = result.bestRawSeedMatchNode;
