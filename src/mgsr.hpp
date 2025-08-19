@@ -109,14 +109,21 @@ class mgsrIndexBuilder {
     std::vector<std::optional<uint64_t>> refOnKminmers;
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;
 
-    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool open) 
-      : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T)
+    // Raw seeds support
+    bool useRawSeeds;
+    std::vector<seeding::rsyncmer_t> uniqueSyncmers;
+    std::unordered_map<seeding::rsyncmer_t, uint64_t> syncmerFrequency;
+    std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerFrequency;
+
+    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool open, bool useRawSeeds = false) 
+      : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T), useRawSeeds(useRawSeeds)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
       indexBuilder.setT(t);
       indexBuilder.setL(l);
       indexBuilder.setOpen(open);
+      indexBuilder.setUseRawSeeds(useRawSeeds);
       perNodeChanges = indexBuilder.initPerNodeChanges(T->allNodes.size());
     }
 
