@@ -270,7 +270,7 @@ std::tuple<size_t, bool, bool> is_syncmer_rollingHash(const std::string &seq, co
 std::pair<size_t, size_t> hashSeq(const std::string& s);
 
 // returns vector of (hash, isReverse, isSyncmer, startPos)  
-std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(const std::string& seq, int k, int s, bool open, int t = 0, bool returnAll = true);
+std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string_view seq, int k, int s, bool open, int t = 0, bool returnAll = true);
 
 void seedsFromFastq(
     const int32_t &k, const int32_t &s, const int32_t &t, const bool &open,
