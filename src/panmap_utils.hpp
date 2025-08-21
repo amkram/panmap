@@ -383,6 +383,8 @@ struct BlockSequences {
 struct BlockEdgeCoord {
   Coordinate start;
   Coordinate end;
+  uint64_t startScalar;
+  uint64_t endScalar;
 };
 
 struct GlobalCoords {
@@ -450,6 +452,8 @@ struct GlobalCoords {
     for (size_t i = 0; i < sequence.size(); i++) {
       blockEdgeCoords[i].start = getBlockStartCoord(i);
       blockEdgeCoords[i].end = getBlockEndCoord(i);
+      blockEdgeCoords[i].startScalar = getBlockStartScalar(i);
+      blockEdgeCoords[i].endScalar = getBlockEndScalar(i);
     }
 
     // sanity check

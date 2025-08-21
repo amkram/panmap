@@ -189,7 +189,7 @@ std::pair<size_t, size_t> hashSeq(const std::string& s) {
   return std::make_pair(fHash, rHash);
 }
 
-std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(const std::string& seq, int k, int s, bool open, int t, bool returnAll) {
+std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string_view seq, int k, int s, bool open, int t, bool returnAll) {
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmers;
   if (seq.size() < k) return syncmers;
   syncmers.reserve(seq.size() - k + 1);

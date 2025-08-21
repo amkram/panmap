@@ -703,6 +703,7 @@ int main(int argc, char *argv[]) {
         ("outputs,o", po::value<std::string>()->default_value("bam,vcf,assembly"), 
          "Outputs (placement/p, assembly/a, reference/r, spectrum/c, sam/s, bam/b, mpileup/m, vcf/v, all/A)")
         ("index,i", po::value<std::string>()->default_value(""), "Path to precomputed index")
+        ("mgsr-index,m", po::value<std::string>()->default_value(""), "Path to precomputed MGSR index")
     ;
     
     po::options_description seeding_opts("Seeding/alignment options");
@@ -1076,16 +1077,40 @@ int main(int argc, char *argv[]) {
                   reindex ? "Reindex flag set" : "No existing index found");
     }
 
-    int mgsr_t = 0;
-    int mgsr_l = 3;
-    bool open = false;
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
-    mgsrIndexBuilder.buildIndex();
-    mgsrIndexBuilder.writeIndex("test.pmai");
+    // int mgsr_t = 0;
+    // int mgsr_l = 3;
+    // bool open = false;
+    // mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 28, s, mgsr_t, mgsr_l, open);
+    // mgsrIndexBuilder.buildIndex();
+    // mgsrIndexBuilder.writeIndex("test.pmai");
 
-    // mgsr::mgsrPlacer mgsrPlacer(&T, "rsv_4000.pmai");
-    // mgsrPlacer.placeReads();
+    if (vm.count("mgsr-index")) {
+      std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
+      
+      
+      auto start_time_deserialize = std::chrono::high_resolution_clock::now();
+      mgsr::mgsrPlacer mgsrPlacer(&T, mgsr_index_path);
+      auto end_time_deserialize = std::chrono::high_resolution_clock::now();
+      auto duration_deserialize = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_deserialize - start_time_deserialize);
+      std::cout << "\n\nDeserialized MGSR index in " << static_cast<double>(duration_deserialize.count()) / 1000.0 << "s\n" << std::endl;
 
+      auto start_time_initialize = std::chrono::high_resolution_clock::now();
+      mgsrPlacer.initializeQueryData(reads1, reads2);
+      std::cout << mgsrPlacer.reads.size() << " number of unique kminmer-set reads" << std::endl;
+      auto end_time_initialize = std::chrono::high_resolution_clock::now();
+      auto duration_initialize = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_initialize - start_time_initialize);
+      std::cout << "Initialized MGSR query data in " << static_cast<double>(duration_initialize.count()) / 1000.0 << "s\n" << std::endl;
+
+      auto start_time_place = std::chrono::high_resolution_clock::now();
+      mgsrPlacer.placeReads();
+      auto end_time_place = std::chrono::high_resolution_clock::now();
+      auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
+      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+
+      
+      
+      exit(0);
+    }
     exit(0);
 
     // Build index if needed
