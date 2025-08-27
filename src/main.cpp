@@ -1128,37 +1128,6 @@ int main(int argc, char *argv[]) {
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
-      
-      std::cout << "Read minichains initialized: " << mgsrPlacer.readMinichainsInitialized << std::endl;
-      std::vector<std::pair<mgsr::RefSeedmerChangeCountStats, size_t>> readMinichainsInitializedInfoVec;
-      readMinichainsInitializedInfoVec.reserve(mgsrPlacer.readMinichainsInitializedInfo.size());
-      for (const auto& [key, value] : mgsrPlacer.readMinichainsInitializedInfo) {
-        readMinichainsInitializedInfoVec.push_back({key, value});
-      }
-      std::sort(readMinichainsInitializedInfoVec.begin(), readMinichainsInitializedInfoVec.end(), [](const auto& a, const auto& b) {
-        return a.second > b.second;
-      });
-      
-      for (const auto& [key, value] : readMinichainsInitializedInfoVec) {
-        std::cout << "\t(UU " << key.EXIST_UNIQUE_TO_EXIST_UNIQUE
-                  << ", UM " << key.EXIST_UNIQUE_TO_EXIST_DUPLICATE
-                  << ", UN " << key.EXIST_UNIQUE_TO_NOT_EXIST
-                  << ", MU " << key.EXIST_DUPLICATE_TO_EXIST_UNIQUE
-                  << ", MM " << key.EXIST_DUPLICATE_TO_EXIST_DUPLICATE
-                  << ", MN " << key.EXIST_DUPLICATE_TO_NOT_EXIST
-                  << ", NU " << key.NOT_EXIST_TO_EXIST_UNIQUE
-                  << ", NM " << key.NOT_EXIST_TO_EXIST_DUPLICATE
-                  << ", NN " << key.NOT_EXIST_TO_NOT_EXIST
-                  << ", TOTAL " << key.TOTAL_SEEDMERS
-                  << "): " << value << std::endl;
-      }
-      std::cout << "Read minichains added: " << mgsrPlacer.readMinichainsAdded << std::endl;
-      std::cout << "\tAdded to empty: " << mgsrPlacer.readMinichainsAddedToEmpty << std::endl;
-      std::cout << "\tAdded to singleton: " << mgsrPlacer.readMinichainsAddedToSingleton << std::endl;
-      std::cout << "\tAdded to multiple: " << mgsrPlacer.readMinichainsAddedToMultiple << std::endl;
-      std::cout << "Read minichains removed: " << mgsrPlacer.readMinichainsRemoved << std::endl;
-      std::cout << "\tRemoved inplace: " << mgsrPlacer.readMinichainsRemovedInplace << std::endl;
-      std::cout << "\tRemoved from multiple: " << mgsrPlacer.readMinichainsRemovedFromMultiple << std::endl;
 
       // mgsr::squareEM squareEM(mgsrPlacer, 1000);
       // auto start_time_squareEM = std::chrono::high_resolution_clock::now();

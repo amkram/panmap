@@ -932,7 +932,7 @@ void mgsr::mgsrPlacer::initializeQueryData(
     kminmerMatches.resize(numReads, std::make_pair(0, 0));
     perNodeKminmerMatchesDeltasIndex.resize(numNodes);
   } else {
-    readScores.resize(numReads, std::make_pair(0, 0.0));
+    readScores.resize(numReads, 0);
     perNodeScoreDeltasIndex.resize(numNodes);
     maxMinichains.resize(numReads);
   }
@@ -2753,10 +2753,9 @@ bool mgsr::squareEM::removeLowPropNodes() {
   return true;
 }
 
-void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score, const double prob, const size_t numDuplicates) {
-  totalScore += (score - readScores[readIndex].first) * numDuplicates;
-  readScores[readIndex].first = score;
-  readScores[readIndex].second = prob;
+void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score, const size_t numDuplicates) {
+  totalScore += (score - readScores[readIndex]) * numDuplicates;
+  readScores[readIndex] = score;
 }
 
 void mgsr::mgsrPlacer::updateRefSeedmerStatus (
@@ -3503,8 +3502,8 @@ int64_t mgsr::mgsrPlacer::getReadPseudoScore(
     return 0;
   } else if (minichains.size() == 1) {
     const uint64_t currentMinichain = minichains[0];
-    uint64_t currentMinichainBeg = decodeBegFromMinichain(currentMinichain);
-    uint64_t currentMinichainEnd = decodeEndFromMinichain(currentMinichain);
+    const uint64_t currentMinichainBeg = decodeBegFromMinichain(currentMinichain);
+    const uint64_t currentMinichainEnd = decodeEndFromMinichain(currentMinichain);
     return currentMinichainEnd - currentMinichainBeg + 1;
   } else {
     // find longest minichain
@@ -3513,8 +3512,8 @@ int64_t mgsr::mgsrPlacer::getReadPseudoScore(
     uint64_t longestMinichainCode = 0;
     for (int32_t i = 0; i < minichains.size(); ++i) {
       const uint64_t currentMinichain = minichains[i];
-      uint64_t currentMinichainBeg = decodeBegFromMinichain(currentMinichain);
-      uint64_t currentMinichainEnd = decodeEndFromMinichain(currentMinichain);
+      const uint64_t currentMinichainBeg = decodeBegFromMinichain(currentMinichain);
+      const uint64_t currentMinichainEnd = decodeEndFromMinichain(currentMinichain);
       if (currentMinichainEnd - currentMinichainBeg + 1 > longestMinichainLength) {
         longestMinichainIndex = i;
         longestMinichainCode = currentMinichain;
@@ -3523,13 +3522,13 @@ int64_t mgsr::mgsrPlacer::getReadPseudoScore(
     }
 
     bool longestMinichainIsReversed = longestMinichainCode & 1;
-    uint64_t longestMinichainBeg = decodeBegFromMinichain(longestMinichainCode);
-    uint64_t longestMinichainEnd = decodeEndFromMinichain(longestMinichainCode);
+    const uint64_t longestMinichainBeg = decodeBegFromMinichain(longestMinichainCode);
+    const uint64_t longestMinichainEnd = decodeEndFromMinichain(longestMinichainCode);
 
     for (int32_t i = 0; i < minichains.size(); ++i) {
       const uint64_t currentMinichain = minichains[i];
-      uint64_t currentMinichainBeg = decodeBegFromMinichain(currentMinichain);
-      uint64_t currentMinichainEnd = decodeEndFromMinichain(currentMinichain);
+      const uint64_t currentMinichainBeg = decodeBegFromMinichain(currentMinichain);
+      const uint64_t currentMinichainEnd = decodeEndFromMinichain(currentMinichain);
       bool currentMinichainIsReversed = currentMinichain & 1;
       if (i == longestMinichainIndex) {
         pseudoChainScore += longestMinichainEnd - longestMinichainBeg + 1;
@@ -3762,7 +3761,6 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
   std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
   std::unordered_set<uint64_t> affectedSeedmers;
   updateSeeds(seedBacktracks, affectedSeedmers);
-  std::cout << "\n[" << curDfsIndex << "] seeds changed: " << affectedSeedmers.size() << " / " << hashToPositionMap.size() << std::endl;
 
   // **** Update gapMap ****
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
@@ -3788,7 +3786,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
   kminmerOverlapCoefficients[node->identifier] = static_cast<double>(binaryOverlapKminmerCount) / static_cast<double>(hashToPositionMap.size());
   nodeToDfsIndex[node->identifier] = curDfsIndex;
 
-  std::vector<std::pair<size_t, std::pair<uint32_t, double>>> readScoresBacktrack;
+  std::vector<std::pair<size_t, int32_t>> readScoresBacktrack;
   std::vector<std::pair<size_t, std::vector<mgsr::minichain_t>>> readMinichainsBacktrack;
   std::unordered_map<size_t, mgsr::hashCoordInfoCache> hashCoordInfoCacheTable;
 
@@ -3808,16 +3806,16 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
     // node for some reason has no seeds... delete all read scores and minichains
     // preallocate memory for score deltas
     size_t numReadsToReset = 0;
-    for (size_t i = 0; i < reads.size(); ++i) numReadsToReset += readScores[i].first != 0;
+    for (size_t i = 0; i < reads.size(); ++i) numReadsToReset += readScores[i] != 0;
     readScoresBacktrack.reserve(numReadsToReset);
     readMinichainsBacktrack.reserve(numReadsToReset);
     currentNodeScoreDeltas.reserve(numReadsToReset);
 
     for (size_t i = 0; i < reads.size(); ++i) {
-      if (readScores[i].first != 0) {
+      if (readScores[i] != 0) {
         readScoresBacktrack.emplace_back(i, readScores[i]);
-        setReadScore(i, 0, 0, readSeedmersDuplicatesIndex[i].size());
-        currentNodeScoreDeltas.emplace_back(i, 0, 0);
+        setReadScore(i, 0, readSeedmersDuplicatesIndex[i].size());
+        currentNodeScoreDeltas.emplace_back(i, 0);
         readMinichainsBacktrack.emplace_back(i, reads[i].minichains);
         reads[i].minichains.clear();
       }
@@ -3856,36 +3854,13 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
         updateMinichains(readIndex, affectedSeedmerIndexCodes, affectedSeedmerIndexCodesSize, allUniqueToNonUnique, allNonUniqueToUnique);
       } else {
         /*chaining debug*/if (false) std::cout << "\tread is not allUniqueToNonUnique or allNonUniqueToUnique... reinitializing minichains" << std::endl;
-        RefSeedmerChangeCountStats stats;
-        for (size_t i = 0; i < affectedSeedmerIndexCodesSize; ++i) {
-          const auto& affectedSeedmerIndexCode = affectedSeedmerIndexCodes[i];
-          mgsr::RefSeedmerChangeType SeedmerChangeType = static_cast<mgsr::RefSeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0x7F);
-          switch (SeedmerChangeType) {
-            case mgsr::RefSeedmerChangeType::EXIST_UNIQUE_TO_EXIST_UNIQUE: stats.EXIST_UNIQUE_TO_EXIST_UNIQUE++; break;
-            case mgsr::RefSeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE: stats.EXIST_UNIQUE_TO_EXIST_DUPLICATE++; break;
-            case mgsr::RefSeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST: stats.EXIST_UNIQUE_TO_NOT_EXIST++; break;
-            case mgsr::RefSeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_UNIQUE: stats.EXIST_DUPLICATE_TO_EXIST_UNIQUE++; break;
-            case mgsr::RefSeedmerChangeType::EXIST_DUPLICATE_TO_EXIST_DUPLICATE: stats.EXIST_DUPLICATE_TO_EXIST_DUPLICATE++; break;
-            case mgsr::RefSeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST: stats.EXIST_DUPLICATE_TO_NOT_EXIST++; break;
-            case mgsr::RefSeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE: stats.NOT_EXIST_TO_EXIST_UNIQUE++; break;
-            case mgsr::RefSeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE: stats.NOT_EXIST_TO_EXIST_DUPLICATE++; break;
-            case mgsr::RefSeedmerChangeType::NOT_EXIST_TO_NOT_EXIST: stats.NOT_EXIST_TO_NOT_EXIST++; break;
-            default:
-              std::cerr << "Error: Invalid seedmer change type: " << static_cast<int>(SeedmerChangeType) << std::endl;
-              exit(1);
-          }
-        }
-        stats.TOTAL_SEEDMERS = curRead.seedmersList.size();
-        readMinichainsInitializedInfo[stats]++;
-
         initializeReadMinichains(curRead);
       }
       int64_t pseudoScore = getReadPseudoScore(curRead, degapCoordIndex, regapCoordIndex, hashCoordInfoCacheTable);
 
-      double pseudoProb  = pow(errorRate, curRead.seedmersList.size() - pseudoScore) * pow(1 - errorRate, pseudoScore);
       readScoresBacktrack.emplace_back(readIndex, readScores[readIndex]);
-      setReadScore(readIndex, pseudoScore, pseudoProb, readSeedmersDuplicatesIndex[readIndex].size());
-      currentNodeScoreDeltas.emplace_back(readIndex, pseudoScore, pseudoProb);
+      setReadScore(readIndex, pseudoScore, readSeedmersDuplicatesIndex[readIndex].size());
+      currentNodeScoreDeltas.emplace_back(readIndex, pseudoScore);
 
       if (pseudoScore > maxScores[readIndex]) {
         maxScores[readIndex] = pseudoScore;
@@ -3938,7 +3913,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
   // Backtrack read scores
   for (size_t i = 0; i < readScoresBacktrack.size(); ++i) {
     const auto& [readIdx, score] = readScoresBacktrack[i];
-    setReadScore(readIdx, score.first, score.second, readSeedmersDuplicatesIndex[readIdx].size());
+    setReadScore(readIdx, score, readSeedmersDuplicatesIndex[readIdx].size());
   }
 
   // Backtrack read minichains
