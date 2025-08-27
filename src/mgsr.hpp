@@ -268,7 +268,6 @@ class mgsrIndexBuilder {
 struct readScoreDelta {
   size_t readIndex;
   uint32_t scoreDelta;
-  double probDelta;
 };
 
 class mgsrPlacer {
@@ -313,7 +312,7 @@ class mgsrPlacer {
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
 
     // current query score index structures
-    std::vector<std::pair<int32_t, double>> readScores;
+    std::vector<int32_t> readScores;
     std::vector<std::pair<int64_t, int64_t>> kminmerMatches;
     std::vector<std::vector<readScoreDelta>> perNodeScoreDeltasIndex;
     std::vector<std::vector<std::tuple<size_t, int64_t, int64_t>>> perNodeKminmerMatchesDeltasIndex;
@@ -334,7 +333,6 @@ class mgsrPlacer {
     // misc
     uint64_t curDfsIndex = 0;
     uint64_t readMinichainsInitialized = 0;
-    std::unordered_map<RefSeedmerChangeCountStats, uint64_t, RefSeedmerChangeCountStatsHash> readMinichainsInitializedInfo;
 
     uint64_t readMinichainsAdded = 0;
     uint64_t readMinichainsAddedToEmpty = 0;
@@ -428,7 +426,7 @@ class mgsrPlacer {
     void delSeedAtPosition(uint64_t pos);
 
     // for updating read scores and kminmer matches
-    void setReadScore(size_t readIndex, const int32_t score, const double prob, const size_t numDuplicates);
+    void setReadScore(size_t readIndex, const int32_t score, const size_t numDuplicates);
     void initializeReadMinichains(size_t readIndex);
     void initializeReadMinichains(mgsr::Read& curRead);
     void updateMinichains(size_t readIndex, const std::vector<uint64_t>& affectedSeedmerIndexCodes, const uint64_t affectedSeedmerIndexCodesSize, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
