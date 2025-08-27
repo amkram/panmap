@@ -6,7 +6,7 @@
 #include "mgsr_index.capnp.h"
 #include "panmap_utils.hpp"
 #include "seeding.hpp"
-
+#include <eigen3/Eigen/Dense>
 
 namespace mgsr {
 
@@ -68,6 +68,22 @@ bool inline compareMinichainByEnd(const minichain_t& a, const minichain_t& b) {
   return ((a >> 32) & 0x7FFFFFFF) < ((b >> 32) & 0x7FFFFFFF);
 }
 
+struct VectorHash {
+  size_t operator()(const std::vector<uint32_t>& v) const {
+    size_t hash = 0;
+    for (const auto& val : v) {
+      hash ^= std::hash<uint32_t>{}(val) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    }
+    return hash;
+  }
+};
+
+struct PairHash {
+  std::size_t operator()(const std::pair<uint64_t, uint64_t>& p) const {
+    return std::hash<uint64_t>{}(p.first) ^ (std::hash<uint64_t>{}(p.second) << 1);
+  }
+};
+
 struct readSeedmer {
   const size_t hash;
   const uint32_t begPos;
@@ -105,6 +121,48 @@ enum RefSeedmerChangeType : uint8_t {
   NOT_EXIST_TO_EXIST_UNIQUE = 6,
   NOT_EXIST_TO_EXIST_DUPLICATE = 7,
   NOT_EXIST_TO_NOT_EXIST = 8
+};
+
+struct RefSeedmerChangeCountStats {
+  size_t EXIST_UNIQUE_TO_EXIST_UNIQUE = 0;
+  size_t EXIST_UNIQUE_TO_EXIST_DUPLICATE = 0;
+  size_t EXIST_UNIQUE_TO_NOT_EXIST = 0;
+  size_t EXIST_DUPLICATE_TO_EXIST_UNIQUE = 0;
+  size_t EXIST_DUPLICATE_TO_EXIST_DUPLICATE = 0;
+  size_t EXIST_DUPLICATE_TO_NOT_EXIST = 0;
+  size_t NOT_EXIST_TO_EXIST_UNIQUE = 0;
+  size_t NOT_EXIST_TO_EXIST_DUPLICATE = 0;
+  size_t NOT_EXIST_TO_NOT_EXIST = 0;
+  size_t TOTAL_SEEDMERS = 0;
+
+  bool operator==(const RefSeedmerChangeCountStats& other) const noexcept {
+    return
+      EXIST_UNIQUE_TO_EXIST_UNIQUE == other.EXIST_UNIQUE_TO_EXIST_UNIQUE &&
+      EXIST_UNIQUE_TO_EXIST_DUPLICATE == other.EXIST_UNIQUE_TO_EXIST_DUPLICATE &&
+      EXIST_UNIQUE_TO_NOT_EXIST == other.EXIST_UNIQUE_TO_NOT_EXIST &&
+      EXIST_DUPLICATE_TO_EXIST_UNIQUE == other.EXIST_DUPLICATE_TO_EXIST_UNIQUE &&
+      EXIST_DUPLICATE_TO_EXIST_DUPLICATE == other.EXIST_DUPLICATE_TO_EXIST_DUPLICATE &&
+      EXIST_DUPLICATE_TO_NOT_EXIST == other.EXIST_DUPLICATE_TO_NOT_EXIST &&
+      NOT_EXIST_TO_EXIST_UNIQUE == other.NOT_EXIST_TO_EXIST_UNIQUE &&
+      NOT_EXIST_TO_EXIST_DUPLICATE == other.NOT_EXIST_TO_EXIST_DUPLICATE &&
+      NOT_EXIST_TO_NOT_EXIST == other.NOT_EXIST_TO_NOT_EXIST &&
+      TOTAL_SEEDMERS == other.TOTAL_SEEDMERS;
+  }
+};
+
+struct RefSeedmerChangeCountStatsHash {
+  std::size_t operator()(const RefSeedmerChangeCountStats& stats) const noexcept {
+    return static_cast<std::size_t>(stats.EXIST_UNIQUE_TO_EXIST_UNIQUE) * 100000000000000000ULL +
+           static_cast<std::size_t>(stats.EXIST_UNIQUE_TO_EXIST_DUPLICATE) * 1000000000000000ULL +
+           static_cast<std::size_t>(stats.EXIST_UNIQUE_TO_NOT_EXIST) * 10000000000000ULL +
+           static_cast<std::size_t>(stats.EXIST_DUPLICATE_TO_EXIST_UNIQUE) * 100000000000ULL +
+           static_cast<std::size_t>(stats.EXIST_DUPLICATE_TO_EXIST_DUPLICATE) * 1000000000ULL +
+           static_cast<std::size_t>(stats.EXIST_DUPLICATE_TO_NOT_EXIST) * 10000000ULL +
+           static_cast<std::size_t>(stats.NOT_EXIST_TO_EXIST_UNIQUE) * 100000ULL +
+           static_cast<std::size_t>(stats.NOT_EXIST_TO_EXIST_DUPLICATE) * 1000ULL +
+           static_cast<std::size_t>(stats.NOT_EXIST_TO_NOT_EXIST) * 10ULL +
+           static_cast<std::size_t>(stats.TOTAL_SEEDMERS);
+  }
 };
 
 enum readType : uint8_t {
@@ -202,7 +260,8 @@ class mgsrIndexBuilder {
     );
 
     std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> computeNewKminmerRanges(
-      std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord
+      std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
+      const uint64_t dfsIndex
     );
 };
 
@@ -262,17 +321,29 @@ class mgsrPlacer {
     std::vector<int32_t> maxScores;
     int64_t totalScore = 0;
     int64_t totalDirectionalKminmerMatches = 0;
-
+    
     // counters for calculating overlap coefficient
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
     size_t binaryOverlapKminmerCount = 0;
 
     // for identical pairs of nodes
+    std::unordered_map<std::string, uint64_t> totalScores;
     std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
     std::unordered_map<std::string, std::string> identicalNodeToGroup;
 
     // misc
     uint64_t curDfsIndex = 0;
+    uint64_t readMinichainsInitialized = 0;
+    std::unordered_map<RefSeedmerChangeCountStats, uint64_t, RefSeedmerChangeCountStatsHash> readMinichainsInitializedInfo;
+
+    uint64_t readMinichainsAdded = 0;
+    uint64_t readMinichainsAddedToEmpty = 0;
+    uint64_t readMinichainsAddedToSingleton = 0;
+    uint64_t readMinichainsAddedToMultiple = 0;
+
+    uint64_t readMinichainsRemoved = 0;
+    uint64_t readMinichainsRemovedInplace = 0;
+    uint64_t readMinichainsRemovedFromMultiple = 0;
     
     mgsrPlacer(panmanUtils::Tree* tree, const std::string& path) : T(tree) {
       ::capnp::ReaderOptions readerOptions {
@@ -365,9 +436,16 @@ class mgsrPlacer {
     inline uint64_t decodeBegFromMinichain(uint64_t minichain);
     inline uint64_t decodeEndFromMinichain(uint64_t minichain);
     inline bool decodeRevFromMinichain(uint64_t minichain);
-
     RefSeedmerExistStatus getCurrentRefSeedmerExistStatus(uint64_t hash);
     RefSeedmerExistStatus getDelayedRefSeedmerExistStatus(uint64_t hash);
+
+    // For preparing for squareEM
+    void updateIdenticalGroups();
+    void mergeIdenticalNodes(const std::unordered_set<std::string>& identicalGroup);
+    bool identicalReadScores(const std::string& node1, const std::string& node2, bool fast_mode = false) const;
+    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
+    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
+    
 
 
 
@@ -399,6 +477,52 @@ class mgsrPlacer {
       std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable) const;
 
     int64_t getReadBruteForceScore(size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
+};
+
+class squareEM {
+  public:
+    // main prob and prop matrices
+    Eigen::MatrixXd probs;
+    Eigen::VectorXd props;
+
+    // preallocate intermediate variables
+    Eigen::VectorXd props0;
+    Eigen::VectorXd props1;
+    Eigen::VectorXd props2;
+    Eigen::VectorXd propsSq;
+    Eigen::VectorXd denoms;
+    Eigen::VectorXd inverseDenoms;
+    Eigen::VectorXd r;
+    Eigen::VectorXd v;
+    Eigen::VectorXd readDuplicates;
+    double llh;
+    double invTotalWeight;
+
+    std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
+    std::unordered_map<std::string, std::string> identicalNodeToGroup;
+    std::vector<std::string> nodes;
+    size_t numNodes;
+    size_t curIteration = 0;
+
+
+    // Input parameters... hardcoded for now
+    double eta = 0.00001;
+    double maxChangeThreshold = 0.0001;
+    double propThresholdToRemove = 0.005;
+
+    squareEM(mgsrPlacer& placer, uint32_t overlapCoefficientCutoff);
+
+
+    void runSquareEM(uint64_t maximumIterations);
+    bool removeLowPropNodes();
+
+  private:
+    void updateProps1();
+    void updateProps2();
+    void updateProps(const Eigen::VectorXd& original, Eigen::VectorXd& result);
+    void normalizeProps(Eigen::VectorXd& props);
+    double getExp(const Eigen::VectorXd& props);
+    void resetIteration();
 };
 
 
