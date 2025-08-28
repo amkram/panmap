@@ -53,83 +53,6 @@ uint64_t degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint6
 uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64_t>& regapCoordsIndex);
 
 
-struct IteratorComparator {
-  bool operator()(const std::map<uint64_t, uint64_t>::iterator& lhs,
-                  const std::map<uint64_t, uint64_t>::iterator& rhs) const {
-      return lhs->first < rhs->first;
-  }
-};
-
-
-
-struct VectorHash {
-  size_t operator()(const std::vector<uint32_t>& v) const {
-    size_t hash = 0;
-    for (const auto& val : v) {
-      hash ^= std::hash<uint32_t>{}(val) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-    }
-    return hash;
-  }
-};
-
-struct PairHash {
-  std::size_t operator()(const std::pair<uint64_t, uint64_t>& p) const {
-    return std::hash<uint64_t>{}(p.first) ^ (std::hash<uint64_t>{}(p.second) << 1);
-  }
-};
-
-
-typedef uint64_t minichain_t;
-
-struct Minichain {
-  uint32_t begIndex;
-  uint32_t endIndex;
-  bool rev;
-
-  uint32_t getLength() const {
-    return endIndex - begIndex + 1;
-  }
-};
-
-bool inline compareMinichaintByBeg(const minichain_t& a, const minichain_t& b) {
-  return ((a >> 1) & 0x7FFFFFFF) < ((b >> 1) & 0x7FFFFFFF);
-}
-
-bool inline compareMinichaintByEnd(const minichain_t& a, const minichain_t& b) {
-  return ((a >> 32) & 0x7FFFFFFF) < ((b >> 32) & 0x7FFFFFFF);
-}
-
-bool inline compareMinichainByBeg(const Minichain& a, const Minichain& b) {
-  return a.begIndex < b.begIndex;
-}
-
-bool inline compareMinichainByEnd(const Minichain& a, const Minichain& b) {
-  return a.endIndex < b.endIndex;
-}
-
-
-struct readSeedmer {
-  const size_t hash;
-  const uint32_t begPos;
-  const uint32_t endPos;
-  const bool rev;
-  const uint32_t iorder;
-};
-
-struct SeedmerState {
-  bool match;
-  bool rev;
-  bool inChain;
-};
-
-struct hashCoordInfoCache {
-  int32_t rGlobalBeg = -1;
-  int32_t rGlobalEnd = -1;
-  int32_t rLocalBeg = -1;
-  int32_t rLocalEnd = -1;
-  int32_t begDfsIndex = -1;
-  int32_t endDfsIndex = -1;
-};
 
 enum RefSeedmerExistStatus : uint8_t {
   EXIST_UNIQUE,
@@ -191,6 +114,92 @@ struct RefSeedmerChangeCountStatsHash {
   }
 };
 
+struct IteratorComparator {
+  bool operator()(const std::map<uint64_t, uint64_t>::iterator& lhs,
+                  const std::map<uint64_t, uint64_t>::iterator& rhs) const {
+      return lhs->first < rhs->first;
+  }
+};
+
+
+
+struct VectorHash {
+  size_t operator()(const std::vector<uint32_t>& v) const {
+    size_t hash = 0;
+    for (const auto& val : v) {
+      hash ^= std::hash<uint32_t>{}(val) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    }
+    return hash;
+  }
+};
+
+struct PairHash {
+  std::size_t operator()(const std::pair<uint64_t, uint64_t>& p) const {
+    return std::hash<uint64_t>{}(p.first) ^ (std::hash<uint64_t>{}(p.second) << 1);
+  }
+};
+
+
+typedef uint64_t minichain_t;
+
+struct Minichain {
+  uint32_t begIndex;
+  uint32_t endIndex;
+  bool rev;
+
+  uint32_t getLength() const {
+    return endIndex - begIndex + 1;
+  }
+};
+
+bool inline compareMinichaintByBeg(const minichain_t& a, const minichain_t& b) {
+  return ((a >> 1) & 0x7FFFFFFF) < ((b >> 1) & 0x7FFFFFFF);
+}
+
+bool inline compareMinichaintByEnd(const minichain_t& a, const minichain_t& b) {
+  return ((a >> 32) & 0x7FFFFFFF) < ((b >> 32) & 0x7FFFFFFF);
+}
+
+bool inline compareMinichainByBeg(const Minichain& a, const Minichain& b) {
+  return a.begIndex < b.begIndex;
+}
+
+bool inline compareMinichainByEnd(const Minichain& a, const Minichain& b) {
+  return a.endIndex < b.endIndex;
+}
+
+struct affectedSeedmerInfo {
+  uint32_t index;
+  RefSeedmerChangeType refSeedmerChangeType;
+  bool rev;
+};
+
+
+struct readSeedmer {
+  const size_t hash;
+  const uint32_t begPos;
+  const uint32_t endPos;
+  const bool rev;
+  const uint32_t iorder;
+};
+
+struct SeedmerState {
+  bool match;
+  bool rev;
+  bool inChain;
+};
+
+struct hashCoordInfoCache {
+  int32_t rGlobalBeg = -1;
+  int32_t rGlobalEnd = -1;
+  int32_t rLocalBeg = -1;
+  int32_t rLocalEnd = -1;
+  int32_t begDfsIndex = -1;
+  int32_t endDfsIndex = -1;
+};
+
+
+
 enum readType : uint8_t {
   PASS,
   HIGH_DUPLICATES,
@@ -201,7 +210,7 @@ class Read {
   public:
     std::vector<readSeedmer> seedmersList;
     std::vector<SeedmerState> seedmerStates;
-    std::unordered_map<size_t, std::vector<uint64_t>> uniqueSeedmers;
+    std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
     std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
 };
@@ -209,7 +218,7 @@ class Read {
 void seedmersFromFastq(
   const std::string& readPath1, const std::string& readPath2,
   std::vector<Read>& reads,
-  std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint64_t>>>>& seedmerToReads,
+  std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint32_t>>>>& seedmerToReads,
   std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
   int k, int s, int t, int l, bool open, bool fast_mode
 );
@@ -335,7 +344,7 @@ class mgsrPlacer {
     // current query kminmer structures
     std::vector<mgsr::Read> reads;
     std::vector<mgsr::readType> readTypes;
-    std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint64_t>>>> seedmerToReads;
+    std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint32_t>>>> seedmerToReads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
 
     // current query score index structures
@@ -457,7 +466,7 @@ class mgsrPlacer {
     void setReadScore(size_t readIndex, const int32_t score, const size_t numDuplicates);
     void initializeReadMinichains(size_t readIndex);
     void initializeReadMinichains(mgsr::Read& curRead);
-    void updateMinichains(size_t readIndex, const std::vector<uint64_t>& affectedSeedmerIndexCodes, const uint64_t affectedSeedmerIndexCodesSize, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
+    void updateMinichains(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
     int64_t getReadPseudoScore(mgsr::Read& curRead, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex);
     inline uint64_t decodeBegFromMinichain(uint64_t minichain);
     inline uint64_t decodeEndFromMinichain(uint64_t minichain);
@@ -482,12 +491,12 @@ class mgsrPlacer {
     void updateRefSeedmerStatus(size_t hash, mgsr::RefSeedmerChangeType& seedmerChangeType, mgsr::RefSeedmerExistStatus refSeedmerOldStatus, mgsr::RefSeedmerExistStatus refSeedmerNewStatus);
     void updateSeedmerChangesTypeFlag(mgsr::RefSeedmerChangeType seedmerChangeType, std::pair<bool, bool>& flags);
     void fillReadToAffectedSeedmerIndex(
-      std::unordered_map<size_t, std::pair<uint64_t, std::pair<bool, bool>>>& readToAffectedSeedmerIndex,
+      std::unordered_map<size_t, std::pair<std::vector<mgsr::affectedSeedmerInfo>, std::pair<bool, bool>>>& readToAffectedSeedmerIndex,
       const std::unordered_set<uint64_t>& affectedSeedmers
     );
     uint64_t extendMinichain(std::map<uint64_t, uint64_t>::const_iterator refPositionIt, const mgsr::Read& curRead, uint64_t& curEnd, bool rev, uint64_t qidx, uint64_t c);
-    void extendChainRemoval(uint64_t& c, uint64_t& curEnd, const std::vector<uint64_t>& affectedSeedmerIndexCode, const uint64_t affectedSeedmerIndexCodesSize, uint32_t lastSeedmerIndex);
-    void extendChainAddition(uint64_t& c, uint64_t& curEnd, const std::vector<uint64_t>& affectedSeedmerIndexCode, const uint64_t affectedSeedmerIndexCodesSize, bool chainRev, std::map<uint64_t, uint64_t>::const_iterator refPositionIt, uint64_t readIndex);
+    void extendChainRemoval(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, uint32_t lastSeedmerIndex);
+    void extendChainAddition(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, bool chainRev, std::map<uint64_t, uint64_t>::const_iterator refPositionIt, uint64_t readIndex);
     bool colinearAdjacent(std::map<uint64_t, uint64_t>::const_iterator from, std::map<uint64_t, uint64_t>::const_iterator to, bool fromRev, bool toRev);
     bool colinearAdjacent(std::map<uint64_t, uint64_t>::const_iterator from, std::map<uint64_t, uint64_t>::const_iterator to, bool fromRev);
     void addToMinichains(const std::vector<readSeedmer>& curSeedmerList, std::vector<Minichain>& curMinichains, Minichain minichain);

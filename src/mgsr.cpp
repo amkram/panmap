@@ -819,10 +819,10 @@ void mgsr::mgsrPlacer::initializeQueryData(
         reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-i-1]);
       }
 
-      uint64_t iorder = 0;
+      uint32_t iorder = 0;
       if (forwardRolledHash != reverseRolledHash) {
         size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-        curRead.uniqueSeedmers.emplace(minHash, std::vector<uint64_t>{iorder << 9});
+        curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
         curRead.seedmersList.emplace_back(mgsr::readSeedmer{
           minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
         ++iorder;
@@ -843,12 +843,12 @@ void mgsr::mgsrPlacer::initializeQueryData(
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
           auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
           if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
-            curRead.uniqueSeedmers.emplace(minHash, std::vector<uint64_t>{iorder << 9});
+            curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
             curRead.seedmersList.emplace_back(mgsr::readSeedmer{
               minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
             ++iorder;
           } else {
-            uniqueSeedmersIt->second.push_back(iorder << 9);
+            uniqueSeedmersIt->second.push_back(iorder);
             curRead.seedmersList.emplace_back(mgsr::readSeedmer{
               uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
             ++iorder;
@@ -2959,17 +2959,17 @@ void mgsr::mgsrPlacer::initializeReadMinichains(mgsr::Read& curRead) {
   ++readMinichainsInitialized;
 }
 
-void mgsr::mgsrPlacer::extendChainRemoval(uint64_t& c, uint64_t& curEnd, const std::vector<uint64_t>& affectedSeedmerIndexCodes, const uint64_t affectedSeedmerIndexCodesSize, uint32_t lastSeedmerIndex) {
-  while (curEnd != lastSeedmerIndex && c < affectedSeedmerIndexCodesSize) {
+void mgsr::mgsrPlacer::extendChainRemoval(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, uint32_t lastSeedmerIndex) {
+  while (curEnd != lastSeedmerIndex && c < affectedSeedmerInfosSize) {
     uint64_t nextIndexOnSeedmerList = curEnd + 1;
-    const uint64_t affectedSeedmerIndexCode = affectedSeedmerIndexCodes[c];
-    uint64_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
+    const auto& affectedSeedmerInfo = affectedSeedmerInfos[c];
+    uint32_t affectedSeedmerIndex = affectedSeedmerInfo.index;
     
     if (nextIndexOnSeedmerList != affectedSeedmerIndex) {
         break;
     }
     
-    mgsr::RefSeedmerChangeType seedmerChangeType = static_cast<mgsr::RefSeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
+    mgsr::RefSeedmerChangeType seedmerChangeType = affectedSeedmerInfo.refSeedmerChangeType;
     
     if (seedmerChangeType == mgsr::RefSeedmerChangeType::EXIST_UNIQUE_TO_EXIST_DUPLICATE ||
         seedmerChangeType == mgsr::RefSeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST) {
@@ -2984,17 +2984,17 @@ void mgsr::mgsrPlacer::extendChainRemoval(uint64_t& c, uint64_t& curEnd, const s
 }
 
 void mgsr::mgsrPlacer::extendChainAddition(
-  uint64_t& c, uint64_t& curEnd, const std::vector<uint64_t>& affectedSeedmerIndexCodes, const uint64_t affectedSeedmerIndexCodesSize,
+  uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize,
   bool chainRev, std::map<uint64_t, uint64_t>::const_iterator refPositionIt, uint64_t readIndex
 ) {
   auto& curRead = reads[readIndex];
   const auto& curSeedmerList = curRead.seedmersList;
   
-  while (curEnd != curSeedmerList.size() - 1 && c < affectedSeedmerIndexCodesSize) {
-    const uint64_t affectedSeedmerIndexCode = affectedSeedmerIndexCodes[c];
-    uint64_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
-    mgsr::RefSeedmerChangeType SeedmerChangeType = static_cast<mgsr::RefSeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
-    bool refRev = affectedSeedmerIndexCode & 1;
+  while (curEnd != curSeedmerList.size() - 1 && c < affectedSeedmerInfosSize) {
+    const auto& affectedSeedmerInfo = affectedSeedmerInfos[c];
+    uint32_t affectedSeedmerIndex = affectedSeedmerInfo.index;
+    mgsr::RefSeedmerChangeType SeedmerChangeType = affectedSeedmerInfo.refSeedmerChangeType;
+    bool refRev = affectedSeedmerInfo.rev;
     
     if (curEnd + 1 != affectedSeedmerIndex) {
       break;
@@ -3261,7 +3261,7 @@ void mgsr::mgsrPlacer::removeFromMinichains(std::vector<mgsr::Minichain>& curMin
   }
 }
 
-void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<uint64_t>& affectedSeedmerIndexCodes, const uint64_t affectedSeedmerIndexCodesSize, bool allUniqueToNonUnique, bool allNonUniqueToUnique) {
+void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, bool allUniqueToNonUnique, bool allNonUniqueToUnique) {
   mgsr::Read& curRead = reads[readIndex];
   const auto& curSeedmerList = curRead.seedmersList;
   auto& curMinichains = curRead.minichains;
@@ -3269,16 +3269,16 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<uint
   // 0th bit is 1 -> reversed
   // 1st to 8th bit is the seedmerChangeType
   // 9th to 40th bit is the affectedSeedmerIndex
-  if (affectedSeedmerIndexCodes.size() > minichainsToUpdate.size()) {
-    minichainsToUpdate.resize(affectedSeedmerIndexCodes.size());
+  if (affectedSeedmerInfos.size() > minichainsToUpdate.size()) {
+    minichainsToUpdate.resize(affectedSeedmerInfos.size());
   }
   uint32_t i = 0;
   uint32_t curMinichainsToUpdateIndex = 0;
-  while (i < affectedSeedmerIndexCodesSize) {
-    const uint64_t affectedSeedmerIndexCode = affectedSeedmerIndexCodes[i];
-    uint64_t affectedSeedmerIndex = (affectedSeedmerIndexCode >> 9) & 0xFFFFFFFF;
-    mgsr::RefSeedmerChangeType SeedmerChangeType = static_cast<mgsr::RefSeedmerChangeType>((affectedSeedmerIndexCode >> 1) & 0xFF);
-    bool refRev = affectedSeedmerIndexCode & 1;
+  while (i < affectedSeedmerInfosSize) {
+    const auto& affectedSeedmerInfo = affectedSeedmerInfos[i];
+    uint32_t affectedSeedmerIndex = affectedSeedmerInfo.index;
+    mgsr::RefSeedmerChangeType SeedmerChangeType = affectedSeedmerInfo.refSeedmerChangeType;
+    bool refRev = affectedSeedmerInfo.rev;
 
     uint64_t c = i + 1;
     uint64_t curEnd = affectedSeedmerIndex;
@@ -3286,7 +3286,7 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<uint
     if (allUniqueToNonUnique) {
       // match to no match -> remove from minichains
       /*chaining debug*/if (false) std::cout << "\tRead is allUniqueToNonUnique... removing minichains" << std::endl;
-      extendChainRemoval(c, curEnd, affectedSeedmerIndexCodes, affectedSeedmerIndexCodesSize, curSeedmerList.size() - 1);
+      extendChainRemoval(c, curEnd, affectedSeedmerInfos, affectedSeedmerInfosSize, curSeedmerList.size() - 1);
       // encode minichain_t
       mgsr::Minichain minichain = {affectedSeedmerIndex, curEnd, false};
       /*chaining debug*/if (false) std::cout << "\t\tRemoving minichain: " << affectedSeedmerIndex << " " << curEnd << " " << 0ULL << "... encoded to " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
@@ -3300,7 +3300,7 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<uint
       /*chaining debug*/if (false) std::cout << "\tRead is allNonUniqueToUnique... adding minichains" << std::endl;
       bool rev = refRev != curSeedmerList[affectedSeedmerIndex].rev;
       auto positionItFromCurrentHash = hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
-      extendChainAddition(c, curEnd, affectedSeedmerIndexCodes, affectedSeedmerIndexCodesSize, rev, positionItFromCurrentHash, readIndex);
+      extendChainAddition(c, curEnd, affectedSeedmerInfos, affectedSeedmerInfosSize, rev, positionItFromCurrentHash, readIndex);
       // encode minichain_t
       mgsr::Minichain minichain = {affectedSeedmerIndex, curEnd, rev};
       /*chaining debug*/if (false) std::cout << "\t\tAdding minichain: " << affectedSeedmerIndex << " " << curEnd << " " << rev << "... encoded to " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
@@ -3353,10 +3353,9 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<uint
 }
 
 void mgsr::mgsrPlacer::fillReadToAffectedSeedmerIndex(
-  std::unordered_map<size_t, std::pair<uint64_t, std::pair<bool, bool>>>& readToAffectedSeedmerIndex,
+  std::unordered_map<size_t, std::pair<std::vector<mgsr::affectedSeedmerInfo>, std::pair<bool, bool>>>& readToAffectedSeedmerIndex,
   const std::unordered_set<uint64_t>& affectedSeedmers
 ) {
-  uint64_t readToAffectedSeedmerStorageHelperIndex = 0;
   for (const auto& hash : affectedSeedmers) {
     mgsr::RefSeedmerChangeType seedmerChangeType;
     mgsr::RefSeedmerExistStatus refSeedmerOldStatus = getDelayedRefSeedmerExistStatus(hash);
@@ -3366,36 +3365,22 @@ void mgsr::mgsrPlacer::fillReadToAffectedSeedmerIndex(
     auto affectedseedmerToReads = seedmerToReads.find(hash);
     if (affectedseedmerToReads == seedmerToReads.end()) continue;
     for (const auto& [readIndex, affectedSeedmerIndices] : affectedseedmerToReads->second) {
-      auto [affectedSeedmerIndexIt, isNew] = readToAffectedSeedmerIndex.try_emplace(readIndex, readToAffectedSeedmerStorageHelperIndex, std::make_pair(true, true));
-      if (isNew) {
-        if (readToAffectedSeedmerStorageHelperIndex == readToAffectedSeedmerStorageHelper.size()) {
-          readToAffectedSeedmerStorageHelper.emplace_back(std::vector<uint64_t>(), 0);
-        }
-        auto& curReadToAffectedSeedmerStorageHelper = readToAffectedSeedmerStorageHelper[readToAffectedSeedmerStorageHelperIndex];
-        if (curReadToAffectedSeedmerStorageHelper.first.size() < reads[readIndex].seedmersList.size()) {
-          curReadToAffectedSeedmerStorageHelper.first.resize(reads[readIndex].seedmersList.size());
-        }
-        curReadToAffectedSeedmerStorageHelper.second = 0;
-        ++readToAffectedSeedmerStorageHelperIndex;
+      auto& affectedSeedmerIndexVector = readToAffectedSeedmerIndex[readIndex];
+      if (affectedSeedmerIndexVector.first.empty()) {
+        affectedSeedmerIndexVector.second.first = true;
+        affectedSeedmerIndexVector.second.second = true;
+        affectedSeedmerIndexVector.first.reserve(reads[readIndex].seedmersList.size());
       }
-
-      uint64_t baseCode;
+      
+      bool refRev = false;
       if (refSeedmerNewStatus == mgsr::RefSeedmerExistStatus::EXIST_UNIQUE) {
-        bool refRev = seedInfos[hashToPositionMap[hash].front()->second].isReverse;
-        baseCode = (static_cast<uint64_t>(seedmerChangeType) << 1) | (refRev ? 1ULL : 0ULL);
-      } else {
-        baseCode = (static_cast<uint64_t>(seedmerChangeType) << 1) | 0ULL;
+        refRev = seedInfos[hashToPositionMap[hash].front()->second].isReverse;
       }
-      auto& curReadToAffectedSeedmerStorageHelper = readToAffectedSeedmerStorageHelper[affectedSeedmerIndexIt->second.first];
+      std::cout << "!" << affectedSeedmerIndices.size() << "\n";
       for (const auto& affectedSeedmerIndex : affectedSeedmerIndices) {
-        // 0th bit is 1 -> reversed
-        // 1st to 8th bit is the seedmerChangeType
-        // 9th to 40th bit is the affectedSeedmerIndex
-        // Combine the components using bitwise operations
-        curReadToAffectedSeedmerStorageHelper.first[curReadToAffectedSeedmerStorageHelper.second] = affectedSeedmerIndex | baseCode;
-        ++curReadToAffectedSeedmerStorageHelper.second;
+        affectedSeedmerIndexVector.first.emplace_back(affectedSeedmerIndex, seedmerChangeType, refRev);
       }
-      updateSeedmerChangesTypeFlag(seedmerChangeType, affectedSeedmerIndexIt->second.second);
+      updateSeedmerChangesTypeFlag(seedmerChangeType, affectedSeedmerIndexVector.second);
     }
   }
 }
@@ -3761,7 +3746,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
 
   // **** Start placing reads ****
   // unordered_map<readIndex, pair<vector<affectedSeedmerIndexOnRead>, pair<allUniqueToNonUnique, allNonUniqueToUnique>>>
-  std::unordered_map<size_t, std::pair<uint64_t, std::pair<bool, bool>>> readToAffectedSeedmerIndex;
+  std::unordered_map<size_t, std::pair<std::vector<mgsr::affectedSeedmerInfo>, std::pair<bool, bool>>> readToAffectedSeedmerIndex;
   size_t binaryOverlapKminmerCountBacktract = binaryOverlapKminmerCount;
   fillReadToAffectedSeedmerIndex(readToAffectedSeedmerIndex, affectedSeedmers);
   kminmerOverlapCoefficients[node->identifier] = static_cast<double>(binaryOverlapKminmerCount) / static_cast<double>(hashToPositionMap.size());
@@ -3808,18 +3793,17 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
 
     for (auto& [readIndex, affectedSeedmerIndexInfo] : readToAffectedSeedmerIndex) {
       /*chaining debug*/if (false) std::cout << "[" << node->identifier << " " << curDfsIndex << "] processingreadIndex: " << readIndex << std::endl;
-      std::vector<uint64_t>& affectedSeedmerIndexCodes = readToAffectedSeedmerStorageHelper[affectedSeedmerIndexInfo.first].first;
-      const uint64_t affectedSeedmerIndexCodesSize = readToAffectedSeedmerStorageHelper[affectedSeedmerIndexInfo.first].second;
+      auto& affectedSeedmerInfos = affectedSeedmerIndexInfo.first;
       const auto& [allUniqueToNonUnique, allNonUniqueToUnique] = affectedSeedmerIndexInfo.second;
-      if (affectedSeedmerIndexCodes.empty()) {
+      if (affectedSeedmerInfos.empty()) {
         std::cerr << "Error: affectedSeedmerIndices is empty" << std::endl;
         exit(1);
       }
 
       mgsr::Read& curRead = reads[readIndex];
 
-      std::sort(affectedSeedmerIndexCodes.begin(), affectedSeedmerIndexCodes.begin() + affectedSeedmerIndexCodesSize, [](const auto& a, const auto& b) {
-        return a < b;
+      std::sort(affectedSeedmerInfos.begin(), affectedSeedmerInfos.end(), [](const auto& a, const auto& b) {
+        return a.index < b.index;
       });
 
       readMinichainsBacktrack.emplace_back(readIndex, curRead.minichains);
@@ -3831,7 +3815,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
           }
           std::cout << std::endl;
         }
-        updateMinichains(readIndex, affectedSeedmerIndexCodes, affectedSeedmerIndexCodesSize, allUniqueToNonUnique, allNonUniqueToUnique);
+        updateMinichains(readIndex, affectedSeedmerInfos, affectedSeedmerInfos.size(), allUniqueToNonUnique, allNonUniqueToUnique);
       } else {
         /*chaining debug*/if (false) std::cout << "\tread is not allUniqueToNonUnique or allNonUniqueToUnique... reinitializing minichains" << std::endl;
         initializeReadMinichains(curRead);
