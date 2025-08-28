@@ -11,7 +11,6 @@
 namespace mgsr {
 
 
-typedef uint64_t minichain_t;
 
 void updateGapMapStep(
     std::map<uint64_t, uint64_t>& gapMap,
@@ -61,12 +60,7 @@ struct IteratorComparator {
   }
 };
 
-bool inline compareMinichainByBeg(const minichain_t& a, const minichain_t& b) {
-  return ((a >> 1) & 0x7FFFFFFF) < ((b >> 1) & 0x7FFFFFFF);
-}
-bool inline compareMinichainByEnd(const minichain_t& a, const minichain_t& b) {
-  return ((a >> 32) & 0x7FFFFFFF) < ((b >> 32) & 0x7FFFFFFF);
-}
+
 
 struct VectorHash {
   size_t operator()(const std::vector<uint32_t>& v) const {
@@ -83,6 +77,36 @@ struct PairHash {
     return std::hash<uint64_t>{}(p.first) ^ (std::hash<uint64_t>{}(p.second) << 1);
   }
 };
+
+
+typedef uint64_t minichain_t;
+
+struct Minichain {
+  uint32_t begIndex;
+  uint32_t endIndex;
+  bool rev;
+
+  uint32_t getLength() const {
+    return endIndex - begIndex + 1;
+  }
+};
+
+bool inline compareMinichaintByBeg(const minichain_t& a, const minichain_t& b) {
+  return ((a >> 1) & 0x7FFFFFFF) < ((b >> 1) & 0x7FFFFFFF);
+}
+
+bool inline compareMinichaintByEnd(const minichain_t& a, const minichain_t& b) {
+  return ((a >> 32) & 0x7FFFFFFF) < ((b >> 32) & 0x7FFFFFFF);
+}
+
+bool inline compareMinichainByBeg(const Minichain& a, const Minichain& b) {
+  return a.begIndex < b.begIndex;
+}
+
+bool inline compareMinichainByEnd(const Minichain& a, const Minichain& b) {
+  return a.endIndex < b.endIndex;
+}
+
 
 struct readSeedmer {
   const size_t hash;
@@ -103,6 +127,8 @@ struct hashCoordInfoCache {
   int32_t rGlobalEnd = -1;
   int32_t rLocalBeg = -1;
   int32_t rLocalEnd = -1;
+  int32_t begDfsIndex = -1;
+  int32_t endDfsIndex = -1;
 };
 
 enum RefSeedmerExistStatus : uint8_t {
@@ -176,7 +202,7 @@ class Read {
     std::vector<readSeedmer> seedmersList;
     std::vector<SeedmerState> seedmerStates;
     std::unordered_map<size_t, std::vector<uint64_t>> uniqueSeedmers;
-    std::vector<minichain_t> minichains;
+    std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
 };
 
@@ -302,8 +328,9 @@ class mgsrPlacer {
     std::unordered_map<size_t, RefSeedmerExistStatus> delayedRefSeedmerStatus;
 
     // preallocated structures to prevent memory allocation and deletion in tight loops
-    std::vector<std::pair<minichain_t, bool>> minichainsToUpdate;
+    std::vector<std::pair<Minichain, bool>> minichainsToUpdate;
     std::vector<std::pair<std::vector<uint64_t>, uint64_t>> readToAffectedSeedmerStorageHelper;  // might be memory intensive....
+    std::unordered_map<size_t, mgsr::hashCoordInfoCache> hashCoordInfoCacheTable;
 
     // current query kminmer structures
     std::vector<mgsr::Read> reads;
@@ -316,7 +343,7 @@ class mgsrPlacer {
     std::vector<std::pair<int64_t, int64_t>> kminmerMatches;
     std::vector<std::vector<readScoreDelta>> perNodeScoreDeltasIndex;
     std::vector<std::vector<std::tuple<size_t, int64_t, int64_t>>> perNodeKminmerMatchesDeltasIndex;
-    std::vector<std::vector<minichain_t>> maxMinichains;
+    std::vector<std::vector<Minichain>> maxMinichains;
     std::vector<int32_t> maxScores;
     int64_t totalScore = 0;
     int64_t totalDirectionalKminmerMatches = 0;
@@ -413,6 +440,7 @@ class mgsrPlacer {
     }
 
     void initializeQueryData(const std::string& readPath1, const std::string& readPath2, bool fast_mode = false);
+    void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
 
     void placeReadsHelper(panmanUtils::Node* node, const panmapUtils::GlobalCoords& globalCoords);
     void placeReads();
@@ -430,7 +458,7 @@ class mgsrPlacer {
     void initializeReadMinichains(size_t readIndex);
     void initializeReadMinichains(mgsr::Read& curRead);
     void updateMinichains(size_t readIndex, const std::vector<uint64_t>& affectedSeedmerIndexCodes, const uint64_t affectedSeedmerIndexCodesSize, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
-    int64_t getReadPseudoScore(mgsr::Read& curRead, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
+    int64_t getReadPseudoScore(mgsr::Read& curRead, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex);
     inline uint64_t decodeBegFromMinichain(uint64_t minichain);
     inline uint64_t decodeEndFromMinichain(uint64_t minichain);
     inline bool decodeRevFromMinichain(uint64_t minichain);
@@ -462,17 +490,14 @@ class mgsrPlacer {
     void extendChainAddition(uint64_t& c, uint64_t& curEnd, const std::vector<uint64_t>& affectedSeedmerIndexCode, const uint64_t affectedSeedmerIndexCodesSize, bool chainRev, std::map<uint64_t, uint64_t>::const_iterator refPositionIt, uint64_t readIndex);
     bool colinearAdjacent(std::map<uint64_t, uint64_t>::const_iterator from, std::map<uint64_t, uint64_t>::const_iterator to, bool fromRev, bool toRev);
     bool colinearAdjacent(std::map<uint64_t, uint64_t>::const_iterator from, std::map<uint64_t, uint64_t>::const_iterator to, bool fromRev);
-    void addToMinichains(const std::vector<readSeedmer>& curSeedmerList, std::vector<minichain_t>& curMinichains, uint64_t minichain);
-    void removeFromMinichains(std::vector<minichain_t>& curMinichains, uint64_t minichain);
+    void addToMinichains(const std::vector<readSeedmer>& curSeedmerList, std::vector<Minichain>& curMinichains, Minichain minichain);
+    void removeFromMinichains(std::vector<Minichain>& curMinichains, Minichain minichain);
     uint64_t getRefSeedmerBegFromHash(const size_t hash) const;
     uint64_t getRefSeedmerEndFromHash(const size_t hash) const;
     bool isColinearFromMinichains(
-      mgsr::Read& curRead, const bool rev,
-      const uint64_t beg1, const uint64_t end1,
-      const uint64_t beg2, const uint64_t end2,
+      mgsr::Read& curRead, const mgsr::Minichain& minichain1, const mgsr::Minichain& minichain2,
       const std::map<uint64_t, uint64_t>& degapCoordIndex,
-      const std::map<uint64_t, uint64_t>& regapCoordIndex,
-      std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable) const;
+      const std::map<uint64_t, uint64_t>& regapCoordIndex);
 
     int64_t getReadBruteForceScore(size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
 };
