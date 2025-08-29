@@ -52,7 +52,7 @@ uint64_t degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint6
 
 uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64_t>& regapCoordsIndex);
 
-
+void extractReadSequences(const std::string& readPath1, const std::string& readPath2, std::vector<std::string>& readSequences);
 
 enum RefSeedmerExistStatus : uint8_t {
   EXIST_UNIQUE,
@@ -307,6 +307,9 @@ struct readScoreDelta {
 
 class mgsrPlacer {
   public:
+    // GlobalCoords pointer
+    const panmapUtils::GlobalCoords* const globalCoords;
+
     // mutation structures
     std::vector<seeding::uniqueKminmer_t> seedInfos;
     std::vector<std::vector<uint32_t>> seedInsubIndices;
@@ -383,7 +386,9 @@ class mgsrPlacer {
 
     uint64_t readMinichainsUpdated = 0;
     
-    mgsrPlacer(panmanUtils::Tree* tree, const std::string& path) : T(tree) {
+    mgsrPlacer(panmanUtils::Tree* tree, const std::string& path, const panmapUtils::GlobalCoords* const globalCoords)
+      : T(tree), globalCoords(globalCoords)
+    {
       ::capnp::ReaderOptions readerOptions {
         .traversalLimitInWords = std::numeric_limits<uint64_t>::max(),
         .nestingLimit = 1024
@@ -453,6 +458,7 @@ class mgsrPlacer {
     }
 
     void initializeQueryData(const std::string& readPath1, const std::string& readPath2, bool fast_mode = false);
+    void initializeQueryData(const std::vector<std::string>& readSequences, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
 
     void placeReadsHelper(panmanUtils::Node* node, const panmapUtils::GlobalCoords& globalCoords);

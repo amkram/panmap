@@ -740,11 +740,7 @@ static void inline perfect_shuffle(std::vector<T>& v) {
   v = std::move(canvas);
 }
 
-void mgsr::mgsrPlacer::initializeQueryData(
-  const std::string& readPath1, const std::string& readPath2, bool fast_mode
-) {
-  std::cout << "initializing query data with parameters: k=" << k << ", s=" << s << ", t=" << t << ", l=" << l << ", open=" << openSyncmer << ", fast_mode=" << fast_mode << std::endl;
-  std::vector<std::string> readSequences;
+void mgsr::extractReadSequences(const std::string& readPath1, const std::string& readPath2, std::vector<std::string>& readSequences) {
   FILE *fp;
   kseq_t *seq;
   fp = fopen(readPath1.c_str(), "r");
@@ -779,7 +775,20 @@ void mgsr::mgsrPlacer::initializeQueryData(
     //Shuffle reads together, so that pairs are next to eatch other
     perfect_shuffle(readSequences);
   }
+}
 
+void mgsr::mgsrPlacer::initializeQueryData(
+  const std::string& readPath1, const std::string& readPath2, bool fast_mode
+) {
+  std::vector<std::string> readSequences;
+  mgsr::extractReadSequences(readPath1, readPath2, readSequences);
+  initializeQueryData(readSequences, fast_mode);
+}
+
+void mgsr::mgsrPlacer::initializeQueryData(
+  const std::vector<std::string>& readSequences, bool fast_mode
+) {
+  std::cout << "initializing query data with parameters: k=" << k << ", s=" << s << ", t=" << t << ", l=" << l << ", open=" << openSyncmer << ", fast_mode=" << fast_mode << std::endl;
   // index duplicate reads
   std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
   for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
@@ -3331,7 +3340,6 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex, const std::vector
           auto& curMinichainsToRemove = minichainsToRemove[curMinichainsToRemoveIndex];
           curMinichainsToRemove.first = minichain;
           ++curMinichainsToRemoveIndex;
-          ++readMinichainsRemoved;
           i += (curEnd - affectedSeedmerIndex + 1);
           break;
         }
@@ -3347,7 +3355,6 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex, const std::vector
           auto& curMinichainToAdd = minichainsToAdd[curMinichainsToAddIndex];
           curMinichainToAdd.first = minichain;
           ++curMinichainsToAddIndex;
-          ++readMinichainsAdded;
           i += (curEnd - affectedSeedmerIndex + 1);
           break;
         }
@@ -3362,7 +3369,6 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex, const std::vector
           auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
           curMinichainToUpdate.first = minichain;
           ++curMinichainsToUpdateIndex;
-          ++readMinichainsUpdated;
           i += (curEnd - affectedSeedmerIndex + 1);
           break;
         }
@@ -3526,6 +3532,7 @@ void mgsr::mgsrPlacer::fillReadToAffectedSeedmerIndex(
     }
   }
 }
+
 
 
 
@@ -4079,15 +4086,12 @@ void mgsr::mgsrPlacer::preallocateHashCoordInfoCacheTable(uint32_t startReadInde
 }
 
 void mgsr::mgsrPlacer::placeReads() {
-  panmapUtils::BlockSequences blockSequences(T);
-  panmapUtils::GlobalCoords globalCoords(blockSequences);
-
   gapMap.clear();
-  gapMap.insert(std::make_pair(0, globalCoords.lastScalarCoord));
+  gapMap.insert(std::make_pair(0, globalCoords->lastScalarCoord));
 
   curDfsIndex = 0;
   preallocateHashCoordInfoCacheTable(0, reads.size());
-  placeReadsHelper(T->root, globalCoords);
+  placeReadsHelper(T->root, *globalCoords);
 
 
   // std::vector<std::pair<std::string, double>> kminmerOverlapCoefficientsVector;

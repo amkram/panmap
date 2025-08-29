@@ -1102,22 +1102,25 @@ int main(int argc, char *argv[]) {
     // int mgsr_t = 0;
     // int mgsr_l = 3;
     // bool open = false;
-    // mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 10, mgsr_t, mgsr_l, open);
+    // mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
     // mgsrIndexBuilder.buildIndex();
     // mgsrIndexBuilder.writeIndex("test.pmai");
 
     if (vm.count("mgsr-index")) {
       std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
-      
+      panmapUtils::BlockSequences blockSequences(&T);
+      panmapUtils::GlobalCoords globalCoords(blockSequences);
       
       auto start_time_deserialize = std::chrono::high_resolution_clock::now();
-      mgsr::mgsrPlacer mgsrPlacer(&T, mgsr_index_path);
+      mgsr::mgsrPlacer mgsrPlacer(&T, mgsr_index_path, &globalCoords);
       auto end_time_deserialize = std::chrono::high_resolution_clock::now();
       auto duration_deserialize = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_deserialize - start_time_deserialize);
       std::cout << "\n\nDeserialized MGSR index in " << static_cast<double>(duration_deserialize.count()) / 1000.0 << "s\n" << std::endl;
 
       auto start_time_initialize = std::chrono::high_resolution_clock::now();
-      mgsrPlacer.initializeQueryData(reads1, reads2);
+      std::vector<std::string> readSequences;
+      mgsr::extractReadSequences(reads1, reads2, readSequences);
+      mgsrPlacer.initializeQueryData(readSequences);
       std::cout << mgsrPlacer.reads.size() << " number of unique kminmer-set reads" << std::endl;
       auto end_time_initialize = std::chrono::high_resolution_clock::now();
       auto duration_initialize = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_initialize - start_time_initialize);
