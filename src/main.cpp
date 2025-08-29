@@ -1122,7 +1122,7 @@ int main(int argc, char *argv[]) {
       auto end_time_initialize = std::chrono::high_resolution_clock::now();
       auto duration_initialize = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_initialize - start_time_initialize);
       std::cout << "Initialized MGSR query data in " << static_cast<double>(duration_initialize.count()) / 1000.0 << "s\n" << std::endl;
-
+      
       auto start_time_place = std::chrono::high_resolution_clock::now();
       mgsrPlacer.placeReads();
       auto end_time_place = std::chrono::high_resolution_clock::now();

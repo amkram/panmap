@@ -218,7 +218,7 @@ class Read {
 void seedmersFromFastq(
   const std::string& readPath1, const std::string& readPath2,
   std::vector<Read>& reads,
-  std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint32_t>>>>& seedmerToReads,
+  std::unordered_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>>& seedmerToReads,
   std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
   int k, int s, int t, int l, bool open, bool fast_mode
 );
@@ -338,13 +338,15 @@ class mgsrPlacer {
 
     // preallocated structures to prevent memory allocation and deletion in tight loops
     std::vector<std::pair<Minichain, bool>> minichainsToUpdate;
+    std::vector<std::pair<Minichain, bool>> minichainsToRemove;
+    std::vector<std::pair<Minichain, bool>> minichainsToAdd;
     std::vector<std::pair<std::vector<uint64_t>, uint64_t>> readToAffectedSeedmerStorageHelper;  // might be memory intensive....
-    std::unordered_map<size_t, mgsr::hashCoordInfoCache> hashCoordInfoCacheTable;
+    absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache> hashCoordInfoCacheTable;
 
     // current query kminmer structures
     std::vector<mgsr::Read> reads;
     std::vector<mgsr::readType> readTypes;
-    std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint32_t>>>> seedmerToReads;
+    std::unordered_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
 
     // current query score index structures
@@ -378,6 +380,8 @@ class mgsrPlacer {
     uint64_t readMinichainsRemoved = 0;
     uint64_t readMinichainsRemovedInplace = 0;
     uint64_t readMinichainsRemovedFromMultiple = 0;
+
+    uint64_t readMinichainsUpdated = 0;
     
     mgsrPlacer(panmanUtils::Tree* tree, const std::string& path) : T(tree) {
       ::capnp::ReaderOptions readerOptions {
@@ -466,7 +470,8 @@ class mgsrPlacer {
     void setReadScore(size_t readIndex, const int32_t score, const size_t numDuplicates);
     void initializeReadMinichains(size_t readIndex);
     void initializeReadMinichains(mgsr::Read& curRead);
-    void updateMinichains(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
+    void updateMinichains(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
+    void updateMinichainsMixed(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos);
     int64_t getReadPseudoScore(mgsr::Read& curRead, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex);
     inline uint64_t decodeBegFromMinichain(uint64_t minichain);
     inline uint64_t decodeEndFromMinichain(uint64_t minichain);
@@ -491,12 +496,13 @@ class mgsrPlacer {
     void updateRefSeedmerStatus(size_t hash, mgsr::RefSeedmerChangeType& seedmerChangeType, mgsr::RefSeedmerExistStatus refSeedmerOldStatus, mgsr::RefSeedmerExistStatus refSeedmerNewStatus);
     void updateSeedmerChangesTypeFlag(mgsr::RefSeedmerChangeType seedmerChangeType, std::pair<bool, bool>& flags);
     void fillReadToAffectedSeedmerIndex(
-      std::unordered_map<size_t, std::pair<std::vector<mgsr::affectedSeedmerInfo>, std::pair<bool, bool>>>& readToAffectedSeedmerIndex,
+      absl::flat_hash_map<uint32_t, std::pair<std::vector<mgsr::affectedSeedmerInfo>, std::pair<bool, bool>>>& readToAffectedSeedmerIndex,
       const std::unordered_set<uint64_t>& affectedSeedmers
     );
     uint64_t extendMinichain(std::map<uint64_t, uint64_t>::const_iterator refPositionIt, const mgsr::Read& curRead, uint64_t& curEnd, bool rev, uint64_t qidx, uint64_t c);
-    void extendChainRemoval(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, uint32_t lastSeedmerIndex);
-    void extendChainAddition(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, const uint64_t affectedSeedmerInfosSize, bool chainRev, std::map<uint64_t, uint64_t>::const_iterator refPositionIt, uint64_t readIndex);
+    void extendChainRemoval(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, uint32_t lastSeedmerIndex);
+    void extendChainAddition(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, bool chainRev, std::map<uint64_t, uint64_t>::const_iterator refPositionIt, uint64_t readIndex);
+    void extendChainUpdate(uint64_t& c, uint64_t& curEnd, const std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos, bool chainRev, std::map<uint64_t, uint64_t>::const_iterator refPositionIt, uint64_t readIndex);
     bool colinearAdjacent(std::map<uint64_t, uint64_t>::const_iterator from, std::map<uint64_t, uint64_t>::const_iterator to, bool fromRev, bool toRev);
     bool colinearAdjacent(std::map<uint64_t, uint64_t>::const_iterator from, std::map<uint64_t, uint64_t>::const_iterator to, bool fromRev);
     void addToMinichains(const std::vector<readSeedmer>& curSeedmerList, std::vector<Minichain>& curMinichains, Minichain minichain);
