@@ -7,6 +7,7 @@
 #include "panmap_utils.hpp"
 #include "seeding.hpp"
 #include <eigen3/Eigen/Dense>
+#include <span>
 
 namespace mgsr {
 
@@ -458,7 +459,7 @@ class mgsrPlacer {
     }
 
     void initializeQueryData(const std::string& readPath1, const std::string& readPath2, bool fast_mode = false);
-    void initializeQueryData(const std::vector<std::string>& readSequences, bool fast_mode = false);
+    void initializeQueryData(std::span<const std::string> readSequences, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
 
     void placeReadsHelper(panmanUtils::Node* node, const panmapUtils::GlobalCoords& globalCoords);

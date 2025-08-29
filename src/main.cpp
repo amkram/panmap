@@ -25,6 +25,8 @@
 #include <stdexcept>
 #include <string>
 #include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 #include <unistd.h>
 #include <vector>
 #include <stack>
@@ -1110,24 +1112,46 @@ int main(int argc, char *argv[]) {
       std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
       panmapUtils::BlockSequences blockSequences(&T);
       panmapUtils::GlobalCoords globalCoords(blockSequences);
-      
-      auto start_time_deserialize = std::chrono::high_resolution_clock::now();
-      mgsr::mgsrPlacer mgsrPlacer(&T, mgsr_index_path, &globalCoords);
-      auto end_time_deserialize = std::chrono::high_resolution_clock::now();
-      auto duration_deserialize = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_deserialize - start_time_deserialize);
-      std::cout << "\n\nDeserialized MGSR index in " << static_cast<double>(duration_deserialize.count()) / 1000.0 << "s\n" << std::endl;
 
-      auto start_time_initialize = std::chrono::high_resolution_clock::now();
+
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
-      mgsrPlacer.initializeQueryData(readSequences);
-      std::cout << mgsrPlacer.reads.size() << " number of unique kminmer-set reads" << std::endl;
-      auto end_time_initialize = std::chrono::high_resolution_clock::now();
-      auto duration_initialize = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_initialize - start_time_initialize);
-      std::cout << "Initialized MGSR query data in " << static_cast<double>(duration_initialize.count()) / 1000.0 << "s\n" << std::endl;
-      
+
+
+      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      const size_t chunkSize = (readSequences.size() + numThreads - 1) / numThreads;
+      std::cout << "Using " << numThreads << " threads" << std::endl;
+      std::cout << readSequences.size() << " reads split into chunks of " << chunkSize << std::endl;
+
+      std::vector<std::pair<size_t, size_t>> readRangesByThread;
+      for (size_t i = 0; i < numThreads; ++i) {
+        size_t start = i * chunkSize;
+        size_t end = (i == numThreads - 1) ? readSequences.size() : (i + 1) * chunkSize;
+        if (start < readSequences.size()) {
+          readRangesByThread.emplace_back(start, end);
+        }
+      }
+
       auto start_time_place = std::chrono::high_resolution_clock::now();
-      mgsrPlacer.placeReads();
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, readRangesByThread.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+        for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+          auto [start, end] = readRangesByThread[i];
+        
+          std::span<const std::string> curThreadReads(readSequences.data() + start, end - start);
+          mgsr::mgsrPlacer curThreadPlacer(&T, mgsr_index_path, &globalCoords);
+          curThreadPlacer.initializeQueryData(curThreadReads);
+          std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
+                    << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads and parameters: k="
+                    << curThreadPlacer.k << ", s=" << curThreadPlacer.s << ", t=" << curThreadPlacer.t << ", l=" << curThreadPlacer.l << ", open=" << curThreadPlacer.openSyncmer << std::endl;
+
+          curThreadPlacer.placeReads();
+          
+          std::cout << "Thread processed " << curThreadReads.size() 
+                    << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
+                    << std::endl;
+        }
+      });
+
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
