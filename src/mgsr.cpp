@@ -786,9 +786,8 @@ void mgsr::mgsrPlacer::initializeQueryData(
 }
 
 void mgsr::mgsrPlacer::initializeQueryData(
-  const std::vector<std::string>& readSequences, bool fast_mode
+  std::span<const std::string> readSequences, bool fast_mode
 ) {
-  std::cout << "initializing query data with parameters: k=" << k << ", s=" << s << ", t=" << t << ", l=" << l << ", open=" << openSyncmer << ", fast_mode=" << fast_mode << std::endl;
   // index duplicate reads
   std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
   for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
