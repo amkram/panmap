@@ -309,7 +309,7 @@ struct readScoreDelta {
   uint32_t scoreDelta;
 };
 
-class ReadsManager {
+class ThreadsManager {
   public:
     panmanUtils::Tree* T;
     std::vector<mgsr::Read> reads;
@@ -318,6 +318,11 @@ class ReadsManager {
 
     //  thread:   dfsIndex:  scoreDelta
     std::vector<std::vector<std::vector<readScoreDelta>>> perNodeScoreDeltasIndexByThreadId; 
+    std::vector<uint64_t> readMinichainsAdded;
+    std::vector<uint64_t> readMinichainsRemoved;
+    std::vector<uint64_t> readMinichainsUpdated;
+    std::vector<uint64_t> readMinichainsInitialized;
+
 
     // readidx:           thread   index
     std::vector<std::pair<size_t, size_t>> readIndexToThreadLocalIndex;
@@ -333,7 +338,9 @@ class ReadsManager {
     // for squareEM... will be moved from mgsrPlacer to here.
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
 
-    ReadsManager(panmanUtils::Tree* T, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : T(T) {
+
+
+    ThreadsManager(panmanUtils::Tree* T, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : T(T) {
       initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     }
 
@@ -341,6 +348,7 @@ class ReadsManager {
     void initializeThreadRanges(size_t numThreads);
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
+    void printStats();
 
 };
 
@@ -560,7 +568,7 @@ class mgsrPlacer {
       const std::map<uint64_t, uint64_t>& degapCoordIndex,
       const std::map<uint64_t, uint64_t>& regapCoordIndex);
 
-    int64_t getReadBruteForceScore(size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
+    int64_t getReadBruteForceScore(size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
 };
 
 class squareEM {
@@ -595,7 +603,7 @@ class squareEM {
     double propThresholdToRemove = 0.005;
     double errorRate = 0.005;
 
-    squareEM(ReadsManager& readsManager, uint32_t overlapCoefficientCutoff);
+    squareEM(ThreadsManager& threadsManager, uint32_t overlapCoefficientCutoff);
 
 
     void runSquareEM(uint64_t maximumIterations);
