@@ -6,12 +6,12 @@
 #include "mgsr_index.capnp.h"
 #include "panmap_utils.hpp"
 #include "seeding.hpp"
+#include "progress_tracker.hpp"
+#include "absl/container/flat_hash_set.h"
 #include <eigen3/Eigen/Dense>
 #include <span>
 
 namespace mgsr {
-
-
 
 void updateGapMapStep(
     std::map<uint64_t, uint64_t>& gapMap,
@@ -53,7 +53,10 @@ uint64_t degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint6
 
 uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64_t>& regapCoordsIndex);
 
+int open_file(const std::string& path);
+
 void extractReadSequences(const std::string& readPath1, const std::string& readPath2, std::vector<std::string>& readSequences);
+
 
 enum RefSeedmerExistStatus : uint8_t {
   EXIST_UNIQUE,
@@ -221,7 +224,7 @@ void seedmersFromFastq(
   std::vector<Read>& reads,
   std::unordered_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>>& seedmerToReads,
   std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex,
-  int k, int s, int t, int l, bool open, bool fast_mode
+  int k, int s, int t, int l, bool openSyncmer, bool fast_mode
 );
 
 
@@ -245,14 +248,14 @@ class mgsrIndexBuilder {
     std::vector<std::optional<uint64_t>> refOnKminmers;
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;
 
-    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool open) 
+    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer) 
       : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
       indexBuilder.setT(t);
       indexBuilder.setL(l);
-      indexBuilder.setOpen(open);
+      indexBuilder.setOpen(openSyncmer);
       perNodeChanges = indexBuilder.initPerNodeChanges(T->allNodes.size());
     }
 
@@ -306,6 +309,41 @@ struct readScoreDelta {
   uint32_t scoreDelta;
 };
 
+class ReadsManager {
+  public:
+    panmanUtils::Tree* T;
+    std::vector<mgsr::Read> reads;
+    std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
+    absl::flat_hash_set<size_t> allSeedmerHashesSet;
+
+    //  thread:   dfsIndex:  scoreDelta
+    std::vector<std::vector<std::vector<readScoreDelta>>> perNodeScoreDeltasIndexByThreadId; 
+
+    // readidx:           thread   index
+    std::vector<std::pair<size_t, size_t>> readIndexToThreadLocalIndex;
+    std::vector<std::pair<size_t, size_t>> threadRanges;
+
+    // for identical parent-child pairs... will be moved from mgsrPlacer to here.
+    std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
+    std::unordered_map<std::string, std::string> identicalNodeToGroup;
+
+    // for squareEM... will be moved from mgsrPlacer to here.
+    std::unordered_map<std::string, int64_t> nodeToDfsIndex;
+
+    // for squareEM... will be moved from mgsrPlacer to here.
+    std::unordered_map<std::string, double> kminmerOverlapCoefficients;
+
+    ReadsManager(panmanUtils::Tree* T, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : T(T) {
+      initializeQueryData(readSequences, k, s, t, l, openSyncmer);
+    }
+
+    void initializeQueryData(std::span<const std::string> readSequences, int k, int s, int t, int l, bool openSyncmer, bool fast_mode = false);
+    void initializeThreadRanges(size_t numThreads);
+    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
+    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
+
+};
+
 class mgsrPlacer {
   public:
     // GlobalCoords pointer
@@ -332,7 +370,7 @@ class mgsrPlacer {
     // parameters from user input... preset for now
     double excludeDuplicatesThreshold = 0.5;
     double errorRate = 0.005;
-    int64_t maximumGap = 100;
+    int64_t maximumGap = 50;
     
     // dynamic reference kminmer structures
     std::map<uint64_t, uint64_t> gapMap;
@@ -348,10 +386,11 @@ class mgsrPlacer {
     absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache> hashCoordInfoCacheTable;
 
     // current query kminmer structures
-    std::vector<mgsr::Read> reads;
-    std::vector<mgsr::readType> readTypes;
-    std::unordered_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
+    std::span<mgsr::Read> reads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
+    // std::vector<mgsr::readType> readTypes;
+    std::unordered_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
+    absl::flat_hash_set<size_t>* allSeedmerHashesSet;
 
     // current query score index structures
     std::vector<int32_t> readScores;
@@ -372,6 +411,11 @@ class mgsrPlacer {
     std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
     std::unordered_map<std::string, std::string> identicalNodeToGroup;
 
+
+    // for tracking progress
+    ProgressTracker* progressTracker = nullptr;
+    size_t threadId = 0;
+
     // misc
     uint64_t curDfsIndex = 0;
     uint64_t readMinichainsInitialized = 0;
@@ -387,16 +431,9 @@ class mgsrPlacer {
 
     uint64_t readMinichainsUpdated = 0;
     
-    mgsrPlacer(panmanUtils::Tree* tree, const std::string& path, const panmapUtils::GlobalCoords* const globalCoords)
+    mgsrPlacer(panmanUtils::Tree* tree, MGSRIndex::Reader indexReader, const panmapUtils::GlobalCoords* const globalCoords)
       : T(tree), globalCoords(globalCoords)
     {
-      ::capnp::ReaderOptions readerOptions {
-        .traversalLimitInWords = std::numeric_limits<uint64_t>::max(),
-        .nestingLimit = 1024
-      };
-      int fd = open_file(path);
-      ::capnp::PackedFdMessageReader reader(fd, readerOptions);
-      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
       capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
       capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
       
@@ -458,12 +495,15 @@ class mgsrPlacer {
       }
     }
 
-    void initializeQueryData(const std::string& readPath1, const std::string& readPath2, bool fast_mode = false);
-    void initializeQueryData(std::span<const std::string> readSequences, bool fast_mode = false);
+    void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
+    void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
 
     void placeReadsHelper(panmanUtils::Node* node, const panmapUtils::GlobalCoords& globalCoords);
     void placeReads();
+
+    // for tracking progress
+    void setProgressTracker(ProgressTracker* tracker, size_t tid);
 
     // for updating reference seeds and gapMap
     void updateSeeds(std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers);
@@ -474,7 +514,7 @@ class mgsrPlacer {
     void delSeedAtPosition(uint64_t pos);
 
     // for updating read scores and kminmer matches
-    void setReadScore(size_t readIndex, const int32_t score, const size_t numDuplicates);
+    void setReadScore(size_t readIndex, const int32_t score);
     void initializeReadMinichains(size_t readIndex);
     void initializeReadMinichains(mgsr::Read& curRead);
     void updateMinichains(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
@@ -498,8 +538,7 @@ class mgsrPlacer {
 
 
   private:
-    int open_file(const std::string& path);
-
+    
     void updateRefSeedmerStatus(size_t hash, mgsr::RefSeedmerChangeType& seedmerChangeType, mgsr::RefSeedmerExistStatus refSeedmerOldStatus, mgsr::RefSeedmerExistStatus refSeedmerNewStatus);
     void updateSeedmerChangesTypeFlag(mgsr::RefSeedmerChangeType seedmerChangeType, std::pair<bool, bool>& flags);
     void fillReadToAffectedSeedmerIndex(
@@ -554,8 +593,9 @@ class squareEM {
     double eta = 0.00001;
     double maxChangeThreshold = 0.0001;
     double propThresholdToRemove = 0.005;
+    double errorRate = 0.005;
 
-    squareEM(mgsrPlacer& placer, uint32_t overlapCoefficientCutoff);
+    squareEM(ReadsManager& readsManager, uint32_t overlapCoefficientCutoff);
 
 
     void runSquareEM(uint64_t maximumIterations);
