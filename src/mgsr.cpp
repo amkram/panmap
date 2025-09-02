@@ -549,7 +549,7 @@ static void printTopN(const Eigen::VectorXd& myVector, size_t n) {
 }
 
 int64_t mgsr::mgsrPlacer::getReadBruteForceScore(
-  size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, std::unordered_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable
+  size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable
 ) {
   auto readCopy = reads[readIndex];
   initializeReadMinichains(readCopy);
@@ -777,16 +777,24 @@ void mgsr::extractReadSequences(const std::string& readPath1, const std::string&
   }
 }
 
-void mgsr::ReadsManager::initializeThreadRanges(size_t numThreads) {
+void mgsr::ThreadsManager::initializeThreadRanges(size_t numThreads) {
   const size_t chunkSize = (reads.size() + numThreads - 1) / numThreads;
 
   threadRanges.clear();
   readIndexToThreadLocalIndex.clear();
   perNodeScoreDeltasIndexByThreadId.clear();
+  readMinichainsInitialized.clear();
+  readMinichainsAdded.clear();
+  readMinichainsRemoved.clear();
+  readMinichainsUpdated.clear();
 
   threadRanges.resize(numThreads);
   readIndexToThreadLocalIndex.resize(reads.size());
   perNodeScoreDeltasIndexByThreadId.resize(numThreads);
+  readMinichainsInitialized.resize(numThreads);
+  readMinichainsAdded.resize(numThreads);
+  readMinichainsRemoved.resize(numThreads);
+  readMinichainsUpdated.resize(numThreads);
 
   for (size_t i = 0; i < numThreads; ++i) {
     size_t start = i * chunkSize;
@@ -801,7 +809,7 @@ void mgsr::ReadsManager::initializeThreadRanges(size_t numThreads) {
   }
 }
 
-void mgsr::ReadsManager::initializeQueryData(std::span<const std::string> readSequences, int k, int s, int t, int l, bool openSyncmer, bool fast_mode) {
+void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, int k, int s, int t, int l, bool openSyncmer, bool fast_mode) {
   // index duplicate reads
   std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
   for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
@@ -4051,13 +4059,13 @@ void mgsr::mgsrPlacer::placeReads() {
   placeReadsHelper(T->root, *globalCoords);
 }
 
-std::vector<uint32_t> mgsr::ReadsManager::getScoresAtNode(const std::string& nodeId) const {
+std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId) const {
   std::vector<uint32_t> curNodeScores(reads.size(), 0);
   getScoresAtNode(nodeId, curNodeScores);
   return curNodeScores;
 }
 
-void mgsr::ReadsManager::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
+void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
   if (curNodeScores.size() != reads.size()) {
     curNodeScores.resize(reads.size(), 0);
   }
@@ -4079,22 +4087,28 @@ void mgsr::ReadsManager::getScoresAtNode(const std::string& nodeId, std::vector<
       const auto threadReadStart = threadRanges[threadId].first;
       const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex];
       for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
-        curNodeScores[threadReadStart + scoreDelta.readIndex] += scoreDelta.scoreDelta;
+        curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
       }
     }
   }
 }
 
+void mgsr::ThreadsManager::printStats() {
+  std::cout << "Thread\tnumReads\tnumInitialized\tnumAdded\tnumRemoved\tnumUpdated" << std::endl;
+  for (size_t i = 0; i < threadRanges.size(); ++i) {
+    std::cout << i << "\t" << threadRanges[i].second - threadRanges[i].first << "\t" << readMinichainsInitialized[i] << "\t" << readMinichainsAdded[i] << "\t" << readMinichainsRemoved[i] << "\t" << readMinichainsUpdated[i] << std::endl;
+  }
+}
 
-mgsr::squareEM::squareEM(mgsr::ReadsManager& readsManager, uint32_t overlapCoefficientCutoff) {
-  auto& kminmerOverlapCoefficients = readsManager.kminmerOverlapCoefficients;
-  auto& readSeedmersDuplicatesIndex = readsManager.readSeedmersDuplicatesIndex;
-  auto& reads = readsManager.reads;
+mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, uint32_t overlapCoefficientCutoff) {
+  auto& kminmerOverlapCoefficients = threadsManager.kminmerOverlapCoefficients;
+  auto& readSeedmersDuplicatesIndex = threadsManager.readSeedmersDuplicatesIndex;
+  auto& reads = threadsManager.reads;
   size_t numReads = reads.size();
 
 
-  this->identicalGroups.swap(readsManager.identicalGroups);
-  this->identicalNodeToGroup.swap(readsManager.identicalNodeToGroup);
+  this->identicalGroups.swap(threadsManager.identicalGroups);
+  this->identicalNodeToGroup.swap(threadsManager.identicalNodeToGroup);
 
   std::vector<std::pair<std::string, double>> kminmerOverlapCoefficientsVector;
   for (const auto& [nodeId, kminmerOverlapCoefficient] : kminmerOverlapCoefficients) {
@@ -4122,10 +4136,10 @@ mgsr::squareEM::squareEM(mgsr::ReadsManager& readsManager, uint32_t overlapCoeff
   std::vector<std::vector<uint32_t>> scoreMatrix(significantOverlapNodeIds.size(), std::vector<uint32_t>(numReads, 0));
   for (size_t i = 0; i < significantOverlapNodeIds.size(); ++i) {
     auto significantNodeId = significantOverlapNodeIds[i];
-    auto nodeDfsIndex = readsManager.nodeToDfsIndex.at(significantNodeId);
-    readsManager.getScoresAtNode(significantNodeId, scoreMatrix[i]);
-    for (size_t threadId = 0; threadId < readsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
-      std::vector<readScoreDelta>().swap(readsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
+    auto nodeDfsIndex = threadsManager.nodeToDfsIndex.at(significantNodeId);
+    threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i]);
+    for (size_t threadId = 0; threadId < threadsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
+      std::vector<readScoreDelta>().swap(threadsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
     }
   }
 
@@ -4162,6 +4176,7 @@ mgsr::squareEM::squareEM(mgsr::ReadsManager& readsManager, uint32_t overlapCoeff
     }
     ++i;
   }
+
 
   
   numNodes = nodes.size();
