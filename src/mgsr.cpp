@@ -777,17 +777,31 @@ void mgsr::extractReadSequences(const std::string& readPath1, const std::string&
   }
 }
 
-void mgsr::mgsrPlacer::initializeQueryData(
-  const std::string& readPath1, const std::string& readPath2, bool fast_mode
-) {
-  std::vector<std::string> readSequences;
-  mgsr::extractReadSequences(readPath1, readPath2, readSequences);
-  initializeQueryData(readSequences, fast_mode);
+void mgsr::ReadsManager::initializeThreadRanges(size_t numThreads) {
+  const size_t chunkSize = (reads.size() + numThreads - 1) / numThreads;
+
+  threadRanges.clear();
+  readIndexToThreadLocalIndex.clear();
+  perNodeScoreDeltasIndexByThreadId.clear();
+
+  threadRanges.resize(numThreads);
+  readIndexToThreadLocalIndex.resize(reads.size());
+  perNodeScoreDeltasIndexByThreadId.resize(numThreads);
+
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * chunkSize;
+    size_t end = (i == numThreads - 1) ? reads.size() : (i + 1) * chunkSize;
+    if (start < reads.size()) {
+      threadRanges[i].first = start;
+      threadRanges[i].second = end;
+    }
+    for (size_t j = start; j < end; j++) {
+      readIndexToThreadLocalIndex[j] = {i, j - start};
+    }
+  }
 }
 
-void mgsr::mgsrPlacer::initializeQueryData(
-  std::span<const std::string> readSequences, bool fast_mode
-) {
+void mgsr::ReadsManager::initializeQueryData(std::span<const std::string> readSequences, int k, int s, int t, int l, bool openSyncmer, bool fast_mode) {
   // index duplicate reads
   std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
   for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
@@ -927,6 +941,15 @@ void mgsr::mgsrPlacer::initializeQueryData(
   for (uint32_t i = 0; i < reads.size(); ++i) {
     reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
     for (const auto& seedmer : reads[i].uniqueSeedmers) {
+      allSeedmerHashesSet.insert(seedmer.first);
+    }
+  }
+}
+
+void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode) {
+  this->reads = reads;
+  for (uint32_t i = 0; i < reads.size(); ++i) {
+    for (const auto& seedmer : reads[i].uniqueSeedmers) {
       for (const auto& seedmerIndex : seedmer.second) {
         seedmerToReads[seedmer.first].emplace_back(i, seedmerIndex);
       }
@@ -947,6 +970,7 @@ void mgsr::mgsrPlacer::initializeQueryData(
     maxMinichains.resize(numReads);
   }
 }
+
 
 uint64_t mgsr::degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint64_t>& degapCoordsIndex) {
   auto coordIt = degapCoordsIndex.upper_bound(globalCoord);
@@ -2458,7 +2482,7 @@ void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path) {
   std::cout << "Index written to " << path << std::endl;
 }
 
-int mgsr::mgsrPlacer::open_file(const std::string& path) {
+int mgsr::open_file(const std::string& path) {
   int fd = ::open(path.c_str(), O_RDONLY);
   if (fd == -1) {
     std::cerr << "Error: failed to open file " << path << std::endl;
@@ -2763,8 +2787,7 @@ bool mgsr::squareEM::removeLowPropNodes() {
   return true;
 }
 
-void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score, const size_t numDuplicates) {
-  totalScore += (score - readScores[readIndex]) * numDuplicates;
+void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score) {
   readScores[readIndex] = score;
 }
 
@@ -2783,13 +2806,13 @@ void mgsr::mgsrPlacer::updateRefSeedmerStatus (
         }
         case mgsr::RefSeedmerExistStatus::EXIST_UNIQUE: {
           seedmerChangeType = mgsr::RefSeedmerChangeType::NOT_EXIST_TO_EXIST_UNIQUE;
-          if (seedmerToReads.find(hash) != seedmerToReads.end()) ++binaryOverlapKminmerCount;
+          if (allSeedmerHashesSet->find(hash) != allSeedmerHashesSet->end()) ++binaryOverlapKminmerCount;
           delayedRefSeedmerStatus[hash] = refSeedmerNewStatus;
           break;
         }
         case mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE: {
           seedmerChangeType = mgsr::RefSeedmerChangeType::NOT_EXIST_TO_EXIST_DUPLICATE;
-          if (seedmerToReads.find(hash) != seedmerToReads.end()) ++binaryOverlapKminmerCount;
+          if (allSeedmerHashesSet->find(hash) != allSeedmerHashesSet->end()) ++binaryOverlapKminmerCount;
           delayedRefSeedmerStatus[hash] = refSeedmerNewStatus;
           break;
         }
@@ -2800,7 +2823,7 @@ void mgsr::mgsrPlacer::updateRefSeedmerStatus (
       switch (refSeedmerNewStatus) {
         case mgsr::RefSeedmerExistStatus::NOT_EXIST: {
           seedmerChangeType = mgsr::RefSeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST;
-          if (seedmerToReads.find(hash) != seedmerToReads.end()) --binaryOverlapKminmerCount;
+          if (allSeedmerHashesSet->find(hash) != allSeedmerHashesSet->end()) --binaryOverlapKminmerCount;
           delayedRefSeedmerStatus.erase(hash);
           break;
         }
@@ -2821,7 +2844,7 @@ void mgsr::mgsrPlacer::updateRefSeedmerStatus (
       switch (refSeedmerNewStatus) {
         case mgsr::RefSeedmerExistStatus::NOT_EXIST: {  
           seedmerChangeType = mgsr::RefSeedmerChangeType::EXIST_DUPLICATE_TO_NOT_EXIST;
-          if (seedmerToReads.find(hash) != seedmerToReads.end()) --binaryOverlapKminmerCount;
+          if (allSeedmerHashesSet->find(hash) != allSeedmerHashesSet->end()) --binaryOverlapKminmerCount;
           delayedRefSeedmerStatus.erase(hash);
           break;
         }
@@ -3801,80 +3824,6 @@ void mgsr::mgsrPlacer::mergeIdenticalNodes(const std::unordered_set<std::string>
   }
 }
 
-void mgsr::mgsrPlacer::updateIdenticalGroups() {
-  // std::cout << "Before updating identical groups:"  << std::endl;
-  // std::cout << "\tTotal identical groups: " << identicalGroups.size() << std::endl;
-  // std::cout << "\tTotal identical nodes: " << identicalNodeToGroup.size() << std::endl;
-  // for (const auto& [nodeId, group] : identicalGroups) {
-  //   std::cout << "\t\t" << nodeId << ": ";
-  //   for (const auto& member : group) {
-  //     std::cout << member << "->" << (identicalNodeToGroup.find(member) != identicalNodeToGroup.end() ? identicalNodeToGroup.at(member) : "null") << " ";
-  //   }
-  //   std::cout << std::endl;
-  // }
-  std::vector<std::pair<std::string, int32_t>> totalScoresSorted;
-  totalScoresSorted.reserve(totalScores.size());
-  for (const auto& [nodeId, totalScore] : totalScores) {
-    if (identicalNodeToGroup.find(nodeId) == identicalNodeToGroup.end()) {
-      totalScoresSorted.emplace_back(nodeId, totalScore);
-    }
-  }
-
-  std::sort(totalScoresSorted.begin(), totalScoresSorted.end(), [](const auto& a, const auto& b) {
-    return a.second > b.second;
-  });
-
-
-  std::unordered_set<std::string> identicalGroup{totalScoresSorted[0].first};
-  uint64_t curGroupScore = totalScoresSorted[0].second;
-  for (size_t i = 1; i < totalScoresSorted.size(); ++i) {
-    const auto& [curNodeId, curTotalScore] = totalScoresSorted[i];
-    if (curTotalScore == curGroupScore) {
-      identicalGroup.insert(curNodeId);
-    } else {
-      if (!identicalGroup.empty()) {
-        mergeIdenticalNodes(identicalGroup);
-      }
-      std::unordered_set<std::string>().swap(identicalGroup);
-      identicalGroup.insert(curNodeId);
-      curGroupScore = curTotalScore;
-    }
-  }
-  if (!identicalGroup.empty()) {
-    mergeIdenticalNodes(identicalGroup);
-  }
-
-  // std::cout << "After updating identical groups:"  << std::endl;
-  // std::cout << "\tTotal identical groups: " << identicalGroups.size() << std::endl;
-  // std::cout << "\tTotal identical nodes: " << identicalNodeToGroup.size() << std::endl;
-  
-  // for (const auto& [nodeId, group] : identicalGroups) {
-  //   std::cout << "\t\t" << nodeId << ": ";
-  //   for (const auto& member : group) {
-  //     std::cout << member << "->" << (identicalNodeToGroup.find(member) != identicalNodeToGroup.end() ? identicalNodeToGroup.at(member) : "null") << " ";
-  //   }
-  //   std::cout << std::endl;
-  // }
-
-  // Sanity check
-  for (const auto& [nodeId, group] : identicalGroups) {
-    if (identicalNodeToGroup.find(nodeId) != identicalNodeToGroup.end()) {
-      std::cerr << "Error: Node " << nodeId << " is in identicalGroups but has a least recent identical ancestor: " << identicalNodeToGroup.at(nodeId) << std::endl;
-      exit(1);
-    }
-    for (const auto& identicalNode : group) {
-      if (identicalNodeToGroup.find(identicalNode) != identicalNodeToGroup.end()) {
-        if (identicalNodeToGroup.at(identicalNode) != nodeId) {
-          std::cerr << "Error: Node " << identicalNode << " has a least recent identical ancestor of " << identicalNodeToGroup.at(identicalNode) << " but is in the identical set of " << nodeId << "." << std::endl;
-          exit(1);
-        }
-      } else if (identicalNode != nodeId) {
-        std::cerr << "Error: Node " << identicalNode << " is in identicalGroups but does not have a least recent identical ancestor." << std::endl;
-        exit(1);
-      }
-    }
-  }
-}
 
 static void insertionSortAffectedSeedmerInfos(std::vector<mgsr::affectedSeedmerInfo>& affectedSeedmerInfos) {
   auto first = affectedSeedmerInfos.begin();
@@ -3901,8 +3850,18 @@ static void sortAffectedSeedmerInfos(std::vector<mgsr::affectedSeedmerInfo>& aff
   }
 }
 
+void mgsr::mgsrPlacer::setProgressTracker(ProgressTracker* tracker, size_t tid) {
+  progressTracker = tracker;
+  threadId = tid;
+}
+
 
 void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUtils::GlobalCoords& globalCoords) {
+  // Update progress if tracker is available
+  if (progressTracker) {
+    progressTracker->incrementProgress(threadId);
+  }
+
   // **** Update seeds ****
   std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
   std::unordered_set<uint64_t> affectedSeedmers;
@@ -3936,7 +3895,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
   std::vector<std::pair<size_t, std::vector<mgsr::Minichain>>> readMinichainsBacktrack;
 
   auto& currentNodeScoreDeltas = perNodeScoreDeltasIndex[curDfsIndex];
-  if (affectedSeedmers.empty() && node->parent != nullptr) {
+  if (seedBacktracks.empty() && node->parent != nullptr) {
     // If the node is identical to its parent, add it to the identical group
     const std::string& parentID = node->parent->identifier;
     auto identicalGroupIt = identicalNodeToGroup.find(parentID);
@@ -3959,7 +3918,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
     for (size_t i = 0; i < reads.size(); ++i) {
       if (readScores[i] != 0) {
         readScoresBacktrack.emplace_back(i, readScores[i]);
-        setReadScore(i, 0, readSeedmersDuplicatesIndex[i].size());
+        setReadScore(i, 0);
         currentNodeScoreDeltas.emplace_back(i, 0);
         readMinichainsBacktrack.emplace_back(i, reads[i].minichains);
         reads[i].minichains.clear();
@@ -4007,7 +3966,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
 
       readScoresBacktrack[backtrackIndex].first = readIndex;
       readScoresBacktrack[backtrackIndex].second = readScores[readIndex];
-      setReadScore(readIndex, pseudoScore, readSeedmersDuplicatesIndex[readIndex].size());
+      setReadScore(readIndex, pseudoScore);
       currentNodeScoreDeltas[backtrackIndex].readIndex = readIndex;
       currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore;
 
@@ -4025,11 +3984,10 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
 
       // if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[readIndex] = mgsr::readType::HIGH_DUPLICATES;
     }
-    totalScores[node->identifier] = totalScore;
   }
   // std::cout << "affectedSeedmers.size(): " << affectedSeedmers.size() << " hashCoordInfoCacheTable.size(): " << hashCoordInfoCacheTable.size() << std::endl;;
 
-  std::cout << "\rFinished dfsIndex: " << curDfsIndex << std::flush;
+  // std::cout << "\rFinished dfsIndex: " << curDfsIndex << std::flush;
   for (panmanUtils::Node *child : node->children) {
     ++curDfsIndex;
     placeReadsHelper(child, globalCoords);
@@ -4060,7 +4018,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
   // Backtrack read scores
   for (size_t i = 0; i < readScoresBacktrack.size(); ++i) {
     const auto& [readIdx, score] = readScoresBacktrack[i];
-    setReadScore(readIdx, score, readSeedmersDuplicatesIndex[readIdx].size());
+    setReadScore(readIdx, score);
   }
 
   // Backtrack read minichains
@@ -4091,29 +4049,52 @@ void mgsr::mgsrPlacer::placeReads() {
   curDfsIndex = 0;
   preallocateHashCoordInfoCacheTable(0, reads.size());
   placeReadsHelper(T->root, *globalCoords);
+}
 
+std::vector<uint32_t> mgsr::ReadsManager::getScoresAtNode(const std::string& nodeId) const {
+  std::vector<uint32_t> curNodeScores(reads.size(), 0);
+  getScoresAtNode(nodeId, curNodeScores);
+  return curNodeScores;
+}
 
-  // std::vector<std::pair<std::string, double>> kminmerOverlapCoefficientsVector;
-  // for (const auto& [nodeID, kminmerOverlapCoefficient] : kminmerOverlapCoefficients) {
-  //   kminmerOverlapCoefficientsVector.emplace_back(nodeID, kminmerOverlapCoefficient);
-  // }
-  // std::sort(kminmerOverlapCoefficientsVector.begin(), kminmerOverlapCoefficientsVector.end(), [](const auto& a, const auto& b) {
-  //   return a.second > b.second;
-  // });
-  // for (size_t i = 0; i < 200; i++) {
-  //   std::cout << "Node " << kminmerOverlapCoefficientsVector[i].first << " has kminmer overlap coefficient " << kminmerOverlapCoefficientsVector[i].second << std::endl;
-  // }
+void mgsr::ReadsManager::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
+  if (curNodeScores.size() != reads.size()) {
+    curNodeScores.resize(reads.size(), 0);
+  }
+
+  panmanUtils::Node* currentNode = T->allNodes[nodeId];
+
+  // Get the path from root the current node
+  std::vector<panmanUtils::Node*> nodePath;
+  while (currentNode->parent != nullptr) {
+    nodePath.push_back(currentNode);
+    currentNode = currentNode->parent;
+  }
+  nodePath.push_back(currentNode);
+  std::reverse(nodePath.begin(), nodePath.end());
+
+  for (const auto& node : nodePath) {
+    auto nodeDfsIndex = nodeToDfsIndex.at(node->identifier);
+    for (size_t threadId = 0; threadId < perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
+      const auto threadReadStart = threadRanges[threadId].first;
+      const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex];
+      for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
+        curNodeScores[threadReadStart + scoreDelta.readIndex] += scoreDelta.scoreDelta;
+      }
+    }
+  }
 }
 
 
-mgsr::squareEM::squareEM(mgsr::mgsrPlacer& placer, uint32_t overlapCoefficientCutoff) {
-  auto& kminmerOverlapCoefficients = placer.kminmerOverlapCoefficients;
-  auto& readSeedmersDuplicatesIndex = placer.readSeedmersDuplicatesIndex;
-  auto& reads = placer.reads;
-  size_t numReads = placer.reads.size();
+mgsr::squareEM::squareEM(mgsr::ReadsManager& readsManager, uint32_t overlapCoefficientCutoff) {
+  auto& kminmerOverlapCoefficients = readsManager.kminmerOverlapCoefficients;
+  auto& readSeedmersDuplicatesIndex = readsManager.readSeedmersDuplicatesIndex;
+  auto& reads = readsManager.reads;
+  size_t numReads = reads.size();
 
-  this->identicalGroups.swap(placer.identicalGroups);
-  this->identicalNodeToGroup.swap(placer.identicalNodeToGroup);
+
+  this->identicalGroups.swap(readsManager.identicalGroups);
+  this->identicalNodeToGroup.swap(readsManager.identicalNodeToGroup);
 
   std::vector<std::pair<std::string, double>> kminmerOverlapCoefficientsVector;
   for (const auto& [nodeId, kminmerOverlapCoefficient] : kminmerOverlapCoefficients) {
@@ -4141,8 +4122,11 @@ mgsr::squareEM::squareEM(mgsr::mgsrPlacer& placer, uint32_t overlapCoefficientCu
   std::vector<std::vector<uint32_t>> scoreMatrix(significantOverlapNodeIds.size(), std::vector<uint32_t>(numReads, 0));
   for (size_t i = 0; i < significantOverlapNodeIds.size(); ++i) {
     auto significantNodeId = significantOverlapNodeIds[i];
-    placer.getScoresAtNode(significantNodeId, scoreMatrix[i]);
-    std::vector<readScoreDelta>().swap(placer.perNodeScoreDeltasIndex[placer.nodeToDfsIndex[significantNodeId]]);
+    auto nodeDfsIndex = readsManager.nodeToDfsIndex.at(significantNodeId);
+    readsManager.getScoresAtNode(significantNodeId, scoreMatrix[i]);
+    for (size_t threadId = 0; threadId < readsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
+      std::vector<readScoreDelta>().swap(readsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
+    }
   }
 
   std::unordered_map<std::vector<uint32_t>, std::vector<std::string_view>, mgsr::VectorHash> scoresToNodeIds;
@@ -4174,7 +4158,7 @@ mgsr::squareEM::squareEM(mgsr::mgsrPlacer& placer, uint32_t overlapCoefficientCu
   for (const auto& [scores, nodeIds] : scoresToNodeIds) {
     nodes[i] = nodeIds[0];
     for (size_t j = 0; j < numReads; ++j) {
-      probs(j, i) = pow(placer.errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - placer.errorRate, scores[j]);
+      probs(j, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
     }
     ++i;
   }

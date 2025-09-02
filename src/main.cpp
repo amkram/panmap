@@ -1110,53 +1110,68 @@ int main(int argc, char *argv[]) {
 
     if (vm.count("mgsr-index")) {
       std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
+      int fd = mgsr::open_file(mgsr_index_path);
+      ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
+      ::capnp::PackedFdMessageReader reader(fd, readerOptions);
+      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
+
+      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      
       panmapUtils::BlockSequences blockSequences(&T);
       panmapUtils::GlobalCoords globalCoords(blockSequences);
 
-
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
+      mgsr::ReadsManager readsManager(&T, readSequences, indexReader.getK(), indexReader.getS(), indexReader.getT(), indexReader.getL(), indexReader.getOpen());
+      readsManager.initializeThreadRanges(numThreads);  
 
-
-      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-      const size_t chunkSize = (readSequences.size() + numThreads - 1) / numThreads;
-      std::cout << "Using " << numThreads << " threads" << std::endl;
-      std::cout << readSequences.size() << " reads split into chunks of " << chunkSize << std::endl;
-
-      std::vector<std::pair<size_t, size_t>> readRangesByThread;
+      std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
-        size_t start = i * chunkSize;
-        size_t end = (i == numThreads - 1) ? readSequences.size() : (i + 1) * chunkSize;
-        if (start < readSequences.size()) {
-          readRangesByThread.emplace_back(start, end);
-        }
+        totalNodesPerThread[i] = T.allNodes.size();
       }
+      ProgressTracker progressTracker(numThreads, totalNodesPerThread);
+
+      std::cout << "Using " << numThreads << " threads" << std::endl;
+      std::cout << readSequences.size() << " reads sketched into " << readsManager.reads.size() << " unique kminmer-set reads" << std::endl;
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
-      tbb::parallel_for(tbb::blocked_range<size_t>(0, readRangesByThread.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, readsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
         for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
-          auto [start, end] = readRangesByThread[i];
+          auto [start, end] = readsManager.threadRanges[i];
         
-          std::span<const std::string> curThreadReads(readSequences.data() + start, end - start);
-          mgsr::mgsrPlacer curThreadPlacer(&T, mgsr_index_path, &globalCoords);
+          std::span<mgsr::Read> curThreadReads(readsManager.reads.data() + start, end - start);
+          mgsr::mgsrPlacer curThreadPlacer(&T, indexReader, &globalCoords);
           curThreadPlacer.initializeQueryData(curThreadReads);
+          curThreadPlacer.setAllSeedmerHashesSet(readsManager.allSeedmerHashesSet);
+
+          curThreadPlacer.setProgressTracker(&progressTracker, i);
+
           std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
-                    << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads and parameters: k="
-                    << curThreadPlacer.k << ", s=" << curThreadPlacer.s << ", t=" << curThreadPlacer.t << ", l=" << curThreadPlacer.l << ", open=" << curThreadPlacer.openSyncmer << std::endl;
+                    << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads" << std::endl;
 
           curThreadPlacer.placeReads();
+
+          readsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
+          if (i == 0) {
+            readsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
+            readsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
+            readsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
+            readsManager.nodeToDfsIndex = std::move(curThreadPlacer.nodeToDfsIndex);
+          }
           
+
           std::cout << "Thread processed " << curThreadReads.size() 
                     << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
                     << std::endl;
         }
       });
 
+
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-      // mgsr::squareEM squareEM(mgsrPlacer, 1000);
+      // mgsr::squareEM squareEM(readsManager, 1000);
       // auto start_time_squareEM = std::chrono::high_resolution_clock::now();
       // for (size_t i = 0; i < 5; ++i) {
       //   squareEM.runSquareEM(1000);
