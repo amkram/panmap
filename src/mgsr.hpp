@@ -248,6 +248,8 @@ class mgsrIndexBuilder {
     std::vector<std::optional<uint64_t>> refOnKminmers;
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;
 
+    std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
+
     mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer) 
       : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T)
     {
@@ -257,6 +259,7 @@ class mgsrIndexBuilder {
       indexBuilder.setL(l);
       indexBuilder.setOpen(openSyncmer);
       perNodeChanges = indexBuilder.initPerNodeChanges(T->allNodes.size());
+      nodeToDfsIndex.reserve(T->allNodes.size());
     }
 
     void buildIndex();
@@ -311,7 +314,7 @@ struct readScoreDelta {
 
 class ThreadsManager {
   public:
-    panmanUtils::Tree* T;
+    panmapUtils::LiteTree* liteTree;
     std::vector<mgsr::Read> reads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
     absl::flat_hash_set<size_t> allSeedmerHashesSet;
@@ -340,7 +343,7 @@ class ThreadsManager {
 
 
 
-    ThreadsManager(panmanUtils::Tree* T, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : T(T) {
+    ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
       initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     }
 
@@ -354,9 +357,6 @@ class ThreadsManager {
 
 class mgsrPlacer {
   public:
-    // GlobalCoords pointer
-    const panmapUtils::GlobalCoords* const globalCoords;
-
     // mutation structures
     std::vector<seeding::uniqueKminmer_t> seedInfos;
     std::vector<std::vector<uint32_t>> seedInsubIndices;
@@ -365,7 +365,7 @@ class mgsrPlacer {
     std::vector<std::vector<uint32_t>> invertedBlocks;
 
     // tree pointer
-    panmanUtils::Tree *T;
+    panmapUtils::LiteTree *liteTree;
     std::unordered_map<std::string, int64_t> nodeToDfsIndex;
 
     // parameters from index
@@ -439,8 +439,8 @@ class mgsrPlacer {
 
     uint64_t readMinichainsUpdated = 0;
     
-    mgsrPlacer(panmanUtils::Tree* tree, MGSRIndex::Reader indexReader, const panmapUtils::GlobalCoords* const globalCoords)
-      : T(tree), globalCoords(globalCoords)
+    mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader)
+      : liteTree(liteTree)
     {
       capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
       capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
@@ -507,15 +507,18 @@ class mgsrPlacer {
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
 
-    void placeReadsHelper(panmanUtils::Node* node, const panmapUtils::GlobalCoords& globalCoords);
+    void placeReadsHelper(panmapUtils::LiteNode* node);
     void placeReads();
+
+    void traverseTreeHelper(panmapUtils::LiteNode* node);
+    void traverseTree();
 
     // for tracking progress
     void setProgressTracker(ProgressTracker* tracker, size_t tid);
 
     // for updating reference seeds and gapMap
     void updateSeeds(std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers);
-    void updateGapMap(const panmapUtils::GlobalCoords& globalCoords, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks);
+    void updateGapMap(std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks);
     void addSeedAtPosition(uint64_t uniqueKminmerIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers);
     void addSeedAtPosition(uint64_t uniqueKminmerIndex);
     void delSeedAtPosition(uint64_t pos, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers);
@@ -527,7 +530,7 @@ class mgsrPlacer {
     void initializeReadMinichains(mgsr::Read& curRead);
     void updateMinichains(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
     void updateMinichainsMixed(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos);
-    int64_t getReadPseudoScore(mgsr::Read& curRead, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex);
+    int64_t getReadPseudoScore(mgsr::Read& curRead);
     inline uint64_t decodeBegFromMinichain(uint64_t minichain);
     inline uint64_t decodeEndFromMinichain(uint64_t minichain);
     inline bool decodeRevFromMinichain(uint64_t minichain);
@@ -572,7 +575,7 @@ class mgsrPlacer {
       mgsr::Read& curRead, const mgsr::Minichain& minichain1, const mgsr::Minichain& minichain2
     );
 
-    int64_t getReadBruteForceScore(size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
+    int64_t getReadBruteForceScore(size_t readIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
 };
 
 class squareEM {

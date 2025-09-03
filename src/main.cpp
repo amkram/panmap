@@ -936,6 +936,119 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    if (vm.count("mgsr-index")) {
+      std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
+      int fd = mgsr::open_file(mgsr_index_path);
+      ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
+      ::capnp::PackedFdMessageReader reader(fd, readerOptions);
+      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
+      LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
+      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      
+      panmapUtils::LiteTree liteTree;
+      liteTree.initialize(liteTreeReader);
+    
+
+      auto start_time_traverse = std::chrono::high_resolution_clock::now();
+      mgsr::mgsrPlacer mgsrPlacer(&liteTree, indexReader);
+      mgsrPlacer.traverseTree();
+      auto end_time_traverse = std::chrono::high_resolution_clock::now();
+      auto duration_traverse = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_traverse - start_time_traverse);
+      std::cout << "\n\nTraversed tree in " << static_cast<double>(duration_traverse.count()) / 1000.0 << "s\n" << std::endl;
+
+      // std::vector<std::string> readSequences;
+      // mgsr::extractReadSequences(reads1, reads2, readSequences);
+      // mgsr::ThreadsManager threadsManager(&liteTree, readSequences, indexReader.getK(), indexReader.getS(), indexReader.getT(), indexReader.getL(), indexReader.getOpen());
+      // threadsManager.initializeThreadRanges(numThreads);  
+
+      // std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
+      // for (size_t i = 0; i < numThreads; ++i) {
+      //   totalNodesPerThread[i] = liteTree.allLiteNodes.size();
+      // }
+      // ProgressTracker progressTracker(numThreads, totalNodesPerThread);
+
+      // std::cout << "Using " << numThreads << " threads" << std::endl;
+      // std::cout << readSequences.size() << " reads sketched into " << threadsManager.reads.size() << " unique kminmer-set reads" << std::endl;
+
+      // auto start_time_place = std::chrono::high_resolution_clock::now();
+      // tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+      //   for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+      //     auto [start, end] = threadsManager.threadRanges[i];
+        
+      //     std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
+      //     mgsr::mgsrPlacer curThreadPlacer(&liteTree, indexReader);
+      //     curThreadPlacer.initializeQueryData(curThreadReads);
+      //     curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
+
+      //     curThreadPlacer.setProgressTracker(&progressTracker, i);
+
+      //     std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
+      //               << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads" << std::endl;
+
+      //     curThreadPlacer.placeReads();
+
+      //     threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
+      //     threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
+      //     threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
+      //     threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
+      //     threadsManager.readMinichainsUpdated[i] = curThreadPlacer.readMinichainsUpdated;
+      //     if (i == 0) {
+      //       threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
+      //       threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
+      //       threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
+      //       threadsManager.nodeToDfsIndex = std::move(curThreadPlacer.nodeToDfsIndex);
+      //     }
+          
+
+      //     std::cout << "Thread processed " << curThreadReads.size() 
+      //               << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
+      //               << std::endl;
+      //   }
+      // });
+
+
+      // auto end_time_place = std::chrono::high_resolution_clock::now();
+      // auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
+      // std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+
+      // mgsr::squareEM squareEM(threadsManager, 1000);
+      
+      // auto start_time_squareEM = std::chrono::high_resolution_clock::now();
+      // for (size_t i = 0; i < 5; ++i) {
+      //   squareEM.runSquareEM(1000);
+      //   std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
+      //   bool removed = squareEM.removeLowPropNodes();
+      //   std::cout << squareEM.nodes.size() << std::endl;
+      //   if (!removed) {
+      //     break;
+      //   }
+      // }
+      
+      // std::vector<uint64_t> indices(squareEM.nodes.size());
+      // std::iota(indices.begin(), indices.end(), 0);
+      // std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
+      //   return squareEM.props[i] > squareEM.props[j];
+      // });
+      // std::cout << std::endl;
+
+      // std::cout << std::setprecision(5) << std::fixed;
+      // for (size_t i = 0; i < indices.size(); ++i) {
+      //   size_t index = indices[i];
+      //   std::cout << squareEM.nodes[index];
+      //   if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
+      //     for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
+      //       std::cout << "," << member;
+      //     }
+      //   }
+      //   std::cout << "\t" << squareEM.props[index] << std::endl;
+      // }
+      // auto end_time_squareEM = std::chrono::high_resolution_clock::now();
+      // auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
+      // std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
+
+      exit(0);
+    }
+
     // Get remaining parameters
     bool reindex = vm.count("reindex") > 0;
     bool prior = vm.count("prior") > 0;
@@ -950,6 +1063,7 @@ int main(int argc, char *argv[]) {
 
     std::random_device rd;
     std::mt19937 rng(rd());
+
 
     // Load pangenome
     msg("Loading reference pangenome from: {}", guide);
@@ -982,6 +1096,18 @@ int main(int argc, char *argv[]) {
 
     msg("Using first tree as reference.");
     panmanUtils::Tree &T = TG->trees[0];
+
+    if (vm.count("index-mgsr")) {
+      std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
+      int mgsr_t = 0;
+      int mgsr_l = 3;
+      bool open = false;
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
+      mgsrIndexBuilder.buildIndex();
+      mgsrIndexBuilder.writeIndex(mgsr_index_path);
+      msg("MGSR index written to: {}", mgsr_index_path);
+      return 0;
+    }
 
     // Handle --dump-random-node parameter if provided
     if (dump_random_node) {
@@ -1102,123 +1228,6 @@ int main(int argc, char *argv[]) {
                   reindex ? "Reindex flag set" : "No existing index found");
     }
 
-    if (vm.count("index-mgsr")) {
-      std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
-      int mgsr_t = 0;
-      int mgsr_l = 3;
-      bool open = false;
-      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
-      mgsrIndexBuilder.buildIndex();
-      mgsrIndexBuilder.writeIndex(mgsr_index_path);
-      msg("MGSR index written to: {}", mgsr_index_path);
-      return 0;
-    }
-
-    if (vm.count("mgsr-index")) {
-      std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
-      int fd = mgsr::open_file(mgsr_index_path);
-      ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
-      ::capnp::PackedFdMessageReader reader(fd, readerOptions);
-      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
-
-      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-      
-      panmapUtils::BlockSequences blockSequences(&T);
-      panmapUtils::GlobalCoords globalCoords(blockSequences);
-
-      std::vector<std::string> readSequences;
-      mgsr::extractReadSequences(reads1, reads2, readSequences);
-      mgsr::ThreadsManager threadsManager(&T, readSequences, indexReader.getK(), indexReader.getS(), indexReader.getT(), indexReader.getL(), indexReader.getOpen());
-      threadsManager.initializeThreadRanges(numThreads);  
-
-      std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
-      for (size_t i = 0; i < numThreads; ++i) {
-        totalNodesPerThread[i] = T.allNodes.size();
-      }
-      ProgressTracker progressTracker(numThreads, totalNodesPerThread);
-
-      std::cout << "Using " << numThreads << " threads" << std::endl;
-      std::cout << readSequences.size() << " reads sketched into " << threadsManager.reads.size() << " unique kminmer-set reads" << std::endl;
-
-      auto start_time_place = std::chrono::high_resolution_clock::now();
-      tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
-        for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
-          auto [start, end] = threadsManager.threadRanges[i];
-        
-          std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-          mgsr::mgsrPlacer curThreadPlacer(&T, indexReader, &globalCoords);
-          curThreadPlacer.initializeQueryData(curThreadReads);
-          curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
-
-          curThreadPlacer.setProgressTracker(&progressTracker, i);
-
-          std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
-                    << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads" << std::endl;
-
-          curThreadPlacer.placeReads();
-
-          threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
-          threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
-          threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
-          threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
-          threadsManager.readMinichainsUpdated[i] = curThreadPlacer.readMinichainsUpdated;
-          if (i == 0) {
-            threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
-            threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
-            threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
-            threadsManager.nodeToDfsIndex = std::move(curThreadPlacer.nodeToDfsIndex);
-          }
-          
-
-          std::cout << "Thread processed " << curThreadReads.size() 
-                    << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
-                    << std::endl;
-        }
-      });
-
-
-      auto end_time_place = std::chrono::high_resolution_clock::now();
-      auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
-
-      // mgsr::squareEM squareEM(threadsManager, 1000);
-      
-      // auto start_time_squareEM = std::chrono::high_resolution_clock::now();
-      // for (size_t i = 0; i < 5; ++i) {
-      //   squareEM.runSquareEM(1000);
-      //   std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
-      //   bool removed = squareEM.removeLowPropNodes();
-      //   std::cout << squareEM.nodes.size() << std::endl;
-      //   if (!removed) {
-      //     break;
-      //   }
-      // }
-      
-      // std::vector<uint64_t> indices(squareEM.nodes.size());
-      // std::iota(indices.begin(), indices.end(), 0);
-      // std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
-      //   return squareEM.props[i] > squareEM.props[j];
-      // });
-      // std::cout << std::endl;
-
-      // std::cout << std::setprecision(5) << std::fixed;
-      // for (size_t i = 0; i < indices.size(); ++i) {
-      //   size_t index = indices[i];
-      //   std::cout << squareEM.nodes[index];
-      //   if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
-      //     for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
-      //       std::cout << "," << member;
-      //     }
-      //   }
-      //   std::cout << "\t" << squareEM.props[index] << std::endl;
-      // }
-      // auto end_time_squareEM = std::chrono::high_resolution_clock::now();
-      // auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
-      // std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
-
-      // exit(0);
-    }
-    exit(0);
 
     // Build index if needed
     if (build) {

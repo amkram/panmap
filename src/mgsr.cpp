@@ -549,11 +549,11 @@ static void printTopN(const Eigen::VectorXd& myVector, size_t n) {
 }
 
 int64_t mgsr::mgsrPlacer::getReadBruteForceScore(
-  size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable
+  size_t readIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable
 ) {
   auto readCopy = reads[readIndex];
   initializeReadMinichains(readCopy);
-  int64_t pseudoScore = getReadPseudoScore(readCopy, degapCoordIndex, regapCoordIndex);
+  int64_t pseudoScore = getReadPseudoScore(readCopy);
   return pseudoScore;
 }
 
@@ -966,7 +966,7 @@ void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fas
 
   // initialize score index structures
   size_t numReads = reads.size();
-  size_t numNodes = T->allNodes.size();
+  size_t numNodes = liteTree->allLiteNodes.size();
   maxScores.resize(numReads, -1);
   // maxScoreNodeIndex.resize(numReads);
   if (fast_mode) {
@@ -2382,6 +2382,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     blockStrandDelayed[blockId] = newStrand;
   }
 
+  nodeToDfsIndex[node->identifier] = dfsIndex;
   std::cout << "\rdfsIndex: " << dfsIndex << std::flush;
   for (panmanUtils::Node *child : node->children) {
     dfsIndex++;
@@ -2463,10 +2464,12 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   std::map<uint64_t, uint64_t> gapMap{{0, globalCoords.lastScalarCoord}};
   std::unordered_set<uint64_t> invertedBlocks;
 
+  // add lite tree to index
+  LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
   uint64_t dfsIndex = 0;
   buildIndexHelper(T->root, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
   
-  // Finally add unique k-min-mers to index
+  // Add unique k-min-mers to index
   capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
   for (size_t i = 0; i < uniqueKminmers.size(); i++) {
     seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
@@ -2474,6 +2477,28 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
     seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
     seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
   }
+
+  // Add block infos to index
+  capnp::List<BlockRange>::Builder blockRangesBuilder = liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
+  for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
+    blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
+    blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
+  }
+
+  // Add node to index
+  capnp::List<LiteNode>::Builder nodesBuilder = liteTreeBuilder.initLiteNodes(T->allNodes.size());
+  for (const auto& [nodeId, node] : T->allNodes) {
+    auto dfsIndex = nodeToDfsIndex[nodeId];
+    nodesBuilder[dfsIndex].setId(nodeId);
+    if (node->parent == nullptr) {
+      nodesBuilder[dfsIndex].setParentIndex(0);
+    } else {
+      nodesBuilder[dfsIndex].setParentIndex(nodeToDfsIndex[node->parent->identifier]);
+    }
+  }
+
+
+
 
   std::cout << "Finished building index!" << std::endl;
 }
@@ -2633,7 +2658,7 @@ void mgsr::mgsrPlacer::updateSeeds(
   seedBacktracks.shrink_to_fit();
 }
 
-void mgsr::mgsrPlacer::updateGapMap(const panmapUtils::GlobalCoords& globalCoords, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks) {
+void mgsr::mgsrPlacer::updateGapMap(std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks) {
   gapMapBacktracks.reserve(coordDeltas[curDfsIndex].size());
   for (const auto& coordDelta : coordDeltas[curDfsIndex]) {
     const uint32_t& pos = coordDelta.first;
@@ -2657,8 +2682,8 @@ void mgsr::mgsrPlacer::updateGapMap(const panmapUtils::GlobalCoords& globalCoord
 
   gapMapBlocksBacktracks.reserve(invertedBlocks[curDfsIndex].size() * 128);
   for (const auto& invertedBlock : invertedBlocks[curDfsIndex]) {
-    uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(invertedBlock);
-    uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(invertedBlock);
+    uint64_t beg = (uint64_t)liteTree->getBlockStartScalar(invertedBlock);
+    uint64_t end = (uint64_t)liteTree->getBlockEndScalar(invertedBlock);
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> tmpGapMapUpdates;
     invertGapMap(gapMap, {beg, end}, gapMapBlocksBacktracks, tmpGapMapUpdates);
   }
@@ -3772,9 +3797,7 @@ bool mgsr::mgsrPlacer::isColinearFromMinichains(
   return false;
 }
 
-int64_t mgsr::mgsrPlacer::getReadPseudoScore(
-  mgsr::Read& curRead, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex
-) {
+int64_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
   const auto& minichains = curRead.minichains;
 
   int64_t pseudoChainScore = 0;
@@ -3825,10 +3848,10 @@ int64_t mgsr::mgsrPlacer::getReadPseudoScore(
 
 
 std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId) const {
-  panmanUtils::Node* currentNode = T->allNodes[nodeId];
+  panmapUtils::LiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
   // Get the path from root the current node
-  std::vector<panmanUtils::Node*> nodePath;
+  std::vector<panmapUtils::LiteNode*> nodePath;
   while (currentNode->parent != nullptr) {
     nodePath.push_back(currentNode);
     currentNode = currentNode->parent;
@@ -3846,10 +3869,10 @@ std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeI
 }
 
 void mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
-  panmanUtils::Node* currentNode = T->allNodes[nodeId];
+  panmapUtils::LiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
   // Get the path from root the current node
-  std::vector<panmanUtils::Node*> nodePath;
+  std::vector<panmapUtils::LiteNode*> nodePath;
   while (currentNode->parent != nullptr) {
     nodePath.push_back(currentNode);
     currentNode = currentNode->parent;
@@ -3866,10 +3889,10 @@ void mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId, std::vector<ui
 }
 
 bool mgsr::mgsrPlacer::identicalReadScores(const std::string& node1, const std::string& node2, bool fast_mode) const {
-  panmanUtils::Node* currentNode1 = T->allNodes[node1];
-  panmanUtils::Node* currentNode2 = T->allNodes[node2];
-  std::vector<panmanUtils::Node*> nodePath1;
-  std::vector<panmanUtils::Node*> nodePath2;
+  panmapUtils::LiteNode* currentNode1 = liteTree->allLiteNodes[node1];
+  panmapUtils::LiteNode* currentNode2 = liteTree->allLiteNodes[node2];
+  std::vector<panmapUtils::LiteNode*> nodePath1;
+  std::vector<panmapUtils::LiteNode*> nodePath2;
 
   while (currentNode1->parent != nullptr) {
     nodePath1.push_back(currentNode1);
@@ -3895,14 +3918,14 @@ bool mgsr::mgsrPlacer::identicalReadScores(const std::string& node1, const std::
 
   std::unordered_map<size_t, std::pair<uint32_t, uint32_t>> changedReads;
   for (size_t i = lcaIndex + 1; i < nodePath1.size(); ++i) {
-    panmanUtils::Node* currNode = nodePath1[i];
+    panmapUtils::LiteNode* currNode = nodePath1[i];
     for (const auto& scoreDelta : perNodeScoreDeltasIndex[nodeToDfsIndex.at(currNode->identifier)]) {
       changedReads[scoreDelta.readIndex] = {scoreDelta.scoreDelta, lcaScores[scoreDelta.readIndex]};
     }
   }
 
   for (size_t i = lcaIndex + 1; i < nodePath2.size(); ++i) {
-    panmanUtils::Node* currNode = nodePath2[i];
+    panmapUtils::LiteNode* currNode = nodePath2[i];
     for (const auto& scoreDelta : perNodeScoreDeltasIndex[nodeToDfsIndex.at(currNode->identifier)]) {
       if (changedReads.find(scoreDelta.readIndex) != changedReads.end()) {
         changedReads[scoreDelta.readIndex].second = scoreDelta.scoreDelta;
@@ -3984,7 +4007,51 @@ void mgsr::mgsrPlacer::setProgressTracker(ProgressTracker* tracker, size_t tid) 
 }
 
 
-void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUtils::GlobalCoords& globalCoords) {
+void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
+  if (curDfsIndex % 100 == 0) {
+    std::cout << "\r" << curDfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
+  }
+
+  // **** Update seeds ****
+  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
+  std::unordered_set<uint64_t> affectedSeedmers;
+  updateSeeds(seedBacktracks, affectedSeedmers);
+
+  // **** Update gapMap ****
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
+  updateGapMap(gapMapBacktracks, gapMapBlocksBacktracks); 
+
+  // **** Revert gapMap inversions ****
+  revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
+
+  for (panmapUtils::LiteNode *child : node->children) {
+    ++curDfsIndex;
+    traverseTreeHelper(child);
+  }
+
+  // Backtrack seeds and delayedRefSeedmerStatus
+  for (const auto& [uniqueKminmerIndex, changeType] : seedBacktracks) {
+    if (changeType == panmapUtils::seedChangeType::ADD) {
+      delSeedAtPosition(seedInfos[uniqueKminmerIndex].startPos);
+    } else {
+      addSeedAtPosition(uniqueKminmerIndex);
+    }
+  }
+  
+  // Backtrack gapMap
+  for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {
+    const auto& [del, range] = *it;
+    if (del) {
+      gapMap.erase(range.first);
+    } else {
+      gapMap[range.first] = range.second;
+    }
+  }
+}
+
+void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   // Update progress if tracker is available
   if (progressTracker) {
     progressTracker->incrementProgress(threadId);
@@ -3998,18 +4065,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
   // **** Update gapMap ****
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
-  updateGapMap(globalCoords, gapMapBacktracks, gapMapBlocksBacktracks);
-
-  // **** Convert gapMap to coordIndex ****
-  std::map<uint64_t, uint64_t> degapCoordIndex;
-  std::map<uint64_t, uint64_t> regapCoordIndex;
-  makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
-  // compareBruteForcePlace(T, node, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, positionMap, hashToPositionMap, seedInfos, k, s, t, l, openSyncmer);
-  
-
-  // **** Revert gapMap inversions ****
-  revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
+  updateGapMap(gapMapBacktracks, gapMapBlocksBacktracks);
 
   // **** Start placing reads ****
   // unordered_map<readIndex, pair<vector<affectedSeedmerIndexOnRead>, pair<allUniqueToNonUnique, allNonUniqueToUnique>>>
@@ -4090,7 +4146,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
         /*chaining debug*/if (false) std::cout << "\tread is not allUniqueToNonUnique or allNonUniqueToUnique... reinitializing minichains" << std::endl;
         initializeReadMinichains(curRead);
       }
-      int64_t pseudoScore = getReadPseudoScore(curRead, degapCoordIndex, regapCoordIndex);
+      int64_t pseudoScore = getReadPseudoScore(curRead);
 
       readScoresBacktrack[backtrackIndex].first = readIndex;
       readScoresBacktrack[backtrackIndex].second = readScores[readIndex];
@@ -4104,7 +4160,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
       }
       ++backtrackIndex;
 
-      // int64_t bruteForceScore = getReadBruteForceScore(readIndex, degapCoordIndex, regapCoordIndex, hashCoordInfoCacheTable);
+      // int64_t bruteForceScore = getReadBruteForceScore(readIndex, hashCoordInfoCacheTable);
       // if (pseudoScore != bruteForceScore) {
       //   std::cerr << "[" << node->identifier << " " << curDfsIndex << "] readIndex: " << readIndex << " dynamic: " << pseudoScore << " != brute force: " << bruteForceScore << std::endl;
       //   exit(1);
@@ -4116,9 +4172,13 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmanUtils::Node* node, const panmapUti
   // std::cout << "affectedSeedmers.size(): " << affectedSeedmers.size() << " hashCoordInfoCacheTable.size(): " << hashCoordInfoCacheTable.size() << std::endl;;
 
   // std::cout << "\rFinished dfsIndex: " << curDfsIndex << std::flush;
-  for (panmanUtils::Node *child : node->children) {
+  // **** Revert gapMap inversions ****
+  revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
+
+  for (panmapUtils::LiteNode *child : node->children) {
     ++curDfsIndex;
-    placeReadsHelper(child, globalCoords);
+    placeReadsHelper(child);
   }
 
   // Backtrack seeds and delayedRefSeedmerStatus
@@ -4172,11 +4232,19 @@ void mgsr::mgsrPlacer::preallocateHashCoordInfoCacheTable(uint32_t startReadInde
 
 void mgsr::mgsrPlacer::placeReads() {
   gapMap.clear();
-  gapMap.insert(std::make_pair(0, globalCoords->lastScalarCoord));
+  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
 
   curDfsIndex = 0;
   preallocateHashCoordInfoCacheTable(0, reads.size());
-  placeReadsHelper(T->root, *globalCoords);
+  placeReadsHelper(liteTree->root);
+}
+
+void mgsr::mgsrPlacer::traverseTree() {
+  gapMap.clear();
+  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
+
+  curDfsIndex = 0;
+  traverseTreeHelper(liteTree->root);
 }
 
 std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId) const {
@@ -4190,10 +4258,10 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
     curNodeScores.resize(reads.size(), 0);
   }
 
-  panmanUtils::Node* currentNode = T->allNodes[nodeId];
+  panmapUtils::LiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
   // Get the path from root the current node
-  std::vector<panmanUtils::Node*> nodePath;
+  std::vector<panmapUtils::LiteNode*> nodePath;
   while (currentNode->parent != nullptr) {
     nodePath.push_back(currentNode);
     currentNode = currentNode->parent;
