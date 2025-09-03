@@ -563,10 +563,14 @@ class mgsrPlacer {
     void removeFromMinichains(std::vector<Minichain>& curMinichains, Minichain minichain);
     uint64_t getRefSeedmerBegFromHash(const size_t hash) const;
     uint64_t getRefSeedmerEndFromHash(const size_t hash) const;
+    int32_t getLocalGap(const uint32_t a, const uint32_t b) const;
     bool isColinearFromMinichains(
       mgsr::Read& curRead, const mgsr::Minichain& minichain1, const mgsr::Minichain& minichain2,
       const std::map<uint64_t, uint64_t>& degapCoordIndex,
       const std::map<uint64_t, uint64_t>& regapCoordIndex);
+    bool isColinearFromMinichains(
+      mgsr::Read& curRead, const mgsr::Minichain& minichain1, const mgsr::Minichain& minichain2
+    );
 
     int64_t getReadBruteForceScore(size_t readIndex, const std::map<uint64_t, uint64_t>& degapCoordIndex, const std::map<uint64_t, uint64_t>& regapCoordIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
 };
