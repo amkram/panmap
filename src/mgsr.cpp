@@ -3579,10 +3579,75 @@ uint64_t mgsr::mgsrPlacer::getRefSeedmerEndFromHash(const size_t hash) const {
   return seedInfos[positionIt->second].endPos;
 }
 
-inline uint32_t absDifference(const uint32_t a, const uint32_t b) {
+inline int32_t absDifference(const uint32_t a, const uint32_t b) {
   return a > b ? a - b : b - a;
 }
 
+int32_t mgsr::mgsrPlacer::getLocalGap(const uint32_t a, const uint32_t b) const {
+  if (a == b) return 0;
+  uint32_t left = a < b ? a : b;
+  uint32_t right = a > b ? a : b;
+  auto curIt = gapMap.upper_bound(left);
+
+  if (curIt == gapMap.end() || curIt->first > right) {
+    return right - left;
+  }
+
+  uint32_t gap = curIt->first - left - 1;
+  auto prevIt = curIt;
+  ++curIt;
+  while (true) {
+    if (curIt == gapMap.end()) {
+      gap += right - prevIt->second;
+      break;
+    } else if (right > curIt->first) {
+      gap += curIt->first - prevIt->second - 1;
+    } else if (right < curIt->first) {
+      gap += right - prevIt->second;
+      break;
+    } else if (right == curIt->first) {
+      std::cerr << "Error: right == curIt->first" << std::endl;
+      exit(1);
+    }
+    prevIt = curIt;
+    ++curIt;
+  }
+  return gap;
+}
+
+bool mgsr::mgsrPlacer::isColinearFromMinichains(
+  mgsr::Read& curRead, const mgsr::Minichain& minichain1, const mgsr::Minichain& minichain2
+) {
+  const bool minichainRev = minichain1.rev;
+  const auto& seedmersList = curRead.seedmersList;
+  const auto& beg1seedmer = seedmersList[minichain1.begIndex];
+  const auto& end1seedmer = seedmersList[minichain1.endIndex];
+  const auto& beg2seedmer = seedmersList[minichain2.begIndex];
+  const auto& end2seedmer = seedmersList[minichain2.endIndex];
+
+  const auto qbeg2 = beg2seedmer.begPos; // qbeg2: minichain2 -> query -> startKminmer
+  const auto qend1 = end1seedmer.endPos; // qend1: minichain1 -> query -> endKminmer
+
+  if (!minichainRev) {   
+    const auto rglobalbeg1 = getRefSeedmerBegFromHash(beg1seedmer.hash);
+    const auto rglobalbeg2 = getRefSeedmerBegFromHash(beg2seedmer.hash);
+    const auto rglobalend1 = getRefSeedmerEndFromHash(end1seedmer.hash);
+
+    int32_t qgap = absDifference(qbeg2, qend1);
+    int32_t rgap = getLocalGap(rglobalbeg2, rglobalend1);
+    if (rglobalbeg1 < rglobalbeg2 && absDifference(qgap, rgap) < maximumGap) return true;
+  } else {
+    const auto rglobalbeg1 = getRefSeedmerBegFromHash(end1seedmer.hash);
+    const auto rglobalbeg2 = getRefSeedmerBegFromHash(end2seedmer.hash);
+    const auto rglobalend2 = getRefSeedmerEndFromHash(beg2seedmer.hash);
+
+
+    int32_t qgap = absDifference(qbeg2, qend1);
+    int32_t rgap = getLocalGap(rglobalbeg1, rglobalend2);
+    if (rglobalbeg2 < rglobalbeg1 && absDifference(qgap, rgap) < maximumGap) return true;
+  }
+  return false;
+}
 
 bool mgsr::mgsrPlacer::isColinearFromMinichains(
   mgsr::Read& curRead, const mgsr::Minichain& minichain1, const mgsr::Minichain& minichain2,
@@ -3599,31 +3664,28 @@ bool mgsr::mgsrPlacer::isColinearFromMinichains(
   const auto qbeg2 = beg2seedmer.begPos; // qbeg2: minichain2 -> query -> startKminmer
   const auto qend1 = end1seedmer.endPos; // qend1: minichain1 -> query -> endKminmer
 
-  // rbeg1: minichain1 -> ref -> startKminmer
-  absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rbeg1CoordInfoCacheIt = hashCoordInfoCacheTable.find(beg1seedmer.hash);
-  absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rbeg2CoordInfoCacheIt = hashCoordInfoCacheTable.find(beg2seedmer.hash);
-  absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rend1CoordInfoCacheIt = minichainRev ? hashCoordInfoCacheTable.end() : hashCoordInfoCacheTable.find(end1seedmer.hash);
-  absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rend2CoordInfoCacheIt = minichainRev ? hashCoordInfoCacheTable.find(end2seedmer.hash) : hashCoordInfoCacheTable.end();
-
-  auto& rglobalbeg1 = rbeg1CoordInfoCacheIt->second.rGlobalBeg;
-  auto& rbeg1       = rbeg1CoordInfoCacheIt->second.rLocalBeg;
-  if (rbeg1CoordInfoCacheIt->second.begDfsIndex != curDfsIndex) {
-    rbeg1CoordInfoCacheIt->second.begDfsIndex = curDfsIndex;
-    rglobalbeg1 = getRefSeedmerBegFromHash(beg1seedmer.hash);
-    rbeg1 = mgsr::degapGlobal(rglobalbeg1, degapCoordIndex);
-  }
-
-  // rbeg2: minichain2 -> ref -> startKminmer
-  auto& rglobalbeg2 = rbeg2CoordInfoCacheIt->second.rGlobalBeg;
-  auto& rbeg2       = rbeg2CoordInfoCacheIt->second.rLocalBeg;
-  if (rbeg2CoordInfoCacheIt->second.begDfsIndex != curDfsIndex) {
-    rbeg2CoordInfoCacheIt->second.begDfsIndex = curDfsIndex;
-    rglobalbeg2 = getRefSeedmerBegFromHash(beg2seedmer.hash);
-    rbeg2 = mgsr::degapGlobal(rglobalbeg2, degapCoordIndex);
-  }
-
-
   if (!minichainRev) {
+    absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rbeg1CoordInfoCacheIt = hashCoordInfoCacheTable.find(beg1seedmer.hash);
+    absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rbeg2CoordInfoCacheIt = hashCoordInfoCacheTable.find(beg2seedmer.hash);
+    absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rend1CoordInfoCacheIt = hashCoordInfoCacheTable.find(end1seedmer.hash);
+   
+    // rbeg1: minichain1 -> ref -> startKminmer
+    auto& rglobalbeg1 = rbeg1CoordInfoCacheIt->second.rGlobalBeg;
+    auto& rbeg1       = rbeg1CoordInfoCacheIt->second.rLocalBeg;
+    if (rbeg1CoordInfoCacheIt->second.begDfsIndex != curDfsIndex) {
+      rbeg1CoordInfoCacheIt->second.begDfsIndex = curDfsIndex;
+      rglobalbeg1 = getRefSeedmerBegFromHash(beg1seedmer.hash);
+      rbeg1 = mgsr::degapGlobal(rglobalbeg1, degapCoordIndex);
+    }
+  
+    // rbeg2: minichain2 -> ref -> startKminmer
+    auto& rglobalbeg2 = rbeg2CoordInfoCacheIt->second.rGlobalBeg;
+    auto& rbeg2       = rbeg2CoordInfoCacheIt->second.rLocalBeg;
+    if (rbeg2CoordInfoCacheIt->second.begDfsIndex != curDfsIndex) {
+      rbeg2CoordInfoCacheIt->second.begDfsIndex = curDfsIndex;
+      rglobalbeg2 = getRefSeedmerBegFromHash(beg2seedmer.hash);
+      rbeg2 = mgsr::degapGlobal(rglobalbeg2, degapCoordIndex);
+    }
     // rend1: minichain1 -> ref -> endKminmer
     auto& rglobalend1 = rend1CoordInfoCacheIt->second.rGlobalEnd;
     auto& rend1       = rend1CoordInfoCacheIt->second.rLocalEnd;
@@ -3637,19 +3699,40 @@ bool mgsr::mgsrPlacer::isColinearFromMinichains(
     int32_t rgap = absDifference(rbeg2, rend1);
     if (rbeg1 < rbeg2 && absDifference(qgap, rgap) < maximumGap) return true;
   } else {
-    // rend2: minichain2 -> ref -> endKminmer
+    absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rbeg1CoordInfoCacheIt = hashCoordInfoCacheTable.find(end1seedmer.hash);
+    absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rbeg2CoordInfoCacheIt = hashCoordInfoCacheTable.find(end2seedmer.hash);
+    absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>::iterator rend2CoordInfoCacheIt = hashCoordInfoCacheTable.find(beg2seedmer.hash);
+   
+    auto& rglobalbeg1 = rbeg1CoordInfoCacheIt->second.rGlobalBeg;
+    auto& rbeg1       = rbeg1CoordInfoCacheIt->second.rLocalBeg;
+    if (rbeg1CoordInfoCacheIt->second.begDfsIndex != curDfsIndex) {
+      rbeg1CoordInfoCacheIt->second.begDfsIndex = curDfsIndex;
+      rglobalbeg1 = getRefSeedmerBegFromHash(end1seedmer.hash);
+      rbeg1 = mgsr::degapGlobal(rglobalbeg1, degapCoordIndex);
+    }
+
+    auto& rglobalbeg2 = rbeg2CoordInfoCacheIt->second.rGlobalBeg;
+    auto& rbeg2       = rbeg2CoordInfoCacheIt->second.rLocalBeg;
+    if (rbeg2CoordInfoCacheIt->second.begDfsIndex != curDfsIndex) {
+      rbeg2CoordInfoCacheIt->second.begDfsIndex = curDfsIndex;
+      rglobalbeg2 = getRefSeedmerBegFromHash(end2seedmer.hash);
+      rbeg2 = mgsr::degapGlobal(rglobalbeg2, degapCoordIndex);
+    }
+
     auto& rglobalend2 = rend2CoordInfoCacheIt->second.rGlobalEnd;
     auto& rend2       = rend2CoordInfoCacheIt->second.rLocalEnd;
     if (rend2CoordInfoCacheIt->second.endDfsIndex != curDfsIndex) {
       rend2CoordInfoCacheIt->second.endDfsIndex = curDfsIndex;
-      rglobalend2 = getRefSeedmerEndFromHash(end2seedmer.hash);
+      rglobalend2 = getRefSeedmerEndFromHash(beg2seedmer.hash);
       rend2 = mgsr::degapGlobal(rglobalend2, degapCoordIndex);
     }
+
 
     int32_t qgap = absDifference(qbeg2, qend1);
     int32_t rgap = absDifference(rbeg1, rend2);
     if (rbeg2 < rbeg1 && absDifference(qgap, rgap) < maximumGap) return true;
   }
+  return false;
 }
 
 int64_t mgsr::mgsrPlacer::getReadPseudoScore(
@@ -3690,11 +3773,11 @@ int64_t mgsr::mgsrPlacer::getReadPseudoScore(
       }
 
       if (longestMinichainIndex < i) {
-        if (isColinearFromMinichains(curRead, longestMinichain, currentMinichain, degapCoordIndex, regapCoordIndex)) {
+        if (isColinearFromMinichains(curRead, longestMinichain, currentMinichain)) {
           pseudoChainScore += currentMinichain.getLength();
         }
       } else if (longestMinichainIndex > i) {
-        if (isColinearFromMinichains(curRead, currentMinichain, longestMinichain, degapCoordIndex, regapCoordIndex)) {
+        if (isColinearFromMinichains(curRead, currentMinichain, longestMinichain)) {
           pseudoChainScore += currentMinichain.getLength();
         }
       }
