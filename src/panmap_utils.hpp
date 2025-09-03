@@ -1,6 +1,9 @@
 #pragma once
 
 #include "panmanUtils.hpp"
+#include "capnp/message.h"
+#include "capnp/serialize-packed.h"
+#include "mgsr_index.capnp.h"
 #include "logging.hpp"
 #include <string>
 #include <iostream>
@@ -37,6 +40,25 @@ std::string getStringFromReference(
   std::string reference,
   bool aligned
 );
+
+class LiteNode {
+  public:
+    std::string identifier;
+    LiteNode* parent;
+    std::vector<LiteNode*> children;
+};
+
+class LiteTree {
+  public:
+    LiteNode* root;
+    std::unordered_map<std::string, LiteNode*> allLiteNodes;
+    std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
+
+    void initialize(::LiteTree::Reader liteTreeReader);
+
+    uint32_t getBlockStartScalar(const uint32_t blockId) const;
+    uint32_t getBlockEndScalar(const uint32_t blockId) const;
+};
 
 
 
