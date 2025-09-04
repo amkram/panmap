@@ -241,6 +241,16 @@ std::string getStringFromReference(panmanUtils::Tree* tree, std::string referenc
 }
 
 
+void LiteTree::cleanup() {
+  for (auto& pair : allLiteNodes) {
+    delete pair.second;
+  }
+  allLiteNodes.clear();
+  blockScalarRanges.clear();
+  nodeToDfsIndex.clear();
+  root = nullptr;
+}
+
 uint32_t LiteTree::getBlockStartScalar(const uint32_t blockId) const {
   return blockScalarRanges[blockId].first;
 }
@@ -263,6 +273,7 @@ void LiteTree::initialize(::LiteTree::Reader liteTreeReader) {
     const auto liteNodeReader = liteNodesReader[i];
     const auto& nodeIdentifier = liteNodeReader.getId();
     const auto parentIndex = liteNodeReader.getParentIndex();
+    nodeToDfsIndex.emplace(nodeIdentifier, i);
     auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new LiteNode(nodeIdentifier, nullptr, {}));
     if (i == 0) continue;
     const auto parentNodeReader = liteNodesReader[parentIndex];

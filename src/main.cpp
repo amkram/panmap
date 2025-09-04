@@ -949,69 +949,62 @@ int main(int argc, char *argv[]) {
       liteTree.initialize(liteTreeReader);
     
 
-      auto start_time_traverse = std::chrono::high_resolution_clock::now();
-      mgsr::mgsrPlacer mgsrPlacer(&liteTree, indexReader);
-      mgsrPlacer.traverseTree();
-      auto end_time_traverse = std::chrono::high_resolution_clock::now();
-      auto duration_traverse = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_traverse - start_time_traverse);
-      std::cout << "\n\nTraversed tree in " << static_cast<double>(duration_traverse.count()) / 1000.0 << "s\n" << std::endl;
+      std::vector<std::string> readSequences;
+      mgsr::extractReadSequences(reads1, reads2, readSequences);
+      mgsr::ThreadsManager threadsManager(&liteTree, numThreads);
+      threadsManager.initializeMGSRIndex(indexReader);
+      threadsManager.initializeQueryData(readSequences);
 
-      // std::vector<std::string> readSequences;
-      // mgsr::extractReadSequences(reads1, reads2, readSequences);
-      // mgsr::ThreadsManager threadsManager(&liteTree, readSequences, indexReader.getK(), indexReader.getS(), indexReader.getT(), indexReader.getL(), indexReader.getOpen());
-      // threadsManager.initializeThreadRanges(numThreads);  
+      std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
+      for (size_t i = 0; i < numThreads; ++i) {
+        totalNodesPerThread[i] = liteTree.allLiteNodes.size();
+      }
+      ProgressTracker progressTracker(numThreads, totalNodesPerThread);
 
-      // std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
-      // for (size_t i = 0; i < numThreads; ++i) {
-      //   totalNodesPerThread[i] = liteTree.allLiteNodes.size();
-      // }
-      // ProgressTracker progressTracker(numThreads, totalNodesPerThread);
+      std::cout << "Using " << numThreads << " threads" << std::endl;
+      std::cout << readSequences.size() << " reads sketched into " << threadsManager.reads.size() << " unique kminmer-set reads" << std::endl;
 
-      // std::cout << "Using " << numThreads << " threads" << std::endl;
-      // std::cout << readSequences.size() << " reads sketched into " << threadsManager.reads.size() << " unique kminmer-set reads" << std::endl;
-
-      // auto start_time_place = std::chrono::high_resolution_clock::now();
-      // tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
-      //   for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
-      //     auto [start, end] = threadsManager.threadRanges[i];
+      auto start_time_place = std::chrono::high_resolution_clock::now();
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+        for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+          auto [start, end] = threadsManager.threadRanges[i];
         
-      //     std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-      //     mgsr::mgsrPlacer curThreadPlacer(&liteTree, indexReader);
-      //     curThreadPlacer.initializeQueryData(curThreadReads);
-      //     curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
+          std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
+          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager);
+          curThreadPlacer.initializeQueryData(curThreadReads);
+          curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
 
-      //     curThreadPlacer.setProgressTracker(&progressTracker, i);
+          curThreadPlacer.setProgressTracker(&progressTracker, i);
 
-      //     std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
-      //               << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads" << std::endl;
+          std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
+                    << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads" << std::endl;
 
-      //     curThreadPlacer.placeReads();
+          curThreadPlacer.placeReads();
 
-      //     threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
-      //     threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
-      //     threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
-      //     threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
-      //     threadsManager.readMinichainsUpdated[i] = curThreadPlacer.readMinichainsUpdated;
-      //     if (i == 0) {
-      //       threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
-      //       threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
-      //       threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
-      //       threadsManager.nodeToDfsIndex = std::move(curThreadPlacer.nodeToDfsIndex);
-      //     }
+          threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
+          threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
+          threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
+          threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
+          threadsManager.readMinichainsUpdated[i] = curThreadPlacer.readMinichainsUpdated;
+          if (i == 0) {
+            threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
+            threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
+            threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
+          }
           
 
-      //     std::cout << "Thread processed " << curThreadReads.size() 
-      //               << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
-      //               << std::endl;
-      //   }
-      // });
-
-
-      // auto end_time_place = std::chrono::high_resolution_clock::now();
-      // auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-      // std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
-
-      // mgsr::squareEM squareEM(threadsManager, 1000);
+          std::cout << "Thread processed " << curThreadReads.size() 
+                    << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
+                    << std::endl;
+        }
+      });
+      auto end_time_place = std::chrono::high_resolution_clock::now();
+      auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
+      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+      
+      // auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
+      // liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
+      // mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, 1000);
       
       // auto start_time_squareEM = std::chrono::high_resolution_clock::now();
       // for (size_t i = 0; i < 5; ++i) {

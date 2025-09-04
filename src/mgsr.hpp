@@ -314,10 +314,27 @@ struct readScoreDelta {
 
 class ThreadsManager {
   public:
+    size_t numThreads;
     panmapUtils::LiteTree* liteTree;
+
+    // Reads 
     std::vector<mgsr::Read> reads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
     absl::flat_hash_set<size_t> allSeedmerHashesSet;
+
+    // parameters
+    int k;
+    int s;
+    int t;
+    int l;
+    bool openSyncmer;
+
+    // mutation structures... shared by all threads during placement
+    std::vector<seeding::uniqueKminmer_t> seedInfos;
+    std::vector<std::vector<uint32_t>> seedInsubIndices;
+    std::vector<std::vector<uint32_t>> seedDeletions;
+    std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>> coordDeltas; 
+    std::vector<std::vector<uint32_t>> invertedBlocks;
 
     //  thread:   dfsIndex:  scoreDelta
     std::vector<std::vector<std::vector<readScoreDelta>>> perNodeScoreDeltasIndexByThreadId; 
@@ -335,22 +352,27 @@ class ThreadsManager {
     std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
     std::unordered_map<std::string, std::string> identicalNodeToGroup;
 
-    // for squareEM... will be moved from mgsrPlacer to here.
-    std::unordered_map<std::string, int64_t> nodeToDfsIndex;
 
     // for squareEM... will be moved from mgsrPlacer to here.
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
 
 
-
-    ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
-      initializeQueryData(readSequences, k, s, t, l, openSyncmer);
+    // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
+    //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
+    // }
+    ThreadsManager(panmapUtils::LiteTree* liteTree,  size_t numThreads) : liteTree(liteTree), numThreads(numThreads) {
+      threadRanges.resize(numThreads);
+      perNodeScoreDeltasIndexByThreadId.resize(numThreads);
+      readMinichainsInitialized.resize(numThreads);
+      readMinichainsAdded.resize(numThreads);
+      readMinichainsRemoved.resize(numThreads);
+      readMinichainsUpdated.resize(numThreads);
     }
 
-    void initializeQueryData(std::span<const std::string> readSequences, int k, int s, int t, int l, bool openSyncmer, bool fast_mode = false);
-    void initializeThreadRanges(size_t numThreads);
-    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
-    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
+    void initializeMGSRIndex(MGSRIndex::Reader indexReader);
+    void initializeQueryData(std::span<const std::string> readSequences, bool fast_mode = false);
+    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const;
+    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const;
     void printStats();
 
 };
@@ -358,22 +380,27 @@ class ThreadsManager {
 class mgsrPlacer {
   public:
     // mutation structures
-    std::vector<seeding::uniqueKminmer_t> seedInfos;
-    std::vector<std::vector<uint32_t>> seedInsubIndices;
-    std::vector<std::vector<uint32_t>> seedDeletions;
-    std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>> coordDeltas;
-    std::vector<std::vector<uint32_t>> invertedBlocks;
+    std::vector<seeding::uniqueKminmer_t>* seedInfosPtr; 
+    std::vector<std::vector<uint32_t>>* seedInsubIndicesPtr; 
+    std::vector<std::vector<uint32_t>>* seedDeletionsPtr;
+    std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>* coordDeltasPtr; 
+    std::vector<std::vector<uint32_t>>* invertedBlocksPtr;
+
+    std::vector<seeding::uniqueKminmer_t>& seedInfos; 
+    std::vector<std::vector<uint32_t>>& seedInsubIndices; 
+    std::vector<std::vector<uint32_t>>& seedDeletions;
+    std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>& coordDeltas; 
+    std::vector<std::vector<uint32_t>>& invertedBlocks;
 
     // tree pointer
     panmapUtils::LiteTree *liteTree;
-    std::unordered_map<std::string, int64_t> nodeToDfsIndex;
+    std::unordered_map<std::string, int64_t> nodeToDfsIndex; // Now calculated from index... no longer updated during placement
 
-    // parameters from index
-    uint k = 0;
-    uint s = 0;
-    uint t = 0;
-    uint l = 0;
-    bool openSyncmer = false;
+    int k;
+    int s;
+    int t;
+    int l;
+    bool openSyncmer;
 
     // parameters from user input... preset for now
     double excludeDuplicatesThreshold = 0.5;
@@ -390,7 +417,6 @@ class mgsrPlacer {
     std::vector<std::pair<Minichain, bool>> minichainsToUpdate;
     std::vector<std::pair<Minichain, bool>> minichainsToRemove;
     std::vector<std::pair<Minichain, bool>> minichainsToAdd;
-    std::vector<std::pair<std::vector<uint64_t>, uint64_t>> readToAffectedSeedmerStorageHelper;  // might be memory intensive....
     absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache> hashCoordInfoCacheTable;
 
     // current query kminmer structures
@@ -411,13 +437,13 @@ class mgsrPlacer {
     int64_t totalDirectionalKminmerMatches = 0;
     
     // counters for calculating overlap coefficient
-    std::unordered_map<std::string, double> kminmerOverlapCoefficients;
+    std::unordered_map<std::string, double> kminmerOverlapCoefficients; // only calculate from the first thread
     size_t binaryOverlapKminmerCount = 0;
 
     // for identical pairs of nodes
     std::unordered_map<std::string, uint64_t> totalScores;
-    std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
-    std::unordered_map<std::string, std::string> identicalNodeToGroup;
+    std::unordered_map<std::string, std::vector<std::string>> identicalGroups; // only calculate from the first thread
+    std::unordered_map<std::string, std::string> identicalNodeToGroup; // only calculate from the first thread
 
 
     // for tracking progress
@@ -439,18 +465,43 @@ class mgsrPlacer {
 
     uint64_t readMinichainsUpdated = 0;
     
-    mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader)
-      : liteTree(liteTree)
+    mgsrPlacer(panmapUtils::LiteTree* liteTree, ThreadsManager& threadsManager)
+      : liteTree(liteTree),
+        seedInfos(threadsManager.seedInfos),
+        seedInfosPtr(&seedInfos),
+        seedInsubIndices(threadsManager.seedInsubIndices),
+        seedInsubIndicesPtr(&seedInsubIndices),
+        seedDeletions(threadsManager.seedDeletions),
+        seedDeletionsPtr(&seedDeletions),
+        coordDeltas(threadsManager.coordDeltas), 
+        coordDeltasPtr(&coordDeltas),
+        invertedBlocks(threadsManager.invertedBlocks),
+        invertedBlocksPtr(&invertedBlocks)
     {
-      capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
-      capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
-      
+      k = threadsManager.k;
+      s = threadsManager.s;
+      t = threadsManager.t;
+      l = threadsManager.l;
+      openSyncmer = threadsManager.openSyncmer;
+    }
+    
+    mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader)
+      : liteTree(liteTree),
+        seedInfos(*seedInfosPtr),
+        seedInsubIndices(*seedInsubIndicesPtr),
+        seedDeletions(*seedDeletionsPtr),
+        coordDeltas(*coordDeltasPtr),
+        invertedBlocks(*invertedBlocksPtr)
+    {
       k = indexReader.getK();
       s = indexReader.getS();
       t = indexReader.getT();
       l = indexReader.getL();
       openSyncmer = indexReader.getOpen();
-
+    
+      capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
+      capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
+    
       seedInfos.resize(seedInfosReader.size());
       for (size_t i = 0; i < seedInfos.size(); i++) {
         const auto& seedReader = seedInfosReader[i];
@@ -460,7 +511,7 @@ class mgsrPlacer {
         seed.endPos = seedReader.getEndPos();
         seed.isReverse = seedReader.getIsReverse();
       }
-
+    
       seedInsubIndices.resize(perNodeChangesReader.size());
       seedDeletions.resize(perNodeChangesReader.size());
       coordDeltas.resize(perNodeChangesReader.size());
@@ -471,38 +522,37 @@ class mgsrPlacer {
         auto& currentSeedDeletions = seedDeletions[i];
         auto& currentCoordDeltas = coordDeltas[i];
         auto& currentInvertedBlocks = invertedBlocks[i];
-
+    
         const auto& currentSeedInsubIndicesReader = currentPerNodeChangeReader.getSeedInsubIndices();
         const auto& currentSeedDeletionsReader = currentPerNodeChangeReader.getSeedDeletions();
         const auto& currentCoordDeltasReader = currentPerNodeChangeReader.getCoordDeltas();
         const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
-
+    
         currentSeedInsubIndices.resize(currentSeedInsubIndicesReader.size());
         currentSeedDeletions.resize(currentSeedDeletionsReader.size());
         currentCoordDeltas.resize(currentCoordDeltasReader.size());
         currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
-
+    
         for (size_t j = 0; j < currentSeedInsubIndicesReader.size(); j++) {
           currentSeedInsubIndices[j] = currentSeedInsubIndicesReader[j];
         }
-
+    
         for (size_t j = 0; j < currentSeedDeletionsReader.size(); j++) {
           currentSeedDeletions[j] = currentSeedDeletionsReader[j];
         }
-
+    
         for (size_t j = 0; j < currentCoordDeltasReader.size(); j++) {
           const auto& currentCoordDeltaReader = currentCoordDeltasReader[j];
           auto& currentCoordDelta = currentCoordDeltas[j];
           currentCoordDelta.first = currentCoordDeltaReader.getPos();
           currentCoordDelta.second = currentCoordDeltaReader.getEndPos().which() == CoordDelta::EndPos::VALUE ? std::optional<uint32_t>(currentCoordDeltaReader.getEndPos().getValue()) : std::nullopt;
         }
-
+    
         for (size_t j = 0; j < currentInvertedBlocksReader.size(); j++) {
           currentInvertedBlocks[j] = currentInvertedBlocksReader[j];
         }
       }
     }
-
     void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
@@ -610,7 +660,7 @@ class squareEM {
     double propThresholdToRemove = 0.005;
     double errorRate = 0.005;
 
-    squareEM(ThreadsManager& threadsManager, uint32_t overlapCoefficientCutoff);
+    squareEM(ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff);
 
 
     void runSquareEM(uint64_t maximumIterations);
