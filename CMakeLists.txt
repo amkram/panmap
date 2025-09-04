@@ -61,6 +61,7 @@ add_custom_target(tbb_build DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so)
 set(TBB_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so")
 # Set up TBB include directories
 include_directories(${tbb_SOURCE_DIR}/include)
+include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # Download and configure jsoncpp
 FetchContent_Declare(
@@ -522,7 +523,6 @@ set(BWA_SOURCES
     src/3rdparty/bwa/bwtsw2_main.c
     src/3rdparty/bwa/bwtsw2_pair.c
     src/3rdparty/bwa/bwtgap.c
-    src/mm_align.c
 )
 
 # Aggregate all the dependencies into a single target
@@ -575,6 +575,7 @@ find_package(Boost COMPONENTS program_options iostreams filesystem date_time sys
 find_package(ZLIB REQUIRED)
 
 add_executable(panmap ${PANMAP_SOURCES_MAIN})
+target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools)
 add_dependencies(panmap build-deps index_capnp_generator tbb_build)
 
 # Add generated sources to panmap target
@@ -643,13 +644,13 @@ if(OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
 elseif(OPTION_PROFILE)
     # Add -pg flag for gprof profiling
-    target_compile_options(panmap PUBLIC -g -O2  -fno-omit-frame-pointer)
-    target_link_options(panmap PUBLIC  -fno-omit-frame-pointer)
+    target_compile_options(panmap PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
+    target_link_options(panmap PUBLIC -pg -fno-omit-frame-pointer)
     
     # Also enable profiling for panman_lib
     if(TARGET panman_lib)
-        target_compile_options(panman_lib PUBLIC -g -O2 -fno-omit-frame-pointer)
-        target_link_options(panman_lib PUBLIC -fno-omit-frame-pointer)
+        target_compile_options(panman_lib PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
+        target_link_options(panman_lib PUBLIC -pg -fno-omit-frame-pointer)
     endif()
 else()
     target_compile_options(panmap PUBLIC -g -O3)
@@ -671,6 +672,85 @@ configure_file(src/test/data/test.nwk test.nwk COPYONLY)
 configure_file(src/test/data/test.json test.json COPYONLY)
 configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
+
+# Build simulate if requested
+if(OPTION_BUILD_SIMULATE)
+    set(SIMULATE_SOURCES
+        src/test/simulate.cpp
+        src/mgsr.cpp
+        src/conversion.cpp
+        src/panmap_utils.cpp
+        src/genotyping.cpp
+        src/gap_map.cpp
+        src/indexing.cpp
+        src/alignment.cpp
+        src/placement.cpp
+        src/seeding.cpp
+        src/mm_align.c
+        src/pileup.c
+        src/performance.cpp
+        src/state.cpp
+        src/state_helpers.cpp
+    )
+    
+    add_executable(simulate ${SIMULATE_SOURCES})
+    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools)
+    add_dependencies(simulate build-deps index_capnp_generator tbb_build)
+    
+    # Add generated sources to simulate target
+    target_sources(simulate PRIVATE ${CAPNP_SRCS} ${MGSR_CAPNP_SRCS})
+    
+    # Add include directories
+    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
+    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+    target_include_directories(simulate PUBLIC ${HTSLIB_INSTALL_DIR}/include)
+    
+    # Link libraries for simulate
+    target_link_libraries(simulate PRIVATE 
+    panman
+    bwa
+    bcftools
+    minimap2 
+    samtools 
+    htslib 
+    docopt
+    # Link system capnp libs directly
+    /usr/local/lib/libcapnp.a 
+    /usr/local/lib/libkj.a 
+    jsoncpp_lib
+    ${Protobuf_LIBRARIES}
+    Boost::program_options
+    Boost::iostreams
+    Boost::filesystem
+    Boost::system
+    ZLIB::ZLIB
+    ${TBB_LIBRARY}
+    spdlog::spdlog
+    panman_lib
+    libdeflate_shared
+    absl::flat_hash_map
+    m
+    pthread
+    )
+    
+    # Set compiler options for simulate
+    if(OPTION_DEBUG)
+        target_compile_options(simulate PUBLIC -g -O0 -ggdb)
+    elseif(OPTION_PROFILE)
+        target_compile_options(simulate PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
+        target_link_options(simulate PUBLIC -pg -fno-omit-frame-pointer)
+    else()
+        target_compile_options(simulate PUBLIC -g -O3)
+        if(OPTION_ENABLE_LTO)
+            target_compile_options(simulate PUBLIC -flto)
+            target_link_options(simulate PUBLIC -flto)
+        endif()
+        target_compile_options(simulate PUBLIC -ftree-vectorize)
+    endif()
+    
+    install(TARGETS simulate RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/ DESTINATION ${CMAKE_INSTALL_LIBDIR} FILES_MATCHING PATTERN "*.a" PATTERN "*.so" PATTERN "*.dylib" PATTERN "*.la" PATTERN "*.so.*")
