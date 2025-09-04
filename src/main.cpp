@@ -25,6 +25,8 @@
 #include <stdexcept>
 #include <string>
 #include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 #include <unistd.h>
 #include <vector>
 #include <stack>
@@ -589,6 +591,28 @@ bool saveNodeSequence(panmanUtils::Tree *tree, panmanUtils::Node *node,
   return false;
 }
 
+// wrapper function for timing functions
+template <typename Func, typename... Args>
+auto timeFunction(const std::string& name, Func&& func, Args&&... args) {
+  auto start = std::chrono::high_resolution_clock::now();
+
+    // Handle both void and non-void return types
+  if constexpr (std::is_void_v<std::invoke_result_t<Func, Args...>>) {
+    std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
+    auto end = std::chrono::high_resolution_clock::now();
+    
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::cout << name << " took: " << duration.count() << " microseconds\n";
+  } else {
+    auto result = std::invoke(std::forward<Func>(func), std::forward<Args>(args)...);
+    auto end = std::chrono::high_resolution_clock::now();
+    
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::cout << name << " took: " << duration.count() << " microseconds\n";
+    return result;
+  }
+}
+
 /**
  * @brief Load a PanMAN tree from a file
  *
@@ -722,7 +746,7 @@ int main(int argc, char *argv[]) {
         ("prefix,p", po::value<std::string>()->default_value("panmap"), "Prefix for output files")
         ("outputs,o", po::value<std::string>()->default_value("bam,vcf,assembly"), 
          "Outputs (placement/p, assembly/a, reference/r, spectrum/c, sam/s, bam/b, mpileup/m, vcf/v, all/A)")
-        ("index,i", po::value<std::string>()->default_value(""), "Path to precomputed index (input)")
+        ("index,i", po::value<std::string>()->default_value(""), "Path to precomputed index")
         ("index-output", po::value<std::string>()->default_value(""), "Path for index output (default: <guide>.pmi)")
         ("mutmat", po::value<std::string>()->default_value(""), "Path to mutation matrix file (input)")
         ("mutmat-output", po::value<std::string>()->default_value(""), "Path for mutation matrix output (default: <guide>.mm)")
@@ -736,6 +760,7 @@ int main(int argc, char *argv[]) {
         ("ref,r", po::value<std::string>()->default_value(""), "Reference node ID to align to (skip placement)")
         ("prior,P", "Use mutation spectrum prior for genotyping")
         ("reindex,f", "Force index rebuild")
+        ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
     ;
 
     po::options_description dev_opts("Developer options");
@@ -933,6 +958,112 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    if (vm.count("mgsr-index")) {
+      std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
+      int fd = mgsr::open_file(mgsr_index_path);
+      ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
+      ::capnp::PackedFdMessageReader reader(fd, readerOptions);
+      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
+      LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
+      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      
+      panmapUtils::LiteTree liteTree;
+      liteTree.initialize(liteTreeReader);
+    
+
+      std::vector<std::string> readSequences;
+      mgsr::extractReadSequences(reads1, reads2, readSequences);
+      mgsr::ThreadsManager threadsManager(&liteTree, numThreads);
+      threadsManager.initializeMGSRIndex(indexReader);
+      threadsManager.initializeQueryData(readSequences);
+
+      std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
+      for (size_t i = 0; i < numThreads; ++i) {
+        totalNodesPerThread[i] = liteTree.allLiteNodes.size();
+      }
+      ProgressTracker progressTracker(numThreads, totalNodesPerThread);
+
+      std::cout << "Using " << numThreads << " threads" << std::endl;
+      std::cout << readSequences.size() << " reads sketched into " << threadsManager.reads.size() << " unique kminmer-set reads" << std::endl;
+
+      auto start_time_place = std::chrono::high_resolution_clock::now();
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+        for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+          auto [start, end] = threadsManager.threadRanges[i];
+        
+          std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
+          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager);
+          curThreadPlacer.initializeQueryData(curThreadReads);
+          curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
+
+          curThreadPlacer.setProgressTracker(&progressTracker, i);
+
+          std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
+                    << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads" << std::endl;
+
+          curThreadPlacer.placeReads();
+
+          threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
+          threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
+          threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
+          threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
+          threadsManager.readMinichainsUpdated[i] = curThreadPlacer.readMinichainsUpdated;
+          if (i == 0) {
+            threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
+            threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
+            threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
+          }
+          
+
+          std::cout << "Thread processed " << curThreadReads.size() 
+                    << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
+                    << std::endl;
+        }
+      });
+      auto end_time_place = std::chrono::high_resolution_clock::now();
+      auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
+      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+      
+      // auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
+      // liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
+      // mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, 1000);
+      
+      // auto start_time_squareEM = std::chrono::high_resolution_clock::now();
+      // for (size_t i = 0; i < 5; ++i) {
+      //   squareEM.runSquareEM(1000);
+      //   std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
+      //   bool removed = squareEM.removeLowPropNodes();
+      //   std::cout << squareEM.nodes.size() << std::endl;
+      //   if (!removed) {
+      //     break;
+      //   }
+      // }
+      
+      // std::vector<uint64_t> indices(squareEM.nodes.size());
+      // std::iota(indices.begin(), indices.end(), 0);
+      // std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
+      //   return squareEM.props[i] > squareEM.props[j];
+      // });
+      // std::cout << std::endl;
+
+      // std::cout << std::setprecision(5) << std::fixed;
+      // for (size_t i = 0; i < indices.size(); ++i) {
+      //   size_t index = indices[i];
+      //   std::cout << squareEM.nodes[index];
+      //   if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
+      //     for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
+      //       std::cout << "," << member;
+      //     }
+      //   }
+      //   std::cout << "\t" << squareEM.props[index] << std::endl;
+      // }
+      // auto end_time_squareEM = std::chrono::high_resolution_clock::now();
+      // auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
+      // std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
+
+      exit(0);
+    }
+
     // Get remaining parameters
     bool reindex = vm.count("reindex") > 0;
     bool prior = vm.count("prior") > 0;
@@ -950,6 +1081,7 @@ int main(int argc, char *argv[]) {
 
     std::random_device rd;
     std::mt19937 rng(rd());
+
 
     // Load pangenome
     msg("Loading reference pangenome from: {}", guide);
@@ -982,6 +1114,18 @@ int main(int argc, char *argv[]) {
 
     msg("Using first tree as reference.");
     panmanUtils::Tree &T = TG->trees[0];
+
+    if (vm.count("index-mgsr")) {
+      std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
+      int mgsr_t = 0;
+      int mgsr_l = 3;
+      bool open = false;
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
+      mgsrIndexBuilder.buildIndex();
+      mgsrIndexBuilder.writeIndex(mgsr_index_path);
+      msg("MGSR index written to: {}", mgsr_index_path);
+      return 0;
+    }
 
     // Handle --dump-random-node parameter if provided
     if (dump_random_node) {

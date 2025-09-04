@@ -1,6 +1,9 @@
 #pragma once
 
 #include "panmanUtils.hpp"
+#include "capnp/message.h"
+#include "capnp/serialize-packed.h"
+#include "mgsr_index.capnp.h"
 #include "logging.hpp"
 #include <string>
 #include <iostream>
@@ -39,6 +42,36 @@ std::string getStringFromReference(
   std::string reference,
   bool aligned
 );
+
+class LiteNode {
+  public:
+    std::string identifier;
+    LiteNode* parent;
+    std::vector<LiteNode*> children;
+};
+
+class LiteTree {
+  public:
+    LiteNode* root;
+    std::unordered_map<std::string, LiteNode*> allLiteNodes;
+    std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
+    std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
+
+    ~LiteTree() {
+      for (auto& pair : allLiteNodes) {
+        delete pair.second;
+      }
+    }
+    
+    void cleanup();
+    void initialize(::LiteTree::Reader liteTreeReader);
+
+    uint32_t getBlockStartScalar(const uint32_t blockId) const;
+    uint32_t getBlockEndScalar(const uint32_t blockId) const;
+
+  private:
+    bool cleaned = false;
+};
 
 
 
@@ -385,6 +418,8 @@ struct BlockSequences {
 struct BlockEdgeCoord {
   Coordinate start;
   Coordinate end;
+  uint64_t startScalar;
+  uint64_t endScalar;
 };
 
 struct GlobalCoords {
@@ -452,6 +487,8 @@ struct GlobalCoords {
     for (size_t i = 0; i < sequence.size(); i++) {
       blockEdgeCoords[i].start = getBlockStartCoord(i);
       blockEdgeCoords[i].end = getBlockEndCoord(i);
+      blockEdgeCoords[i].startScalar = getBlockStartScalar(i);
+      blockEdgeCoords[i].endScalar = getBlockEndScalar(i);
     }
 
     // sanity check

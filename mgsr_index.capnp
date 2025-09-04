@@ -24,6 +24,21 @@ struct NodeChanges {
   invertedBlocks @4 :List(UInt32);
 }
 
+struct LiteNode {
+  id @0: Text;
+  parentIndex @1: UInt32;
+}
+
+struct BlockRange {
+  rangeBeg @0: UInt32;
+  rangeEnd @1: UInt32;
+}
+
+struct LiteTree {
+  liteNodes @0: List(LiteNode);
+  blockRanges @1: List(BlockRange);
+}
+
 struct MGSRIndex {
   k @0 :UInt16;
   s @1 :UInt16;
@@ -32,6 +47,8 @@ struct MGSRIndex {
   open @4 :Bool;
   useRawSeeds @7 :Bool;
 
-  seedInfo @5 :List(SeedInfo);
-  perNodeChanges @6 :List(NodeChanges);
+  liteTree @5 :LiteTree;
+  seedInfo @6 :List(SeedInfo);
+  perNodeChanges @7 :List(NodeChanges);
+  
 }
