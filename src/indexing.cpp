@@ -1,4 +1,5 @@
 #include "indexing.hpp"
+#include "panmap_utils.hpp"
 #include "alignment.hpp"
 #include "capnp/message.h"
 #include "capnp/serialize-packed.h"
@@ -456,10 +457,6 @@ namespace {
 }
 
 
-extern void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path);
-
-
-extern std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path);
 
 
 namespace panmanUtils {
@@ -4940,13 +4937,13 @@ void index(panmanUtils::Tree *tree, Index::Builder &indexBuilder, int k, int s,
                 }
             }
             
-            ::writeCapnp(message, indexPath);
+            panmapUtils::writeCapnp(message, indexPath);
             logging::info("Successfully wrote index to disk: {}", indexPath);
             
             // Verify the written index
             try {
                 logging::info("Verifying the written index...");
-                auto reader = ::readCapnp(indexPath);
+                auto reader = panmapUtils::readCapnp(indexPath);
                 if (reader) {
                     auto verifyRoot = reader->getRoot<Index>();
                     
