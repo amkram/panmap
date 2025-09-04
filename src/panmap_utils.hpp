@@ -53,11 +53,22 @@ class LiteTree {
     LiteNode* root;
     std::unordered_map<std::string, LiteNode*> allLiteNodes;
     std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
+    std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
+    ~LiteTree() {
+      for (auto& pair : allLiteNodes) {
+        delete pair.second;
+      }
+    }
+    
+    void cleanup();
     void initialize(::LiteTree::Reader liteTreeReader);
 
     uint32_t getBlockStartScalar(const uint32_t blockId) const;
     uint32_t getBlockEndScalar(const uint32_t blockId) const;
+
+  private:
+    bool cleaned = false;
 };
 
 
