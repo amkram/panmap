@@ -2270,7 +2270,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     }
   } else { 
     // processing k-min-mers
-  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord);
+  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
     auto beg = *newKminmerRanges[i].first;
@@ -2548,7 +2548,7 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
     capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueSyncmers.size());
     for (size_t i = 0; i < uniqueSyncmers.size(); i++) {
       seedInfoBuilder[i].setHash(uniqueSyncmers[i].hash);
-      seedInfoBuilder[i].setStartPos(uniqueSyncmers[i].startPos);
+      seedInfoBuilder[i].setStartPos(uniqueSyncmers[i].endPos - indexBuilder.getK() + 1);
       seedInfoBuilder[i].setEndPos(uniqueSyncmers[i].endPos);
       seedInfoBuilder[i].setIsReverse(uniqueSyncmers[i].isReverse);
     }
