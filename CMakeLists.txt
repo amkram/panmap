@@ -118,8 +118,6 @@ find_program(CAPNP_EXECUTABLE NAMES capnp)
 find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++)
 find_package(CapnProto QUIET)
 
-set(CAPNP_EXECUTABLE "")
-
 if(CAPNP_EXECUTABLE AND CAPNPC_CXX_EXECUTABLE AND CapnProto_FOUND)
     # Use system CapnProto
     set(CAPNP_LIBRARIES CapnProto::capnp CapnProto::kj)
