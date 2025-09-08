@@ -975,10 +975,27 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     }
   }
 
+  absl::flat_hash_map<uint64_t, uint64_t> kminmerCounts;
   for (uint32_t i = 0; i < reads.size(); ++i) {
     reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
     for (const auto& seedmer : reads[i].uniqueSeedmers) {
       allSeedmerHashesSet.insert(seedmer.first);
+      if (skipSingleton) kminmerCounts[seedmer.first] += seedmer.second.size();
+    }
+  }
+  
+  numPassedReads = reads.size();
+  if (skipSingleton) {
+    for (uint32_t i = 0; i < reads.size(); ++i) {
+      reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
+      for (const auto& seedmer : reads[i].seedmersList) {
+        if (kminmerCounts.at(seedmer.hash) == 1) {
+          reads[i].readType = mgsr::ReadType::CONTAINS_SINGLETON;
+          ++numSingletonReads;
+          --numPassedReads;
+          break;
+        } 
+      }
     }
   }
 
@@ -994,6 +1011,12 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     for (size_t j = start; j < end; j++) {
       readIndexToThreadLocalIndex[j] = {i, j - start};
     }
+  }
+
+  std::cout << "Collapsed " << readSequences.size() << " raw reads to " << reads.size() << " sketched kminmer sets" << std::endl;
+  if (skipSingleton) {
+    std::cout << "SkipSingleton turned on: " << numSingletonReads << " reads with singletons will be skipped during placement and EM... "
+              << "Total reads to process: " << numPassedReads << std::endl;
   }
 }
 
@@ -2765,7 +2788,7 @@ void mgsr::squareEM::updateProps(const Eigen::VectorXd& original, Eigen::VectorX
 }
 
 void mgsr::squareEM::normalizeProps(Eigen::VectorXd& props) {
-  for (int i = 0; i < props.size(); ++i) {
+  for (size_t i = 0; i < props.size(); ++i) {
     if (props(i) <= 0) {
       // std::cout << "prop[" << i << "]: " << props(i) << std::endl;
       props(i) = 1e-12;
@@ -2798,26 +2821,29 @@ void mgsr::squareEM::runSquareEM(uint64_t maximumIterations) {
     double alpha = -r.norm() / v.norm();
 
     propsSq.noalias() = props0 - 2.0 * alpha * r + alpha * alpha * v;
+    normalizeProps(props2);
     normalizeProps(propsSq);
 
     double llh2 = getExp(props2);
     double llhSq = getExp(propsSq);
 
+    double difference = 0;
     if (llhSq > llh2 - eta) {
       props.swap(propsSq);
+      difference = llhSq - llh;
+      llh = llhSq;
     } else {
       props.swap(props2);
+      difference = llh2 - llh;
+      llh = llh2;
     }
 
-    
-    double max_change;
-    if (props.size() > 1000) {
-      max_change = (props.head(1000) - props0.head(1000)).array().abs().maxCoeff();
-    } else {
-      max_change = (props - props0).array().abs().maxCoeff();
-    }
-
-    std::cout << "\rEM iteration " << curIteration << " max_change: " << max_change << std::flush;
+    // std::cout << "\rEM iteration " << curIteration << " difference: " << std::fixed << std::setprecision(8) << difference << std::flush;
+    // if (abs(difference) < 0.00001 || curIteration >= maximumIterations) {
+    //   break;
+    // }
+    double max_change = (props - props0).array().abs().maxCoeff();
+    std::cout << "\rEM iteration " << curIteration << " max_change: " << std::fixed << std::setprecision(8) << max_change << std::flush;
 
     if (max_change < maxChangeThreshold || curIteration >= maximumIterations) {
       break;
@@ -3620,6 +3646,7 @@ void mgsr::mgsrPlacer::fillReadToAffectedSeedmerIndex(
     auto affectedseedmerToReads = seedmerToReads.find(hash);
     if (affectedseedmerToReads == seedmerToReads.end()) continue;
     for (const auto& [readIndex, affectedSeedmerIndex] : affectedseedmerToReads->second) {
+      if (reads[readIndex].readType != mgsr::ReadType::PASS) continue;
       auto [affectedSeedmerIndexVectorIt, inserted] = readToAffectedSeedmerIndex.try_emplace(readIndex, std::vector<mgsr::affectedSeedmerInfo>{}, std::pair<bool, bool>{});
       auto& affectedSeedmerIndexVector = affectedSeedmerIndexVectorIt->second;
       if (affectedSeedmerIndexVector.first.empty()) {
@@ -4142,12 +4169,16 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
     // node for some reason has no seeds... delete all read scores and minichains
     // preallocate memory for score deltas
     size_t numReadsToReset = 0;
-    for (size_t i = 0; i < reads.size(); ++i) numReadsToReset += readScores[i] != 0;
+    for (size_t i = 0; i < reads.size(); ++i) {
+      if (reads[i].readType != mgsr::ReadType::PASS) continue;
+      numReadsToReset += readScores[i] != 0;
+    }
     readScoresBacktrack.reserve(numReadsToReset);
     readMinichainsBacktrack.reserve(numReadsToReset);
     currentNodeScoreDeltas.reserve(numReadsToReset);
 
     for (size_t i = 0; i < reads.size(); ++i) {
+      if (reads[i].readType != mgsr::ReadType::PASS) continue;
       if (readScores[i] != 0) {
         readScoresBacktrack.emplace_back(i, readScores[i]);
         setReadScore(i, 0);
@@ -4165,15 +4196,16 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
     size_t backtrackIndex = 0;
     for (auto& [readIndex, affectedSeedmerIndexInfo] : readToAffectedSeedmerIndex) {
       /*chaining debug*/if (false) std::cout << "[" << node->identifier << " " << curDfsIndex << "] processingreadIndex: " << readIndex << std::endl;
+
+      mgsr::Read& curRead = reads[readIndex];
+      if (curRead.readType != mgsr::ReadType::PASS) continue;
+
       auto& affectedSeedmerInfos = affectedSeedmerIndexInfo.first;
       const auto& [allUniqueToNonUnique, allNonUniqueToUnique] = affectedSeedmerIndexInfo.second;
       if (affectedSeedmerInfos.empty()) {
         std::cerr << "Error: affectedSeedmerIndices is empty" << std::endl;
         exit(1);
       }
-
-      mgsr::Read& curRead = reads[readIndex];
-
 
       sortAffectedSeedmerInfos(affectedSeedmerInfos);
 
@@ -4217,12 +4249,13 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
       // if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[readIndex] = mgsr::readType::HIGH_DUPLICATES;
     }
   }
-  // std::cout << "affectedSeedmers.size(): " << affectedSeedmers.size() << " hashCoordInfoCacheTable.size(): " << hashCoordInfoCacheTable.size() << std::endl;;
 
-  // std::cout << "\rFinished dfsIndex: " << curDfsIndex << std::flush;
   // **** Revert gapMap inversions ****
   revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
+
+  // clear memory that are no longer needed
+  decltype(gapMapBlocksBacktracks){}.swap(gapMapBlocksBacktracks);
+  decltype(readToAffectedSeedmerIndex){}.swap(readToAffectedSeedmerIndex);
 
   for (panmapUtils::LiteNode *child : node->children) {
     ++curDfsIndex;
@@ -4403,12 +4436,15 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
   }
 
   nodes.resize(scoresToNodeIds.size());
-  probs.resize(numReads, scoresToNodeIds.size());
+  probs.resize(threadsManager.numPassedReads, scoresToNodeIds.size());
   size_t i = 0;
   for (const auto& [scores, nodeIds] : scoresToNodeIds) {
     nodes[i] = nodeIds[0];
+    size_t passedReadIndex = 0;
     for (size_t j = 0; j < numReads; ++j) {
-      probs(j, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
+      if (reads[j].readType != mgsr::ReadType::PASS) continue;
+      probs(passedReadIndex, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
+      ++passedReadIndex;
     }
     ++i;
   }
@@ -4423,12 +4459,16 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
   propsSq = Eigen::VectorXd::Zero(numNodes);
   r = Eigen::VectorXd::Zero(numNodes);
   v = Eigen::VectorXd::Zero(numNodes);
-  denoms = Eigen::VectorXd::Zero(numReads);
-  inverseDenoms = Eigen::VectorXd::Zero(numReads);
-  readDuplicates = Eigen::VectorXd::Zero(numReads);
+  denoms = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
+  inverseDenoms = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
+  readDuplicates = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
 
-
+  size_t passedReadIndex = 0;
   for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
-    readDuplicates(i) = readSeedmersDuplicatesIndex[i].size();
+    if (reads[i].readType != mgsr::ReadType::PASS) continue;
+    readDuplicates(passedReadIndex) = readSeedmersDuplicatesIndex[i].size();
+    ++passedReadIndex;
   }
+  std::cout << "Probs matrix size: " << probs.rows() << "x" << probs.cols() << std::endl;
+  std::cout << "Props vector size: " << props.size() << std::endl;
 }

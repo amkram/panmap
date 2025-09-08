@@ -727,7 +727,6 @@ int main(int argc, char *argv[]) {
         ("outputs,o", po::value<std::string>()->default_value("bam,vcf,assembly"), 
          "Outputs (placement/p, assembly/a, reference/r, spectrum/c, sam/s, bam/b, mpileup/m, vcf/v, all/A)")
         ("index,i", po::value<std::string>()->default_value(""), "Path to precomputed index")
-        ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
     ;
     
     po::options_description seeding_opts("Seeding/alignment options");
@@ -738,7 +737,15 @@ int main(int argc, char *argv[]) {
         ("ref,r", po::value<std::string>()->default_value(""), "Reference node ID to align to (skip placement)")
         ("prior,P", "Use mutation spectrum prior for genotyping")
         ("reindex,f", "Force index rebuild")
+        
+    ;
+
+    po::options_description mgsr_opts("MGSR options");
+    mgsr_opts.add_options()
         ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
+        ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
+        ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
+        ("skip-singleton", "Skip singleton reads")
     ;
 
     po::options_description dev_opts("Developer options");
@@ -768,10 +775,10 @@ int main(int argc, char *argv[]) {
     ;
 
     po::options_description cmdline_options;
-    cmdline_options.add(generic_opts).add(input_opts).add(seeding_opts).add(dev_opts).add(hidden_opts);
+    cmdline_options.add(generic_opts).add(input_opts).add(mgsr_opts).add(seeding_opts).add(dev_opts).add(hidden_opts);
 
     po::options_description visible_options("panmap -- v0.0 \u27d7 \u27d7\nPangenome phylogenetic placement, alignment, genotyping, and assembly of reads\n\nUsage: panmap [options] <guide.panman> [<reads1.fastq>] [<reads2.fastq>]\n\nAllowed options");
-    visible_options.add(generic_opts).add(input_opts).add(seeding_opts).add(dev_opts);
+    visible_options.add(generic_opts).add(input_opts).add(mgsr_opts).add(seeding_opts).add(dev_opts);
 
     po::positional_options_description p;
     p.add("guide-panman", 1).add("reads1", 1).add("reads2", 1);
@@ -951,10 +958,12 @@ int main(int argc, char *argv[]) {
 
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
-      mgsr::ThreadsManager threadsManager(&liteTree, numThreads);
+
+      bool skipSingleton = vm.count("skip-singleton") > 0;
+      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton);
       threadsManager.initializeMGSRIndex(indexReader);
       threadsManager.initializeQueryData(readSequences);
-
+      
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
         totalNodesPerThread[i] = liteTree.allLiteNodes.size();
@@ -962,7 +971,6 @@ int main(int argc, char *argv[]) {
       ProgressTracker progressTracker(numThreads, totalNodesPerThread);
 
       std::cout << "Using " << numThreads << " threads" << std::endl;
-      std::cout << readSequences.size() << " reads sketched into " << threadsManager.reads.size() << " unique kminmer-set reads" << std::endl;
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
       tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
@@ -1002,42 +1010,44 @@ int main(int argc, char *argv[]) {
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
       
-      // auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
-      // liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
-      // mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, 1000);
+      auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
+      mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, 1000);
+      liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
-      // auto start_time_squareEM = std::chrono::high_resolution_clock::now();
-      // for (size_t i = 0; i < 5; ++i) {
-      //   squareEM.runSquareEM(1000);
-      //   std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
-      //   bool removed = squareEM.removeLowPropNodes();
-      //   std::cout << squareEM.nodes.size() << std::endl;
-      //   if (!removed) {
-      //     break;
-      //   }
-      // }
+      auto start_time_squareEM = std::chrono::high_resolution_clock::now();
+      for (size_t i = 0; i < 5; ++i) {
+        squareEM.runSquareEM(1000);
+        std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
+        bool removed = squareEM.removeLowPropNodes();
+        std::cout << squareEM.nodes.size() << std::endl;
+        if (!removed) {
+          break;
+        }
+      }
       
-      // std::vector<uint64_t> indices(squareEM.nodes.size());
-      // std::iota(indices.begin(), indices.end(), 0);
-      // std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
-      //   return squareEM.props[i] > squareEM.props[j];
-      // });
-      // std::cout << std::endl;
+      std::vector<uint64_t> indices(squareEM.nodes.size());
+      std::iota(indices.begin(), indices.end(), 0);
+      std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
+        return squareEM.props[i] > squareEM.props[j];
+      });
+      std::cout << std::endl;
 
-      // std::cout << std::setprecision(5) << std::fixed;
-      // for (size_t i = 0; i < indices.size(); ++i) {
-      //   size_t index = indices[i];
-      //   std::cout << squareEM.nodes[index];
-      //   if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
-      //     for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
-      //       std::cout << "," << member;
-      //     }
-      //   }
-      //   std::cout << "\t" << squareEM.props[index] << std::endl;
-      // }
-      // auto end_time_squareEM = std::chrono::high_resolution_clock::now();
-      // auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
-      // std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
+      std::ofstream abundanceOutput(prefix + ".mgsr.abundance.out");
+      abundanceOutput << std::setprecision(5) << std::fixed;
+      for (size_t i = 0; i < indices.size(); ++i) {
+        size_t index = indices[i];
+        abundanceOutput << squareEM.nodes[index];
+        if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
+          for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
+            abundanceOutput << "," << member;
+          }
+        }
+        abundanceOutput << "\t" << squareEM.props[index] << std::endl;
+      }
+      abundanceOutput.close();
+      auto end_time_squareEM = std::chrono::high_resolution_clock::now();
+      auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
+      std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
 
       exit(0);
     }
