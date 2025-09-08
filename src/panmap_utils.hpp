@@ -44,7 +44,7 @@ std::string getStringFromReference(
 class LiteNode {
   public:
     std::string identifier;
-    LiteNode* parent;
+    LiteNode* parent = nullptr;
     std::vector<LiteNode*> children;
 };
 

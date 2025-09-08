@@ -204,10 +204,11 @@ struct hashCoordInfoCache {
 
 
 
-enum readType : uint8_t {
+enum ReadType : uint8_t {
   PASS,
   HIGH_DUPLICATES,
-  IDENTICAL_SCORE_ACROSS_NODES
+  IDENTICAL_SCORE_ACROSS_NODES,
+  CONTAINS_SINGLETON
 };
 
 class Read {
@@ -217,6 +218,7 @@ class Read {
     std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
     std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
+    ReadType readType = ReadType::PASS;
 };
 
 void seedmersFromFastq(
@@ -308,7 +310,7 @@ class mgsrIndexBuilder {
 };
 
 struct readScoreDelta {
-  size_t readIndex;
+  uint32_t readIndex;
   uint32_t scoreDelta;
 };
 
@@ -319,6 +321,8 @@ class ThreadsManager {
 
     // Reads 
     std::vector<mgsr::Read> reads;
+    size_t numPassedReads;
+    size_t numSingletonReads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
     absl::flat_hash_set<size_t> allSeedmerHashesSet;
 
@@ -328,6 +332,7 @@ class ThreadsManager {
     int t;
     int l;
     bool openSyncmer;
+    bool skipSingleton;
 
     // mutation structures... shared by all threads during placement
     std::vector<seeding::uniqueKminmer_t> seedInfos;
@@ -360,7 +365,7 @@ class ThreadsManager {
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(panmapUtils::LiteTree* liteTree,  size_t numThreads) : liteTree(liteTree), numThreads(numThreads) {
+    ThreadsManager(panmapUtils::LiteTree* liteTree,  size_t numThreads, bool skipSingleton) : liteTree(liteTree), numThreads(numThreads), skipSingleton(skipSingleton) {
       threadRanges.resize(numThreads);
       perNodeScoreDeltasIndexByThreadId.resize(numThreads);
       readMinichainsInitialized.resize(numThreads);
@@ -403,6 +408,7 @@ class mgsrPlacer {
     bool openSyncmer;
 
     // parameters from user input... preset for now
+    bool skipSingleton;
     double excludeDuplicatesThreshold = 0.5;
     double errorRate = 0.005;
     int64_t maximumGap = 50;
@@ -437,6 +443,7 @@ class mgsrPlacer {
     int64_t totalDirectionalKminmerMatches = 0;
     
     // counters for calculating overlap coefficient
+    std::map<double, std::vector<std::string>> kminmerOverlapCoefficientsMap;
     std::unordered_map<std::string, double> kminmerOverlapCoefficients; // only calculate from the first thread
     size_t binaryOverlapKminmerCount = 0;
 
@@ -483,6 +490,7 @@ class mgsrPlacer {
       t = threadsManager.t;
       l = threadsManager.l;
       openSyncmer = threadsManager.openSyncmer;
+      skipSingleton = threadsManager.skipSingleton;
     }
     
     mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader)
