@@ -954,7 +954,8 @@ int main(int argc, char *argv[]) {
       
       panmapUtils::LiteTree liteTree;
       liteTree.initialize(liteTreeReader);
-    
+
+
 
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
@@ -971,6 +972,15 @@ int main(int argc, char *argv[]) {
       ProgressTracker progressTracker(numThreads, totalNodesPerThread);
 
       std::cout << "Using " << numThreads << " threads" << std::endl;
+
+
+      // auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+      // mgsr::mgsrPlacer placer(&liteTree, threadsManager);
+      // placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+      // auto end_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+      // auto duration_computeOverlapCoefficients = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_computeOverlapCoefficients - start_time_computeOverlapCoefficients);
+      // std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
+      // exit(0);
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
       tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
@@ -1111,6 +1121,9 @@ int main(int argc, char *argv[]) {
       msg("MGSR index written to: {}", mgsr_index_path);
       return 0;
     }
+
+    exit(0);
+
 
     // Handle --dump-random-node parameter if provided
     if (dump_random_node) {
