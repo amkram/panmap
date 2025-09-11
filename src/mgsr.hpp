@@ -10,6 +10,7 @@
 #include "absl/container/flat_hash_set.h"
 #include <eigen3/Eigen/Dense>
 #include <span>
+#include <tbb/task_arena.h>
 
 namespace mgsr {
 
@@ -219,6 +220,8 @@ class Read {
     std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
     ReadType readType = ReadType::PASS;
+    int32_t maxScore = -1;
+    std::vector<Minichain> maxMinichains;
 };
 
 void seedmersFromFastq(
@@ -437,8 +440,6 @@ class mgsrPlacer {
     std::vector<std::pair<int64_t, int64_t>> kminmerMatches;
     std::vector<std::vector<readScoreDelta>> perNodeScoreDeltasIndex;
     std::vector<std::vector<std::tuple<size_t, int64_t, int64_t>>> perNodeKminmerMatchesDeltasIndex;
-    std::vector<std::vector<Minichain>> maxMinichains;
-    std::vector<int32_t> maxScores;
     int64_t totalScore = 0;
     int64_t totalDirectionalKminmerMatches = 0;
     
@@ -670,6 +671,10 @@ class squareEM {
     double maxChangeThreshold = 0.0001;
     double propThresholdToRemove = 0.005;
     double errorRate = 0.005;
+
+    size_t numThreads;
+    mutable tbb::task_arena arena;
+    std::vector<std::pair<uint32_t, uint32_t>> threadsRangeByProps;
 
     squareEM(ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff);
 
