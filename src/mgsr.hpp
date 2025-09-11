@@ -568,6 +568,9 @@ class mgsrPlacer {
     void placeReadsHelper(panmapUtils::LiteNode* node);
     void placeReads();
 
+    void computeOverlapCoefficientsHelper(panmapUtils::LiteNode* node, const absl::flat_hash_set<size_t>& allSeedmerHashesSet, std::vector<std::pair<std::string, double>>& overlapCoefficients, std::vector<std::optional<size_t>>& kminmerOnRef, std::unordered_map<size_t, size_t>& kminmerOnRefCount);
+    void computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
+
     void traverseTreeHelper(panmapUtils::LiteNode* node);
     void traverseTree();
 

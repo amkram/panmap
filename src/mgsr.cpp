@@ -955,39 +955,90 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
   }
 
+  // for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
+  //   const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
+
+  //   if (!(currSeedmers.seedmersList.size() == reads.back().seedmersList.size() && 
+  //         std::equal(currSeedmers.seedmersList.begin(), currSeedmers.seedmersList.end(), reads.back().seedmersList.begin(), reads.back().seedmersList.end(),
+  //                    [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
+  //                        if (fast_mode) {
+  //                         return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
+  //                        } else {
+  //                          return a.hash == b.hash && a.begPos == b.begPos && a.endPos == b.endPos && a.rev == b.rev && a.iorder == b.iorder;
+  //                        }
+  //                    }))) {
+  //     reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]]));
+  //     readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
+  //   }
+  //   for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[i]].second) {
+  //     readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
+  //   }
+  // }
   for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
     const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
-
-    if (!(currSeedmers.seedmersList.size() == reads.back().seedmersList.size() && 
-          std::equal(currSeedmers.seedmersList.begin(), currSeedmers.seedmersList.end(), reads.back().seedmersList.begin(), reads.back().seedmersList.end(),
-                     [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
-                         if (fast_mode) {
-                          return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
-                         } else {
-                           return a.hash == b.hash && a.begPos == b.begPos && a.endPos == b.endPos && a.rev == b.rev && a.iorder == b.iorder;
-                         }
-                     }))) {
+    
+    bool isDuplicate = false;
+    
+    if (currSeedmers.seedmersList.size() == reads.back().seedmersList.size()) {
+      const auto& curr = currSeedmers.seedmersList;
+      const auto& prev = reads.back().seedmersList;
+      
+      if (fast_mode) {
+        isDuplicate = std::equal(curr.begin(), curr.end(), prev.begin(),
+          [](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
+            return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
+          });
+      } else {
+        isDuplicate = true;
+        
+        for (size_t j = 0; j < curr.size() && isDuplicate; ++j) {
+          if (curr[j].hash != prev[j].hash || 
+              curr[j].rev != prev[j].rev || 
+              curr[j].iorder != prev[j].iorder) {
+            isDuplicate = false;
+            break;
+          }
+          
+          size_t currLength = curr[j].endPos - curr[j].begPos;
+          size_t prevLength = prev[j].endPos - prev[j].begPos;
+          if (currLength != prevLength) {
+            isDuplicate = false;
+            break;
+          }
+          
+          if (j > 0) {
+            size_t currGap = curr[j].begPos - curr[j-1].endPos;
+            size_t prevGap = prev[j].begPos - prev[j-1].endPos;
+            if (currGap != prevGap) {
+              isDuplicate = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    if (!isDuplicate) {
       reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]]));
       readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
     }
+    
     for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[i]].second) {
       readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
     }
   }
 
-  absl::flat_hash_map<uint64_t, uint64_t> kminmerCounts;
-  for (uint32_t i = 0; i < reads.size(); ++i) {
-    reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
-    for (const auto& seedmer : reads[i].uniqueSeedmers) {
-      allSeedmerHashesSet.insert(seedmer.first);
-      if (skipSingleton) kminmerCounts[seedmer.first] += seedmer.second.size();
-    }
-  }
-  
   numPassedReads = reads.size();
   if (skipSingleton) {
+    absl::flat_hash_map<uint64_t, uint64_t> kminmerCounts;
     for (uint32_t i = 0; i < reads.size(); ++i) {
       reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
+      for (const auto& seedmer : reads[i].uniqueSeedmers) {
+        kminmerCounts[seedmer.first] += seedmer.second.size();
+      }
+    }
+
+    for (uint32_t i = 0; i < reads.size(); ++i) {
       for (const auto& seedmer : reads[i].seedmersList) {
         if (kminmerCounts.at(seedmer.hash) == 1) {
           reads[i].readType = mgsr::ReadType::CONTAINS_SINGLETON;
@@ -995,6 +1046,18 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
           --numPassedReads;
           break;
         } 
+      }
+      if (reads[i].readType != mgsr::ReadType::CONTAINS_SINGLETON) {
+        for (const auto& seedmer : reads[i].seedmersList) {
+          allSeedmerHashesSet.insert(seedmer.hash);
+        }
+      }
+    }
+  } else {
+    for (uint32_t i = 0; i < reads.size(); ++i) {
+      reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
+      for (const auto& seedmer : reads[i].seedmersList) {
+        allSeedmerHashesSet.insert(seedmer.hash);
       }
     }
   }
@@ -2167,6 +2230,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   potentialSyncmerDeletions.shrink_to_fit();
   localMutationRanges.shrink_to_fit();
   gapRunUpdates.shrink_to_fit();
+
 
   updateGapMap(node, dfsIndex, gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunUpdates); // gapRunUpdates is no longer needed... clear memory
@@ -4078,6 +4142,147 @@ void mgsr::mgsrPlacer::setProgressTracker(ProgressTracker* tracker, size_t tid) 
   threadId = tid;
 }
 
+void mgsr::mgsrPlacer::computeOverlapCoefficientsHelper(
+  panmapUtils::LiteNode* node,
+  const absl::flat_hash_set<size_t>& allSeedmerHashesSet,
+  std::vector<std::pair<std::string, double>>& overlapCoefficients,
+  std::vector<std::optional<size_t>>& kminmerOnRef,
+  std::unordered_map<size_t, size_t>& kminmerOnRefCount
+) {
+  if (curDfsIndex % 1000 == 0) {
+    std::cout << "\r" << curDfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
+  }
+
+  // **** Update seeds ****
+  size_t binaryOverlapKminmerCountBacktrack = binaryOverlapKminmerCount;
+  std::vector<std::tuple<uint32_t, size_t, panmapUtils::seedChangeType>> seedBacktracks;
+  seedBacktracks.reserve(seedInsubIndices[curDfsIndex].size() + seedDeletions[curDfsIndex].size());
+  for (uint32_t seedInsubSeedIndex : seedInsubIndices[curDfsIndex]) {
+    const auto& newKminmer = seedInfos[seedInsubSeedIndex];
+    const auto startPos = newKminmer.startPos;
+    auto& kminmerOnRefState = kminmerOnRef[startPos];
+    if (kminmerOnRefState.has_value()) {
+      // sub
+      auto oldKminmer = kminmerOnRefState.value();
+      auto oldKminmerCountIt = kminmerOnRefCount.find(oldKminmer);
+      oldKminmerCountIt->second -= 1;
+      if (oldKminmerCountIt->second == 0) {
+        kminmerOnRefCount.erase(oldKminmerCountIt);
+        if (allSeedmerHashesSet.find(oldKminmer) != allSeedmerHashesSet.end()) --binaryOverlapKminmerCount;
+      }
+      auto [newKminmerCountIt, newKminmerCountInserted] = kminmerOnRefCount.emplace(newKminmer.hash, 1);
+      if (!newKminmerCountInserted) {
+        newKminmerCountIt->second++;
+      } else {
+        if (allSeedmerHashesSet.find(newKminmer.hash) != allSeedmerHashesSet.end()) ++binaryOverlapKminmerCount;
+      }
+      kminmerOnRefState = newKminmer.hash;
+      seedBacktracks.emplace_back(startPos, oldKminmer, panmapUtils::seedChangeType::SUB);
+    } else {
+      // add
+      auto [newKminmerCountIt, newKminmerCountInserted] = kminmerOnRefCount.emplace(newKminmer.hash, 1);
+      if (!newKminmerCountInserted) {
+        newKminmerCountIt->second++;
+      } else {
+        if (allSeedmerHashesSet.find(newKminmer.hash) != allSeedmerHashesSet.end()) ++binaryOverlapKminmerCount;
+      }
+      kminmerOnRefState = newKminmer.hash;
+      seedBacktracks.emplace_back(startPos, 0, panmapUtils::seedChangeType::ADD);
+    }
+  }
+
+  for (uint32_t deletePos : seedDeletions[curDfsIndex]) {
+    auto oldKminmer = kminmerOnRef[deletePos].value();
+    auto oldKminmerCountIt = kminmerOnRefCount.find(oldKminmer);
+    oldKminmerCountIt->second -= 1;
+    if (oldKminmerCountIt->second == 0) {
+      kminmerOnRefCount.erase(oldKminmerCountIt);
+      if (allSeedmerHashesSet.find(oldKminmer) != allSeedmerHashesSet.end()) --binaryOverlapKminmerCount;
+    }
+    kminmerOnRef[deletePos] = std::nullopt;
+    seedBacktracks.emplace_back(deletePos, oldKminmer, panmapUtils::seedChangeType::DEL);
+  }
+  overlapCoefficients[curDfsIndex].first = node->identifier;
+  overlapCoefficients[curDfsIndex].second = static_cast<double>(binaryOverlapKminmerCount) / static_cast<double>(kminmerOnRefCount.size());
+
+  for (panmapUtils::LiteNode *child : node->children) {
+    ++curDfsIndex;
+    computeOverlapCoefficientsHelper(child, allSeedmerHashesSet, overlapCoefficients, kminmerOnRef, kminmerOnRefCount);
+  }
+
+  // Backtrack seeds
+  for (const auto& [pos, oldKminmerHash, changeType] : seedBacktracks) {
+    switch (changeType) {
+      case panmapUtils::seedChangeType::ADD: {
+        // added -> delete to backtrack
+        auto& kminmerOnRefState = kminmerOnRef[pos];
+        auto kminmerOnRefStateHash = kminmerOnRefState.value();
+        kminmerOnRefCount[kminmerOnRefStateHash] -= 1;
+        if (kminmerOnRefCount[kminmerOnRefStateHash] == 0) {
+          kminmerOnRefCount.erase(kminmerOnRefStateHash);
+        }
+        kminmerOnRefState = std::nullopt;
+        break;
+      }
+      case panmapUtils::seedChangeType::DEL: {
+        // deleted -> add old kminmer to backtrack
+        kminmerOnRefCount[oldKminmerHash] += 1;
+        kminmerOnRef[pos] = oldKminmerHash;
+        break;
+      }
+      case panmapUtils::seedChangeType::SUB: {
+        // subed -> delete new kminmer and add old kminmer to backtrack
+        auto& kminmerOnRefState = kminmerOnRef[pos];
+        auto kminmerOnRefStateHash = kminmerOnRefState.value();
+        kminmerOnRefCount[kminmerOnRefStateHash] -= 1;
+        if (kminmerOnRefCount[kminmerOnRefStateHash] == 0) {
+          kminmerOnRefCount.erase(kminmerOnRefStateHash);
+        }
+        kminmerOnRefCount[oldKminmerHash] += 1;
+        kminmerOnRefState = oldKminmerHash;
+        break;
+      }
+    }
+  }
+
+  binaryOverlapKminmerCount = binaryOverlapKminmerCountBacktrack;
+}
+
+void mgsr::mgsrPlacer::computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet) {
+  curDfsIndex = 0;
+  size_t maxIndex = 0;
+  for (size_t i = 0; i < seedInfos.size(); ++i) {
+    if (seedInfos[i].startPos > maxIndex) {
+      maxIndex = seedInfos[i].startPos;
+    }
+  }
+  std::vector<std::optional<size_t>> kminmerOnRef(maxIndex + 1, std::nullopt);
+  std::unordered_map<size_t, size_t> kminmerOnRefCount;
+  std::vector<std::pair<std::string, double>> overlapCoefficients(liteTree->allLiteNodes.size(), std::make_pair("", 0.0));
+  computeOverlapCoefficientsHelper(liteTree->root, allSeedmerHashesSet, overlapCoefficients, kminmerOnRef, kminmerOnRefCount);
+  std::sort(overlapCoefficients.begin(), overlapCoefficients.end(), [](const auto& a, const auto& b) {
+    return a.second > b.second;
+  });
+
+  size_t overlapCoefficientCutoff = 1000;
+  size_t curRank = 0;
+  size_t curIndex = 0;
+  double curCoefficient = overlapCoefficients[0].second;
+  for (size_t i = 1; i < overlapCoefficients.size(); ++i) {
+    if (overlapCoefficients[i].second != curCoefficient) {
+      ++curRank;
+    }
+    if (curRank >= overlapCoefficientCutoff) break;
+    curIndex = i;
+  }
+
+  // for (size_t i = 0; i < overlapCoefficients.size(); ++i) {
+  //   std::cout << overlapCoefficients[i].first << " " << overlapCoefficients[i].second << std::endl;
+  // }
+
+  std::cout << "overlapCoefficientCutoff: " << overlapCoefficientCutoff << " last index to include: " << curIndex << std::endl;
+  exit(0);
+}
 
 void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
   if (curDfsIndex % 100 == 0) {
@@ -4121,6 +4326,14 @@ void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
       gapMap[range.first] = range.second;
     }
   }
+}
+
+void mgsr::mgsrPlacer::traverseTree() {
+  gapMap.clear();
+  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
+
+  curDfsIndex = 0;
+  traverseTreeHelper(liteTree->root);
 }
 
 void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
@@ -4297,6 +4510,16 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
 
 }
 
+void mgsr::mgsrPlacer::placeReads() {
+  gapMap.clear();
+  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
+
+  curDfsIndex = 0;
+  preallocateHashCoordInfoCacheTable(0, reads.size());
+  placeReadsHelper(liteTree->root);
+}
+
+
 void mgsr::mgsrPlacer::preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex) {
   std::unordered_set<size_t> uniqueHashes;
   for (const auto& read : reads) {
@@ -4311,22 +4534,7 @@ void mgsr::mgsrPlacer::preallocateHashCoordInfoCacheTable(uint32_t startReadInde
   }
 }
 
-void mgsr::mgsrPlacer::placeReads() {
-  gapMap.clear();
-  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
 
-  curDfsIndex = 0;
-  preallocateHashCoordInfoCacheTable(0, reads.size());
-  placeReadsHelper(liteTree->root);
-}
-
-void mgsr::mgsrPlacer::traverseTree() {
-  gapMap.clear();
-  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
-
-  curDfsIndex = 0;
-  traverseTreeHelper(liteTree->root);
-}
 
 std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const {
   std::vector<uint32_t> curNodeScores(reads.size(), 0);
