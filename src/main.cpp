@@ -1018,6 +1018,7 @@ int main(int argc, char *argv[]) {
       });
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
+
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
       
       auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);

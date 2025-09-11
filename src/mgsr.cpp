@@ -1098,7 +1098,6 @@ void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fas
   // initialize score index structures
   size_t numReads = reads.size();
   size_t numNodes = liteTree->allLiteNodes.size();
-  maxScores.resize(numReads, -1);
   // maxScoreNodeIndex.resize(numReads);
   if (fast_mode) {
     kminmerMatches.resize(numReads, std::make_pair(0, 0));
@@ -1106,7 +1105,6 @@ void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fas
   } else {
     readScores.resize(numReads, 0);
     perNodeScoreDeltasIndex.resize(numNodes);
-    maxMinichains.resize(numReads);
   }
 }
 
@@ -2826,16 +2824,15 @@ void mgsr::squareEM::updateProps1() {
   denoms.noalias() = probs * props0;
   inverseDenoms.noalias() = denoms.cwiseInverse();
   for (size_t i = 0; i < numNodes; ++i) {
-    double newProp = (readDuplicates.array() * (probs.col(i).array() * props0[i] * inverseDenoms.array())).sum() * invTotalWeight;
-    props1(i) = newProp > 0 ? newProp : 1e-12;
+    props1(i) = (readDuplicates.array() * (probs.col(i).array() * props0[i] * inverseDenoms.array())).sum() * invTotalWeight;
   }
 }
+
 void mgsr::squareEM::updateProps2() {
   denoms.noalias() = probs * props1;
   inverseDenoms.noalias() = denoms.cwiseInverse();
   for (size_t i = 0; i < numNodes; ++i) {
-    double newProp = (readDuplicates.array() * (probs.col(i).array() * props1[i] * inverseDenoms.array())).sum() * invTotalWeight;
-    props2(i) = newProp > 0 ? newProp : 1e-12;
+    props2(i) = (readDuplicates.array() * (probs.col(i).array() * props1[i] * inverseDenoms.array())).sum() * invTotalWeight;
   }
 }
 
@@ -2846,8 +2843,7 @@ void mgsr::squareEM::updateProps(const Eigen::VectorXd& original, Eigen::VectorX
   denoms.noalias() = probs * original;
   inverseDenoms.noalias() = denoms.cwiseInverse();
   for (size_t i = 0; i < numNodes; ++i) {
-    double newProp = (readDuplicates.array() * (probs.col(i).array() * original[i] * inverseDenoms.array())).sum() * invTotalWeight;
-    result(i) = newProp > 0 ? newProp : 1e-12;
+    result(i) = (readDuplicates.array() * (probs.col(i).array() * original[i] * inverseDenoms.array())).sum() * invTotalWeight;
   }
 }
 
@@ -2877,7 +2873,9 @@ void mgsr::squareEM::runSquareEM(uint64_t maximumIterations) {
   while (curIteration < maximumIterations) {
     props0.swap(props);
     updateProps1();
+    normalizeProps(props1);
     updateProps2();
+    normalizeProps(props2);
 
     r.noalias() = props1 - props0;
     v.noalias() = (props2 - props1) - r;
@@ -2885,7 +2883,6 @@ void mgsr::squareEM::runSquareEM(uint64_t maximumIterations) {
     double alpha = -r.norm() / v.norm();
 
     propsSq.noalias() = props0 - 2.0 * alpha * r + alpha * alpha * v;
-    normalizeProps(props2);
     normalizeProps(propsSq);
 
     double llh2 = getExp(props2);
@@ -2944,6 +2941,17 @@ bool mgsr::squareEM::removeLowPropNodes() {
   probs.swap(passedProbs);
   numNodes = nodes.size();
 
+  const size_t propsChunkSize = (numNodes + numThreads - 1) / numThreads;
+  threadsRangeByProps.resize(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * propsChunkSize;
+    size_t end = (i == numThreads - 1) ? numNodes : (i + 1) * propsChunkSize;
+    if (start < numNodes) {
+      threadsRangeByProps[i].first = start;
+      threadsRangeByProps[i].second = end;
+    }
+  }
+
   props = Eigen::VectorXd::Constant(numNodes, 1.0 / static_cast<double>(numNodes));
   props0 = Eigen::VectorXd::Zero(numNodes);
   props1 = Eigen::VectorXd::Zero(numNodes);
@@ -2957,6 +2965,9 @@ bool mgsr::squareEM::removeLowPropNodes() {
 
 void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score) {
   readScores[readIndex] = score;
+  if (score > reads[readIndex].maxScore) {
+    reads[readIndex].maxScore = score;
+  }
 }
 
 void mgsr::mgsrPlacer::updateRefSeedmerStatus (
@@ -4447,10 +4458,6 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
       currentNodeScoreDeltas[backtrackIndex].readIndex = readIndex;
       currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore;
 
-      if (pseudoScore > maxScores[readIndex]) {
-        maxScores[readIndex] = pseudoScore;
-        maxMinichains[readIndex] = curRead.minichains;
-      }
       ++backtrackIndex;
 
       // int64_t bruteForceScore = getReadBruteForceScore(readIndex, hashCoordInfoCacheTable);
@@ -4578,6 +4585,9 @@ void mgsr::ThreadsManager::printStats() {
 }
 
 mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff) {
+  numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+  arena = tbb::task_arena(numThreads);
+
   auto& kminmerOverlapCoefficients = threadsManager.kminmerOverlapCoefficients;
   auto& readSeedmersDuplicatesIndex = threadsManager.readSeedmersDuplicatesIndex;
   auto& reads = threadsManager.reads;
@@ -4594,8 +4604,12 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
   }
 
   std::sort(kminmerOverlapCoefficientsVector.begin(), kminmerOverlapCoefficientsVector.end(), [](const auto& a, const auto& b) {
+    if (a.second == b.second) {
+      return a.first < b.first;
+    }
     return a.second > b.second;
   });
+
 
   std::vector<std::string> significantOverlapNodeIds{kminmerOverlapCoefficientsVector[0].first};
   size_t curRank = 0;
@@ -4611,11 +4625,31 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
 
   // get score matrix to find ambiguous nodes with identical scores
   std::vector<std::vector<uint32_t>> scoreMatrix(significantOverlapNodeIds.size(), std::vector<uint32_t>(numReads, 0));
-  for (size_t i = 0; i < significantOverlapNodeIds.size(); ++i) {
-    auto significantNodeId = significantOverlapNodeIds[i];
-    auto nodeDfsIndex = nodeToDfsIndex.at(significantNodeId);
-    threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i], nodeToDfsIndex);
-    for (size_t threadId = 0; threadId < threadsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
+  const size_t chunkSize = (significantOverlapNodeIds.size() + numThreads - 1) / numThreads;
+  std::vector<std::pair<size_t, size_t>> threadRanges(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * chunkSize;
+    size_t end = (i == numThreads - 1) ? significantOverlapNodeIds.size() : (i + 1) * chunkSize;
+    if (start < significantOverlapNodeIds.size()) {
+      threadRanges[i].first = start;
+      threadRanges[i].second = end;
+    }
+  }
+  arena.execute([&]() {
+    tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+      const auto& range = threadRanges[threadIdx];
+      for (size_t i = range.first; i < range.second; ++i) {
+        auto significantNodeId = significantOverlapNodeIds[i];
+        auto nodeDfsIndex = nodeToDfsIndex.at(significantNodeId);
+        threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i], nodeToDfsIndex);
+      }
+    });
+  });
+
+
+  // clear memory that are no longer needed
+  for (size_t threadId = 0; threadId < threadsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
+    for (size_t nodeDfsIndex = 0; nodeDfsIndex < threadsManager.perNodeScoreDeltasIndexByThreadId[threadId].size(); ++nodeDfsIndex) {
       std::vector<readScoreDelta>().swap(threadsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
     }
   }
@@ -4645,17 +4679,38 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
 
   nodes.resize(scoresToNodeIds.size());
   probs.resize(threadsManager.numPassedReads, scoresToNodeIds.size());
-  size_t i = 0;
-  for (const auto& [scores, nodeIds] : scoresToNodeIds) {
-    nodes[i] = nodeIds[0];
-    size_t passedReadIndex = 0;
-    for (size_t j = 0; j < numReads; ++j) {
-      if (reads[j].readType != mgsr::ReadType::PASS) continue;
-      probs(passedReadIndex, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
-      ++passedReadIndex;
-    }
-    ++i;
+  std::vector<std::pair<std::vector<uint32_t>, std::vector<std::string_view>>> scoresToNodeIdsVector(scoresToNodeIds.size());
+  size_t scoresToNodeIdsVecIndex = 0;
+  for (auto& [scores, nodeIds] : scoresToNodeIds) {
+    scoresToNodeIdsVector[scoresToNodeIdsVecIndex].first = std::move(scores);
+    scoresToNodeIdsVector[scoresToNodeIdsVecIndex].second = std::move(nodeIds);
+    ++scoresToNodeIdsVecIndex;
   }
+  const size_t chunkSizeScoresToNodeIdsVector = (scoresToNodeIdsVector.size() + numThreads - 1) / numThreads;
+  std::vector<std::pair<size_t, size_t>> threadRangesScoresToNodeIdsVector(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * chunkSizeScoresToNodeIdsVector;
+    size_t end = (i == numThreads - 1) ? scoresToNodeIdsVector.size() : (i + 1) * chunkSizeScoresToNodeIdsVector;
+    if (start < scoresToNodeIdsVector.size()) {
+      threadRangesScoresToNodeIdsVector[i].first = start;
+      threadRangesScoresToNodeIdsVector[i].second = end;
+    }
+  }
+  arena.execute([&]() {
+    tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+      const auto& range = threadRangesScoresToNodeIdsVector[threadIdx];
+      for (size_t i = range.first; i < range.second; ++i) {
+      const auto& [scores, nodeIds] = scoresToNodeIdsVector[i];
+      nodes[i] = nodeIds[0];
+      size_t passedReadIndex = 0;
+      for (size_t j = 0; j < numReads; ++j) {
+        if (reads[j].readType != mgsr::ReadType::PASS) continue;
+        probs(passedReadIndex, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
+          ++passedReadIndex;
+        }
+      }
+    });
+  });
 
 
   
@@ -4677,6 +4732,18 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
     readDuplicates(passedReadIndex) = readSeedmersDuplicatesIndex[i].size();
     ++passedReadIndex;
   }
+
+  const size_t propsChunkSize = (numNodes + numThreads - 1) / numThreads;
+  threadsRangeByProps.resize(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * propsChunkSize;
+    size_t end = (i == numThreads - 1) ? numNodes : (i + 1) * propsChunkSize;
+    if (start < numNodes) {
+      threadsRangeByProps[i].first = start;
+      threadsRangeByProps[i].second = end;
+    }
+  }
+
   std::cout << "Probs matrix size: " << probs.rows() << "x" << probs.cols() << std::endl;
   std::cout << "Props vector size: " << props.size() << std::endl;
 }
