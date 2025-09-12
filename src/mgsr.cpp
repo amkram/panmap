@@ -839,33 +839,45 @@ void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   }
 }
 void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, bool fast_mode) {
-  // index duplicate reads
-  std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
-  for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
-  tbb::parallel_sort(sortedReadSequencesIndices.begin(), sortedReadSequencesIndices.end(), [&readSequences](size_t i1, size_t i2) {
-    return readSequences[i1] < readSequences[i2];
-  });
+  // // index duplicate reads
+  // std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
+  // for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
+  // tbb::parallel_sort(sortedReadSequencesIndices.begin(), sortedReadSequencesIndices.end(), [&readSequences](size_t i1, size_t i2) {
+  //   return readSequences[i1] < readSequences[i2];
+  // });
 
-  // index duplicate reads
-  std::vector<std::pair<std::string_view, std::vector<size_t>>> dupReadsIndex;
-  std::string_view prevSeq = readSequences[sortedReadSequencesIndices[0]];
-  dupReadsIndex.emplace_back(std::make_pair(prevSeq, std::vector<size_t>{0}));
-  for (size_t i = 1; i < sortedReadSequencesIndices.size(); ++i) {
-    std::string_view currSeq = readSequences[sortedReadSequencesIndices[i]];
-    if (currSeq == prevSeq) {
-      dupReadsIndex.back().second.push_back(i);
-    } else {
-      dupReadsIndex.emplace_back(std::make_pair(currSeq, std::vector<size_t>{i}));
-    }
-    prevSeq = currSeq;
+  // // index duplicate reads
+  // std::vector<std::pair<std::string_view, std::vector<size_t>>> dupReadsIndex;
+  // std::string_view prevSeq = readSequences[sortedReadSequencesIndices[0]];
+  // dupReadsIndex.emplace_back(std::make_pair(prevSeq, std::vector<size_t>{0}));
+  // for (size_t i = 1; i < sortedReadSequencesIndices.size(); ++i) {
+  //   std::string_view currSeq = readSequences[sortedReadSequencesIndices[i]];
+  //   if (currSeq == prevSeq) {
+  //     dupReadsIndex.back().second.push_back(i);
+  //   } else {
+  //     dupReadsIndex.emplace_back(std::make_pair(currSeq, std::vector<size_t>{i}));
+  //   }
+  //   prevSeq = currSeq;
+  // }
+
+  std::unordered_map<std::string_view, std::vector<size_t>> seqToIndex;
+  for (size_t i = 0; i < readSequences.size(); ++i) {
+    seqToIndex[readSequences[i]].push_back(i);
+  }
+  std::vector<std::pair<std::string_view, std::vector<size_t>>> seqToIndexVec(seqToIndex.size());
+  size_t seqToIndexVecIndex = 0;
+  for (auto& [seq, index] : seqToIndex) {
+    seqToIndexVec[seqToIndexVecIndex].first = seq;
+    seqToIndexVec[seqToIndexVecIndex].second = std::move(index);
+    ++seqToIndexVecIndex;
   }
 
   // seedmers for each unique read sequence
   size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-  std::vector<mgsr::Read> uniqueReadSeedmers(dupReadsIndex.size());
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, dupReadsIndex.size(), dupReadsIndex.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range){
+  std::vector<mgsr::Read> uniqueReadSeedmers(seqToIndexVec.size());
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, seqToIndexVec.size(), seqToIndexVec.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range){
     for (size_t i = range.begin(); i < range.end(); ++i) {
-      const auto& seq = dupReadsIndex[i].first;
+      const auto& seq = seqToIndexVec[i].first;
       const auto& syncmers = seeding::rollingSyncmers(seq, k, s, openSyncmer, t, false);
       mgsr::Read& curRead = uniqueReadSeedmers[i];
       if (syncmers.size() < l) continue;
@@ -951,29 +963,10 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
 
   reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[0]]));
   readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
-  for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[0]].second) {
-    readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
+  for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[0]].second) {
+    readSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
   }
 
-  // for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
-  //   const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
-
-  //   if (!(currSeedmers.seedmersList.size() == reads.back().seedmersList.size() && 
-  //         std::equal(currSeedmers.seedmersList.begin(), currSeedmers.seedmersList.end(), reads.back().seedmersList.begin(), reads.back().seedmersList.end(),
-  //                    [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
-  //                        if (fast_mode) {
-  //                         return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
-  //                        } else {
-  //                          return a.hash == b.hash && a.begPos == b.begPos && a.endPos == b.endPos && a.rev == b.rev && a.iorder == b.iorder;
-  //                        }
-  //                    }))) {
-  //     reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]]));
-  //     readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
-  //   }
-  //   for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[i]].second) {
-  //     readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
-  //   }
-  // }
   for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
     const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
     
@@ -1023,8 +1016,8 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
       readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
     }
     
-    for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[i]].second) {
-      readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
+    for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[i]].second) {
+      readSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
     }
   }
 
