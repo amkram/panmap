@@ -955,14 +955,13 @@ int main(int argc, char *argv[]) {
       panmapUtils::LiteTree liteTree;
       liteTree.initialize(liteTreeReader);
 
-
-
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
 
       bool skipSingleton = vm.count("skip-singleton") > 0;
       mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton);
       threadsManager.initializeMGSRIndex(indexReader);
+      close(fd);
       threadsManager.initializeQueryData(readSequences);
       
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
@@ -1029,7 +1028,7 @@ int main(int argc, char *argv[]) {
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
 
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
-      
+
       auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
       mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
