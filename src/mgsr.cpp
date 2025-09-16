@@ -9,6 +9,9 @@
 #include <tbb/parallel_sort.h>
 #include <tbb/parallel_for.h>
 #include <tbb/global_control.h>
+#include <random>
+#include <numeric>
+#include <algorithm>
 
 static void compareBruteForceBuild(
   panmanUtils::Tree *T,
@@ -1029,6 +1032,32 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
       readSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
     }
   }
+
+  // Shuffle reads and readSeedmersDuplicatesIndex together
+  std::random_device rd;
+  std::mt19937 g(rd());
+  
+  // Create indices for shuffling
+  std::vector<size_t> indices(reads.size());
+  std::iota(indices.begin(), indices.end(), 0);
+  
+  // Shuffle the indices
+  std::shuffle(indices.begin(), indices.end(), g);
+  
+  // Apply the shuffle to both vectors
+  std::vector<mgsr::Read> shuffledReads;
+  std::vector<std::vector<size_t>> shuffledReadSeedmersDuplicatesIndex;
+  shuffledReads.reserve(reads.size());
+  shuffledReadSeedmersDuplicatesIndex.reserve(readSeedmersDuplicatesIndex.size());
+  
+  for (size_t idx : indices) {
+    shuffledReads.emplace_back(std::move(reads[idx]));
+    shuffledReadSeedmersDuplicatesIndex.emplace_back(std::move(readSeedmersDuplicatesIndex[idx]));
+  }
+  
+  // Replace original vectors with shuffled ones
+  reads = std::move(shuffledReads);
+  readSeedmersDuplicatesIndex = std::move(shuffledReadSeedmersDuplicatesIndex);
 
   numPassedReads = reads.size();
   if (skipSingleton) {
