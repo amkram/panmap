@@ -673,7 +673,6 @@ class squareEM {
     double errorRate = 0.005;
 
     size_t numThreads;
-    mutable tbb::task_arena arena;
     std::vector<std::pair<uint32_t, uint32_t>> threadsRangeByProps;
 
     squareEM(ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff);
