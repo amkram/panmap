@@ -339,8 +339,9 @@ class ThreadsManager {
 
     // mutation structures... shared by all threads during placement
     std::vector<seeding::uniqueKminmer_t> seedInfos;
-    std::vector<std::vector<uint32_t>> seedInsubIndices;
+    std::vector<std::vector<uint32_t>> seedInsertions;
     std::vector<std::vector<uint32_t>> seedDeletions;
+    std::vector<std::vector<std::pair<uint32_t, uint32_t>>> seedSubstitutions;
     std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>> coordDeltas; 
     std::vector<std::vector<uint32_t>> invertedBlocks;
 
@@ -389,14 +390,16 @@ class mgsrPlacer {
   public:
     // mutation structures
     std::vector<seeding::uniqueKminmer_t>* seedInfosPtr; 
-    std::vector<std::vector<uint32_t>>* seedInsubIndicesPtr; 
+    std::vector<std::vector<uint32_t>>* seedInsertionsPtr; 
     std::vector<std::vector<uint32_t>>* seedDeletionsPtr;
+    std::vector<std::vector<std::pair<uint32_t, uint32_t>>>* seedSubstitutionsPtr; 
     std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>* coordDeltasPtr; 
     std::vector<std::vector<uint32_t>>* invertedBlocksPtr;
 
     std::vector<seeding::uniqueKminmer_t>& seedInfos; 
-    std::vector<std::vector<uint32_t>>& seedInsubIndices; 
+    std::vector<std::vector<uint32_t>>& seedInsertions; 
     std::vector<std::vector<uint32_t>>& seedDeletions;
+    std::vector<std::vector<std::pair<uint32_t, uint32_t>>>& seedSubstitutions; 
     std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>& coordDeltas; 
     std::vector<std::vector<uint32_t>>& invertedBlocks;
 
@@ -477,10 +480,12 @@ class mgsrPlacer {
       : liteTree(liteTree),
         seedInfos(threadsManager.seedInfos),
         seedInfosPtr(&seedInfos),
-        seedInsubIndices(threadsManager.seedInsubIndices),
-        seedInsubIndicesPtr(&seedInsubIndices),
+        seedInsertions(threadsManager.seedInsertions),
+        seedInsertionsPtr(&seedInsertions),
         seedDeletions(threadsManager.seedDeletions),
         seedDeletionsPtr(&seedDeletions),
+        seedSubstitutions(threadsManager.seedSubstitutions),
+        seedSubstitutionsPtr(&seedSubstitutions),
         coordDeltas(threadsManager.coordDeltas), 
         coordDeltasPtr(&coordDeltas),
         invertedBlocks(threadsManager.invertedBlocks),
@@ -497,8 +502,9 @@ class mgsrPlacer {
     mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader)
       : liteTree(liteTree),
         seedInfos(*seedInfosPtr),
-        seedInsubIndices(*seedInsubIndicesPtr),
+        seedInsertions(*seedInsertionsPtr),
         seedDeletions(*seedDeletionsPtr),
+        seedSubstitutions(*seedSubstitutionsPtr),
         coordDeltas(*coordDeltasPtr),
         invertedBlocks(*invertedBlocksPtr)
     {
@@ -521,35 +527,44 @@ class mgsrPlacer {
         seed.isReverse = seedReader.getIsReverse();
       }
     
-      seedInsubIndices.resize(perNodeChangesReader.size());
+      seedInsertions.resize(perNodeChangesReader.size());
       seedDeletions.resize(perNodeChangesReader.size());
+      seedSubstitutions.resize(perNodeChangesReader.size());
       coordDeltas.resize(perNodeChangesReader.size());
       invertedBlocks.resize(perNodeChangesReader.size());
       for (size_t i = 0; i < perNodeChangesReader.size(); i++) {
         const auto& currentPerNodeChangeReader = perNodeChangesReader[i];
-        auto& currentSeedInsubIndices = seedInsubIndices[i];
+        auto& currentSeedInsertions = seedInsertions[i];
         auto& currentSeedDeletions = seedDeletions[i];
+        auto& currentSeedSubstitutions = seedSubstitutions[i];
         auto& currentCoordDeltas = coordDeltas[i];
         auto& currentInvertedBlocks = invertedBlocks[i];
     
-        const auto& currentSeedInsubIndicesReader = currentPerNodeChangeReader.getSeedInsubIndices();
+        const auto& currentSeedInsertionsReader = currentPerNodeChangeReader.getSeedInsertions();
         const auto& currentSeedDeletionsReader = currentPerNodeChangeReader.getSeedDeletions();
+        const auto& currentSeedSubstitutionsReader = currentPerNodeChangeReader.getSeedSubstitutions();
         const auto& currentCoordDeltasReader = currentPerNodeChangeReader.getCoordDeltas();
         const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
     
-        currentSeedInsubIndices.resize(currentSeedInsubIndicesReader.size());
+        currentSeedInsertions.resize(currentSeedInsertionsReader.size());
         currentSeedDeletions.resize(currentSeedDeletionsReader.size());
+        currentSeedSubstitutions.resize(currentSeedSubstitutionsReader.size());
         currentCoordDeltas.resize(currentCoordDeltasReader.size());
         currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
     
-        for (size_t j = 0; j < currentSeedInsubIndicesReader.size(); j++) {
-          currentSeedInsubIndices[j] = currentSeedInsubIndicesReader[j];
+        for (size_t j = 0; j < currentSeedInsertionsReader.size(); j++) {
+          currentSeedInsertions[j] = currentSeedInsertionsReader[j];
         }
     
         for (size_t j = 0; j < currentSeedDeletionsReader.size(); j++) {
           currentSeedDeletions[j] = currentSeedDeletionsReader[j];
         }
-    
+        
+        for (size_t j = 0; j < currentSeedSubstitutionsReader.size(); j++) {
+          currentSeedSubstitutions[j].first = currentSeedSubstitutionsReader[j].getOldSeedIndex();
+          currentSeedSubstitutions[j].second = currentSeedSubstitutionsReader[j].getNewSeedIndex();
+        }
+
         for (size_t j = 0; j < currentCoordDeltasReader.size(); j++) {
           const auto& currentCoordDeltaReader = currentCoordDeltasReader[j];
           auto& currentCoordDelta = currentCoordDeltas[j];
@@ -566,25 +581,30 @@ class mgsrPlacer {
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
 
+
+    void traverseTreeHelper(panmapUtils::LiteNode* node);
+    void traverseTree();
+
     void placeReadsHelper(panmapUtils::LiteNode* node);
     void placeReads();
 
     void computeOverlapCoefficientsHelper(panmapUtils::LiteNode* node, const absl::flat_hash_set<size_t>& allSeedmerHashesSet, std::vector<std::pair<std::string, double>>& overlapCoefficients, std::vector<std::optional<size_t>>& kminmerOnRef, std::unordered_map<size_t, size_t>& kminmerOnRefCount);
     void computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
 
-    void traverseTreeHelper(panmapUtils::LiteNode* node);
-    void traverseTree();
 
     // for tracking progress
     void setProgressTracker(ProgressTracker* tracker, size_t tid);
 
     // for updating reference seeds and gapMap
-    void updateSeeds(std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers);
+    void updateSeeds(std::unordered_set<uint64_t>& affectedSeedmers);
+    void backtrackSeeds(uint64_t nodeDfsIndex);
     void updateGapMap(std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks);
-    void addSeedAtPosition(uint64_t uniqueKminmerIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers);
+    void addSeedAtPosition(uint64_t uniqueKminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers);
     void addSeedAtPosition(uint64_t uniqueKminmerIndex);
-    void delSeedAtPosition(uint64_t pos, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers);
-    void delSeedAtPosition(uint64_t pos);
+    void subSeedAtPosition(uint64_t uniqueKminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers);
+    void subSeedAtPosition(uint64_t uniqueKminmerIndex);
+    void delSeedAtPosition(uint64_t uniqueKminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers);
+    void delSeedAtPosition(uint64_t uniqueKminmerIndex);
 
     // for updating read scores and kminmer matches
     void setReadScore(size_t readIndex, const int32_t score);

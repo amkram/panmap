@@ -797,33 +797,42 @@ void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
     seed.isReverse = seedReader.getIsReverse();
   }
 
-  seedInsubIndices.resize(perNodeChangesReader.size());
+  seedInsertions.resize(perNodeChangesReader.size());
   seedDeletions.resize(perNodeChangesReader.size());
+  seedSubstitutions.resize(perNodeChangesReader.size());
   coordDeltas.resize(perNodeChangesReader.size());
   invertedBlocks.resize(perNodeChangesReader.size());
   for (size_t i = 0; i < perNodeChangesReader.size(); i++) {
     const auto& currentPerNodeChangeReader = perNodeChangesReader[i];
-    auto& currentSeedInsubIndices = seedInsubIndices[i];
+    auto& currentSeedInsertions = seedInsertions[i];
+    auto& currentSeedSubstitutions = seedSubstitutions[i];
     auto& currentSeedDeletions = seedDeletions[i];
     auto& currentCoordDeltas = coordDeltas[i];
     auto& currentInvertedBlocks = invertedBlocks[i];
 
-    const auto& currentSeedInsubIndicesReader = currentPerNodeChangeReader.getSeedInsubIndices();
+    const auto& currentSeedInsertionsReader = currentPerNodeChangeReader.getSeedInsertions();
     const auto& currentSeedDeletionsReader = currentPerNodeChangeReader.getSeedDeletions();
+    const auto& currentSeedSubstitutionsReader = currentPerNodeChangeReader.getSeedSubstitutions();
     const auto& currentCoordDeltasReader = currentPerNodeChangeReader.getCoordDeltas();
     const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
 
-    currentSeedInsubIndices.resize(currentSeedInsubIndicesReader.size());
+    currentSeedInsertions.resize(currentSeedInsertionsReader.size());
+    currentSeedSubstitutions.resize(currentSeedSubstitutionsReader.size());
     currentSeedDeletions.resize(currentSeedDeletionsReader.size());
     currentCoordDeltas.resize(currentCoordDeltasReader.size());
     currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
 
-    for (size_t j = 0; j < currentSeedInsubIndicesReader.size(); j++) {
-      currentSeedInsubIndices[j] = currentSeedInsubIndicesReader[j];
+    for (size_t j = 0; j < currentSeedInsertionsReader.size(); j++) {
+      currentSeedInsertions[j] = currentSeedInsertionsReader[j];
     }
 
     for (size_t j = 0; j < currentSeedDeletionsReader.size(); j++) {
       currentSeedDeletions[j] = currentSeedDeletionsReader[j];
+    }
+
+    for (size_t j = 0; j < currentSeedSubstitutionsReader.size(); j++) {
+      currentSeedSubstitutions[j].first = currentSeedSubstitutionsReader[j].getOldSeedIndex();
+      currentSeedSubstitutions[j].second = currentSeedSubstitutionsReader[j].getNewSeedIndex();
     }
 
     for (size_t j = 0; j < currentCoordDeltasReader.size(); j++) {
@@ -2344,6 +2353,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   auto l = indexBuilder.getL();
   std::vector<uint64_t> deletedSeedIndices;
   std::vector<uint64_t> addedSeedIndices;
+  std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedIndices;
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
     auto [curIt, endIt] = newKminmerRanges[i];
     auto indexingIt = curIt;
@@ -2368,11 +2378,12 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       forwardHash = seeding::rol(forwardHash, k) ^ startingSyncmerHashes[j];
       reverseHash = seeding::rol(reverseHash, k) ^ startingSyncmerHashes[l - j - 1];
     }
+    auto& curRefOnKminmer = refOnKminmers[*indexingIt];
     if (forwardHash != reverseHash) {
       seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
-
-      if (refOnKminmers[*indexingIt].has_value()) {
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, refOnKminmers[*indexingIt].value());
+      bool substitution = curRefOnKminmer.has_value();
+      if (substitution) {
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
       } else {
         refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
       }
@@ -2381,18 +2392,26 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
         uniqueKminmers.emplace_back(uniqueKminmer);
         kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
-        addedSeedIndices.push_back(uniqueKminmers.size() - 1);
-        refOnKminmers[*indexingIt] = uniqueKminmers.size() - 1;
+        if (substitution) {
+          substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmers.size() - 1);
+        } else {
+          addedSeedIndices.push_back(uniqueKminmers.size() - 1);
+        }
+        curRefOnKminmer = uniqueKminmers.size() - 1;
       } else {
-        addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
-        refOnKminmers[*indexingIt] = uniqueKminmerIndexIt->second;
+        if (substitution) {
+          substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmerIndexIt->second);
+        } else {
+          addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
+        }
+        curRefOnKminmer = uniqueKminmerIndexIt->second;
       }
       
     } else {
-      if (refOnKminmers[*indexingIt].has_value()) {
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*indexingIt].value());
-        refOnKminmers[*indexingIt] = std::nullopt;
-        deletedSeedIndices.push_back(*indexingIt);
+      if (curRefOnKminmer.has_value()) {
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
+        deletedSeedIndices.push_back(curRefOnKminmer.value());
+        curRefOnKminmer = std::nullopt;
       }
     }
 
@@ -2405,10 +2424,12 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(refOnSyncmers[*indexingIt].value().hash, k)     ^ seeding::rol(refOnSyncmers[*curIt].value().hash, k * (l-1));
       ++indexingIt;
 
+      auto& curRefOnKminmer = refOnKminmers[*indexingIt];
       if (forwardHash != reverseHash) {
         seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
-        if (refOnKminmers[*indexingIt].has_value()) {
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, refOnKminmers[*indexingIt].value());
+        bool substitution = curRefOnKminmer.has_value();
+        if (substitution) {
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
         } else {
           refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
         }
@@ -2417,17 +2438,25 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
         if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
           uniqueKminmers.emplace_back(uniqueKminmer);
           kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
-          addedSeedIndices.push_back(uniqueKminmers.size() - 1);
-          refOnKminmers[*indexingIt] = uniqueKminmers.size() - 1;
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmers.size() - 1);
+          } else {
+            addedSeedIndices.push_back(uniqueKminmers.size() - 1);
+          }
+          curRefOnKminmer = uniqueKminmers.size() - 1;
         } else {
-          addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
-          refOnKminmers[*indexingIt] = uniqueKminmerIndexIt->second;
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmerIndexIt->second);
+          } else {
+            addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
+          }
+          curRefOnKminmer = uniqueKminmerIndexIt->second;
         }
       } else {
-        if (refOnKminmers[*indexingIt].has_value()) {
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*indexingIt].value());
-          refOnKminmers[*indexingIt] = std::nullopt;
-          deletedSeedIndices.push_back(*indexingIt);
+        if (curRefOnKminmer.has_value()) {
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
+          deletedSeedIndices.push_back(curRefOnKminmer.value());
+          curRefOnKminmer = std::nullopt;
         }
       }
     }
@@ -2438,8 +2467,8 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       --delIt;
       if (refOnKminmers[*delIt].has_value()) {
         refOnKminmersChangeRecord.emplace_back(*delIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*delIt].value());
+        deletedSeedIndices.push_back(refOnKminmers[*delIt].value());
         refOnKminmers[*delIt] = std::nullopt;
-        deletedSeedIndices.push_back(*delIt);
       }
       if (delIt == refOnSyncmersMap.begin()) break;
     }
@@ -2447,8 +2476,8 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
     if (changeType == panmapUtils::seedChangeType::DEL && refOnKminmers[syncmerPos].has_value()) {
       refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, refOnKminmers[syncmerPos].value());
+      deletedSeedIndices.push_back(refOnKminmers[syncmerPos].value());
       refOnKminmers[syncmerPos] = std::nullopt;
-      deletedSeedIndices.push_back(syncmerPos);
     }
   }
 
@@ -2459,7 +2488,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   curNodeChanges.setNodeIndex(dfsIndex);
 
   // adding inserted/substituted seeds to index
-  capnp::List<uint32_t>::Builder seedInsubBuilder = curNodeChanges.initSeedInsubIndices(addedSeedIndices.size());
+  capnp::List<uint32_t>::Builder seedInsubBuilder = curNodeChanges.initSeedInsertions(addedSeedIndices.size());
   for (size_t i = 0; i < addedSeedIndices.size(); i++) {
     seedInsubBuilder.set(i, addedSeedIndices[i]);
   }
@@ -2468,6 +2497,13 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   capnp::List<uint32_t>::Builder seedDeletionBuilder = curNodeChanges.initSeedDeletions(deletedSeedIndices.size());
   for (size_t i = 0; i < deletedSeedIndices.size(); i++) {
     seedDeletionBuilder.set(i, deletedSeedIndices[i]);
+  }
+
+  // adding substituted seeds to index
+  capnp::List<SeedSubstitutionIndex>::Builder seedSubstitutionBuilder = curNodeChanges.initSeedSubstitutions(substitutedSeedIndices.size());
+  for (size_t i = 0; i < substitutedSeedIndices.size(); i++) {
+    seedSubstitutionBuilder[i].setOldSeedIndex(substitutedSeedIndices[i].first);
+    seedSubstitutionBuilder[i].setNewSeedIndex(substitutedSeedIndices[i].second);
   }
 
   // adding coord deltas to index
@@ -2647,71 +2683,71 @@ int mgsr::open_file(const std::string& path) {
   return fd;
 }
 
-void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t newKminmerIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers) {
+void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t newKminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers) {
   const auto& newKminmer = seedInfos[newKminmerIndex];
   const uint32_t pos = newKminmer.startPos;
-  auto posMapIt = positionMap.find(pos);
-  if (posMapIt != positionMap.end()) {
-    uint64_t& oldKminmerIndex = posMapIt->second;
-    seedBacktracks.emplace_back(oldKminmerIndex, panmapUtils::seedChangeType::SUB);
-    size_t oldHash = seedInfos[oldKminmerIndex].hash;
-    size_t newHash = newKminmer.hash;
-    affectedSeedmers.insert(oldHash);
-    affectedSeedmers.insert(newHash);
-    auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
-    if (oldHashToPositionIt->second.size() == 1) {
-      hashToPositionMap.erase(oldHashToPositionIt);
-    } else {
-      auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
-      oldHashToPositionIt->second.erase(eraseIt);
-      if (oldHashToPositionIt->second.empty()) hashToPositionMap.erase(oldHashToPositionIt);
-    }
-    oldKminmerIndex = newKminmerIndex;
-    hashToPositionMap[newHash].push_back(posMapIt);
-  } else {
-    posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
-    size_t hash = newKminmer.hash;
-    affectedSeedmers.insert(hash);
-    hashToPositionMap[hash].push_back(posMapIt);
-    seedBacktracks.emplace_back(newKminmerIndex, panmapUtils::seedChangeType::ADD);
-  }
+  auto posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
+  size_t hash = newKminmer.hash;
+  affectedSeedmers.insert(hash);
+  hashToPositionMap[hash].push_back(posMapIt);
 }
 
 void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t newKminmerIndex) {
   const auto& newKminmer = seedInfos[newKminmerIndex];
   const uint32_t pos = newKminmer.startPos;
-  auto posMapIt = positionMap.find(pos);
-  if (posMapIt != positionMap.end()) {
-    uint64_t& oldKminmerIndex = posMapIt->second;
-    size_t oldHash = seedInfos[oldKminmerIndex].hash;
-    size_t newHash = newKminmer.hash;
-    auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
-    if (oldHashToPositionIt->second.size() == 1) {
-      hashToPositionMap.erase(oldHashToPositionIt);
-      delayedRefSeedmerStatus.erase(oldHash);
-    } else {
-      auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
-      oldHashToPositionIt->second.erase(eraseIt);
-      delayedRefSeedmerStatus[oldHash] = oldHashToPositionIt->second.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
-    }
-    oldKminmerIndex = newKminmerIndex;
-    auto& positions = hashToPositionMap[newHash];
-    positions.push_back(posMapIt);
-    delayedRefSeedmerStatus[newHash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
-  } else {
-    posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
-    size_t hash = newKminmer.hash;
-    auto& positions = hashToPositionMap[hash];
-    positions.push_back(posMapIt);
-    delayedRefSeedmerStatus[hash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
-  }
+  auto posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
+  size_t hash = newKminmer.hash;
+  auto& positions = hashToPositionMap[hash];
+  positions.push_back(posMapIt);
+  delayedRefSeedmerStatus[hash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
 }
 
-
-void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t pos, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers) {
+void mgsr::mgsrPlacer::subSeedAtPosition(uint64_t newKminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers) {
+  const auto& newKminmer = seedInfos[newKminmerIndex];
+  const uint32_t pos = newKminmer.startPos;
   auto posMapIt = positionMap.find(pos);
+  uint64_t& oldKminmerIndex = posMapIt->second;
+  size_t oldHash = seedInfos[oldKminmerIndex].hash;
+  size_t newHash = newKminmer.hash;
+  affectedSeedmers.insert(oldHash);
+  affectedSeedmers.insert(newHash);
+  auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
+  if (oldHashToPositionIt->second.size() == 1) {
+    hashToPositionMap.erase(oldHashToPositionIt);
+  } else {
+    auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
+    oldHashToPositionIt->second.erase(eraseIt);
+    if (oldHashToPositionIt->second.empty()) hashToPositionMap.erase(oldHashToPositionIt);
+  }
+  oldKminmerIndex = newKminmerIndex;
+  hashToPositionMap[newHash].push_back(posMapIt);
+}
+
+void mgsr::mgsrPlacer::subSeedAtPosition(uint64_t newKminmerIndex) {
+  const auto& newKminmer = seedInfos[newKminmerIndex];
+  const uint32_t pos = newKminmer.startPos;
+  auto posMapIt = positionMap.find(pos);
+  uint64_t& oldKminmerIndex = posMapIt->second;
+  size_t oldHash = seedInfos[oldKminmerIndex].hash;
+  size_t newHash = newKminmer.hash;
+  auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
+  if (oldHashToPositionIt->second.size() == 1) {
+    hashToPositionMap.erase(oldHashToPositionIt);
+    delayedRefSeedmerStatus.erase(oldHash);
+  } else {
+    auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
+    oldHashToPositionIt->second.erase(eraseIt);
+    delayedRefSeedmerStatus[oldHash] = oldHashToPositionIt->second.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
+  }
+  oldKminmerIndex = newKminmerIndex;
+  auto& positions = hashToPositionMap[newHash];
+  positions.push_back(posMapIt);
+  delayedRefSeedmerStatus[newHash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
+}
+
+void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t kminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers) {
+  auto posMapIt = positionMap.find(seedInfos[kminmerIndex].startPos);
   const uint64_t oldKminmerIndex = posMapIt->second;
-  seedBacktracks.emplace_back(oldKminmerIndex, panmapUtils::seedChangeType::DEL);
   size_t hash = seedInfos[oldKminmerIndex].hash;
   affectedSeedmers.insert(hash);
   auto hashToPositionIt = hashToPositionMap.find(hash);
@@ -2725,8 +2761,8 @@ void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t pos, std::vector<std::pair<uin
   positionMap.erase(posMapIt);
 }
 
-void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t pos) {
-  auto posMapIt = positionMap.find(pos);
+void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t kminmerIndex) {
+  auto posMapIt = positionMap.find(seedInfos[kminmerIndex].startPos);
   const uint64_t oldKminmerIndex = posMapIt->second;
   size_t hash = seedInfos[oldKminmerIndex].hash;
   auto hashToPositionIt = hashToPositionMap.find(hash);
@@ -2767,18 +2803,33 @@ mgsr::RefSeedmerExistStatus mgsr::mgsrPlacer::getDelayedRefSeedmerExistStatus(ui
 }
 
 void mgsr::mgsrPlacer::updateSeeds(
-  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks,
   std::unordered_set<uint64_t>& affectedSeedmers
 ) {
-  seedBacktracks.reserve(seedInsubIndices[curDfsIndex].size() + seedDeletions[curDfsIndex].size());
-  for (uint32_t seedInsubSeedIndex : seedInsubIndices[curDfsIndex]) {
-    addSeedAtPosition(seedInsubSeedIndex, seedBacktracks, affectedSeedmers);
+  for (uint32_t seedInsertion : seedInsertions[curDfsIndex]) {
+    addSeedAtPosition(seedInsertion, affectedSeedmers);
   }
 
-  for (uint32_t deletedPos : seedDeletions[curDfsIndex]) {
-    delSeedAtPosition(deletedPos, seedBacktracks, affectedSeedmers);
+  for (const auto& seedSubstitution : seedSubstitutions[curDfsIndex]) {
+    subSeedAtPosition(seedSubstitution.second, affectedSeedmers);
   }
-  seedBacktracks.shrink_to_fit();
+
+  for (uint32_t deletedSeedIndex : seedDeletions[curDfsIndex]) {
+    delSeedAtPosition(deletedSeedIndex, affectedSeedmers);
+  }
+}
+
+void mgsr::mgsrPlacer::backtrackSeeds(uint64_t nodeDfsIndex) {
+  for (uint32_t seedInsertion : seedInsertions[nodeDfsIndex]) {
+    delSeedAtPosition(seedInsertion);
+  }
+
+  for (const auto& seedSubstitution : seedSubstitutions[nodeDfsIndex]) {
+    subSeedAtPosition(seedSubstitution.first);
+  }
+
+  for (uint32_t deletedSeedIndex : seedDeletions[nodeDfsIndex]) {
+    addSeedAtPosition(deletedSeedIndex);
+  }
 }
 
 void mgsr::mgsrPlacer::updateGapMap(std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks) {
@@ -4160,8 +4211,8 @@ void mgsr::mgsrPlacer::computeOverlapCoefficientsHelper(
   // **** Update seeds ****
   size_t binaryOverlapKminmerCountBacktrack = binaryOverlapKminmerCount;
   std::vector<std::tuple<uint32_t, size_t, panmapUtils::seedChangeType>> seedBacktracks;
-  seedBacktracks.reserve(seedInsubIndices[curDfsIndex].size() + seedDeletions[curDfsIndex].size());
-  for (uint32_t seedInsubSeedIndex : seedInsubIndices[curDfsIndex]) {
+  seedBacktracks.reserve(seedInsertions[curDfsIndex].size() + seedSubstitutions[curDfsIndex].size() + seedDeletions[curDfsIndex].size());
+  for (uint32_t seedInsubSeedIndex : seedInsertions[curDfsIndex]) {
     const auto& newKminmer = seedInfos[seedInsubSeedIndex];
     const auto startPos = newKminmer.startPos;
     auto& kminmerOnRefState = kminmerOnRef[startPos];
@@ -4195,7 +4246,42 @@ void mgsr::mgsrPlacer::computeOverlapCoefficientsHelper(
     }
   }
 
-  for (uint32_t deletePos : seedDeletions[curDfsIndex]) {
+  for (const auto& seedInsubSeedIndex : seedSubstitutions[curDfsIndex]) {
+    const auto& newKminmer = seedInfos[seedInsubSeedIndex.second];
+    const auto startPos = newKminmer.startPos;
+    auto& kminmerOnRefState = kminmerOnRef[startPos];
+    if (kminmerOnRefState.has_value()) {
+      // sub
+      auto oldKminmer = kminmerOnRefState.value();
+      auto oldKminmerCountIt = kminmerOnRefCount.find(oldKminmer);
+      oldKminmerCountIt->second -= 1;
+      if (oldKminmerCountIt->second == 0) {
+        kminmerOnRefCount.erase(oldKminmerCountIt);
+        if (allSeedmerHashesSet.find(oldKminmer) != allSeedmerHashesSet.end()) --binaryOverlapKminmerCount;
+      }
+      auto [newKminmerCountIt, newKminmerCountInserted] = kminmerOnRefCount.emplace(newKminmer.hash, 1);
+      if (!newKminmerCountInserted) {
+        newKminmerCountIt->second++;
+      } else {
+        if (allSeedmerHashesSet.find(newKminmer.hash) != allSeedmerHashesSet.end()) ++binaryOverlapKminmerCount;
+      }
+      kminmerOnRefState = newKminmer.hash;
+      seedBacktracks.emplace_back(startPos, oldKminmer, panmapUtils::seedChangeType::SUB);
+    } else {
+      // add
+      auto [newKminmerCountIt, newKminmerCountInserted] = kminmerOnRefCount.emplace(newKminmer.hash, 1);
+      if (!newKminmerCountInserted) {
+        newKminmerCountIt->second++;
+      } else {
+        if (allSeedmerHashesSet.find(newKminmer.hash) != allSeedmerHashesSet.end()) ++binaryOverlapKminmerCount;
+      }
+      kminmerOnRefState = newKminmer.hash;
+      seedBacktracks.emplace_back(startPos, 0, panmapUtils::seedChangeType::ADD);
+    }
+  }
+
+  for (uint32_t deleteSeedIndex : seedDeletions[curDfsIndex]) {
+    uint32_t deletePos = seedInfos[deleteSeedIndex].startPos;
     auto oldKminmer = kminmerOnRef[deletePos].value();
     auto oldKminmerCountIt = kminmerOnRefCount.find(oldKminmer);
     oldKminmerCountIt->second -= 1;
@@ -4289,14 +4375,14 @@ void mgsr::mgsrPlacer::computeOverlapCoefficients(const absl::flat_hash_set<size
 }
 
 void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
-  if (curDfsIndex % 100 == 0) {
-    std::cout << "\r" << curDfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
+  // Update progress if tracker is available
+  if (progressTracker) {
+    progressTracker->incrementProgress(threadId);
   }
 
   // **** Update seeds ****
-  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
   std::unordered_set<uint64_t> affectedSeedmers;
-  updateSeeds(seedBacktracks, affectedSeedmers);
+  updateSeeds(affectedSeedmers);
 
   // **** Update gapMap ****
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
@@ -4307,19 +4393,14 @@ void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
   revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
 
+  auto nodeDfsIndex = curDfsIndex;
   for (panmapUtils::LiteNode *child : node->children) {
     ++curDfsIndex;
     traverseTreeHelper(child);
   }
 
   // Backtrack seeds and delayedRefSeedmerStatus
-  for (const auto& [uniqueKminmerIndex, changeType] : seedBacktracks) {
-    if (changeType == panmapUtils::seedChangeType::ADD) {
-      delSeedAtPosition(seedInfos[uniqueKminmerIndex].startPos);
-    } else {
-      addSeedAtPosition(uniqueKminmerIndex);
-    }
-  }
+  backtrackSeeds(nodeDfsIndex);
   
   // Backtrack gapMap
   for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {
@@ -4347,9 +4428,8 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   }
 
   // **** Update seeds ****
-  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
   std::unordered_set<uint64_t> affectedSeedmers;
-  updateSeeds(seedBacktracks, affectedSeedmers);
+  updateSeeds(affectedSeedmers);
 
   // **** Update gapMap ****
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
@@ -4369,7 +4449,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   std::vector<std::pair<size_t, std::vector<mgsr::Minichain>>> readMinichainsBacktrack;
 
   auto& currentNodeScoreDeltas = perNodeScoreDeltasIndex[curDfsIndex];
-  if (seedBacktracks.empty()) {
+  if (affectedSeedmers.empty()) {
     // If the node is identical to its parent, add it to the identical group
     if (node->parent != nullptr && threadId == 0) {
       const std::string& parentID = node->parent->identifier;
@@ -4470,19 +4550,14 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   decltype(gapMapBlocksBacktracks){}.swap(gapMapBlocksBacktracks);
   decltype(readToAffectedSeedmerIndex){}.swap(readToAffectedSeedmerIndex);
 
+  auto nodeDfsIndex = curDfsIndex;
   for (panmapUtils::LiteNode *child : node->children) {
     ++curDfsIndex;
     placeReadsHelper(child);
   }
 
   // Backtrack seeds and delayedRefSeedmerStatus
-  for (const auto& [uniqueKminmerIndex, changeType] : seedBacktracks) {
-    if (changeType == panmapUtils::seedChangeType::ADD) {
-      delSeedAtPosition(seedInfos[uniqueKminmerIndex].startPos);
-    } else {
-      addSeedAtPosition(uniqueKminmerIndex);
-    }
-  }
+  backtrackSeeds(nodeDfsIndex);
 
   // Backtrack gapMap
   for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {

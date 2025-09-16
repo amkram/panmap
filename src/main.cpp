@@ -973,6 +973,15 @@ int main(int argc, char *argv[]) {
 
       std::cout << "Using " << numThreads << " threads" << std::endl;
 
+      // mgsr::mgsrPlacer placer(&liteTree, threadsManager);
+      // placer.setProgressTracker(&progressTracker, 0);
+      // auto start_time_traverseTree = std::chrono::high_resolution_clock::now();
+      // placer.traverseTree();
+      // auto end_time_traverseTree = std::chrono::high_resolution_clock::now();
+      // auto duration_traverseTree = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_traverseTree - start_time_traverseTree);
+      // std::cout << "Traversed tree in " << std::fixed << std::setprecision(3) << static_cast<double>(duration_traverseTree.count()) / 1000.0 << "s\n" << std::endl;
+      // exit(0);
+
 
       // auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
       // mgsr::mgsrPlacer placer(&liteTree, threadsManager);
