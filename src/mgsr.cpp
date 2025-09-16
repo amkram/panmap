@@ -4579,7 +4579,6 @@ void mgsr::ThreadsManager::printStats() {
 
 mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff) {
   numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-  arena = tbb::task_arena(numThreads);
 
   auto& kminmerOverlapCoefficients = threadsManager.kminmerOverlapCoefficients;
   auto& readSeedmersDuplicatesIndex = threadsManager.readSeedmersDuplicatesIndex;
@@ -4628,15 +4627,13 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
       threadRanges[i].second = end;
     }
   }
-  arena.execute([&]() {
-    tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
-      const auto& range = threadRanges[threadIdx];
-      for (size_t i = range.first; i < range.second; ++i) {
-        auto significantNodeId = significantOverlapNodeIds[i];
-        auto nodeDfsIndex = nodeToDfsIndex.at(significantNodeId);
-        threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i], nodeToDfsIndex);
-      }
-    });
+  tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+    const auto& range = threadRanges[threadIdx];
+    for (size_t i = range.first; i < range.second; ++i) {
+      auto significantNodeId = significantOverlapNodeIds[i];
+      auto nodeDfsIndex = nodeToDfsIndex.at(significantNodeId);
+      threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i], nodeToDfsIndex);
+    }
   });
 
 
@@ -4689,20 +4686,18 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
       threadRangesScoresToNodeIdsVector[i].second = end;
     }
   }
-  arena.execute([&]() {
-    tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
-      const auto& range = threadRangesScoresToNodeIdsVector[threadIdx];
-      for (size_t i = range.first; i < range.second; ++i) {
-      const auto& [scores, nodeIds] = scoresToNodeIdsVector[i];
-      nodes[i] = nodeIds[0];
-      size_t passedReadIndex = 0;
-      for (size_t j = 0; j < numReads; ++j) {
-        if (reads[j].readType != mgsr::ReadType::PASS) continue;
-        probs(passedReadIndex, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
-          ++passedReadIndex;
-        }
+  tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+    const auto& range = threadRangesScoresToNodeIdsVector[threadIdx];
+    for (size_t i = range.first; i < range.second; ++i) {
+    const auto& [scores, nodeIds] = scoresToNodeIdsVector[i];
+    nodes[i] = nodeIds[0];
+    size_t passedReadIndex = 0;
+    for (size_t j = 0; j < numReads; ++j) {
+      if (reads[j].readType != mgsr::ReadType::PASS) continue;
+      probs(passedReadIndex, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
+        ++passedReadIndex;
       }
-    });
+    }
   });
 
 
