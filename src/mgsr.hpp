@@ -212,6 +212,10 @@ enum ReadType : uint8_t {
   CONTAINS_SINGLETON
 };
 
+
+
+
+
 class Read {
   public:
     std::vector<readSeedmer> seedmersList;
@@ -222,6 +226,36 @@ class Read {
     ReadType readType = ReadType::PASS;
     int32_t maxScore = -1;
     std::vector<Minichain> maxMinichains;
+};
+
+struct RDGNode {
+  size_t hash;
+  std::unordered_set<RDGNode*> neighbors; // vector of pointers to neighbors
+  std::vector<uint32_t> readIndicesMid; // vector of read indices whose mid seedmer start at this seedmer. will be seedmerList.size() / 2 + 1
+  std::vector<uint32_t> readIndicesCovered;
+  RDGNode(size_t h) : hash(h), neighbors{}, readIndicesMid{}, readIndicesCovered{} {}
+};
+
+class ReadDebruijnGraph {
+  public:
+    std::unordered_map<size_t, std::unique_ptr<RDGNode>> hashToNode;
+    std::vector<std::vector<RDGNode*>> connectedComponents;
+
+    ReadDebruijnGraph() : hashToNode() {}
+    ~ReadDebruijnGraph() {
+      hashToNode.clear();
+      connectedComponents.clear();
+    }
+    void buildGraph(std::vector<Read>& reads);
+
+    RDGNode* makeNewNode(size_t hash);
+    std::pair<RDGNode*, bool> tryMakeNewNode(size_t hash);
+    void linkNodes(RDGNode* node1, RDGNode* node2);
+    void identifyConnectedComponents();
+    void searchComponentDFS(RDGNode* node, std::unordered_set<RDGNode*>& visited, std::vector<RDGNode*>& currentComponent);
+    void exportToGFA(const std::string& path);
+    void sortReads(std::vector<Read>& reads, std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex);
+    void sortReadsHelper(RDGNode* node, size_t& curReadIndex, std::vector<mgsr::Read>& reads, std::vector<mgsr::Read>& sortedReads, std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<std::vector<size_t>>& sortedReadSeedmersDuplicatesIndex);
 };
 
 void seedmersFromFastq(
@@ -314,7 +348,23 @@ class mgsrIndexBuilder {
 
 struct readScoreDelta {
   uint32_t readIndex;
-  uint32_t scoreDelta;
+  int16_t scoreDelta;
+};
+
+struct readScoreDeltaLowMemory {
+  uint32_t readIndex;
+  int16_t  scoreDelta;
+  uint64_t trailingDelta;
+
+  void encodeTrailingDelta(int16_t scoreDeltaDiff, uint32_t indexToEncode) {
+    uint64_t encodedScoreDelta = (scoreDeltaDiff + 8) & 0xF;
+    trailingDelta |= encodedScoreDelta << (indexToEncode - readIndex - 1) * 4;
+  }
+
+  int16_t decodeTrailingDelta(uint32_t offset) const {
+    uint64_t encodedScoreDelta = (trailingDelta >> (offset * 4)) & 0xF;
+    return encodedScoreDelta - 8;
+  }
 };
 
 class ThreadsManager {
@@ -336,6 +386,7 @@ class ThreadsManager {
     int l;
     bool openSyncmer;
     bool skipSingleton;
+    bool lowMemory;
 
     // mutation structures... shared by all threads during placement
     std::vector<seeding::uniqueKminmer_t> seedInfos;
@@ -347,6 +398,7 @@ class ThreadsManager {
 
     //  thread:   dfsIndex:  scoreDelta
     std::vector<std::vector<std::vector<readScoreDelta>>> perNodeScoreDeltasIndexByThreadId; 
+    std::vector<std::vector<std::vector<readScoreDeltaLowMemory>>> perNodeScoreDeltasIndexByThreadIdLowMemory;
     std::vector<uint64_t> readMinichainsAdded;
     std::vector<uint64_t> readMinichainsRemoved;
     std::vector<uint64_t> readMinichainsUpdated;
@@ -369,9 +421,13 @@ class ThreadsManager {
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(panmapUtils::LiteTree* liteTree,  size_t numThreads, bool skipSingleton) : liteTree(liteTree), numThreads(numThreads), skipSingleton(skipSingleton) {
+    ThreadsManager(panmapUtils::LiteTree* liteTree,  size_t numThreads, bool skipSingleton, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), skipSingleton(skipSingleton), lowMemory(lowMemory) {
       threadRanges.resize(numThreads);
-      perNodeScoreDeltasIndexByThreadId.resize(numThreads);
+      if (lowMemory) {
+        perNodeScoreDeltasIndexByThreadIdLowMemory.resize(numThreads);
+      } else {
+        perNodeScoreDeltasIndexByThreadId.resize(numThreads);
+      }
       readMinichainsInitialized.resize(numThreads);
       readMinichainsAdded.resize(numThreads);
       readMinichainsRemoved.resize(numThreads);
@@ -415,6 +471,7 @@ class mgsrPlacer {
 
     // parameters from user input... preset for now
     bool skipSingleton;
+    bool lowMemory;
     double excludeDuplicatesThreshold = 0.5;
     double errorRate = 0.005;
     int64_t maximumGap = 50;
@@ -442,6 +499,7 @@ class mgsrPlacer {
     std::vector<int32_t> readScores;
     std::vector<std::pair<int64_t, int64_t>> kminmerMatches;
     std::vector<std::vector<readScoreDelta>> perNodeScoreDeltasIndex;
+    std::vector<std::vector<readScoreDeltaLowMemory>> perNodeScoreDeltasIndexLowMemory;
     std::vector<std::vector<std::tuple<size_t, int64_t, int64_t>>> perNodeKminmerMatchesDeltasIndex;
     int64_t totalScore = 0;
     int64_t totalDirectionalKminmerMatches = 0;
@@ -455,6 +513,7 @@ class mgsrPlacer {
     std::unordered_map<std::string, uint64_t> totalScores;
     std::unordered_map<std::string, std::vector<std::string>> identicalGroups; // only calculate from the first thread
     std::unordered_map<std::string, std::string> identicalNodeToGroup; // only calculate from the first thread
+
 
 
     // for tracking progress
@@ -476,7 +535,7 @@ class mgsrPlacer {
 
     uint64_t readMinichainsUpdated = 0;
     
-    mgsrPlacer(panmapUtils::LiteTree* liteTree, ThreadsManager& threadsManager)
+    mgsrPlacer(panmapUtils::LiteTree* liteTree, ThreadsManager& threadsManager, bool lowMemory)
       : liteTree(liteTree),
         seedInfos(threadsManager.seedInfos),
         seedInfosPtr(&seedInfos),
@@ -489,94 +548,29 @@ class mgsrPlacer {
         coordDeltas(threadsManager.coordDeltas), 
         coordDeltasPtr(&coordDeltas),
         invertedBlocks(threadsManager.invertedBlocks),
-        invertedBlocksPtr(&invertedBlocks)
-    {
-      k = threadsManager.k;
-      s = threadsManager.s;
-      t = threadsManager.t;
-      l = threadsManager.l;
-      openSyncmer = threadsManager.openSyncmer;
-      skipSingleton = threadsManager.skipSingleton;
-    }
+        invertedBlocksPtr(&invertedBlocks),
+        lowMemory(lowMemory),
+        k(threadsManager.k),
+        s(threadsManager.s),
+        t(threadsManager.t),
+        l(threadsManager.l),
+        openSyncmer(threadsManager.openSyncmer),
+        skipSingleton(threadsManager.skipSingleton)
+    {}
     
-    mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader)
+    mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory)
       : liteTree(liteTree),
         seedInfos(*seedInfosPtr),
         seedInsertions(*seedInsertionsPtr),
         seedDeletions(*seedDeletionsPtr),
         seedSubstitutions(*seedSubstitutionsPtr),
         coordDeltas(*coordDeltasPtr),
-        invertedBlocks(*invertedBlocksPtr)
+        invertedBlocks(*invertedBlocksPtr),
+        lowMemory(lowMemory)
     {
-      k = indexReader.getK();
-      s = indexReader.getS();
-      t = indexReader.getT();
-      l = indexReader.getL();
-      openSyncmer = indexReader.getOpen();
-    
-      capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
-      capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
-    
-      seedInfos.resize(seedInfosReader.size());
-      for (size_t i = 0; i < seedInfos.size(); i++) {
-        const auto& seedReader = seedInfosReader[i];
-        auto& seed = seedInfos[i];
-        seed.hash = seedReader.getHash();
-        seed.startPos = seedReader.getStartPos();
-        seed.endPos = seedReader.getEndPos();
-        seed.isReverse = seedReader.getIsReverse();
-      }
-    
-      seedInsertions.resize(perNodeChangesReader.size());
-      seedDeletions.resize(perNodeChangesReader.size());
-      seedSubstitutions.resize(perNodeChangesReader.size());
-      coordDeltas.resize(perNodeChangesReader.size());
-      invertedBlocks.resize(perNodeChangesReader.size());
-      for (size_t i = 0; i < perNodeChangesReader.size(); i++) {
-        const auto& currentPerNodeChangeReader = perNodeChangesReader[i];
-        auto& currentSeedInsertions = seedInsertions[i];
-        auto& currentSeedDeletions = seedDeletions[i];
-        auto& currentSeedSubstitutions = seedSubstitutions[i];
-        auto& currentCoordDeltas = coordDeltas[i];
-        auto& currentInvertedBlocks = invertedBlocks[i];
-    
-        const auto& currentSeedInsertionsReader = currentPerNodeChangeReader.getSeedInsertions();
-        const auto& currentSeedDeletionsReader = currentPerNodeChangeReader.getSeedDeletions();
-        const auto& currentSeedSubstitutionsReader = currentPerNodeChangeReader.getSeedSubstitutions();
-        const auto& currentCoordDeltasReader = currentPerNodeChangeReader.getCoordDeltas();
-        const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
-    
-        currentSeedInsertions.resize(currentSeedInsertionsReader.size());
-        currentSeedDeletions.resize(currentSeedDeletionsReader.size());
-        currentSeedSubstitutions.resize(currentSeedSubstitutionsReader.size());
-        currentCoordDeltas.resize(currentCoordDeltasReader.size());
-        currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
-    
-        for (size_t j = 0; j < currentSeedInsertionsReader.size(); j++) {
-          currentSeedInsertions[j] = currentSeedInsertionsReader[j];
-        }
-    
-        for (size_t j = 0; j < currentSeedDeletionsReader.size(); j++) {
-          currentSeedDeletions[j] = currentSeedDeletionsReader[j];
-        }
-        
-        for (size_t j = 0; j < currentSeedSubstitutionsReader.size(); j++) {
-          currentSeedSubstitutions[j].first = currentSeedSubstitutionsReader[j].getOldSeedIndex();
-          currentSeedSubstitutions[j].second = currentSeedSubstitutionsReader[j].getNewSeedIndex();
-        }
-
-        for (size_t j = 0; j < currentCoordDeltasReader.size(); j++) {
-          const auto& currentCoordDeltaReader = currentCoordDeltasReader[j];
-          auto& currentCoordDelta = currentCoordDeltas[j];
-          currentCoordDelta.first = currentCoordDeltaReader.getPos();
-          currentCoordDelta.second = currentCoordDeltaReader.getEndPos().which() == CoordDelta::EndPos::VALUE ? std::optional<uint32_t>(currentCoordDeltaReader.getEndPos().getValue()) : std::nullopt;
-        }
-    
-        for (size_t j = 0; j < currentInvertedBlocksReader.size(); j++) {
-          currentInvertedBlocks[j] = currentInvertedBlocksReader[j];
-        }
-      }
+      initializeMGSRIndex(indexReader);
     }
+    void initializeMGSRIndex(MGSRIndex::Reader indexReader);
     void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
@@ -612,7 +606,7 @@ class mgsrPlacer {
     void initializeReadMinichains(mgsr::Read& curRead);
     void updateMinichains(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos, bool allUniqueToNonUnique, bool allNonUniqueToUnique);
     void updateMinichainsMixed(size_t readIndex, const std::vector<affectedSeedmerInfo>& affectedSeedmerInfos);
-    int64_t getReadPseudoScore(mgsr::Read& curRead);
+    int32_t getReadPseudoScore(mgsr::Read& curRead);
     inline uint64_t decodeBegFromMinichain(uint64_t minichain);
     inline uint64_t decodeEndFromMinichain(uint64_t minichain);
     inline bool decodeRevFromMinichain(uint64_t minichain);
@@ -631,7 +625,6 @@ class mgsrPlacer {
 
 
   private:
-    
     void updateRefSeedmerStatus(size_t hash, mgsr::RefSeedmerChangeType& seedmerChangeType, mgsr::RefSeedmerExistStatus refSeedmerOldStatus, mgsr::RefSeedmerExistStatus refSeedmerNewStatus);
     void updateSeedmerChangesTypeFlag(mgsr::RefSeedmerChangeType seedmerChangeType, std::pair<bool, bool>& flags);
     void fillReadToAffectedSeedmerIndex(
@@ -656,6 +649,8 @@ class mgsrPlacer {
     bool isColinearFromMinichains(
       mgsr::Read& curRead, const mgsr::Minichain& minichain1, const mgsr::Minichain& minichain2
     );
+    uint64_t encodeScoreDeltaToFourBits(int16_t scoreDelta);
+
 
     int64_t getReadBruteForceScore(size_t readIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable);
 };

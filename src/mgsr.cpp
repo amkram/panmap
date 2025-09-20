@@ -12,6 +12,7 @@
 #include <random>
 #include <numeric>
 #include <algorithm>
+#include <stack>
 
 static void compareBruteForceBuild(
   panmanUtils::Tree *T,
@@ -556,7 +557,7 @@ int64_t mgsr::mgsrPlacer::getReadBruteForceScore(
 ) {
   auto readCopy = reads[readIndex];
   initializeReadMinichains(readCopy);
-  int64_t pseudoScore = getReadPseudoScore(readCopy);
+  int32_t pseudoScore = getReadPseudoScore(readCopy);
   return pseudoScore;
 }
 
@@ -780,6 +781,177 @@ void mgsr::extractReadSequences(const std::string& readPath1, const std::string&
   }
 }
 
+mgsr::RDGNode* mgsr::ReadDebruijnGraph::makeNewNode(size_t hash) {
+  auto newNode = std::make_unique<RDGNode>(hash);
+  auto rawPtr = newNode.get();
+  hashToNode[hash] = std::move(newNode);
+  return rawPtr;
+}
+
+std::pair<mgsr::RDGNode*, bool> mgsr::ReadDebruijnGraph::tryMakeNewNode(size_t hash) {
+  auto hashToNodeIt = hashToNode.find(hash);
+  if (hashToNodeIt == hashToNode.end()) {
+    return {makeNewNode(hash), true};
+  }
+  return {hashToNodeIt->second.get(), false};
+}
+
+void mgsr::ReadDebruijnGraph::linkNodes(RDGNode* node1, RDGNode* node2) {
+  if (node1 == nullptr || node2 == nullptr) {
+    return;
+  }
+  node1->neighbors.insert(node2);
+  node2->neighbors.insert(node1);
+}
+
+void mgsr::ReadDebruijnGraph::identifyConnectedComponents() {
+  std::unordered_set<RDGNode*> visited;
+  for (const auto& [_, nodeUniquePtr] : hashToNode) {
+    auto node = nodeUniquePtr.get();
+    if (visited.find(node) != visited.end()) continue;
+    std::vector<RDGNode*> currentComponent;
+    searchComponentDFS(node, visited, currentComponent);
+    std::sort(currentComponent.begin(), currentComponent.end(), [](const RDGNode* a, const RDGNode* b) {
+      return a->hash < b->hash;
+    });
+    connectedComponents.push_back(std::move(currentComponent));
+  }
+}
+
+
+void mgsr::ReadDebruijnGraph::searchComponentDFS(RDGNode* node, std::unordered_set<RDGNode*>& visited, std::vector<RDGNode*>& currentComponent) {
+  std::stack<RDGNode*> stack;
+  stack.push(node);
+  while (!stack.empty()) {
+    RDGNode* currentNode = stack.top();
+    stack.pop();
+    if (visited.find(currentNode) != visited.end()) continue;
+    visited.insert(currentNode);
+    currentComponent.push_back(currentNode);
+    for (const auto& neighbor : currentNode->neighbors) {
+      if (visited.find(neighbor) == visited.end()) {
+        stack.push(neighbor);
+      }
+    }
+  }
+}
+
+void mgsr::ReadDebruijnGraph::sortReads(
+  std::vector<mgsr::Read>& reads,
+  std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex
+) {
+  size_t curReadIndex = 0;
+  std::vector<mgsr::Read> sortedReads(reads.size());
+  std::vector<std::vector<size_t>> sortedReadSeedmersDuplicatesIndex(readSeedmersDuplicatesIndex.size());
+  for (const auto& component : connectedComponents) {
+    sortReadsHelper(component[0], curReadIndex, reads, sortedReads, readSeedmersDuplicatesIndex, sortedReadSeedmersDuplicatesIndex);
+  }
+  reads.swap(sortedReads);
+  readSeedmersDuplicatesIndex.swap(sortedReadSeedmersDuplicatesIndex);
+}
+
+void mgsr::ReadDebruijnGraph::sortReadsHelper(
+  RDGNode* node, size_t& curReadIndex,
+  std::vector<mgsr::Read>& reads, std::vector<mgsr::Read>& sortedReads,
+  std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<std::vector<size_t>>& sortedReadSeedmersDuplicatesIndex
+) {
+  std::stack<RDGNode*> stack;
+  std::unordered_set<RDGNode*> visited;
+  stack.push(node);
+  while (!stack.empty()) {
+    RDGNode* currentNode = stack.top();
+    stack.pop();
+    if (visited.find(currentNode) != visited.end()) continue;
+    visited.insert(currentNode);
+    for (const auto& readIndex : currentNode->readIndicesMid) {
+      sortedReads[curReadIndex] = std::move(reads[readIndex]);
+      sortedReadSeedmersDuplicatesIndex[curReadIndex] = std::move(readSeedmersDuplicatesIndex[readIndex]);
+      ++curReadIndex;
+    }
+    for (const auto& neighbor : currentNode->neighbors) {
+      if (visited.find(neighbor) == visited.end()) {
+        stack.push(neighbor);
+      }
+    }
+  }
+}
+
+void mgsr::ReadDebruijnGraph::exportToGFA(const std::string& filename) {
+    std::ofstream gfaFile(filename);
+  if (!gfaFile.is_open()) {
+    throw std::runtime_error("Cannot open GFA file for writing: " + filename);
+  }
+  
+  // Header line
+  gfaFile << "H\tVN:Z:1.0\n";
+  
+  // Export segments (nodes)
+  for (const auto& [hash, node] : hashToNode) {
+    gfaFile << "S\t" << hash << "\t" << node.get()->hash << "\n";
+  }
+  
+  // Export links (edges)
+  std::unordered_set<std::pair<size_t, size_t>, mgsr::PairHash> exportedEdges;
+  
+  for (const auto& [hash, node] : hashToNode) {
+    for (const auto& neighbor : node->neighbors) {
+      size_t neighborHash = neighbor->hash;
+      
+      // Avoid duplicate edges (undirected graph)
+      std::pair<size_t, size_t> edge = {std::min(hash, neighborHash), std::max(hash, neighborHash)};
+      if (exportedEdges.find(edge) != exportedEdges.end()) continue;
+      exportedEdges.insert(edge);
+      
+      // Determine orientation and overlap
+      int overlap = 1;
+      gfaFile << "L\t" << hash << "\t+\t" << neighborHash << "\t+\t" << overlap << "M\n";
+    }
+  }
+  
+  // Export paths for each connected component
+  for (size_t i = 0; i < connectedComponents.size(); ++i) {
+    if (connectedComponents[i].empty()) continue;
+    
+    gfaFile << "P\tcomponent_" << i << "\t";
+    for (size_t j = 0; j < connectedComponents[i].size(); ++j) {
+      if (j > 0) gfaFile << ",";
+      gfaFile << connectedComponents[i][j]->hash << "+";
+    }
+    gfaFile << "\t*\n";
+  }
+  
+  gfaFile.close();
+}
+
+void mgsr::ReadDebruijnGraph::buildGraph(std::vector<Read>& reads) {
+  for (size_t i = 0; i < reads.size(); ++i) {
+    RDGNode* prevNode = nullptr;
+    for (size_t j = 0; j < reads[i].seedmersList.size(); ++j) {
+      const auto& seedmer = reads[i].seedmersList[j];
+      auto [curNode, isNew] = tryMakeNewNode(seedmer.hash);
+
+      linkNodes(prevNode, curNode);
+
+      if (j == reads[i].seedmersList.size() / 2 + 1) {
+        curNode->readIndicesMid.push_back(i);
+      }
+      curNode->readIndicesCovered.push_back(i);
+
+      prevNode = curNode;
+    } 
+  }
+
+  // find connected components
+  identifyConnectedComponents();
+
+  // sort components by size (largest first)
+  std::sort(connectedComponents.begin(), connectedComponents.end(),
+    [](const std::vector<RDGNode*>& a, const std::vector<RDGNode*>& b) {
+      return a.size() > b.size();
+  });
+  
+}
+
 void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   k = indexReader.getK();
   s = indexReader.getS();
@@ -789,7 +961,6 @@ void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
 
   capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
   capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
-
   seedInfos.resize(seedInfosReader.size());
   for (size_t i = 0; i < seedInfos.size(); i++) {
     const auto& seedReader = seedInfosReader[i];
@@ -850,28 +1021,79 @@ void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
     }
   }
 }
+
+void mgsr::mgsrPlacer::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
+  k = indexReader.getK();
+  s = indexReader.getS();
+  t = indexReader.getT();
+  l = indexReader.getL();
+  openSyncmer = indexReader.getOpen();
+
+  capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
+  capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
+
+  seedInfos.resize(seedInfosReader.size());
+  for (size_t i = 0; i < seedInfos.size(); i++) {
+    const auto& seedReader = seedInfosReader[i];
+    auto& seed = seedInfos[i];
+    seed.hash = seedReader.getHash();
+    seed.startPos = seedReader.getStartPos();
+    seed.endPos = seedReader.getEndPos();
+    seed.isReverse = seedReader.getIsReverse();
+  }
+
+  seedInsertions.resize(perNodeChangesReader.size());
+  seedDeletions.resize(perNodeChangesReader.size());
+  seedSubstitutions.resize(perNodeChangesReader.size());
+  coordDeltas.resize(perNodeChangesReader.size());
+  invertedBlocks.resize(perNodeChangesReader.size());
+  for (size_t i = 0; i < perNodeChangesReader.size(); i++) {
+    const auto& currentPerNodeChangeReader = perNodeChangesReader[i];
+    auto& currentSeedInsertions = seedInsertions[i];
+    auto& currentSeedDeletions = seedDeletions[i];
+    auto& currentSeedSubstitutions = seedSubstitutions[i];
+    auto& currentCoordDeltas = coordDeltas[i];
+    auto& currentInvertedBlocks = invertedBlocks[i];
+
+    const auto& currentSeedInsertionsReader = currentPerNodeChangeReader.getSeedInsertions();
+    const auto& currentSeedDeletionsReader = currentPerNodeChangeReader.getSeedDeletions();
+    const auto& currentSeedSubstitutionsReader = currentPerNodeChangeReader.getSeedSubstitutions();
+    const auto& currentCoordDeltasReader = currentPerNodeChangeReader.getCoordDeltas();
+    const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
+
+    currentSeedInsertions.resize(currentSeedInsertionsReader.size());
+    currentSeedDeletions.resize(currentSeedDeletionsReader.size());
+    currentSeedSubstitutions.resize(currentSeedSubstitutionsReader.size());
+    currentCoordDeltas.resize(currentCoordDeltasReader.size());
+    currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
+
+    for (size_t j = 0; j < currentSeedInsertionsReader.size(); j++) {
+      currentSeedInsertions[j] = currentSeedInsertionsReader[j];
+    }
+
+    for (size_t j = 0; j < currentSeedDeletionsReader.size(); j++) {
+      currentSeedDeletions[j] = currentSeedDeletionsReader[j];
+    }
+    
+    for (size_t j = 0; j < currentSeedSubstitutionsReader.size(); j++) {
+      currentSeedSubstitutions[j].first = currentSeedSubstitutionsReader[j].getOldSeedIndex();
+      currentSeedSubstitutions[j].second = currentSeedSubstitutionsReader[j].getNewSeedIndex();
+    }
+
+    for (size_t j = 0; j < currentCoordDeltasReader.size(); j++) {
+      const auto& currentCoordDeltaReader = currentCoordDeltasReader[j];
+      auto& currentCoordDelta = currentCoordDeltas[j];
+      currentCoordDelta.first = currentCoordDeltaReader.getPos();
+      currentCoordDelta.second = currentCoordDeltaReader.getEndPos().which() == CoordDelta::EndPos::VALUE ? std::optional<uint32_t>(currentCoordDeltaReader.getEndPos().getValue()) : std::nullopt;
+    }
+
+    for (size_t j = 0; j < currentInvertedBlocksReader.size(); j++) {
+      currentInvertedBlocks[j] = currentInvertedBlocksReader[j];
+    }
+  }
+}
+
 void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, bool fast_mode) {
-  // // index duplicate reads
-  // std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
-  // for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
-  // tbb::parallel_sort(sortedReadSequencesIndices.begin(), sortedReadSequencesIndices.end(), [&readSequences](size_t i1, size_t i2) {
-  //   return readSequences[i1] < readSequences[i2];
-  // });
-
-  // // index duplicate reads
-  // std::vector<std::pair<std::string_view, std::vector<size_t>>> dupReadsIndex;
-  // std::string_view prevSeq = readSequences[sortedReadSequencesIndices[0]];
-  // dupReadsIndex.emplace_back(std::make_pair(prevSeq, std::vector<size_t>{0}));
-  // for (size_t i = 1; i < sortedReadSequencesIndices.size(); ++i) {
-  //   std::string_view currSeq = readSequences[sortedReadSequencesIndices[i]];
-  //   if (currSeq == prevSeq) {
-  //     dupReadsIndex.back().second.push_back(i);
-  //   } else {
-  //     dupReadsIndex.emplace_back(std::make_pair(currSeq, std::vector<size_t>{i}));
-  //   }
-  //   prevSeq = currSeq;
-  // }
-
   std::unordered_map<std::string_view, std::vector<size_t>> seqToIndex;
   for (size_t i = 0; i < readSequences.size(); ++i) {
     seqToIndex[readSequences[i]].push_back(i);
@@ -940,25 +1162,25 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
       }
     }
   });
+  
   std::vector<size_t> sortedUniqueReadSeedmersIndices(uniqueReadSeedmers.size());
   for (size_t i = 0; i < uniqueReadSeedmers.size(); ++i) sortedUniqueReadSeedmersIndices[i] = i;
   tbb::parallel_sort(sortedUniqueReadSeedmersIndices.begin(), sortedUniqueReadSeedmersIndices.end(), [&uniqueReadSeedmers, fast_mode](size_t i1, size_t i2) {
     const auto& lhs = uniqueReadSeedmers[i1].seedmersList;
     const auto& rhs = uniqueReadSeedmers[i2].seedmersList;
     
-    // First, compare the sizes of the seedmersList
-    if (lhs.size() != rhs.size()) {
-      return lhs.size() < rhs.size();
-    }
-    
-    // If sizes are equal, compare hash values first
-    for (size_t i = 0; i < lhs.size(); ++i) {
+    size_t minSize = std::min(lhs.size(), rhs.size());
+
+    for (size_t i = 0; i < minSize; ++i) {
       if (lhs[i].hash != rhs[i].hash) {
         return lhs[i].hash < rhs[i].hash;
       }
     }
+
+    if (lhs.size() != rhs.size()) {
+      return lhs.size() < rhs.size();
+    }
     
-    // If all hash values are equal, compare other fields
     return std::lexicographical_compare(
       lhs.begin(), lhs.end(),
       rhs.begin(), rhs.end(),
@@ -1033,31 +1255,40 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     }
   }
 
-  // Shuffle reads and readSeedmersDuplicatesIndex together
-  std::random_device rd;
-  std::mt19937 g(rd());
-  
-  // Create indices for shuffling
-  std::vector<size_t> indices(reads.size());
-  std::iota(indices.begin(), indices.end(), 0);
-  
-  // Shuffle the indices
-  std::shuffle(indices.begin(), indices.end(), g);
-  
-  // Apply the shuffle to both vectors
-  std::vector<mgsr::Read> shuffledReads;
-  std::vector<std::vector<size_t>> shuffledReadSeedmersDuplicatesIndex;
-  shuffledReads.reserve(reads.size());
-  shuffledReadSeedmersDuplicatesIndex.reserve(readSeedmersDuplicatesIndex.size());
-  
-  for (size_t idx : indices) {
-    shuffledReads.emplace_back(std::move(reads[idx]));
-    shuffledReadSeedmersDuplicatesIndex.emplace_back(std::move(readSeedmersDuplicatesIndex[idx]));
+  if (lowMemory) {
+    ReadDebruijnGraph readDebruijnGraph;
+    readDebruijnGraph.buildGraph(reads);
+    readDebruijnGraph.sortReads(reads, readSeedmersDuplicatesIndex);
+  } else {
+    std::random_device rd;
+    std::mt19937 g(rd());
+    
+    // Create indices for shuffling
+    std::vector<size_t> indices(reads.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    
+    // Shuffle the indices
+    std::shuffle(indices.begin(), indices.end(), g);
+    
+    // Apply the shuffle to both vectors
+    std::vector<mgsr::Read> shuffledReads;
+    std::vector<std::vector<size_t>> shuffledReadSeedmersDuplicatesIndex;
+    shuffledReads.reserve(reads.size());
+    shuffledReadSeedmersDuplicatesIndex.reserve(readSeedmersDuplicatesIndex.size());
+    
+    for (size_t idx : indices) {
+      shuffledReads.emplace_back(std::move(reads[idx]));
+      shuffledReadSeedmersDuplicatesIndex.emplace_back(std::move(readSeedmersDuplicatesIndex[idx]));
+    }
+    
+    // Replace original vectors with shuffled ones
+    reads = std::move(shuffledReads);
+    readSeedmersDuplicatesIndex = std::move(shuffledReadSeedmersDuplicatesIndex);
   }
-  
-  // Replace original vectors with shuffled ones
-  reads = std::move(shuffledReads);
-  readSeedmersDuplicatesIndex = std::move(shuffledReadSeedmersDuplicatesIndex);
+
+
+
+
 
   numPassedReads = reads.size();
   if (skipSingleton) {
@@ -1079,6 +1310,7 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
         } 
       }
       if (reads[i].readType != mgsr::ReadType::CONTAINS_SINGLETON) {
+        size_t estimatedUpdates = std::numeric_limits<size_t>::max();
         for (const auto& seedmer : reads[i].seedmersList) {
           allSeedmerHashesSet.insert(seedmer.hash);
         }
@@ -1087,11 +1319,14 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
   } else {
     for (uint32_t i = 0; i < reads.size(); ++i) {
       reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
+      size_t estimatedUpdates = std::numeric_limits<size_t>::max();
       for (const auto& seedmer : reads[i].seedmersList) {
         allSeedmerHashesSet.insert(seedmer.hash);
       }
     }
   }
+
+
 
   readIndexToThreadLocalIndex.resize(reads.size());
   const size_t chunkSize = (reads.size() + numThreads - 1) / numThreads;
@@ -1112,6 +1347,10 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     std::cout << "SkipSingleton turned on: " << numSingletonReads << " reads with singletons will be skipped during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
   }
+  for (size_t i = 0; i < numThreads; ++i) {
+    std::cout << "  Thread " << i << " will process " << threadRanges[i].second - threadRanges[i].first << " reads: " << threadRanges[i].first << " -> " << threadRanges[i].second << std::endl;
+  }
+
 }
 
 
@@ -1135,7 +1374,11 @@ void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fas
     perNodeKminmerMatchesDeltasIndex.resize(numNodes);
   } else {
     readScores.resize(numReads, 0);
-    perNodeScoreDeltasIndex.resize(numNodes);
+    if (lowMemory) {
+      perNodeScoreDeltasIndexLowMemory.resize(numNodes);
+    } else {
+      perNodeScoreDeltasIndex.resize(numNodes);
+    }
   }
 }
 
@@ -4017,10 +4260,10 @@ bool mgsr::mgsrPlacer::isColinearFromMinichains(
   return false;
 }
 
-int64_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
+int32_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
   const auto& minichains = curRead.minichains;
 
-  int64_t pseudoChainScore = 0;
+  int32_t pseudoChainScore = 0;
   if (minichains.empty()) {
     return 0;
   } else if (minichains.size() == 1) {
@@ -4450,6 +4693,8 @@ void mgsr::mgsrPlacer::traverseTree() {
   traverseTreeHelper(liteTree->root);
 }
 
+
+
 void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   // Update progress if tracker is available
   if (progressTracker) {
@@ -4477,7 +4722,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   std::vector<std::pair<size_t, int32_t>> readScoresBacktrack;
   std::vector<std::pair<size_t, std::vector<mgsr::Minichain>>> readMinichainsBacktrack;
 
-  auto& currentNodeScoreDeltas = perNodeScoreDeltasIndex[curDfsIndex];
+  std::vector<readScoreDelta> currentNodeScoreDeltas;
   if (affectedSeedmers.empty()) {
     // If the node is identical to its parent, add it to the identical group
     if (node->parent != nullptr && threadId == 0) {
@@ -4507,8 +4752,12 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
       if (reads[i].readType != mgsr::ReadType::PASS) continue;
       if (readScores[i] != 0) {
         readScoresBacktrack.emplace_back(i, readScores[i]);
+        if (!lowMemory) {
+          currentNodeScoreDeltas.emplace_back(i, 0);
+        } else {
+          currentNodeScoreDeltas.emplace_back(i, -readScores[i]);
+        }
         setReadScore(i, 0);
-        currentNodeScoreDeltas.emplace_back(i, 0);
         readMinichainsBacktrack.emplace_back(i, reads[i].minichains);
         reads[i].minichains.clear();
       }
@@ -4537,6 +4786,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
 
       readMinichainsBacktrack[backtrackIndex].first = readIndex;
       readMinichainsBacktrack[backtrackIndex].second = curRead.minichains;
+
       if (allUniqueToNonUnique || allNonUniqueToUnique) {
         /*chaining debug*/if (false) {
           std::cout << "\tread is allUniqueToNonUnique " << allUniqueToNonUnique << " or allNonUniqueToUnique " << allNonUniqueToUnique << "... updating minichains" << std::endl;
@@ -4552,13 +4802,19 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
         /*chaining debug*/if (false) std::cout << "\tread is not allUniqueToNonUnique or allNonUniqueToUnique... reinitializing minichains" << std::endl;
         initializeReadMinichains(curRead);
       }
-      int64_t pseudoScore = getReadPseudoScore(curRead);
+      int32_t pseudoScore = getReadPseudoScore(curRead);
 
-      readScoresBacktrack[backtrackIndex].first = readIndex;
-      readScoresBacktrack[backtrackIndex].second = readScores[readIndex];
+      readScoresBacktrack[backtrackIndex].first         = readIndex;
+      readScoresBacktrack[backtrackIndex].second        = readScores[readIndex];
+      currentNodeScoreDeltas[backtrackIndex].readIndex  = readIndex;
+      if (lowMemory) {
+        currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore - readScores[readIndex];
+      } else {
+        currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore;
+      }
       setReadScore(readIndex, pseudoScore);
-      currentNodeScoreDeltas[backtrackIndex].readIndex = readIndex;
-      currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore;
+
+
 
       ++backtrackIndex;
 
@@ -4571,6 +4827,45 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
       // if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[readIndex] = mgsr::readType::HIGH_DUPLICATES;
     }
   }
+  
+
+
+  if (lowMemory && currentNodeScoreDeltas.size() > 0) {
+    auto& currentNodeScoreDeltasGrouped = perNodeScoreDeltasIndexLowMemory[curDfsIndex];
+    currentNodeScoreDeltasGrouped.reserve(currentNodeScoreDeltas.size());
+    std::sort(currentNodeScoreDeltas.begin(), currentNodeScoreDeltas.end(), [&](const auto& a, const auto& b) {
+      return a.readIndex < b.readIndex;
+    });
+    currentNodeScoreDeltasGrouped.emplace_back(currentNodeScoreDeltas[0].readIndex, currentNodeScoreDeltas[0].scoreDelta, 0);
+    auto currentGroup = &currentNodeScoreDeltasGrouped.back();
+    for (size_t i = 1; i < currentNodeScoreDeltas.size(); ++i) {
+      auto [currentScoreDeltaIndex, currentScoreDelta] = currentNodeScoreDeltas[i];
+      bool startNew = false;
+
+      int16_t scoreDeltaDiff = currentNodeScoreDeltas[i].scoreDelta - currentGroup->scoreDelta;
+      if (currentScoreDeltaIndex > currentGroup->readIndex + 16) {
+        startNew = true;
+      } else if (currentNodeScoreDeltas[i].scoreDelta > currentGroup->scoreDelta && scoreDeltaDiff > 7) {
+        startNew = true;
+      } else if (currentNodeScoreDeltas[i].scoreDelta < currentGroup->scoreDelta && scoreDeltaDiff < -8) {
+        startNew = true;
+      }
+
+      if (startNew) {
+        currentNodeScoreDeltasGrouped.emplace_back(currentScoreDeltaIndex, currentScoreDelta, 0);
+        currentGroup = &currentNodeScoreDeltasGrouped.back();
+      } else {
+        currentGroup->encodeTrailingDelta(scoreDeltaDiff, currentScoreDeltaIndex);
+      }
+    }
+    currentNodeScoreDeltasGrouped.shrink_to_fit();
+    std::vector<readScoreDelta>().swap(currentNodeScoreDeltas);
+  } else if (!lowMemory) {
+    perNodeScoreDeltasIndex[curDfsIndex] = std::move(currentNodeScoreDeltas);
+  }
+
+
+
 
   // **** Revert gapMap inversions ****
   revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
@@ -4662,13 +4957,27 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
   nodePath.push_back(currentNode);
   std::reverse(nodePath.begin(), nodePath.end());
 
+  std::cout << "Retrieving scores for node " << nodeId << std::endl;
   for (const auto& node : nodePath) {
     auto nodeDfsIndex = nodeToDfsIndex.at(node->identifier);
+    std::cout << "\tApplying score deltas for node " << node->identifier << std::endl;
     for (size_t threadId = 0; threadId < perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
       const auto threadReadStart = threadRanges[threadId].first;
-      const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex];
-      for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
-        curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
+      if (lowMemory) {
+        const auto& curNodeThreadScoreDeltasLowMemory = perNodeScoreDeltasIndexByThreadIdLowMemory[threadId][nodeDfsIndex];
+        for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
+          const auto [readIndex, currentScoreDelta, trailingDelta] = scoreDelta;
+          std::cout << "\t\tApplying score delta for read " << readIndex << " with delta " << currentScoreDelta << " from " << curNodeScores[threadReadStart + readIndex] << " to " << curNodeScores[threadReadStart + readIndex] + currentScoreDelta << std::endl;
+          curNodeScores[threadReadStart + readIndex] += currentScoreDelta;
+          for (size_t i = 0; i < 16; ++i) {
+            curNodeScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + scoreDelta.decodeTrailingDelta(i);
+          }
+        }
+      } else {
+        const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex];
+        for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
+          curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
+        }
       }
     }
   }

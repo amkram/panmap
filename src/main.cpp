@@ -746,6 +746,7 @@ int main(int argc, char *argv[]) {
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
         ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
         ("skip-singleton", "Skip singleton reads")
+        ("low-memory", "Use low memory mode")
     ;
 
     po::options_description dev_opts("Developer options");
@@ -959,10 +960,12 @@ int main(int argc, char *argv[]) {
       mgsr::extractReadSequences(reads1, reads2, readSequences);
 
       bool skipSingleton = vm.count("skip-singleton") > 0;
-      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton);
+      bool lowMemory = vm.count("low-memory") > 0;
+      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
       threadsManager.initializeQueryData(readSequences);
+      std::cout << "Total unique kminmers: " << threadsManager.allSeedmerHashesSet.size() << std::endl;
       
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
@@ -996,18 +999,19 @@ int main(int argc, char *argv[]) {
           auto [start, end] = threadsManager.threadRanges[i];
         
           std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager);
+          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory);
           curThreadPlacer.initializeQueryData(curThreadReads);
           curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
 
           curThreadPlacer.setProgressTracker(&progressTracker, i);
 
-          std::cout << "Starting thread " << i << " with reads from " << start << " to " << end
-                    << " with " << curThreadPlacer.reads.size() << " unique kminmer-set reads" << std::endl;
-
           curThreadPlacer.placeReads();
 
-          threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
+          if (lowMemory) {
+            threadsManager.perNodeScoreDeltasIndexByThreadIdLowMemory[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndexLowMemory);
+          } else {
+            threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
+          }
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
           threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
           threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
@@ -1017,16 +1021,10 @@ int main(int argc, char *argv[]) {
             threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
             threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
           }
-          
-
-          std::cout << "Thread processed " << curThreadReads.size() 
-                    << " reads (range " << start << "-" << end << ") " << curThreadPlacer.reads.size() << " unique kminmer-set reads placed"
-                    << std::endl;
         }
       });
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
       auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
