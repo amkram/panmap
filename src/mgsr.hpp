@@ -352,13 +352,15 @@ struct readScoreDelta {
 };
 
 struct readScoreDeltaLowMemory {
+  uint64_t trailingDelta = 0;
   uint32_t readIndex;
+  uint16_t numTrailing = 0;
   int16_t  scoreDelta;
-  uint64_t trailingDelta;
 
   void encodeTrailingDelta(int16_t scoreDeltaDiff, uint32_t indexToEncode) {
     uint64_t encodedScoreDelta = (scoreDeltaDiff + 8) & 0xF;
     trailingDelta |= encodedScoreDelta << (indexToEncode - readIndex - 1) * 4;
+    numTrailing = indexToEncode - readIndex;
   }
 
   int16_t decodeTrailingDelta(uint32_t offset) const {
@@ -515,6 +517,8 @@ class mgsrPlacer {
     std::unordered_map<std::string, std::string> identicalNodeToGroup; // only calculate from the first thread
 
 
+    size_t numGroupsUpdate = 0;
+    size_t numReadsUpdate = 0;
 
     // for tracking progress
     ProgressTracker* progressTracker = nullptr;

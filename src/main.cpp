@@ -994,6 +994,8 @@ int main(int argc, char *argv[]) {
       // exit(0);
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
+      std::atomic<size_t> numGroupsUpdate = 0;
+      std::atomic<size_t> numReadsUpdate = 0;
       tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
         for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
           auto [start, end] = threadsManager.threadRanges[i];
@@ -1021,6 +1023,8 @@ int main(int argc, char *argv[]) {
             threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
             threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
           }
+          numGroupsUpdate += curThreadPlacer.numGroupsUpdate;
+          numReadsUpdate += curThreadPlacer.numReadsUpdate;
         }
       });
       auto end_time_place = std::chrono::high_resolution_clock::now();
