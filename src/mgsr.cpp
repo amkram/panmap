@@ -13,6 +13,7 @@
 #include <numeric>
 #include <algorithm>
 #include <stack>
+#include <bitset>
 
 static void compareBruteForceBuild(
   panmanUtils::Tree *T,
@@ -4836,29 +4837,38 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
     std::sort(currentNodeScoreDeltas.begin(), currentNodeScoreDeltas.end(), [&](const auto& a, const auto& b) {
       return a.readIndex < b.readIndex;
     });
-    currentNodeScoreDeltasGrouped.emplace_back(currentNodeScoreDeltas[0].readIndex, currentNodeScoreDeltas[0].scoreDelta, 0);
+    currentNodeScoreDeltasGrouped.emplace_back(mgsr::readScoreDeltaLowMemory{
+      .readIndex = currentNodeScoreDeltas[0].readIndex,
+      .scoreDelta = currentNodeScoreDeltas[0].scoreDelta,
+    });
     auto currentGroup = &currentNodeScoreDeltasGrouped.back();
     for (size_t i = 1; i < currentNodeScoreDeltas.size(); ++i) {
       auto [currentScoreDeltaIndex, currentScoreDelta] = currentNodeScoreDeltas[i];
       bool startNew = false;
 
       int16_t scoreDeltaDiff = currentNodeScoreDeltas[i].scoreDelta - currentGroup->scoreDelta;
+
       if (currentScoreDeltaIndex > currentGroup->readIndex + 16) {
         startNew = true;
       } else if (currentNodeScoreDeltas[i].scoreDelta > currentGroup->scoreDelta && scoreDeltaDiff > 7) {
         startNew = true;
-      } else if (currentNodeScoreDeltas[i].scoreDelta < currentGroup->scoreDelta && scoreDeltaDiff < -8) {
+      } else if (currentNodeScoreDeltas[i].scoreDelta < currentGroup->scoreDelta && scoreDeltaDiff < -7) {
         startNew = true;
       }
 
       if (startNew) {
-        currentNodeScoreDeltasGrouped.emplace_back(currentScoreDeltaIndex, currentScoreDelta, 0);
+        currentNodeScoreDeltasGrouped.emplace_back(mgsr::readScoreDeltaLowMemory{
+          .readIndex = currentScoreDeltaIndex,
+          .scoreDelta = currentScoreDelta,
+        });
         currentGroup = &currentNodeScoreDeltasGrouped.back();
       } else {
         currentGroup->encodeTrailingDelta(scoreDeltaDiff, currentScoreDeltaIndex);
       }
     }
     currentNodeScoreDeltasGrouped.shrink_to_fit();
+    numGroupsUpdate += currentNodeScoreDeltasGrouped.size();
+    numReadsUpdate += currentNodeScoreDeltas.size();
     std::vector<readScoreDelta>().swap(currentNodeScoreDeltas);
   } else if (!lowMemory) {
     perNodeScoreDeltasIndex[curDfsIndex] = std::move(currentNodeScoreDeltas);
@@ -4957,20 +4967,21 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
   nodePath.push_back(currentNode);
   std::reverse(nodePath.begin(), nodePath.end());
 
-  std::cout << "Retrieving scores for node " << nodeId << std::endl;
   for (const auto& node : nodePath) {
     auto nodeDfsIndex = nodeToDfsIndex.at(node->identifier);
-    std::cout << "\tApplying score deltas for node " << node->identifier << std::endl;
-    for (size_t threadId = 0; threadId < perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
+    for (size_t threadId = 0; threadId < numThreads; ++threadId) {
       const auto threadReadStart = threadRanges[threadId].first;
       if (lowMemory) {
         const auto& curNodeThreadScoreDeltasLowMemory = perNodeScoreDeltasIndexByThreadIdLowMemory[threadId][nodeDfsIndex];
         for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
-          const auto [readIndex, currentScoreDelta, trailingDelta] = scoreDelta;
-          std::cout << "\t\tApplying score delta for read " << readIndex << " with delta " << currentScoreDelta << " from " << curNodeScores[threadReadStart + readIndex] << " to " << curNodeScores[threadReadStart + readIndex] + currentScoreDelta << std::endl;
+          const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
           curNodeScores[threadReadStart + readIndex] += currentScoreDelta;
-          for (size_t i = 0; i < 16; ++i) {
-            curNodeScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + scoreDelta.decodeTrailingDelta(i);
+          for (size_t i = 0; i < numTrailing; ++i) {
+            int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
+            // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply the trailing delta
+            if (curDecodedTrailingDelta > -8) {
+              curNodeScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + curDecodedTrailingDelta;
+            }
           }
         }
       } else {
@@ -5052,9 +5063,16 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
 
   // clear memory that are no longer needed
   for (size_t threadId = 0; threadId < threadsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
-    for (size_t nodeDfsIndex = 0; nodeDfsIndex < threadsManager.perNodeScoreDeltasIndexByThreadId[threadId].size(); ++nodeDfsIndex) {
-      std::vector<readScoreDelta>().swap(threadsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
+    if (threadsManager.lowMemory) {
+      for (size_t nodeDfsIndex = 0; nodeDfsIndex < threadsManager.perNodeScoreDeltasIndexByThreadIdLowMemory[threadId].size(); ++nodeDfsIndex) {
+        std::vector<readScoreDeltaLowMemory>().swap(threadsManager.perNodeScoreDeltasIndexByThreadIdLowMemory[threadId][nodeDfsIndex]);
+      }
+    } else {
+      for (size_t nodeDfsIndex = 0; nodeDfsIndex < threadsManager.perNodeScoreDeltasIndexByThreadId[threadId].size(); ++nodeDfsIndex) {
+        std::vector<readScoreDelta>().swap(threadsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
+      }
     }
+
   }
 
   std::unordered_map<std::vector<uint32_t>, std::vector<std::string_view>, mgsr::VectorHash> scoresToNodeIds;
