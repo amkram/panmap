@@ -2543,7 +2543,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
         bool wasSeed = refOnSyncmers[startPosGlobal].has_value();
         if (!wasSeed && isSeed) {
           auto it = refOnSyncmersMap.insert(startPosGlobal).first;
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t{hash, endPosGlobal, isReverse});
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
           blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::ADD);
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
           blockOnSyncmers[curBlockId].insert(startPosGlobal);
@@ -2557,7 +2557,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
             blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
           }
         } else if (wasSeed && isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, seeding::rsyncmer_t{hash, endPosGlobal, isReverse});
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, refOnSyncmers[startPosGlobal].value());
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
         }
       }
@@ -2605,32 +2605,9 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     }
   }
 
-  // Declare seed index vectors for both raw seeds and k-minmers
-  std::vector<uint64_t> deletedSeedIndices;
-  std::vector<uint64_t> addedSeedIndices;
 
-  // Handle raw seeds if enabled
-  if (useRawSeeds) {
-    for (const auto& [syncmerPos, changeType, syncmer] : refOnSyncmersChangeRecord) {
-
-      const auto& currentSyncmer = syncmer;
-
-      if (changeType == panmapUtils::seedChangeType::ADD || changeType == panmapUtils::seedChangeType::SUB) {
-
-        if (!(changeType == panmapUtils::seedChangeType::SUB)) {
-          syncmerFrequency[currentSyncmer]++;
-        }
-
-        uniqueSyncmers.emplace_back(currentSyncmer);
-        addedSeedIndices.push_back(uniqueSyncmers.size() - 1);
-      } else if (changeType == panmapUtils::seedChangeType::DEL) {
-        syncmerFrequency[currentSyncmer]--;
-        deletedSeedIndices.push_back(syncmerPos);
-      }
-    }
-  } else { 
-    // processing k-min-mers
-  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord);
+  // processing k-min-mers
+  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
     auto beg = *newKminmerRanges[i].first;
@@ -2776,7 +2753,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       refOnKminmers[syncmerPos] = std::nullopt;
     }
   }
-  } // end of k-minmer processing
 
 
   
@@ -2909,7 +2885,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 }
 
 void mgsr::mgsrIndexBuilder::buildIndex() {
-  std::cout << "DEBUG: buildIndex starting, uniqueSyncmers.size()=" << uniqueSyncmers.size() << std::endl;
   panmapUtils::BlockSequences blockSequences(T);
   panmapUtils::GlobalCoords globalCoords(blockSequences);
   refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
@@ -2926,29 +2901,13 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   uint64_t dfsIndex = 0;
   buildIndexHelper(T->root, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
   
-  // Finally add unique seeds to index
-  if (useRawSeeds) {
-    std::cout << "DEBUG: Building index with " << uniqueSyncmers.size() << " unique syncmers" << std::endl;
-    if (uniqueSyncmers.size() > 0) {
-      std::cout << "DEBUG: First syncmer: hash=" << uniqueSyncmers[0].hash 
-                << ", endPos=" << uniqueSyncmers[0].endPos 
-                << ", isReverse=" << uniqueSyncmers[0].isReverse << std::endl;
-    }
-    capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueSyncmers.size());
-    for (size_t i = 0; i < uniqueSyncmers.size(); i++) {
-      seedInfoBuilder[i].setHash(uniqueSyncmers[i].hash);
-      seedInfoBuilder[i].setStartPos(uniqueSyncmers[i].startPos);
-      seedInfoBuilder[i].setEndPos(uniqueSyncmers[i].endPos);
-      seedInfoBuilder[i].setIsReverse(uniqueSyncmers[i].isReverse);
-    }
-  } else {
-    capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
-    for (size_t i = 0; i < uniqueKminmers.size(); i++) {
-      seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
-      seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
-      seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
-      seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
-    }
+  // Add unique k-min-mers to index
+  capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
+  for (size_t i = 0; i < uniqueKminmers.size(); i++) {
+    seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
+    seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
+    seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
+    seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
   }
 
   // Add block infos to index

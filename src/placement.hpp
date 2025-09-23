@@ -1,10 +1,9 @@
 #pragma once
 
 #include "capnp/list.h"
-#include "mgsr_index.capnp.h"
+#include "index.capnp.h"
 #include "panman.hpp"
 #include "progress_state.hpp"
-#include "seeding.hpp"
 #include "state.hpp"
 #include <atomic>
 #include <cstddef>
@@ -16,9 +15,6 @@
 #include <utility>
 #include <vector>
 #include <absl/container/flat_hash_map.h>
-
-// Type alias for seed structures
-using seed_t = seeding::seed_t;
 
 // Forward declaration for indexing 
 namespace indexing {
@@ -37,31 +33,54 @@ extern std::shared_ptr<PlacementProgressState> progress_state;
 
 // Parameters for traversal - consolidated
 struct TraversalParams {
-  int k = 0;              // k-mer size
-  int s = 0;              // syncmer parameter s
+  int k = 32;              // k-mer size
+  int s = 8;              // syncmer parameter s
   int t = 0;               // t-syncmer parameter
   bool open = false;        // Whether to use open syncmers
   double scoreScale = 1.0; // Scaling factor for scores
   std::string debug_node_id;
 };
 
-// Track global state during placement (MGSR-only simplified)
+// Track global state during placement
 struct PlacementGlobalState {
-    // Seed frequencies in reads
-    absl::flat_hash_map<size_t, int64_t> seedFreqInReads;      // Hash -> read frequency count
-    absl::flat_hash_map<size_t, std::string> hashToKmer;       // Optional: hash -> k-mer sequence (if available)
-    float totalReadSeedCount = 0.0f;
-    double jaccardDenominator = 0.0;
-    size_t readUniqueSeedCount = 0;
-    std::atomic<bool> stopTraversal{false};
-    int kmerSize = 32;  // set from params
+  // Reference to seed mutations from the index
+  ::capnp::List<::SeedMutations>::Reader perNodeSeedMutations;
 
-    // Active seed set during traversal (map of seedIndex -> count)
-    std::unordered_map<uint64_t, uint32_t> activeSeedIndices;
-    
-    // MGSR index data
-    ::capnp::List<SeedInfo>::Reader seedInfo;
-    ::capnp::List<NodeChanges>::Reader perNodeChanges;
+  // Reference to gap mutations from the index
+  ::capnp::List<::GapMutations>::Reader perNodeGapMutations;
+
+  // Reference to node path information from the index
+  ::capnp::List<::NodePathInfo>::Reader nodePathInfo;
+
+  // Reference to block information from the index
+  ::capnp::List<::BlockInfo>::Reader blockInfo;
+
+  // Reference to ancestor matrix from the index
+  ::capnp::List<::capnp::List<bool>>::Reader ancestorMatrix;
+
+  // K-mer dictionary and seed frequencies
+  std::unordered_map<uint32_t, std::string> kmerDictionary;  // Dictionary ID -> k-mer sequence
+  std::unordered_map<size_t, uint32_t> kmerHashToId;         // Hash -> Dictionary ID
+  std::unordered_map<size_t, bool> hashOrientation;          // Hash -> is reverse orientation
+  std::unordered_map<size_t, bool> canonicalHashes;          // Hash -> is canonical form
+  
+  absl::flat_hash_map<size_t, int64_t> seedFreqInReads;      // Hash -> read frequency count
+  absl::flat_hash_map<size_t, std::string> hashToKmer;      // Hash -> k-mer sequence
+  
+  float totalReadSeedCount = 0.0f;                          // Total seeds in reads (for normalization)
+  double jaccardDenominator = 0.0;                          // Denominator for Jaccard calculation
+  size_t readUniqueSeedCount = 0;                           // Count of unique seed hashes in reads
+
+  // Flag to stop the traversal
+  std::atomic<bool> stopTraversal{false};
+  
+  // Store k-mer size for hash calculations
+  int kmerSize = 32;  // Default value, will be set from params in place()
+
+  // Helper methods for node relationships
+  bool isAncestor(const std::string &potentialAncestorId, const std::string &nodeId) const;
+  uint32_t getNodeLevel(const std::string &nodeId) const;
+  std::vector<int32_t> getNodeActiveBlocks(const std::string &nodeId) const;
 };
 
 // Helper class to store score info for a single node during placement
@@ -100,6 +119,7 @@ struct PlacementResult {
 
   // Jaccard Index (Presence/Absence) (New)
   double bestJaccardPresenceScore = 0.0;
+  int64_t bestJaccardPresenceCount = 0;  // Raw count of seed matches (not ratio)
   panmanUtils::Node *bestJaccardPresenceNode = nullptr;
   std::vector<panmanUtils::Node *> tiedJaccardPresenceNodes;
 
@@ -134,17 +154,38 @@ struct PlacementResult {
   void updateHitsScore(panmanUtils::Node* node, int64_t hits); // This is for the existing "maxHitsInAnyGenome"
   void updateRawSeedMatchScore(panmanUtils::Node* node, int64_t score); // New
   void updateJaccardScore(panmanUtils::Node* node, double score); // This is for weighted Jaccard
-  void updateJaccardPresenceScore(panmanUtils::Node* node, double score); // New
+  void updateJaccardPresenceScore(panmanUtils::Node* node, double score, int64_t rawCount); // New
   void updateCosineScore(panmanUtils::Node* node, double score);
   void updateWeightedScore(panmanUtils::Node* node, double score, double scale);
 };
 
 // Core functions for placement
-// Note: Legacy processNodeMutations and placementTraversal removed 
-// MGSR placement now uses inline traversal in place() function
+void processNodeMutations(panmanUtils::Node *node,
+                          state::StateManager &stateManager,
+                          PlacementGlobalState &state,
+                          PlacementResult &result,
+                          const TraversalParams &params);
+
+void placementTraversal(state::StateManager &stateManager,
+                        PlacementResult &result,
+                        panmanUtils::Tree *T, 
+                        PlacementGlobalState &state,
+                        const TraversalParams &params,
+                        const std::string &debug_node_id_param);
+
+/**
+ * @brief Load seed information from index into the StateManager for placement
+ * 
+ * This function decodes the quaternary-encoded seed changes from the index
+ * and applies them to the StateManager's hierarchical seed stores.
+ * 
+ * @param stateManager StateManager to populate with seed data
+ * @param index The index to read seed data from
+ */
+void loadSeedsFromIndex(state::StateManager& stateManager, const ::Index::Reader& index);
 
 void place(PlacementResult &result, panmanUtils::Tree *T,
-           ::MGSRIndex::Reader &mgsrIndex, const std::string &reads1,
+           ::Index::Reader &index, const std::string &reads1,
            const std::string &reads2,
            std::vector<std::vector<seeding::seed_t>>& readSeeds,
            std::vector<std::string>& readSequences,
@@ -153,9 +194,8 @@ void place(PlacementResult &result, panmanUtils::Tree *T,
            std::string &outputPath,
            const std::string &indexPath,
            const std::string &debug_node_id_param);
-// Batch mode now accepts path to MGSR index file instead of legacy Index::Reader
-void placeBatch(panmanUtils::Tree *T,
-                ::MGSRIndex::Reader &mgsrIndex,
+
+void placeBatch(panmanUtils::Tree *T, ::Index::Reader &index,
                 const std::string &batchFilePath,
                 std::string prefixBase, 
                 std::string refFileNameBase,
@@ -187,14 +227,17 @@ void dumpKmerDebugData(
     int k,
     const std::string& outputFilename);
 
-// Consolidated seed processing functions (MGSR compatible)
+// Consolidated seed processing functions
 void processSeedOperation(
     panmanUtils::Node* node,
     state::StateManager& stateManager,
     PlacementGlobalState& state,
     PlacementResult& result,
     absl::flat_hash_set<size_t>& uniqueSeedHashes,
-    uint32_t seedIndex);
+    int64_t pos,
+    bool isRemoval,
+    bool isAddition,
+    const seeding::seed_t* newSeed = nullptr);
 
 seeding::seed_t createAndProcessSeed(
     panmanUtils::Node* node,

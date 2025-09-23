@@ -50,7 +50,6 @@ struct MGSRIndex {
   t @2 :UInt16;
   l @3 :UInt16;
   open @4 :Bool;
-  useRawSeeds @7 :Bool;
 
   liteTree @5 :LiteTree;
   seedInfo @6 :List(SeedInfo);
