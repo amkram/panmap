@@ -216,7 +216,7 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
                          " (errno=" + std::to_string(errno) + ": " + 
                          std::strerror(errno) + ")";
       logging::err("{}", error);
-      close(fd);
+    close(fd);
       throw std::runtime_error(error);
     }
     
@@ -268,7 +268,7 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
   } catch (const std::exception& e) {
     // Clean up temporary file on error
     if (fd != -1) {
-      close(fd);
+    close(fd);
     }
     if (boost::filesystem::exists(tempPath)) {
       boost::filesystem::remove(tempPath);
@@ -389,25 +389,6 @@ std::string demangle(const char* symbol) {
     }
     
     return std::string(symbol);
-}
-
-/**
- * Sanitizes a string to be safe for use as a filename
- * Replaces invalid filesystem characters with underscores
- * 
- * @param input The original string
- * @return A sanitized string safe for use as a filename
- */
-std::string sanitizeFilename(const std::string& input) {
-    std::string result = input;
-    // Replace characters that are problematic in filenames
-    const std::string invalidChars = "/\\:*?\"<>|";
-    for (char& c : result) {
-        if (invalidChars.find(c) != std::string::npos) {
-            c = '_';
-        }
-    }
-    return result;
 }
 
 /**
@@ -737,7 +718,6 @@ int main(int argc, char *argv[]) {
         ("seed,Q", po::value<int>()->default_value(42), "Seed for random number generation")
         ("test", "Run coordinate system tests")
         ("test-nucleotide-mutations", "Run targeted test for nucleotide mutations in node_2")
-        ("test-placement", "Run placement algorithm correctness test")
     ;
 
     po::options_description input_opts("Input/output options");
@@ -747,9 +727,6 @@ int main(int argc, char *argv[]) {
         ("outputs,o", po::value<std::string>()->default_value("bam,vcf,assembly"), 
          "Outputs (placement/p, assembly/a, reference/r, spectrum/c, sam/s, bam/b, mpileup/m, vcf/v, all/A)")
         ("index,i", po::value<std::string>()->default_value(""), "Path to precomputed index")
-        ("index-output", po::value<std::string>()->default_value(""), "Path for index output (default: <guide>.pmi)")
-        ("mutmat", po::value<std::string>()->default_value(""), "Path to mutation matrix file (input)")
-        ("mutmat-output", po::value<std::string>()->default_value(""), "Path for mutation matrix output (default: <guide>.mm)")
     ;
     
     po::options_description seeding_opts("Seeding/alignment options");
@@ -1107,9 +1084,6 @@ int main(int argc, char *argv[]) {
     int k = vm["k"].as<int>(); // Default handled by boost
     int s = vm["s"].as<int>(); // Default handled by boost
     std::string index_path = vm["index"].as<std::string>(); // Default handled by boost
-    std::string index_output_path = vm["index-output"].as<std::string>(); // Default handled by boost
-    std::string mutmat_path = vm["mutmat"].as<std::string>(); // Default handled by boost
-    std::string mutmat_output_path = vm["mutmat-output"].as<std::string>(); // Default handled by boost
 
     std::random_device rd;
     std::mt19937 rng(rd());
@@ -1185,7 +1159,7 @@ int main(int argc, char *argv[]) {
       }
 
       std::string outputFileName =
-          guide + ".random." + sanitizeFilename(randomNode->identifier) + ".fa";
+          guide + ".random." + randomNode->identifier + ".fa";
       if (saveNodeSequence(nodeTree, randomNode, outputFileName)) {
         msg("Random node {} sequence written to {}", randomNode->identifier,
             outputFileName);
@@ -1205,7 +1179,7 @@ int main(int argc, char *argv[]) {
       }
 
       std::string sequence = T.getStringFromReference(nodeID, false, true);
-      std::string outputFileName = guide + "." + sanitizeFilename(nodeID) + ".fa";
+      std::string outputFileName = guide + "." + nodeID + ".fa";
       std::ofstream outFile(outputFileName);
 
       if (outFile.is_open()) {
@@ -1236,53 +1210,41 @@ int main(int argc, char *argv[]) {
     
     // Ensure paths are consistent by normalizing to absolute paths
     boost::filesystem::path guidePath = boost::filesystem::absolute(guide);
-    std::string default_index_input_path = guidePath.string() + ".pmi";
-    std::string default_index_output_path = guidePath.string() + ".pmi";
+    std::string default_index_path = guidePath.string() + ".pmi";
     
-    // If an explicit index input path was provided, also normalize it
-    std::string normalized_index_input_path = "";
+    // If an explicit index path was provided, also normalize it
+    std::string normalized_index_path = "";
     if (!index_path.empty()) {
       boost::filesystem::path explicitIndexPath = boost::filesystem::absolute(index_path);
-      normalized_index_input_path = explicitIndexPath.string();
-    }
-    
-    // If an explicit index output path was provided, also normalize it
-    std::string normalized_index_output_path = "";
-    if (!index_output_path.empty()) {
-      boost::filesystem::path explicitIndexOutputPath = boost::filesystem::absolute(index_output_path);
-      normalized_index_output_path = explicitIndexOutputPath.string();
+      normalized_index_path = explicitIndexPath.string();
     }
     
     // Use the normalized paths for all operations
-    std::string effective_index_input_path = normalized_index_input_path.empty() ? default_index_input_path : normalized_index_input_path;
-    std::string effective_index_output_path = normalized_index_output_path.empty() ? default_index_output_path : normalized_index_output_path;
+    std::string effective_index_path = normalized_index_path.empty() ? default_index_path : normalized_index_path;
     
-    logging::debug("DEBUG-INDEX: Default index input path: {}", default_index_input_path);
-    logging::debug("DEBUG-INDEX: Explicit index input path: {}", normalized_index_input_path);
-    logging::debug("DEBUG-INDEX: Effective index input path: {}", effective_index_input_path);
-    logging::debug("DEBUG-INDEX: Default index output path: {}", default_index_output_path);
-    logging::debug("DEBUG-INDEX: Explicit index output path: {}", normalized_index_output_path);
-    logging::debug("DEBUG-INDEX: Effective index output path: {}", effective_index_output_path);
+    logging::debug("DEBUG-INDEX: Default index path: {}", default_index_path);
+    logging::debug("DEBUG-INDEX: Explicit index path: {}", normalized_index_path);
+    logging::debug("DEBUG-INDEX: Effective index path: {}", effective_index_path);
     logging::debug("DEBUG-INDEX: Reindex flag: {}", reindex ? "true" : "false");
 
     // CRITICAL FIX: Add checkpoint to check for and remove corrupted index
-    if (fs::exists(effective_index_input_path) && !reindex) {
-      msg("Checking if existing index {} is valid...", effective_index_input_path);
+    if (fs::exists(effective_index_path) && !reindex) {
+      msg("Checking if existing index {} is valid...", effective_index_path);
       // Try to read the index file to validate it
       try {
-        logging::debug("DEBUG-INDEX: Attempting to load existing index from effective input path");
-        inMessage = readCapnp(effective_index_input_path);
+        logging::debug("DEBUG-INDEX: Attempting to load existing index from effective path");
+        inMessage = readCapnp(effective_index_path);
         
         // If we get here, the index loaded successfully
         build = false;
-        msg("Successfully loaded existing index from: {}", effective_index_input_path);
-        logging::debug("DEBUG-INDEX: Successfully loaded index from effective input path");
+        msg("Successfully loaded existing index from: {}", effective_index_path);
+        logging::debug("DEBUG-INDEX: Successfully loaded index from effective path");
       } catch (const std::exception &e) {
         err("Existing index appears to be corrupted: {}", e.what());
         logging::debug("DEBUG-INDEX: Failed to load existing index: {}", e.what());
         msg("Will rebuild the index. Use -f/--reindex to skip this check.");
-        logging::debug("DEBUG-INDEX: Removing corrupted index file: {}", effective_index_input_path);
-        fs::remove(effective_index_input_path);
+        logging::debug("DEBUG-INDEX: Removing corrupted index file: {}", effective_index_path);
+        fs::remove(effective_index_path);
         build = true;
       }
     } 
@@ -1293,70 +1255,6 @@ int main(int argc, char *argv[]) {
                   reindex ? "Reindex flag set" : "No existing index found");
     }
 
-    int mgsr_t = 0;
-    int mgsr_l = 0;
-    bool open = false;
-    bool use_raw_seeds = true; // true for panmap, false for panmama
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l, open, use_raw_seeds);
-    mgsrIndexBuilder.buildIndex();
-    
-    // Log unique seed/k-mer count
-    if (use_raw_seeds) {
-      msg("Built raw seeds index with {} unique seeds", mgsrIndexBuilder.uniqueSyncmers.size());
-    } else {
-      msg("Built k-minmers index with {} unique k-minmers", mgsrIndexBuilder.uniqueKminmers.size());
-    }
-    
-    // Use the effective output path for MGSR index
-    mgsrIndexBuilder.writeIndex(effective_index_output_path);
-
-    // Handle --test-placement if provided
-    if (vm.count("test-placement")) {
-        msg("=== Running Placement Algorithm Correctness Test ===");
-        // TODO: Implement testPlacementCorrectness function
-        msg("⚠️  PLACEMENT TEST NOT IMPLEMENTED YET");
-        return 0;
-        // bool testPassed = placement::testPlacementCorrectness(&T, k, s);
-        // if (testPassed) {
-        //     msg("✅ PLACEMENT TEST PASSED");
-        //     return 0;
-        // } else {
-        //     err("❌ PLACEMENT TEST FAILED");
-        //     return 1;
-        // }
-    }
-
-    // Generate mutation matrices during indexing if requested
-    std::string mm_path = guide + ".mm";
-    if (reindex || !fs::exists(mm_path)) {
-      msg("=== Generating Mutation Matrices ===");
-      genotyping::mutationMatrices mutMat;
-      msg("Building mutation matrices from tree");
-      genotyping::fillMutationMatricesFromTree_test(mutMat, &T, mm_path);
-      msg("Mutation matrices written to: {}", mm_path);
-    }
-
-    // Prepare MGSRIndex reader for placement
-    int fd_mgsr = ::open(effective_index_output_path.c_str(), O_RDONLY);
-    if (fd_mgsr < 0) {
-      throw std::runtime_error("Failed to open MGSR index file: " + effective_index_output_path);
-    }
-    ::capnp::ReaderOptions opts; opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max(); opts.nestingLimit = 1024;
-    ::capnp::PackedFdMessageReader mgsrMsg(fd_mgsr, opts);
-    ::MGSRIndex::Reader mgsrIndexRoot = mgsrMsg.getRoot<MGSRIndex>();
-
-    // Run placement using new MGSR index format
-    placement::PlacementResult result;
-    std::vector<std::vector<seeding::seed_t>> readSeeds;
-    std::vector<std::string> readSequences;
-    std::vector<std::string> readNames;
-    std::vector<std::string> readQuals;
-    std::string placementFileName = guide + ".placement.tsv";
-    placement::place(result, &T, mgsrIndexRoot, reads1, reads2,
-                     readSeeds, readSequences, readNames, readQuals,
-                     placementFileName, effective_index_output_path, "");
-    
-    return 0;
 
     // Build index if needed
     if (build) {
@@ -1373,7 +1271,7 @@ int main(int argc, char *argv[]) {
         logging::debug("DEBUG-INDEX: Building index with k={}, s={}", k, s);
         auto start_indexing = std::chrono::high_resolution_clock::now(); // Renamed variable
         // This function now only builds the index in outMessage, it does not write it.
-        indexing::index(&T, index, k, s, outMessage, effective_index_output_path); 
+        indexing::index(&T, index, k, s, outMessage, effective_index_path); 
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - start_indexing); // Use renamed variable
         
@@ -1381,14 +1279,14 @@ int main(int argc, char *argv[]) {
 
         // The index function now writes the index file directly when given a path
         // No need to call writeCapnp here anymore
-        msg("Index written to: {}", effective_index_output_path);
+        msg("Index written to: {}", effective_index_path);
         
         // Try to immediately read back the index to confirm it's valid
         logging::debug("DEBUG-INDEX: Verifying newly written index");
         try {
           // Add a small delay to ensure file system operations complete
           std::this_thread::sleep_for(std::chrono::milliseconds(500));
-          inMessage = readCapnp(effective_index_output_path);
+          inMessage = readCapnp(effective_index_path);
           if (inMessage) {
             auto root = inMessage->getRoot<Index>();
             bool indexValid = (root.getK() == k && root.getS() == s);
@@ -1404,48 +1302,28 @@ int main(int argc, char *argv[]) {
         logging::debug("DEBUG-INDEX: Exception during index build/write: {}", e.what());
         return 1;
       }
-      
-      msg("Index written to {}", effective_index_output_path);
     }
 
     // Load mutation matrices
     msg("=== Loading Mutation Matrices ===");
     genotyping::mutationMatrices mutMat;
-    
-    std::string default_mutmat_input_path = guide + ".mm";
-    std::string default_mutmat_output_path = guide + ".mm";
-    
-    // If an explicit mutation matrix input path was provided, normalize it
-    std::string normalized_mutmat_input_path = "";
-    if (!mutmat_path.empty()) {
-      boost::filesystem::path explicitMutmatPath = boost::filesystem::absolute(mutmat_path);
-      normalized_mutmat_input_path = explicitMutmatPath.string();
-    }
-    
-    // If an explicit mutation matrix output path was provided, normalize it
-    std::string normalized_mutmat_output_path = "";
-    if (!mutmat_output_path.empty()) {
-      boost::filesystem::path explicitMutmatOutputPath = boost::filesystem::absolute(mutmat_output_path);
-      normalized_mutmat_output_path = explicitMutmatOutputPath.string();
-    }
-    
-    // Use the normalized paths for all operations
-    std::string effective_mutmat_input_path = normalized_mutmat_input_path.empty() ? default_mutmat_input_path : normalized_mutmat_input_path;
-    std::string effective_mutmat_output_path = normalized_mutmat_output_path.empty() ? default_mutmat_output_path : normalized_mutmat_output_path;
-    
-    logging::debug("DEBUG-MUTMAT: Default mutation matrix input path: {}", default_mutmat_input_path);
-    logging::debug("DEBUG-MUTMAT: Explicit mutation matrix input path: {}", normalized_mutmat_input_path);
-    logging::debug("DEBUG-MUTMAT: Effective mutation matrix input path: {}", effective_mutmat_input_path);
-    logging::debug("DEBUG-MUTMAT: Default mutation matrix output path: {}", default_mutmat_output_path);
-    logging::debug("DEBUG-MUTMAT: Explicit mutation matrix output path: {}", normalized_mutmat_output_path);
-    logging::debug("DEBUG-MUTMAT: Effective mutation matrix output path: {}", effective_mutmat_output_path);
+    // Assuming --mutmat isn't needed with boost (wasn't in original docopt?)
+    // If needed, add: ("mutmat", po::value<std::string>(), "Path to mutation matrix") to input_opts
+    std::string mutmat_path = ""; // Replace with vm access if --mutmat option is added
+    std::string default_mutmat_path = guide + ".mm";
 
-    if (!effective_mutmat_input_path.empty() && fs::exists(effective_mutmat_input_path)) {
-      msg("Loading mutation matrices from: {}", effective_mutmat_input_path);
-      std::ifstream mutmat_file(effective_mutmat_input_path);
+    if (!mutmat_path.empty()) {
+      msg("Loading mutation matrices from: {}", mutmat_path);
+      std::ifstream mutmat_file(mutmat_path);
+      genotyping::fillMutationMatricesFromFile(mutMat, mutmat_file);
+    } else if (fs::exists(default_mutmat_path)) {
+      msg("Loading default mutation matrices from: {}", default_mutmat_path);
+      std::ifstream mutmat_file(default_mutmat_path);
       genotyping::fillMutationMatricesFromFile(mutMat, mutmat_file);
     } else {
-      msg("No mutation matrices found - mutations will use default parameters");
+      msg("Building new mutation matrices");
+      genotyping::fillMutationMatricesFromTree_test(mutMat, &T,
+                                                    default_mutmat_path);
     }
 
     if (!eval.empty()) {
@@ -1465,23 +1343,23 @@ int main(int argc, char *argv[]) {
       if (!inMessage) {
         try {
           logging::warn("Index was not successfully loaded, attempting to use existing index...");
-          logging::debug("DEBUG-PLACE: Looking for index at {}", effective_index_input_path);
-          // Only try to load from the input index path
-          if (fs::exists(effective_index_input_path)) {
-            logging::info("Trying to load index from: {}", effective_index_input_path);
-            logging::debug("DEBUG-PLACE: Index exists with size: {} bytes", fs::file_size(effective_index_input_path));
+          logging::debug("DEBUG-PLACE: Looking for index at {}", effective_index_path);
+          // Only try to load from the default index path
+          if (fs::exists(effective_index_path)) {
+            logging::info("Trying to load index from: {}", effective_index_path);
+            logging::debug("DEBUG-PLACE: Default index exists with size: {} bytes", fs::file_size(effective_index_path));
             
             // Check file permissions
-            bool isReadable = access(effective_index_input_path.c_str(), R_OK) == 0;
-            uintmax_t fileSize = fs::file_size(effective_index_input_path);
+            bool isReadable = access(effective_index_path.c_str(), R_OK) == 0;
+            uintmax_t fileSize = fs::file_size(effective_index_path);
             if (!isReadable) {
-              logging::err("DEBUG-PLACE: Index file exists but cannot be read (permission denied): {}", effective_index_input_path);
-              throw std::runtime_error("Index file permission denied: " + effective_index_input_path);
+              logging::err("DEBUG-PLACE: Index file exists but cannot be read (permission denied): {}", effective_index_path);
+              throw std::runtime_error("Index file permission denied: " + effective_index_path);
             }
             
             if (fileSize == 0) {
-              logging::err("DEBUG-PLACE: Index file exists but is empty: {}", effective_index_input_path);
-              throw std::runtime_error("Empty index file: " + effective_index_input_path);
+              logging::err("DEBUG-PLACE: Index file exists but is empty: {}", effective_index_path);
+              throw std::runtime_error("Empty index file: " + effective_index_path);
             }
             
             // Print detailed file info
@@ -1489,10 +1367,10 @@ int main(int argc, char *argv[]) {
             
             // Try to load the index with detailed error reporting
             try {
-              logging::debug("DEBUG-PLACE: Calling readCapnp on input index path");
-              inMessage = readCapnp(effective_index_input_path);
-              logging::debug("DEBUG-PLACE: Successfully loaded index from input path");
-              logging::info("Successfully loaded index from: {}", effective_index_input_path);
+              logging::debug("DEBUG-PLACE: Calling readCapnp on default index path");
+              inMessage = readCapnp(effective_index_path);
+              logging::debug("DEBUG-PLACE: Successfully loaded index from default path");
+              logging::info("Successfully loaded index from: {}", effective_index_path);
             } catch (const std::exception& e) {
               logging::err("DEBUG-PLACE: Error loading index: {}", e.what());
               throw;
@@ -1500,11 +1378,11 @@ int main(int argc, char *argv[]) {
           }
           // If index still not loaded and reindex isn't set, error out
           else if (!vm.count("reindex")) {
-            logging::debug("DEBUG-PLACE: Index input path doesn't exist and reindex not set");
-            throw std::runtime_error("Failed to load index from " + effective_index_input_path + 
+            logging::debug("DEBUG-PLACE: Default index path doesn't exist and reindex not set");
+            throw std::runtime_error("Failed to load index from " + effective_index_path + 
                                    " and reindex option not specified");
           } else {
-            logging::debug("DEBUG-PLACE: Index doesn't exist but reindex flag set - will rebuild");
+            logging::debug("DEBUG-PLACE: Default index doesn't exist but reindex flag set - will rebuild");
           }
         } catch (const std::exception& e) {
           err("ERROR loading index: {}. Run with -f/--reindex to rebuild the index or specify a working index with -i.", e.what());
@@ -1525,12 +1403,16 @@ int main(int argc, char *argv[]) {
       // Scope to ensure inMessage stays alive as long as index_input is used
       {
         // Extract the root from the message - this reader depends on inMessage staying alive!
-  MGSRIndex::Reader mgsrIndexInput = inMessage->getRoot<MGSRIndex>();
-  logging::debug("DEBUG-PLACE: Loaded MGSR index root");
+        Index::Reader index_input = inMessage->getRoot<Index>();
+        logging::debug("DEBUG-PLACE: Successfully extracted root from inMessage");
         
-  uint32_t k = mgsrIndexInput.getK();
-  size_t seedCount = mgsrIndexInput.getSeedInfo().size();
-  logging::debug("DEBUG-PLACE: MGSR index k={}, seeds={} (k-minmers or raw seeds)", k, seedCount);
+        // Let's check for critical fields
+        uint32_t k = index_input.getK();
+        uint32_t s = index_input.getS();
+        bool open = index_input.getOpen();
+        uint32_t t = index_input.getT();
+        size_t nodeCount = index_input.getPerNodeSeedMutations().size();
+        logging::debug("DEBUG-PLACE: Index contains k={}, nodes={}", k, nodeCount);
         
         if (genotype_from_sam) {
           msg("Genotyping from SAM file");
@@ -1566,13 +1448,13 @@ int main(int argc, char *argv[]) {
             try {
               msg("=== Starting Batch Placement ===");
               // Process batch file - keep inMessage alive during the whole process
-              placement::placeBatch(&T, mgsrIndexInput, batchFilePath, prefix,
+              placement::placeBatch(&T, index_input, batchFilePath, prefix,
                                     refFileName, samFileName, bamFileName,
                                     mpileupFileName, vcfFileName, aligner, refNode,
                                     vm.count("save-jaccard") > 0, vm.count("time") > 0,
                                     vm["candidate-threshold"].as<float>(), 
                                     vm["max-candidates"].as<int>(),      
-                                    effective_index_input_path, 
+                                    effective_index_path, 
                                     debug_specific_node_id);
               msg("Batch placement completed.");
             } catch (const std::exception &e) {
@@ -1581,10 +1463,8 @@ int main(int argc, char *argv[]) {
             return 0;
           }
 
-          // Initialize placement variables
+          // Initialize placement variables and read information needed for alignment
           placement::PlacementResult result;
-          
-          // Initialize required vectors for placement
           std::vector<std::vector<seeding::seed_t>> readSeeds;
           std::vector<std::string> readSequences;
           std::vector<std::string> readNames;
@@ -1592,26 +1472,106 @@ int main(int argc, char *argv[]) {
 
           std::string placementFileName = prefix + ".placement.tsv";
           // Perform placement - keep inMessage alive during the whole process
-          placement::place(result, &T, mgsrIndexInput, reads1, reads2,
-                         readSeeds, readSequences, readNames, readQuals,
-                         placementFileName, effective_index_input_path, debug_specific_node_id);
+          placement::place(result, &T, index_input, reads1, reads2,
+                          readSeeds, readSequences, readNames, readQuals,
+                         placementFileName, effective_index_path, debug_specific_node_id);
 
-          // Get placement results for raw seed matches
-          panmanUtils::Node *bestRawMatchNode = result.bestRawSeedMatchNode;
-          int64_t bestRawMatchScore = result.bestRawSeedMatchScore;
 
-          msg("Best raw seed match: node {} with score {} (sum of read frequencies for matched seeds)",
-              bestRawMatchNode ? bestRawMatchNode->identifier : "none", bestRawMatchScore);
+          /* @Alan this is the end of placement
+            -> next step is pass seeds of target node to Nico's alignment code
+            -> and genotyping
 
-          // Log all other best scores to console
-          msg("Best Jaccard (Presence/Absence): node {} with score {:.4f}",
-              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", result.bestJaccardPresenceScore);
+            placementResult should have nodeSeedMap[targetId] with the target seed set
+            
+            TODO: I'm not sure k-mer end positions are correct yet
+          */
+          
+
+          std::string bestMatchSequence = panmapUtils::getStringFromReference(&T, result.bestJaccardPresenceNode->identifier, false);
+          logging::info("Best match sequence built for {} with length {}", result.bestJaccardPresenceNode->identifier, bestMatchSequence.size());
+
+
+          
+          std::vector<std::tuple<size_t, bool, bool, int64_t>> refSyncmers;
+          std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> seedToRefPositions;
+          bool shortenSyncmers = false;
+          
+          if (k > 28 && !shortenSyncmers) {
+            logging::warn("k > 28, setting k = 19, s = 10, t = 0, open = {} for minimap alignment", open);
+            int k_minimap = 28;
+            int s_minimap = 15;
+            bool open_minimap = open;
+            int t_minimap = 0;
+            seeding::recalculateReadSeeds(k_minimap, s_minimap, open_minimap, t_minimap, readSequences, readSeeds);
+            refSyncmers = seeding::rollingSyncmers(bestMatchSequence, k_minimap, s_minimap, open_minimap, t_minimap, false);
+          } else {
+            refSyncmers = seeding::rollingSyncmers(bestMatchSequence, k, s, open, t, false);
+          }
+
+          // going to build ref seed from scratch for now until Alex corrects k-mer end positions.
+          for (const auto &[kmerHash, isReverse, isSyncmer, startPos] : refSyncmers) {
+            if (!isSyncmer) {
+              continue;
+            }
+            if (seedToRefPositions.find(kmerHash) == seedToRefPositions.end()) {
+              seedToRefPositions[kmerHash] = std::make_pair(std::vector<uint32_t>(), std::vector<uint32_t>());
+            }
+            if (isReverse) {
+              seedToRefPositions[kmerHash].second.push_back(startPos);
+            } else {
+              seedToRefPositions[kmerHash].first.push_back(startPos);
+            }
+          }
+
+          bool pairedEndReads = reads1.size() > 0 && reads2.size() > 0;
+          std::vector<char *> samAlignments;
+          std::string samHeader;
+          if (k > 28) {
+            if (shortenSyncmers) {
+              createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, 28, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
+            } else {
+              createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, 19, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
+            }
+          } else {
+            createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, k, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
+          }
+
+          sam_hdr_t *header;
+          bam1_t **bamRecords;
+          createBam(samAlignments, samHeader, bamFileName, header, bamRecords);
+
+          createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName);
+
+          createVcfWithMutationMatrices(prefix, mpileupFileName, mutMat, vcfFileName, 0.0011);
+
+          std::string placementSummaryFileName = prefix + ".placement.summary.md";
+          placement::dumpPlacementSummary(result, placementSummaryFileName);
+
+          // Report the top 3 metrics as requested
+          msg("=== TOP PLACEMENT RESULTS ===");
+          
+          // 1. Raw number of matches (set, no frequency) - using raw count
+          msg("Top by raw seed matches (unique count): node {} with {} matches (Jaccard score {:.4f})",
+              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", 
+              result.bestJaccardPresenceCount,
+              result.bestJaccardPresenceScore);
+          
+          // 2. Number of matches scaled by read frequency 
+          msg("Top by weighted seed matches (frequency-scaled): node {} with score {}",
+              result.bestRawSeedMatchNode ? result.bestRawSeedMatchNode->identifier : "none", 
+              result.bestRawSeedMatchScore);
+          
+          // 3. Cosine similarity
+          msg("Top by cosine similarity: node {} with score {:.4f}",
+              result.bestCosineNode ? result.bestCosineNode->identifier : "none", 
+              result.bestCosineScore);
+          
+          msg("=== ADDITIONAL METRICS ===");
           msg("Best Weighted Jaccard: node {} with score {:.4f}",
-              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore); // bestJaccardScore is Weighted Jaccard
-          msg("Best Cosine Similarity: node {} with score {:.4f}",
-              result.bestCosineNode ? result.bestCosineNode->identifier : "none", result.bestCosineScore);
+              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore);
           msg("Overall Best Weighted Score (Jaccard*scale + Cosine*(1-scale)): node {} with score {:.4f}",
               result.bestWeightedNode ? result.bestWeightedNode->identifier : "none", result.bestWeightedScore);
+          
         }
         
         // Validate the loaded index

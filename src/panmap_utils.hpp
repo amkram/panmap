@@ -7,8 +7,6 @@
 #include "logging.hpp"
 #include <string>
 #include <iostream>
-#include <memory>
-#include "capnp/message.h"
 
 namespace panmapUtils {
 
@@ -842,9 +840,5 @@ struct GlobalCoords {
     return nextCoord;
   }
 };
-
-// CapnProto utility functions
-void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path);
-std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path);
 
 }

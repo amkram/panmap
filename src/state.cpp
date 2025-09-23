@@ -4,7 +4,6 @@
 #include "logging.hpp"
 #include "panman.hpp" // Assuming panmanUtils types are here
 #include "seeding.hpp"
-#include "seq_utils.hpp"
 #include <algorithm>
 #include <atomic> // Added
 #include <cassert>
@@ -23,15 +22,6 @@
 #include <sstream> // Added
 #include <stdexcept> // Added
 #include <string> // Added explicitly
-
-// OPTIMIZATION: Branch prediction hints for performance
-#ifdef __GNUC__
-#define LIKELY(x)   __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define LIKELY(x)   (x)
-#define UNLIKELY(x) (x)
-#endif
 #include <string_view>
 #include <tbb/tbb.h>
 #include <tuple> // Added
@@ -56,34 +46,8 @@ namespace state {
 void diagnoseBlockStatus(const NodeState& nodeState, const std::string& nodeId, int32_t blockId);
 
 // Define the thread-local cache storage
-thread_local StateManager::NodeStateCache StateManager::tlsNodeCache;
-
-// Define the thread-local cache storage
 // Use the CacheType alias defined in the header to match the declaration
 thread_local HierarchicalStore<char>::CacheType HierarchicalStore<char>::tlsCache;
-
-// Implementation of HierarchicalStore<char>::get method
-std::optional<char> HierarchicalStore<char>::get(const PositionKey& key) const {
-  // First, check local store
-  {
-    std::lock_guard<std::mutex> lock(storeMutex);
-    auto it = localValues.find(key);
-    if (it != localValues.end()) {
-      localCacheHits.fetch_add(1, std::memory_order_relaxed);
-      return it->second;
-    }
-  }
-  
-  // If not found locally, check parent
-  auto parentPtr = parent.lock();
-  if (parentPtr) {
-    parentTraversals.fetch_add(1, std::memory_order_relaxed);
-    return parentPtr->get(key);
-  }
-  
-  // Not found anywhere
-  return std::nullopt;
-}
 
 /*
  * Character Data Access Pattern:
@@ -111,8 +75,6 @@ std::optional<char> HierarchicalStore<char>::get(const PositionKey& key) const {
 using ::coordinates::CoordRange;
 using ::coordinates::GapUpdate;
 using ::gap_map::GapRange;
-
-// Gap run tracking is now part of NodeState struct in the header file
 
 // Global variables for initialization tracking
 std::unordered_set<std::string> nodesInProgress;
@@ -279,6 +241,7 @@ void StateManager::setNumBlocks(size_t blockCount) {
 
 // Initialize a node's state
 void StateManager::initializeNode(const std::string &nodeId) {
+  // std::cout << "DEBUG_INIT_NODE: Initializing " << nodeId << std::endl;
   // Acquire the lock at the beginning of the function
   std::unique_lock<std::shared_mutex> lock(nodeMutex);
 
@@ -287,6 +250,7 @@ void StateManager::initializeNode(const std::string &nodeId) {
 
   // Check if node is already initialized
   if (nodeStates.find(nodeId) != nodeStates.end()) {
+    // std::cout << "DEBUG_INIT_NODE: " << nodeId << " already initialized, parentId='" << nodeStates[nodeId].parentId << "'" << std::endl;
     if (verbose_logging) {
       std::cerr << "[DEBUG] Node " << nodeId << " already initialized" << std::endl;
     }
@@ -295,6 +259,7 @@ void StateManager::initializeNode(const std::string &nodeId) {
 
   // Create a new node state
   nodeStates.emplace(nodeId, NodeState());
+  // std::cout << "DEBUG_INIT_NODE: Created new state for " << nodeId << std::endl;
   if (verbose_logging) {
     std::cerr << "[DEBUG] Created new node state for node " << nodeId << std::endl;
   }
@@ -324,10 +289,15 @@ void StateManager::initializeNode(const std::string &nodeId) {
   auto hierarchyIt = nodeHierarchy.find(nodeId);
   if (hierarchyIt != nodeHierarchy.end()) {
     parentId = hierarchyIt->second.parentId;
+    // std::cout << "DEBUG_INIT_NODE: " << nodeId << " parent=" << parentId << std::endl;
     
     // Set up hierarchical structure inheritance from nodeHierarchy directly
     auto& nodeState = nodeStates[nodeId];
     nodeState.parentId = parentId;
+    // std::cout << "DEBUG_INIT_NODE: Set parent ID for " << nodeId << " to '" << parentId << "' (nodeState.parentId now = '" << nodeState.parentId << "')" << std::endl;
+    // std::cout << "DEBUG_PARENTID_TRACE: " << nodeId << " parentId SET to '" << parentId << "' at initialization" << std::endl;
+  } else {
+    // std::cout << "DEBUG_INIT_NODE: Node " << nodeId << " NOT found in nodeHierarchy during initialization!" << std::endl;
   }
   
   // Get reference to the node state
@@ -365,13 +335,10 @@ void StateManager::initializeNode(const std::string &nodeId) {
       
       // No need to initialize the parent - it should have been initialized before
       // in the topological order. If not, that's an error in our sorting or the tree structure.
-    } else {
-      // OPTIMIZATION: Store parent reference for later bulk materialization
-      // Don't materialize here to avoid quadratic behavior during initialization
-      if (verbose_logging) {
-        std::cerr << "[DEBUG] Node " << nodeId << " parent reference set to " << parentId 
-                  << " (materialization deferred)" << std::endl;
-      }
+    } else if (verbose_logging) {
+      // With inheritance-based approach, explicit propagation is not needed
+      // Node will automatically inherit parent state when needed
+      std::cerr << "[DEBUG] Node " << nodeId << " will inherit from parent " << parentId << " as needed" << std::endl;
     }
   } else {
     // Root node setup
@@ -380,12 +347,6 @@ void StateManager::initializeNode(const std::string &nodeId) {
     // Ensure gapMap and characterStore are assigned
     if (!nodeState.gapMap) nodeState.gapMap = rootGapMap; 
     if (!nodeState.characterStore) nodeState.characterStore = rootCharacterStore;
-    
-    // OPTIMIZATION: Root node starts with empty materialized block state
-    nodeState.materializeBlockState(nullptr);
-    if (verbose_logging) {
-      std::cerr << "[DEBUG] Root node " << nodeId << " initialized with empty materialized block state" << std::endl;
-    }
   }
 
   // Final verification and setup
@@ -436,71 +397,6 @@ void StateManager::initializeNode(const std::string &nodeId) {
   }
 }
 
-// OPTIMIZATION: Bulk materialize all node block states for maximum performance
-void StateManager::materializeAllNodeBlockStates() {
-  std::unique_lock<std::shared_mutex> lock(nodeMutex);
-  
-  // Build topological order for efficient materialization
-  std::vector<std::string> topoOrder;
-  std::unordered_set<std::string> visited;
-  std::unordered_set<std::string> processing;
-  
-  // Helper function for DFS topological sort
-  std::function<void(const std::string&)> dfsVisit = [&](const std::string& nodeId) {
-    if (processing.count(nodeId)) {
-      std::cerr << "[WARN] Cycle detected in node hierarchy at " << nodeId << std::endl;
-      return;
-    }
-    if (visited.count(nodeId)) return;
-    
-    processing.insert(nodeId);
-    
-    auto it = nodeStates.find(nodeId);
-    if (it != nodeStates.end() && !it->second.parentId.empty()) {
-      dfsVisit(it->second.parentId);
-    }
-    
-    processing.erase(nodeId);
-    visited.insert(nodeId);
-    topoOrder.push_back(nodeId);
-  };
-  
-  // Visit all nodes to build topological order
-  for (const auto& [nodeId, nodeState] : nodeStates) {
-    if (!visited.count(nodeId)) {
-      dfsVisit(nodeId);
-    }
-  }
-  
-  // Materialize in topological order (parents before children)
-  size_t materializedCount = 0;
-  for (const std::string& nodeId : topoOrder) {
-    auto it = nodeStates.find(nodeId);
-    if (it == nodeStates.end()) continue;
-    
-    auto& nodeState = it->second;
-    if (!nodeState.blockStateMaterialized) {
-      // Find parent state
-      const NodeState* parentState = nullptr;
-      if (!nodeState.parentId.empty()) {
-        auto parentIt = nodeStates.find(nodeState.parentId);
-        if (parentIt != nodeStates.end()) {
-          parentState = &parentIt->second;
-        }
-      }
-      
-      // Materialize this node's block state
-      nodeState.materializeBlockState(parentState);
-      materializedCount++;
-    }
-    
-    // OPTIMIZATION: Cache parent state pointer for ultra-fast access
-    nodeState.cacheParentState(nodeStates);
-  }
-  
-  std::cerr << "[INFO] Bulk materialized block states for " << materializedCount << " nodes" << std::endl;
-}
-
 // Track which block is used by which node
 void StateManager::trackBlockUsage(int32_t blockId, const std::string &nodeId) {
   if (blockId >= 0 && blockId < static_cast<int32_t>(numBlocks)) {
@@ -516,52 +412,10 @@ bool StateManager::isBlockOn(std::string_view nodeId, int32_t blockId) const {
 }
 
 bool StateManager::isBlockOn_unsafe(std::string_view nodeId, int32_t blockId) const {
-    // CRITICAL OPTIMIZATION: Avoid string construction in hot path
-    // Use string_view directly with a specialized cache lookup
-    const NodeState* nodeState = tlsNodeCache.getCachedStateByView(nodeId, nodeStates);
-    
-    if (LIKELY(nodeState)) {
-        // OPTIMIZATION: Fast path for already materialized state (most common case)
-        if (LIKELY(nodeState->blockStateMaterialized)) {
-            return nodeState->isBlockActive(blockId);
-        }
-        
-        // OPTIMIZATION: Check local mutations first - use likely/unlikely hints
-        if (UNLIKELY(nodeState->localBlockActivations.contains(blockId))) {
-            return true;
-        }
-        if (UNLIKELY(nodeState->localBlockDeactivations.contains(blockId))) {
-            return false;
-        }
-        
-        // OPTIMIZATION: Cache parent node pointer to avoid repeated string conversions
-        const NodeState* currentState = nodeState;
-        while (UNLIKELY(!currentState->parentId.empty())) {
-            // Use cached parent pointer if available
-            if (currentState->cachedParentState) {
-                currentState = currentState->cachedParentState;
-            } else {
-                // Fallback to string lookup (should be rare after warmup)
-                currentState = tlsNodeCache.getCachedStateByView(currentState->parentId, nodeStates);
-                if (!currentState) break;
-            }
-            
-            // If parent has materialized state, use it
-            if (LIKELY(currentState->blockStateMaterialized)) {
-                return currentState->isBlockActive(blockId);
-            }
-            
-            // Check parent's local mutations
-            if (UNLIKELY(currentState->localBlockActivations.contains(blockId))) {
-                return true;
-            }
-            if (UNLIKELY(currentState->localBlockDeactivations.contains(blockId))) {
-                return false;
-            }
-        }
-        
-        // Fallback: use legacy activeBlocks for compatibility
-        return nodeState->activeBlocks.contains(blockId);
+    auto it = nodeStates.find(std::string(nodeId));
+    if (it != nodeStates.end()) {
+        // Direct lookup in the node's activeBlocks set - no hierarchy traversal
+        return it->second.activeBlocks.contains(blockId);
     }
     return false; // Node not found
 }
@@ -586,74 +440,31 @@ bool StateManager::isBlockInverted_unsafe(std::string_view nodeId, int32_t block
 // Unsafe version of getActiveBlockRanges - caller must hold the lock
 std::vector<std::pair<int32_t, coordinates::CoordRange>>
 StateManager::getActiveBlockRanges(std::string_view nodeId) const {
+  // Convert string_view to string once and reuse
+  std::string nodeIdStr(nodeId);
   std::vector<std::pair<int32_t, coordinates::CoordRange>> activeBlocks;
   
   // NOTE: This is the unsafe version - caller must hold the lock
   
   try {
-    // SIMPLIFIED: Direct lookup without cache overhead - cache was 37.74% bottleneck
-    std::string nodeIdStr(nodeId); // Convert once, reuse
-    auto it = nodeStates.find(nodeIdStr);
-    if (it == nodeStates.end()) {
-      return activeBlocks; // Empty result for non-existent node
-    }
-    const NodeState* nodeState = &it->second;
+    // Collect all active blocks using inheritance model
+    std::unordered_set<int32_t> inheritedActiveBlocks;
     
-    // SIMPLIFIED: Always use materialized state path if available
-    if (nodeState->blockStateMaterialized) {
-      const size_t totalBlocks = numBlocks;
-      
-      // OPTIMIZATION: Use vectorized batch block status checking
-      // Process blocks in larger chunks for better cache locality
-      const int32_t batchSize = 128; // Increased from 64 for better vectorization
-      activeBlocks.reserve(nodeState->materializedActiveBlocks.size());
-      
-      // Pre-allocate batch status vector to avoid repeated allocations
-      // NOTE: Using std::vector<char> instead of std::vector<bool> because std::vector<bool>
-      // is specialized and doesn't provide a usable .data() method
-      thread_local std::vector<char> batchStatus;
-      batchStatus.clear();
-      batchStatus.reserve(batchSize);
-      
-      for (int32_t startBlock = 0; startBlock < static_cast<int32_t>(totalBlocks); startBlock += batchSize) {
-        int32_t remainingBlocks = std::min(batchSize, static_cast<int32_t>(totalBlocks) - startBlock);
-        
-        // Get batch status for this range - use a temporary bool array
-        batchStatus.resize(remainingBlocks);
-        std::unique_ptr<bool[]> tempBoolArray(new bool[remainingBlocks]);
-        nodeState->getBlockStatusBatchFast(startBlock, remainingBlocks, tempBoolArray.get());
-        
-        // Copy results to our char vector for processing
-        for (int32_t i = 0; i < remainingBlocks; ++i) {
-          batchStatus[i] = tempBoolArray[i] ? 1 : 0;
-        }
-        
-        // Process results and add active blocks - unroll inner loop for better performance
-        for (int32_t i = 0; i < remainingBlocks; ++i) {
-          if (LIKELY(!batchStatus[i])) continue;
-          
-          int32_t blockId = startBlock + i;
-          auto rangeIt = blockRanges.find(blockId);
-          if (LIKELY(rangeIt != blockRanges.end())) {
-            activeBlocks.emplace_back(blockId, rangeIt->second);
-          }
-        }
+    // Get total available blocks
+    const size_t totalBlocks = numBlocks;
+    
+    // Check each possible block ID using inheritance-based isBlockOn_unsafe
+    for (int32_t blockId = 0; blockId < static_cast<int32_t>(totalBlocks); ++blockId) {
+      if (isBlockOn_unsafe(nodeId, blockId)) {
+        inheritedActiveBlocks.insert(blockId);
       }
-    } else {
-      // OPTIMIZATION: Fallback path - use more efficient collection
-      const size_t totalBlocks = numBlocks;
-      
-      // Pre-allocate based on typical active block ratio
-      activeBlocks.reserve(totalBlocks / 4); // Assume ~25% blocks are active
-      
-      // Use batch checking even for inheritance model
-      for (int32_t blockId = 0; blockId < static_cast<int32_t>(totalBlocks); ++blockId) {
-        if (isBlockOn_unsafe(nodeId, blockId)) {
-          auto rangeIt = blockRanges.find(blockId);
-          if (LIKELY(rangeIt != blockRanges.end())) {
-            activeBlocks.emplace_back(blockId, rangeIt->second);
-          }
-        }
+    }
+    
+    // Convert to ranges
+    for (int32_t blockId : inheritedActiveBlocks) {
+      auto rangeIt = blockRanges.find(blockId);
+      if (rangeIt != blockRanges.end()) {
+        activeBlocks.emplace_back(blockId, rangeIt->second);
       }
     }
     
@@ -664,7 +475,7 @@ StateManager::getActiveBlockRanges(std::string_view nodeId) const {
               });
               
   } catch (const std::exception& e) {
-    logging::err("Exception in getActiveBlockRanges for node {}: {}", std::string(nodeId), e.what());
+    logging::err("Exception in getActiveBlockRanges for node {}: {}", nodeIdStr, e.what());
   }
   
   return activeBlocks;
@@ -683,54 +494,23 @@ void StateManager::setBlockOn(std::string_view nodeId, int32_t blockId, bool on)
   // Get reference to node state to modify it
   auto& nodeState = it->second;
   
-  // Determine parent's effective state for this block (to detect first OFF→ON)
-  bool parentOn = false;
-  if (!nodeState.parentId.empty()) {
-    auto pit = nodeStates.find(nodeState.parentId);
-    if (pit != nodeStates.end()) {
-      const NodeState* parentState = &pit->second;
-      // Ensure parent materialized for accurate check
-      if (!parentState->blockStateMaterialized) {
-        lock.unlock();
-        materializeNodeState(nodeState.parentId);
-        lock.lock();
-        pit = nodeStates.find(nodeState.parentId);
-        if (pit != nodeStates.end()) parentState = &pit->second;
-      }
-      parentOn = parentState->materializedActiveBlocks.contains(blockId);
-    }
-  }
-
-  // Set local block mutation instead of maintaining complete activeBlocks
-  nodeState.setLocalBlockState(blockId, on);
+  // ALWAYS set explicit block state in this node (which will prevent inheritance from parent)
+  nodeState.setExplicitBlockState(blockId, on);
   
-  // Re-materialize this node's block state
-  auto parentIt = nodeStates.find(nodeState.parentId);
-  const NodeState* parentState = (parentIt != nodeStates.end()) ? &parentIt->second : nullptr;
-  nodeState.materializeBlockState(parentState);
-
-  // If this is the first activation along this lineage (parent OFF → this ON),
-  // mark baseline reference as initialized for this block at this node.
-  if (on && !parentOn) {
-    nodeState.baselineRefInitializedBlocks.insert(blockId);
-  }
-  
-  // Invalidate materialized state for all children (they need to re-inherit)
+  // Check if this node has any children, and if they inherit this block's state
   for (const auto& [childId, hierarchy] : nodeHierarchy) {
     if (hierarchy.parentId == strNodeId) {
+      // Found a child - check if it doesn't have an explicit override for this block
       auto childStateIt = nodeStates.find(childId);
       if (childStateIt != nodeStates.end()) {
-        childStateIt->second.blockStateMaterialized = false;
-        // Children will re-materialize lazily when accessed
+        auto& childState = childStateIt->second;
+        if (!childState.hasExplicitBlockState(blockId)) {
+          // Log that a child might be affected by this change
+          logging::debug("Block {} state change in parent {} may affect child {}", 
+                       blockId, strNodeId, childId);
+        }
       }
     }
-  }
-  
-  // Legacy: Also update old activeBlocks for backward compatibility during transition
-  if (on) {
-    nodeState.activeBlocks.insert(blockId);
-  } else {
-    nodeState.activeBlocks.erase(blockId);
   }
   
   // Reset node cache since block status changed
@@ -745,6 +525,7 @@ void StateManager::setBlockForward(std::string_view nodeId, int32_t blockId,
   // Ensure node exists before modifying it
   auto nodeIt = nodeStates.find(strNodeId);
   if (nodeIt == nodeStates.end()) {
+    // std::cout << "DEBUG_SETBLOCK_ERROR: Node " << strNodeId << " not found in nodeStates, calling getNodeState first" << std::endl;
     lock.unlock(); // Release lock temporarily
     getNodeState(strNodeId); // This will initialize the node properly
     lock.lock(); // Re-acquire lock
@@ -756,7 +537,9 @@ void StateManager::setBlockForward(std::string_view nodeId, int32_t blockId,
   }
   
   auto &nodeState = nodeIt->second;
+  // std::cout << "DEBUG_SETBLOCK: Node " << strNodeId << " parentId='" << nodeState.parentId << "' before setBlockForward" << std::endl;
   nodeState.setBlockForward(blockId, forward);
+  // std::cout << "DEBUG_SETBLOCK: Node " << strNodeId << " parentId='" << nodeState.parentId << "' after setBlockForward" << std::endl;
 
   // Reset cache since block orientation changed
   resetNodeCache(strNodeId);
@@ -771,233 +554,179 @@ void StateManager::setBlockInverted(std::string_view nodeId, int32_t blockId,
 // Get character at position using hierarchical lookup with node's mutation index
 char StateManager::getCharAtPosition(std::string_view nodeId_sv, int32_t blockId,
                                      int32_t nucPos, int32_t gapPos) const {
-  // OPTIMIZATION: Avoid string construction in hot path
+  std::string nodeId_str(nodeId_sv);
+  
+  // Add specific debugging for the problematic blocks
+  bool debug_specific_blocks = (nodeId_str == "node_2" && (blockId == 617 || blockId == 941));
+  std::ofstream debug_problematic_blocks;
+  
+  if (debug_specific_blocks) {
+    std::string debug_filename = "debug_problem_block_" + std::to_string(blockId) + "_" + nodeId_str + ".txt";
+    debug_problematic_blocks.open(debug_filename, std::ios_base::app);
+    debug_problematic_blocks << "getCharAtPosition: node_2, block " << blockId 
+                            << ", nucPos=" << nucPos << ", gapPos=" << gapPos;
+  }
+  
+  bool is_leaf_for_debug_get = (nodeId_str == "MZ515684.1");
+  bool log_this_get_to_file = is_leaf_for_debug_get;
+  std::ofstream debug_file_ourcode_get;
+  if (log_this_get_to_file) {
+    std::string filename = "debug_OURCODE_" + nodeId_str + "_ALL_blocks_char_retrieval.txt";
+    debug_file_ourcode_get.open(filename, std::ios_base::app);
+    if (debug_file_ourcode_get.is_open()) { // Check if file opened successfully
+        debug_file_ourcode_get << "GET_CHAR_AT: node='" << nodeId_str << "'"
+                               << ", blockId=" << blockId
+                               << ", nucPos=" << nucPos
+                               << ", gapPos=" << gapPos << std::endl;
+    }
+  }
+
   try {
+    std::string nodeId(nodeId_sv);
+    char canonicalChar = '?'; // Character in its canonical (forward) orientation
+    bool foundInStore = false;
+
+    // Get node state once
+    const NodeState* currentNodeState = &getNodeState(nodeId);
+
     // Create position key once
-    state::PositionKey posKey{blockId, nucPos, gapPos};
+    PositionKey posKey{blockId, nucPos, gapPos};
     
-    // STEP 1: Check if block is OFF for this node → return '-'
+    // MATERIALIZED LOOKUP ONLY: Check materialized state first for O(1) lookup
+    if (currentNodeState != nullptr && currentNodeState->materializedStateComputed) {
+      std::optional<char> materializedChar = currentNodeState->getMaterializedCharacter(posKey);
+      if (materializedChar.has_value()) {
+        canonicalChar = materializedChar.value();
+        foundInStore = true;
+        if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+          debug_problematic_blocks << " -> FOUND MATERIALIZED: '" << canonicalChar << "'" << std::endl;
+        }
+        if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+          debug_file_ourcode_get << "  -> found in MATERIALIZED store: '" << canonicalChar << "'" << std::endl;
+        }
+      }
+    }
+ 
+    // Fallback to base blockSequences if not found in materialized state
+    if (!foundInStore) {
+        // Fallback to base blockSequences if not found in any character store
+        if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+          debug_problematic_blocks << " -> NOT FOUND in materialized state, falling back to blockSequences" << std::endl;
+        }
+        if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+            debug_file_ourcode_get << "  -> materialized state MISS, falling back to blockSequences for block " << blockId << std::endl;
+        }
+        auto blockSeqIt = blockSequences.find(blockId);
+        if (blockSeqIt != blockSequences.end()) {
+            PositionKey structuralKey_for_fallback = PositionKey::create(blockId, nucPos, gapPos);
+            int64_t flatIndex = -1;
+            auto blockMapIt = blockRootCharFlatIndices.find(blockId);
+            if (blockMapIt != blockRootCharFlatIndices.end()) {
+                auto& blockSpecificMap = blockMapIt->second; 
+                auto flatIndexIt = blockSpecificMap.find(structuralKey_for_fallback);
+                if (flatIndexIt != blockSpecificMap.end()) {
+                    flatIndex = flatIndexIt->second;
+                } else { /* flatIndex remains -1 */ }
+            }
+
+            if (flatIndex >= 0 && flatIndex < static_cast<int64_t>(blockSeqIt->second.size())) {
+                canonicalChar = blockSeqIt->second[flatIndex];
+                if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+                  debug_problematic_blocks << " -> FOUND in blockSequences at flatIndex " << flatIndex << ": '" << canonicalChar << "'" << std::endl;
+                }
+                if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+                     debug_file_ourcode_get << "    -> fallback to blockSequences[" << blockId << "][" << flatIndex 
+                                       << " (was struct. nucPos=" << nucPos << ", gapPos=" << gapPos << ")], canonicalChar='" << canonicalChar << "'" << std::endl;
+                }
+            } else {
+                if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+                  debug_problematic_blocks << " -> flatIndex " << flatIndex << " out of bounds or not found, defaulting to '-'" << std::endl;
+                }
+                if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+                    debug_file_ourcode_get << "    -> fallback, flatIndex " << flatIndex << " out of bounds or not found for block " << blockId 
+                                           << " (gappy_seq_size: " << (blockSeqIt != blockSequences.end() ? blockSeqIt->second.size() : 0)
+                                           << ", from struct. nucPos=" << nucPos << ", gapPos=" << gapPos << "), setting canonicalChar to '-'" << std::endl;
+                }
+                canonicalChar = '-'; // Default if not found or out of bounds
+            }
+        } else {
+            if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+              debug_problematic_blocks << " -> Block sequence not found, defaulting to '-'" << std::endl;
+            }
+            if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+                debug_file_ourcode_get << "    -> fallback, no reference sequence for block " << blockId << ", setting canonicalChar to '-'" << std::endl;
+            }
+            canonicalChar = '-'; // Default if block sequence itself is missing
+        }
+    }
+
+    // Now, determine if the block is inverted for the *original target nodeId*
     bool isTargetNodeBlockActive = isBlockOn_unsafe(nodeId_sv, blockId);
     if (!isTargetNodeBlockActive) {
-      return '-';
+         
+        return '-'; // If the block is not active on the target node, it's effectively a gap
     }
-    
-    // STEP 2: Check current node's character data (accumulated mutations)
-    const NodeState* nodeState = tlsNodeCache.getCachedStateByView(nodeId_sv, nodeStates);
-    if (nodeState != nullptr && nodeState->characterStore) {
-      // Try materialized state first for O(1) lookup
-      std::optional<char> materializedChar = nodeState->getMaterializedCharacter(posKey);
-      if (materializedChar.has_value()) {
-        char canonicalChar = materializedChar.value();
-        
-        // Apply inversion if needed before returning
-        bool isBlockInverted = isBlockInverted_unsafe(nodeId_sv, blockId);
-        if (isBlockInverted) {
-          return seq_utils::getComplementCharacter(canonicalChar);
-        } else {
-          return canonicalChar;
-        }
-      }
-      
-      // Check node's local store (no hierarchical lookup)
-      std::optional<char> localCharOpt = nodeState->characterStore->getLocal(posKey);
-      if (localCharOpt.has_value()) {
-        char canonicalChar = localCharOpt.value();
-        
-        // Apply inversion if needed before returning
-        bool isBlockInverted = isBlockInverted_unsafe(nodeId_sv, blockId);
-        if (isBlockInverted) {
-          return seq_utils::getComplementCharacter(canonicalChar);
-        } else {
-          return canonicalChar;
-        }
-      }
-    }
-    
-  // STEP 3: Reference sequence fallback from global block reference.
-    auto blockSeqIt = blockSequences.find(blockId);
-    if (blockSeqIt != blockSequences.end()) {
-      state::PositionKey structuralKey_for_fallback = state::PositionKey::create(blockId, nucPos, gapPos);
-      int64_t flatIndex = -1;
-      auto blockMapIt = blockRootCharFlatIndices.find(blockId);
-      if (blockMapIt != blockRootCharFlatIndices.end()) {
-        auto& blockSpecificMap = blockMapIt->second; 
-        auto flatIndexIt = blockSpecificMap.find(structuralKey_for_fallback);
-        if (flatIndexIt != blockSpecificMap.end()) {
-          flatIndex = flatIndexIt->second;
-        }
-      }
+    bool isTargetNodeBlockInverted = isBlockInverted_unsafe(nodeId_sv, blockId);
+    char finalChar = canonicalChar;
 
-      if (flatIndex >= 0 && flatIndex < static_cast<int64_t>(blockSeqIt->second.size())) {
-        char canonicalChar = blockSeqIt->second[flatIndex];
+    if (isTargetNodeBlockInverted && canonicalChar != '-' && canonicalChar != 'x') { // Don't complement gap chars
         
-        // Apply inversion if needed before returning
-        bool isBlockInverted = isBlockInverted_unsafe(nodeId_sv, blockId);
-        if (isBlockInverted) {
-          return seq_utils::getComplementCharacter(canonicalChar);
-        } else {
-          return canonicalChar;
-        }
-      }
-    }
-    
-    // If no reference found, return gap
-    return '-';
-    
-  } catch (const std::exception &e) {
-    logging::warn("Exception in getCharAtPosition for node {}, block {}, position ({}, {}): {}", 
-                std::string(nodeId_sv), blockId, nucPos, gapPos, e.what());
-    return '-';
-  }
-}
-
-// PERFORMANCE OPTIMIZATION: Bulk character extraction to avoid individual StateManager calls
-std::vector<char> StateManager::getCharactersAtBlock(std::string_view nodeId, int32_t blockId,
-                                                    int32_t startNucPos, int32_t startGapPos, int32_t length) const {
-  std::vector<char> result;
-  result.reserve(length);
-  
-  if (length <= 0) {
-    return result;
-  }
-  
-  std::string nodeId_str(nodeId);
-  
-  try {
-    // Cache common lookups for efficiency
-    const NodeState* nodeState = nullptr;
-    {
-      auto it = nodeStates.find(nodeId_str);
-      if (it != nodeStates.end()) {
-        nodeState = &it->second;
-      }
-    }
-    
-    // Cache block sequence lookup
-    const std::string* blockSequence = nullptr;
-    auto blockSeqIt = blockSequences.find(blockId);
-    if (blockSeqIt != blockSequences.end()) {
-      blockSequence = &blockSeqIt->second;
-    }
-    
-    // Cache block orientation
-    bool isBlockInverted = isBlockInverted_unsafe(nodeId, blockId);
-    bool isBlockActive = isBlockOn_unsafe(nodeId, blockId);
-    
-    if (!isBlockActive) {
-      // If block is not active, all positions return gap character
-      result.assign(length, '-');
-      return result;
-    }
-    
-    // Extract characters in sequence with minimal overhead
-    for (int32_t i = 0; i < length; ++i) {
-      int32_t currentNucPos = startNucPos;
-      int32_t currentGapPos = startGapPos;
-      
-      if (startGapPos == -1) {
-        currentNucPos = startNucPos + i;
-        currentGapPos = -1;
-      } else {
-        currentNucPos = startNucPos;
-        currentGapPos = startGapPos + i;
-      }
-      
-      char canonicalChar = '?';
-      bool foundInStore = false;
-      
-      // Quick check in materialized state first
-      if (nodeState && nodeState->characterStore) {
-        state::PositionKey posKey{blockId, currentNucPos, currentGapPos};
-        std::optional<char> materializedChar = nodeState->getMaterializedCharacter(posKey);
-        if (materializedChar.has_value()) {
-          canonicalChar = materializedChar.value();
-          foundInStore = true;
-        } else {
-          // Check local character store
-          std::optional<char> localCharOpt = nodeState->characterStore->getLocal(posKey);
-          if (localCharOpt.has_value()) {
-            canonicalChar = localCharOpt.value();
-            foundInStore = true;
-          }
-        }
-      }
-      
-      // Fallback to block sequences if not found in stores
-      if (!foundInStore && blockSequence) {
-        state::PositionKey structuralKey = state::PositionKey::create(blockId, currentNucPos, currentGapPos);
-        auto blockMapIt = blockRootCharFlatIndices.find(blockId);
-        if (blockMapIt != blockRootCharFlatIndices.end()) {
-          auto flatIndexIt = blockMapIt->second.find(structuralKey);
-          if (flatIndexIt != blockMapIt->second.end()) {
-            int64_t flatIndex = flatIndexIt->second;
-            if (flatIndex >= 0 && flatIndex < static_cast<int64_t>(blockSequence->size())) {
-              canonicalChar = (*blockSequence)[flatIndex];
-              foundInStore = true;
-            }
-          }
-        }
-      }
-      
-      if (!foundInStore) {
-        canonicalChar = '-';
-      }
-      
-      // Apply orientation if needed
-      char finalChar = canonicalChar;
-      if (isBlockInverted && canonicalChar != '-' && canonicalChar != 'x') {
         switch (canonicalChar) {
-          case 'A': finalChar = 'T'; break; case 'T': finalChar = 'A'; break;
-          case 'C': finalChar = 'G'; break; case 'G': finalChar = 'C'; break;
-          case 'a': finalChar = 't'; break; case 't': finalChar = 'a'; break;
-          case 'c': finalChar = 'g'; break; case 'g': finalChar = 'c'; break;
-          default: finalChar = canonicalChar; break;
+            case 'A': finalChar = 'T'; break; case 'T': finalChar = 'A'; break;
+            case 'C': finalChar = 'G'; break; case 'G': finalChar = 'C'; break;
+            case 'a': finalChar = 't'; break; case 't': finalChar = 'a'; break;
+            case 'c': finalChar = 'g'; break; case 'g': finalChar = 'c'; break;
+            // N, other IUPAC codes, or already complemented chars from a parent that had different inversion are not complemented again here.
+            default: finalChar = canonicalChar; 
         }
-      }
-      
-      result.push_back(finalChar);
+        if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+          debug_problematic_blocks << "'" << finalChar << "'" << std::endl;
+        }
+        if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+            debug_file_ourcode_get << "    -> complemented to finalChar='" << finalChar << "'" << std::endl;
+        }
+    } else if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+         debug_problematic_blocks << " -> Block FORWARD or char is gap, finalChar='" << finalChar << "'" << std::endl;
+    } else if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+         debug_file_ourcode_get << "  -> target node '" << nodeId_str << "' has block " << blockId << " FORWARD or char is gap. finalChar='" << finalChar << "'" << std::endl;
     }
-  } catch (const std::exception& e) {
-    logging::warn("Exception in getCharactersAtBlock for node {}, block {}, position ({}, {}), length {}: {}", 
-                  std::string(nodeId), blockId, startNucPos, startGapPos, length, e.what());
-    // Return partial result up to the point of failure
+
+    if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+      debug_problematic_blocks.close();
+    }
+    if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+        debug_file_ourcode_get.close();
+    }
+    return finalChar;
   }
-  
-  return result;
+  catch (const std::exception &e) {
+    if (debug_specific_blocks && debug_problematic_blocks.is_open()) {
+      debug_problematic_blocks << " -> EXCEPTION: " << e.what() << std::endl;
+      debug_problematic_blocks.close();
+    }
+    if (log_this_get_to_file && debug_file_ourcode_get.is_open()) {
+        debug_file_ourcode_get << "  -> EXCEPTION in getCharAtPosition: " << e.what() << ", returning '-'" << std::endl;
+        debug_file_ourcode_get.close();
+    } else {
+        logging::warn("Exception in getCharAtPosition for node {}, block {}, position ({}, {}): {}", 
+                    nodeId_str, blockId, nucPos, gapPos, e.what());
+    }
+    return '-';
+  }
 }
 
 // Set character at (blockId, nucPos, gapPos) in nodeId
 bool StateManager::setCharAtPosition(std::string_view nodeId, int32_t blockId,
                                      int32_t nucPos, int32_t gapPos, char c) {
   try {
-    // OPTIMIZATION: Use string_view as much as possible, convert only when necessary
-    const NodeState* cachedNodeState = tlsNodeCache.getCachedStateByView(nodeId, nodeStates);
-    if (!cachedNodeState) {
-      // Need to create node state, convert string_view to string only now
-      std::string nodeIdStr(nodeId);
-      auto &nodeState = getNodeState(nodeIdStr);
-      return setCharAtPositionImpl(nodeIdStr, nodeState, blockId, nucPos, gapPos, c);
-    }
-    
-    // We have cached state, but need mutable reference for modification
+    // Convert string_view to string once
     std::string nodeIdStr(nodeId);
-    auto &nodeState = getNodeState(nodeIdStr);
-    return setCharAtPositionImpl(nodeIdStr, nodeState, blockId, nucPos, gapPos, c);
-    
-  } catch (const std::exception& e) {
-    logging::warn("Error in setCharAtPosition({}:{}:{}:{}): {}", 
-                std::string(nodeId), blockId, nucPos, gapPos, e.what());
-    return false;
-  }
-}
-
-// Helper method to reduce code duplication
-bool StateManager::setCharAtPositionImpl(const std::string& nodeIdStr, NodeState& nodeState,
-                                        int32_t blockId, int32_t nucPos, int32_t gapPos, char c) {
     bool is_debug_node = (nodeIdStr == "node_2");
     
+    auto &nodeState = getNodeState(nodeIdStr);
+
     // Create position key
-    state::PositionKey posKey{blockId, nucPos, gapPos};
+    PositionKey posKey{blockId, nucPos, gapPos};
     // Create combined key for caching
     NodePositionKey cacheKey{nodeIdStr, posKey};
     
@@ -1024,13 +753,13 @@ bool StateManager::setCharAtPositionImpl(const std::string& nodeIdStr, NodeState
       // Create a new characterStore, inheriting from parent if possible
       if (parentCharStore != nullptr) {
         nodeState.characterStore = std::make_shared<HierarchicalCharacterStore>(parentCharStore);
-        logging::warn("Created characterStore for node {} with parent inheritance", nodeIdStr);
+        // logging::warn("Created characterStore for node {} with parent inheritance", nodeIdStr);
         
         // Note: Materialization is deferred until explicitly called via materializeNodeState()
         // This ensures proper parent-child inheritance order
       } else {
         nodeState.characterStore = std::make_shared<HierarchicalCharacterStore>();
-        logging::warn("Created characterStore for node {} without parent", nodeIdStr);
+        // logging::warn("Created characterStore for node {} without parent", nodeIdStr);
       }
     }
     
@@ -1095,6 +824,11 @@ bool StateManager::setCharAtPositionImpl(const std::string& nodeIdStr, NodeState
     }
     
     return true;
+  } catch (const std::exception& e) {
+    logging::warn("Error in setCharAtPosition({}:{}:{}:{}): {}", 
+                nodeId, blockId, nucPos, gapPos, e.what());
+    return false;
+  }
 }
 
 // Get range in scalar global coordinates for a block
@@ -1162,19 +896,7 @@ StateManager::calculateRecompRange(std::string_view nodeId, int32_t blockId,
                                    bool isBlockDeactivation) {
     if (kmerSize <= 0) kmerSize = getKmerSize();
     
-    // DEBUG: Log all range calculations for node_3
-    if (false) { // Disabled bulk debug logging
-      logging::info("CALC_RECOMP_RANGE: Block {} pos={} len={} isBlockMut={} isBlockDeact={}", 
-                   blockId, pos, len, isBlockMutation, isBlockDeactivation);
-    }
-    
     bool blockActive = isBlockOn(nodeId, blockId);
-    
-    // CRITICAL FIX: Don't generate recomputation ranges for nucleotide mutations in OFF blocks
-    if (!isBlockMutation && !blockActive && !isBlockDeactivation) {
-      // Nucleotide mutation in an inactive block - no recomputation needed
-      return std::nullopt;
-    }
     
     auto blockRangeIt = blockRanges.find(blockId);
     if (blockRangeIt == blockRanges.end()) {
@@ -1194,23 +916,11 @@ StateManager::calculateRecompRange(std::string_view nodeId, int32_t blockId,
     
     // For nucleotide mutations, expand upstream by k non-gap positions
     if (!isBlockMutation && kmerSize > 0) {
-      // DEBUG: Log when we enter nucleotide mutation extension
-      std::string strNodeId(nodeId);
-      if (strNodeId == "node_3") {
-        logging::info("NUC_MUT_EXT_ENTRY: Block {} nucleotide mutation - entering extension logic", blockId);
-      }
       try {
+        std::string strNodeId(nodeId);
+        std::shared_ptr<HierarchicalGapMap> nodeGapMap = getNodeGapMap(strNodeId);
         
-        // Get node state for fast gap checking
-        const NodeState* nodeStatePtr = nullptr;
-        {
-          auto it = nodeStates.find(strNodeId);
-          if (it != nodeStates.end()) {
-            nodeStatePtr = &it->second;
-          }
-        }
-        
-        if (nodeStatePtr) {
+        if (nodeGapMap) {
           // Calculate global position of the mutation
           int64_t globalMutationPos = blockRange.start + pos;
           
@@ -1224,10 +934,10 @@ StateManager::calculateRecompRange(std::string_view nodeId, int32_t blockId,
           while (positionsNeeded > 0 && currentPos >= blockRange.start && iterations < kmerSize * 100) {
             iterations++;
             
-            // Check if current position is a gap using fast gap run checking
+            // Check if current position is a gap
             bool isGap = false;
             try {
-              isGap = nodeStatePtr->isGapRun(blockId, currentPos - blockRange.start);
+              isGap = nodeGapMap->isGap(currentPos);
             } catch (const std::exception& e) {
               isGap = false; // If we can't check for gaps, assume it's not a gap
             }
@@ -1247,54 +957,6 @@ StateManager::calculateRecompRange(std::string_view nodeId, int32_t blockId,
           
           // Expand the result range upstream
           result.start = std::min(result.start, targetStart);
-          
-          // DEBUG: Log backward extension for debugging  
-          if (strNodeId == "node_3") {
-            logging::info("NUC_MUT_BACKWARD_EXT: Block {} mut at globalPos {} - original start={}, targetStart={}, final start={}", 
-                         blockId, globalMutationPos, 
-                         std::max(blockRange.start + pos - kmerSize, blockRange.start), targetStart, result.start);
-          }
-          
-          // FORWARD EXTENSION: Also extend downstream by k non-gap positions
-          int64_t targetEnd = globalMutationPos + kmerSize;
-          currentPos = globalMutationPos + 1;
-          positionsNeeded = kmerSize;
-          iterations = 0;
-          
-          // Work forwards from the mutation position to account for gaps
-          while (positionsNeeded > 0 && currentPos < blockRange.end && iterations < kmerSize * 10000) {
-            iterations++;
-            
-            // Check if current position is a gap using fast gap run checking
-            bool isGap = false;
-            try {
-              isGap = nodeStatePtr->isGapRun(blockId, currentPos - blockRange.start);
-            } catch (const std::exception& e) {
-              isGap = false; // If we can't check for gaps, assume it's not a gap
-            }
-            
-            if (!isGap) {
-              // This position counts toward our k positions
-              positionsNeeded--;
-              targetEnd = currentPos + 1; // +1 because we want the end position
-            }
-            // If it's a gap, we need to go further forward but don't count it
-            
-            currentPos++;
-          }
-          
-          // Ensure we don't go beyond the block end
-          targetEnd = std::min(targetEnd, blockRange.end);
-          
-          // Expand the result range downstream
-          result.end = std::max(result.end, targetEnd);
-          
-          // DEBUG: Log forward extension for debugging
-          if (strNodeId == "node_3") {
-            logging::info("NUC_MUT_FORWARD_EXT: Block {} mut at globalPos {} - original end={}, targetEnd={}, final end={}", 
-                         blockId, globalMutationPos, 
-                         std::min(blockRange.start + pos + len, blockRange.end), targetEnd, result.end);
-          }
         }
       } catch (const std::exception& e) {
         // Fallback to naive expansion if gap-aware expansion fails
@@ -1462,15 +1124,21 @@ bool StateManager::applyBlockMutation(std::string_view nodeId, int32_t blockId,
       // This is a simplified version of expandRecompRanges that doesn't acquire additional locks
       
       // Get the gap map for this node (this doesn't acquire locks)
-      const NodeState* nodeStatePtr = nullptr;
-      {
-        auto it = nodeStates.find(strNodeId);
-        if (it != nodeStates.end()) {
-          nodeStatePtr = &it->second;
+      std::shared_ptr<HierarchicalGapMap> nodeGapMap;
+      try {
+        nodeGapMap = getNodeGapMap(strNodeId);
+      } catch (const std::exception& e) {
+        logging::warn("APPLY_BM_DEBUG: Could not get gap map for node {}: {}. Using naive k-position expansion.", strNodeId, e.what());
+        // Fallback to naive expansion
+        coordinates::CoordRange naiveUpstreamRange;
+        naiveUpstreamRange.start = std::max(previousActiveRange.end - k, previousActiveRange.start);
+        naiveUpstreamRange.end = previousActiveRange.end;
+        if (naiveUpstreamRange.start < naiveUpstreamRange.end) {
+          mergeRangeWithExisting(nodeState.recompRanges, naiveUpstreamRange);
         }
       }
       
-      if (nodeStatePtr) {
+      if (nodeGapMap) {
         // Simplified gap-aware expansion: expand from the end of the block backwards by k positions,
         // but account for gaps by expanding further when gaps are encountered
         int64_t targetStart = previousActiveRange.end - k;
@@ -1482,10 +1150,10 @@ bool StateManager::applyBlockMutation(std::string_view nodeId, int32_t blockId,
         while (positionsNeeded > 0 && currentPos >= previousActiveRange.start && iterations < k * 100) {
           iterations++;
           
-          // Check if current position is a gap using fast gap run checking
+          // Check if current position is a gap
           bool isGap = false;
           try {
-            isGap = nodeStatePtr->isGapRun(previousActiveBlockId, currentPos - previousActiveRange.start);
+            isGap = nodeGapMap->isGap(currentPos);
           } catch (const std::exception& e) {
             // If we can't check for gaps, assume it's not a gap
             isGap = false;
@@ -1516,15 +1184,6 @@ bool StateManager::applyBlockMutation(std::string_view nodeId, int32_t blockId,
             logging::debug("APPLY_BM_DEBUG: Added upstream recomputation range [{}, {}) from previous block {} for block {} mutation (gap-aware expansion)",
                            upstreamRange.start, upstreamRange.end, previousActiveBlockId, blockId);
           }
-        }
-      } else {
-        // Fallback to naive expansion when nodeState is not available
-        logging::warn("APPLY_BM_DEBUG: Could not get node state for node {}: Using naive k-position expansion.", strNodeId);
-        coordinates::CoordRange naiveUpstreamRange;
-        naiveUpstreamRange.start = std::max(previousActiveRange.end - k, previousActiveRange.start);
-        naiveUpstreamRange.end = previousActiveRange.end;
-        if (naiveUpstreamRange.start < naiveUpstreamRange.end) {
-          mergeRangeWithExisting(nodeState.recompRanges, naiveUpstreamRange);
         }
       }
     } else if (enable_specific_debug) {
@@ -1571,16 +1230,6 @@ bool StateManager::applyBlockMutation(std::string_view nodeId, int32_t blockId,
     }
   }
 
-  // Update gap runs when block state changes for fast gap detection
-  if (effectiveActivation) {
-    // Block turned ON: need to update gap runs for this block
-    // For now, clear any existing gap runs for this block and they will be rebuilt on demand
-    nodeState.gapRuns.erase(blockId);
-  } else if (effectiveDeactivation) {
-    // Block turned OFF: clear gap runs for this block since it's no longer active
-    nodeState.gapRuns.erase(blockId);
-  }
-
   resetNodeCache(nodeId); // Stays as is, uses string_view
   // lock is released by RAII
   return true;
@@ -1612,10 +1261,7 @@ void StateManager::propagateState(const std::string &fromNode, const std::string
   // Set the parent-child relationship for inheritance
   childState.parentId = fromNode;
   
-  // OPTIMIZATION: Materialize block state from parent inheritance
-  childState.materializeBlockState(&parentState);
-  
-  // Legacy: Copy parent's active blocks to child (inheritance) for backward compatibility
+  // Copy parent's active blocks to child (inheritance)
   childState.activeBlocks = parentState.activeBlocks;
   
   // Inherit parent's total seed count
@@ -1636,9 +1282,6 @@ void StateManager::propagateState(const std::string &fromNode, const std::string
     if (!localRootCharacterStore) { localRootCharacterStore = std::make_shared<HierarchicalCharacterStore>(); }
     childState.characterStore = std::make_shared<HierarchicalCharacterStore>(localRootCharacterStore);
   }
-  
-  // Inherit parent's gap runs for fast gap detection
-  childState.gapRuns = parentState.gapRuns;
   
   // Set up hierarchical seed store
   auto hierarchyIt_child = nodeHierarchy.find(toNode);
@@ -1689,7 +1332,7 @@ void StateManager::applyNucleotideMutation(const std::string& nodeId, NodeState&
   // Make sure the character store exists
   if (!nodeState.characterStore) {
     // Critical issue - characterStore doesn't exist for this node!
-    logging::warn("Creating missing characterStore during applyNucleotideMutation for node {}", nodeId);
+    // logging::warn("Creating missing characterStore during applyNucleotideMutation for node {}", nodeId);
     
     
     // Look up parent's characterStore to inherit from
@@ -1712,17 +1355,17 @@ void StateManager::applyNucleotideMutation(const std::string& nodeId, NodeState&
     // Create a new characterStore, inheriting from parent if possible
     if (parentCharStore != nullptr) {
       nodeState.characterStore = std::make_shared<HierarchicalCharacterStore>(parentCharStore);
-      logging::warn("Created characterStore for node {} with parent inheritance", nodeId);
+      // logging::warn("Created characterStore for node {} with parent inheritance", nodeId);
       
      
     } else {
       nodeState.characterStore = std::make_shared<HierarchicalCharacterStore>();
-      logging::warn("Created characterStore for node {} without parent", nodeId);
+      // logging::warn("Created characterStore for node {} without parent", nodeId);
       
     }
   }
   
-  // CRITICAL FIX: Directly store mutations in the local character store and hierarchy store
+  // CRITICAL FIX: Directly store mutations in the local character store and materialized state
   // This ensures they're found when later looking them up
   bool directStoreSuccess = false;
   bool hierStoreSuccess = false;
@@ -1731,7 +1374,7 @@ void StateManager::applyNucleotideMutation(const std::string& nodeId, NodeState&
   if (nodeState.characterStore) {
     directStoreSuccess = nodeState.characterStore->set(posKey, storeValue);
     
-    // Update materialized state for performance
+    // IMPORTANT: Update materialized state directly for immediate availability
     nodeState.setMaterializedCharacter(posKey, storeValue);
   }
   
@@ -2197,6 +1840,21 @@ std::optional<seeding::seed_t> StateManager::getSeedAtPosition(std::string_view 
     
     // Debug: Track inheritance for specific nodes
     static thread_local int debug_call_count = 0;
+    bool is_debug_node = (strNodeId == "node_3");
+    bool should_debug = is_debug_node && (debug_call_count++ < 20);
+    
+    if (should_debug) {
+        // std::cout << "SEED_LOOKUP: node=" << strNodeId << " pos=" << pos;
+        auto& nodeState = nodeStateIt->second;
+        // std::cout << " materialized=" << nodeState.materializedStateComputed;
+        if (nodeState.materializedStateComputed) {
+            auto seed_it = nodeState.materializedSeeds.find(pos);
+            bool found = (seed_it != nodeState.materializedSeeds.end());
+            // std::cout << " found=" << found << " totalSeeds=" << nodeState.materializedSeeds.size();
+        }
+        // std::cout << std::endl;
+    }
+    
     // All inherited seeds should already be materialized before mutations are applied
     auto result = nodeStateIt->second.getMaterializedSeed(pos);
     return result; // Return the result directly (might be nullopt if no seed at this position)
@@ -2322,7 +1980,7 @@ void StateManager::initialize(panmanUtils::Tree *tree, size_t maxNucPosHint) {
   }
   
   // CRITICAL FIX: Log the current state of blockRanges before initialization
-  logging::info("Starting StateManager initialization with {} existing block ranges", blockRanges.size());
+  // logging::info("Starting StateManager initialization with {} existing block ranges", blockRanges.size());
   
   logging::debug("Initializing state manager with tree");
   
@@ -2386,6 +2044,9 @@ void StateManager::initialize(panmanUtils::Tree *tree, size_t maxNucPosHint) {
       nodesInitialized++;
       
       // Log progress periodically
+      if (nodesInitialized % 1000 == 0 || nodesInitialized == 1) {
+        logging::info("Initialized {}/{} nodes", nodesInitialized, sortedNodes.size());
+      }
     } catch (const std::exception& e) {
       logging::err("Failed to initialize node {}: {}", nodeId, e.what());
     }
@@ -2954,9 +2615,9 @@ std::vector<coordinates::CoordRange> StateManager::expandRecompRanges(
                         int32_t mappedBlockId, structuralNucPos, structuralGapPos;
                         std::tie(mappedBlockId, structuralNucPos, structuralGapPos) = *coord3D;
                         if (mappedBlockId == currentSegmentBlockId) {
-                          c = getCharAtPosition(nodeId, mappedBlockId, structuralNucPos, structuralGapPos);
+                            c = getCharAtPosition(nodeId, mappedBlockId, structuralNucPos, structuralGapPos);
                         } else {
-                          logging::warn("expandRecompRanges: Mismatch! currentPos {} in currentSegmentBlockId {} but fastMapGlobalToLocal returned mappedBlockId {}. Using fallback '-'.", currentPos, currentSegmentBlockId, mappedBlockId);
+                            logging::warn("expandRecompRanges: Mismatch! currentPos {} in currentSegmentBlockId {} but fastMapGlobalToLocal returned mappedBlockId {}. Using fallback '-'.", currentPos, currentSegmentBlockId, mappedBlockId);
                         }
                     } else {
                         logging::warn("expandRecompRanges: Failed to map globalPos {} to local for node '{}'. Using fallback '-'.", currentPos, nodeId);
@@ -3017,7 +2678,7 @@ std::vector<coordinates::CoordRange> StateManager::expandRecompRanges(
          return range; 
     }
     int64_t expandedStart = ensureExactlyKNonGapChars(clampedStart, false, nodeGapMap); 
-    int64_t expandedEnd = ensureExactlyKNonGapChars(clampedEnd, true, nodeGapMap);
+    int64_t expandedEnd = clampedEnd;
     coordinates::CoordRange expandedRange{expandedStart, expandedEnd};
     if (expandedRange.end < expandedRange.start) {
          logging::err("expandRecompRanges: Invalid expanded range [{}, {}) node '{}'. Original=[{}, {}), Clamped=[{}, {}).", expandedRange.start, expandedRange.end, nodeId, range.start, range.end, clampedStart, clampedEnd);
@@ -3105,26 +2766,62 @@ coordinates::BlockCoordinate StateManager::mapGlobalToBlockCoords(
   
   // Use global position cache for fast lookup if initialized
   if (globalPosCacheInitialized.load(std::memory_order_acquire) && globalPos < globalPosCache.maxPosition) {
-    // int32_t blockId = globalPosCache.posToBlockId[pos]; // OLD - Incorrect access
-    int32_t blockId = globalPosCache.getBlockId(globalPos); // NEW - Use helper method
-    if (blockId >= 0) {
-      return {blockId, -1, -1}; // Return BlockCoordinate with blockId
-    }
-    // Fall through to linear search if cache doesn't have a mapping
-  } else if (!globalPosCacheInitialized.load(std::memory_order_acquire)) {
-    throw std::runtime_error("getBlockIdFromPosition called before globalPosCache was initialized");
-  }
-  
-  // Fallback to linear search through block ranges
-  for (const auto& [blockId, range] : blockRanges) {
-    if (globalPos >= range.start && globalPos < range.end) {
-      return {blockId, -1, -1}; // Return BlockCoordinate with blockId
+    blockId = globalPosCache.getBlockId(globalPos); // NEW - Use helper method
+  } else {
+    // Fallback to linear search through block ranges
+    for (const auto& [id, range] : blockRanges) {
+      if (globalPos >= range.start && globalPos < range.end) {
+        blockId = id;
+        break;
+      }
     }
   }
   
-  // If we get here, the position isn't in any known block
-  throw std::runtime_error("Position " + std::to_string(globalPos) + 
-                          " is not contained in any known block");
+  if (blockId < 0) {
+    // Position not in any block
+    return {-1, -1, -1};
+  }
+  
+  // Check if block is active for this node
+  if (!isBlockOn(nodeId, blockId)) {
+    // Block exists but is not active for this node
+    return {blockId, -1, -1}; // Return blockId but invalid nuc/gap pos
+  }
+  
+  // Get if block is inverted
+  bool inverted = isBlockInverted(nodeId, blockId);
+  
+  // Get block range
+  const auto& range = blockRanges.at(blockId);
+  
+  // Calculate offset within block
+  int64_t blockOffset = globalPos - range.start;
+  
+  // Map to 3D coordinates using fastMapGlobalToLocal
+  auto coordsOpt = fastMapGlobalToLocal(globalPos);
+  if (!coordsOpt) {
+    return {blockId, -1, -1}; // Mapping failed
+  }
+  
+  auto [mappedBlockId, nucPos, gapPos] = *coordsOpt;
+  
+  // Double-check block ID matches what we expect
+  if (mappedBlockId != blockId) {
+    // This is a serious inconsistency that shouldn't happen
+    logging::warn("Block ID mismatch during coordinate mapping: expected {}, got {}",
+                 blockId, mappedBlockId);
+    return {blockId, -1, -1};
+  }
+  
+  // Return the final coordinates, handling inversion if needed
+  if (inverted) {
+    // For inverted blocks, invert the nucPos within the block
+    // The exact inversion logic depends on block-specific details
+    // (implemented within the fastMapGlobalToLocal)
+    return {blockId, nucPos, gapPos};
+  } else {
+    return {blockId, nucPos, gapPos};
+  }
 }
 
 // Extract a sequence from a range of positions
@@ -3340,36 +3037,6 @@ std::tuple<std::string, std::vector<int64_t>, std::vector<bool>, std::vector<int
     if (result_str.empty() && range.start < range.end && !active_blocks_in_node.empty()) {
       logging::warn("extractSequence: Failed to extract any characters for node '{}' from range [{}:{}) using structural iteration, though active blocks overlap.",
                   nodeId, range.start, range.end);
-      
-      // DEBUG: For node_4, log which blocks overlap with this range and their states
-      std::string strNodeId(nodeId);
-      if (strNodeId == "node_4") {
-        
-        // Check which blocks this range intersects
-        for (const auto& [blockId, blockRange] : active_blocks_in_node) {
-          bool intersects = (range.start < blockRange.end && range.end > blockRange.start);
-          if (intersects) {
-            bool blockIsOn = isBlockOn(nodeId, blockId);
-            bool blockIsInverted = isBlockInverted(nodeId, blockId);
-            logging::info("  Block {}: range=[{}, {}), intersects=YES, isOn={}, isInverted={}", 
-                         blockId, blockRange.start, blockRange.end, blockIsOn, blockIsInverted);
-          }
-        }
-        
-        // Also check if there are any gaps in this range that might prevent extraction
-        try {
-          auto coords = fastMapGlobalToLocal(range.start);
-          if (coords) {
-            auto [blockId, nucPos, gapPos] = *coords;
-            logging::info("  Range start {} maps to: block={}, nucPos={}, gapPos={}", 
-                         range.start, blockId, nucPos, gapPos);
-          } else {
-            logging::info("  Range start {} could not be mapped to block coordinates", range.start);
-          }
-        } catch (const std::exception& e) {
-          logging::info("  Range start {} mapping failed: {}", range.start, e.what());
-        }
-      }
       if (debug_problem_blocks && debug_extract.is_open()) {
         debug_extract << "  -> WARNING: Failed to extract any characters despite active blocks" << std::endl;
       }
@@ -3428,7 +3095,7 @@ void StateManager::initializeNodeHierarchy(panmanUtils::Tree *tree, panmanUtils:
     return;
   }
 
-  logging::info("Initializing node hierarchy for {} nodes", tree->allNodes.size());
+  // logging::info("Initializing node hierarchy for {} nodes", tree->allNodes.size());
   
   // CRITICAL FIX: Before clearing the hierarchy, preserve the block ranges if they exist
   absl::flat_hash_map<int32_t, coordinates::CoordRange> preservedBlockRanges;
@@ -3460,6 +3127,8 @@ void StateManager::initializeNodeHierarchy(panmanUtils::Tree *tree, panmanUtils:
     
     // Set parent relationship
     hierarchy.parentId = parentId;
+    
+    // std::cout << "HIERARCHY_DEBUG: Setting node '" << nodeId << "' parent to '" << parentId << "'" << std::endl;
     
     // Record parent-child relationship for both parent and child
     if (!parentId.empty()) {
@@ -3643,8 +3312,8 @@ StateManager::fastMapGlobalToLocal(int64_t globalPos) const {
         logging::warn("fastMapGlobalToLocal: Cache not initialized for coordinate mapping (pos: {}, numCoords: {}, blockRanges.size: {})", 
                       globalPos, numCoords, blockRanges.size());
     } else { // Must be invalid position
-        logging::warn("fastMapGlobalToLocal: Position {} outside valid cache range [0, {})", 
-                      globalPos, globalPosCache.maxPosition);
+        logging::warn("fastMapGlobalToLocal: Position {} outside valid cache range [0, {}) (cache maxPos: {})", 
+                      globalPos, globalPosCache.maxPosition, globalPosCache.maxPosition);
     }
     return std::nullopt;
   }
@@ -3696,212 +3365,80 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractKmer(
   }
   
   // Main kmer extraction implementation
+  std::string rawKmer; // Store raw sequence with gaps
   std::string ungappedKmer; // Store sequence with gaps removed
   std::vector<int64_t> positions; // non-gapped positions of each k-mer character
   int nonGapCount = 0;
-  int64_t lastNonGapPos = -1;
 
+  rawKmer.reserve(k * 2); // Reserve more to account for gaps
   ungappedKmer.reserve(k); // Reserve exact k size for ungapped result
   positions.reserve(k * 2);
 
-  // OPTIMIZATION: Use bulk character extraction for the entire block range
-  // Estimate characters needed (accounting for gaps)
-  int64_t estimatedLength = k * 2; // Heuristic: assume up to 50% gaps
-  int64_t startPos = reverse ? std::max(pos - estimatedLength + 1, static_cast<int64_t>(0)) : pos;
-  int64_t endPos = reverse ? pos + 1 : std::min(pos + estimatedLength, static_cast<int64_t>(numCoords));
+  // Extract one character at a time
+  int64_t currentPos = pos;
+  int direction = reverse ? -1 : 1; // Move backwards if reverse=true
   
-  // Adjust bounds if necessary
-  if (startPos < 0) startPos = 0;
-  if (endPos > static_cast<int64_t>(numCoords)) endPos = numCoords;
-  
-  // Extract bulk characters using coordinate mapping
-  std::vector<char> bulkChars;
-  std::vector<int64_t> bulkPositions;
-  
-  try {
+  while (nonGapCount < k) { 
+    // Check bounds based on direction
+    if (currentPos < 0 || currentPos >= static_cast<int64_t>(numCoords)) {
+      try {
+        kmerFailedDueToLength.fetch_add(1, std::memory_order_relaxed);
+      } catch (...) {}
+      
+      return {"", {}};
+    }
+
+    // Map position to block coordinates
+    auto coordsOpt = fastMapGlobalToLocal(currentPos);
+    if (!coordsOpt) {
+      throw std::runtime_error("Failed to map position " + std::to_string(currentPos) + 
+                           " to block coordinates for node " + std::string(nodeId));
+    }
+
+    auto [blockId, nucPos, gapPos] = *coordsOpt;
+
     std::shared_ptr<HierarchicalGapMap> nodeGapMap;
     try {
         nodeGapMap = getNodeGapMap(nodeId); 
     } catch (const std::exception& e) {
         logging::warn("StateManager::extractKmer: Could not get gap map for node {}: {}", nodeId, e.what());
     }
-    
-    // Extract characters for the range
-    bool isDebugPos = (pos == 371508 || pos == 371517 || pos == 372797 || pos == 375076 || pos == 375077 ||
-                       pos == 418503 || pos == 418527 || pos == 434620 || pos == 434632 || pos == 451606);
-    if (isDebugPos) {
-      logging::debug("EXTRACT_KMER_BULK_DEBUG: pos {} bulk range [{}, {}) reverse={}", pos, startPos, endPos, reverse);
-    }
-    
-    for (int64_t currentPos = startPos; currentPos < endPos; ++currentPos) {
-      auto coordsOpt = fastMapGlobalToLocal(currentPos);
-      if (!coordsOpt) continue;
-      
-      auto [blockId, nucPos, gapPos] = *coordsOpt;
-      char c = getCharAtPosition(nodeId, blockId, nucPos, gapPos);
-      
-      bulkChars.push_back(c);
-      bulkPositions.push_back(currentPos);
-      
-      if (false && bulkChars.size() <= 10) { // Disabled bulk debug logging
-        logging::info("EXTRACT_KMER_BULK_DEBUG: pos {} bulk[{}] currentPos {} -> char '{}'", pos, bulkChars.size()-1, currentPos, c);
-      }
-    }
-    
-    if (isDebugPos) {
-      logging::debug("EXTRACT_KMER_BULK_DEBUG: pos {} extracted {} bulk chars", pos, bulkChars.size());
-    }
-  } catch (const std::exception& e) {
-    // Fallback to individual character extraction if bulk fails
-    int64_t currentPos = pos;
-    int direction = reverse ? -1 : 1;
-    
-    while (nonGapCount < k) { 
-      if (currentPos < 0 || currentPos >= static_cast<int64_t>(numCoords)) {
-        try {
-          kmerFailedDueToLength.fetch_add(1, std::memory_order_relaxed);
-        } catch (...) {}
-        return {"", {}};  // Return empty pair
-      }
 
-      auto coordsOpt = fastMapGlobalToLocal(currentPos);
-      if (!coordsOpt) {
-        throw std::runtime_error("Failed to map position " + std::to_string(currentPos) + 
-                             " to block coordinates for node " + std::string(nodeId));
-      }
+    char c = getCharAtPosition(nodeId, blockId, nucPos, gapPos);
 
-      auto [blockId, nucPos, gapPos] = *coordsOpt;
-      char c = getCharAtPosition(nodeId, blockId, nucPos, gapPos);
-
-      if (reverse) {
-        if (c != '-' && c != 'x') {
-          ungappedKmer.insert(0, 1, c);
-          positions.insert(positions.begin(), currentPos);
-          nonGapCount++;
-          lastNonGapPos = currentPos;
-        }
-      } else {
-        if (c != '-' && c != 'x') {
-          ungappedKmer.push_back(c);
-          positions.push_back(currentPos);
-          nonGapCount++;
-          lastNonGapPos = currentPos;
-        }
-      }
-      currentPos += direction;
-    }
-    // Optionally: return lastNonGapPos if needed for downstream logic
-    // return {ungappedKmer, positions};
-    // If you need to use endPos elsewhere, use lastNonGapPos instead of positions.back()
-    return {ungappedKmer, positions};
-  }
-  
-  // Process bulk characters to extract k-mer
-  if (reverse) {
-    // Process from end to beginning for reverse mode
-    for (int i = static_cast<int>(bulkChars.size()) - 1; i >= 0 && nonGapCount < k; --i) {
-      char c = bulkChars[i];
+    if (reverse) {
+      // For reverse mode, prepend characters to build the k-mer in correct order
+      rawKmer.insert(0, 1, c);
       if (c != '-' && c != 'x') {
         ungappedKmer.insert(0, 1, c);
-        positions.insert(positions.begin(), bulkPositions[i]);
+        positions.insert(positions.begin(), currentPos);
         nonGapCount++;
-        lastNonGapPos = bulkPositions[i];
       }
-    }
-  } else {
-    // Process from beginning for forward mode
-    for (size_t i = 0; i < bulkChars.size() && nonGapCount < static_cast<size_t>(k); ++i) {
-      char c = bulkChars[i];
+    } else {
+      // Forward mode (original logic)
+      rawKmer.push_back(c);
       if (c != '-' && c != 'x') {
         ungappedKmer.push_back(c);
-        positions.push_back(bulkPositions[i]);
+        positions.push_back(currentPos);
         nonGapCount++;
-        lastNonGapPos = bulkPositions[i];
       }
     }
+
+    // Move to next position in the specified direction
+    currentPos += direction;
   }
 
   if (nonGapCount < k) {
-    bool isDebugPos = (pos == 371508 || pos == 371517 || pos == 372797 || pos == 375076 || pos == 375077 ||
-                       pos == 418503 || pos == 418527 || pos == 434620 || pos == 434632 || pos == 451606);
-    
-    // Continue extracting characters beyond the initial range
-    int64_t extendedEndPos = reverse ? startPos - 1 : endPos;
-    int maxExtension = k * 15000;
-    int extensionCount = 0;
-    
-    while (nonGapCount < k && extensionCount < maxExtension) {
-      int64_t currentPos = reverse ? (extendedEndPos - extensionCount) : (extendedEndPos + extensionCount);
-      
-      if (currentPos < 0 || currentPos >= static_cast<int64_t>(numCoords)) {
-        if (isDebugPos) {
-          logging::info("EXTRACT_KMER_BULK_DEBUG: pos {} EXTENSION_BOUNDARY - hit coordinate bounds at currentPos={}, numCoords={}", 
-                       pos, currentPos, numCoords);
-        }
-        break; // Hit coordinate bounds
-      }
-      
-      auto coordsOpt = fastMapGlobalToLocal(currentPos);
-      char c;
-      if (!coordsOpt) {
-        // This is a gap position - include gap character in gapped sequence
-        c = '-';
-        if (isDebugPos && extensionCount % 50 == 0) {  // Log every 50th gap to avoid spam
-          logging::info("EXTRACT_KMER_BULK_DEBUG: pos {} EXTENSION_GAP - currentPos={} is gap, adding '-'", 
-                       pos, currentPos);
-        }
+    // Failed to get a full k-mer
+    try {
+      if (rawKmer.length() > 0 && nonGapCount == 0) {
+        kmerFailedDueToOnlyGaps.fetch_add(1, std::memory_order_relaxed);
       } else {
-        auto [blockId, nucPos, gapPos] = *coordsOpt;
-        c = getCharAtPosition(nodeId, blockId, nucPos, gapPos);
+        kmerFailedDueToLength.fetch_add(1, std::memory_order_relaxed);
       }
-      
-      // Debug: Show progress every 100 extensions for problematic positions
-      if (false && extensionCount % 100 == 0) { // Disabled bulk debug logging
-        logging::info("EXTRACT_KMER_BULK_DEBUG: pos {} EXTENSION_PROGRESS - extensionCount={}, currentPos={}, char='{}', nonGapCount={}", 
-                     pos, extensionCount, currentPos, c, nonGapCount);
-      }
-      
-      if (reverse) {
-        if (c != '-' && c != 'x') {
-          ungappedKmer.insert(0, 1, c);
-          positions.insert(positions.begin(), currentPos);
-          nonGapCount++;
-          lastNonGapPos = currentPos;
-        }
-      } else {
-        if (c != '-' && c != 'x') {
-          ungappedKmer.push_back(c);
-          positions.push_back(currentPos);
-          nonGapCount++;
-          lastNonGapPos = currentPos;
-        }
-      }
-      // Advance extension offset each iteration to progress through coordinates
-      extensionCount++;
-    }
+    } catch (...) {}
     
-    if (isDebugPos) {
-      logging::debug("EXTRACT_KMER_BULK_DEBUG: pos {} EXTENSION_RESULT - nonGapCount={}, extensionCount={}, ungappedKmer='{}'", 
-                   pos, nonGapCount, extensionCount, ungappedKmer);
-    }
-    
-    // Check again after extension
-    if (nonGapCount < k) {
-      if (isDebugPos) {
-        logging::info("EXTRACT_KMER_BULK_DEBUG: pos {} FINAL_FAILED - nonGapCount={} < k={} after extension", 
-                     pos, nonGapCount, k);
-      }
-      
-      try {
-        if (ungappedKmer.length() > 0 && nonGapCount == 0) {
-          kmerFailedDueToOnlyGaps.fetch_add(1, std::memory_order_relaxed);
-        } else {
-          kmerFailedDueToLength.fetch_add(1, std::memory_order_relaxed);
-        }
-      } catch (...) {}
-      
-      return {"", {}};  // Return empty pair
-    }
+    return {"", {}};
   }
 
   // Count successful extraction
@@ -3909,74 +3446,9 @@ std::pair<std::string, std::vector<int64_t>> StateManager::extractKmer(
     successfulKmerExtractions.fetch_add(1, std::memory_order_relaxed);
   } catch (...) {}
 
-  bool isDebugPos = (pos == 371508 || pos == 371517 || pos == 372797 || pos == 375076 || pos == 375077 ||
-                     pos == 418503 || pos == 418527 || pos == 434620 || pos == 434632 || pos == 451606);
-  if (isDebugPos) {
-    logging::debug("EXTRACT_KMER_BULK_DEBUG: pos {} SUCCESS - nonGapCount={} >= k={}, ungappedKmer='{}'", 
-                 pos, nonGapCount, k, ungappedKmer);
-  }
-
   // Return the ungapped k-mer but preserve the original positions vector
   // which allows correct tracking of gapped end positions
   return {ungappedKmer, positions};
-}
-
-// Restore the seed storage initialization method with enhanced diagnostics
-void StateManager::initializeSeedStorage() {
-  std::unique_lock<std::shared_mutex> lock(nodeMutex);
-
-  logging::info("SEED_INIT: Initializing seed storage for {} nodes", nodeHierarchy.size());
-
-  size_t createdRootStores = 0;
-  size_t createdChildStores = 0;
-  std::vector<std::string> nodesWithoutStores;
-
-  // Ensure root-level store is available for inheritance
-  static std::shared_ptr<HierarchicalSeedStore> rootSeedStore;
-  if (!rootSeedStore) {
-    rootSeedStore = std::make_shared<HierarchicalSeedStore>();
-    logging::info("SEED_INIT: Created global root seed store");
-  }
-
-  for (auto &entry : nodeHierarchy) {
-    const std::string &nodeId = entry.first;
-    auto &hierarchy = entry.second;
-
-    if (!hierarchy.seedStore) {
-      if (!hierarchy.parentId.empty()) {
-        auto parentIt = nodeHierarchy.find(hierarchy.parentId);
-        if (parentIt != nodeHierarchy.end() && parentIt->second.seedStore) {
-          hierarchy.seedStore = std::make_shared<HierarchicalSeedStore>(parentIt->second.seedStore);
-          createdChildStores++;
-          logging::debug("SEED_INIT: Created child seed store for node {} with parent {}", nodeId, hierarchy.parentId);
-        } else {
-          hierarchy.seedStore = std::make_shared<HierarchicalSeedStore>(rootSeedStore);
-          createdRootStores++;
-          logging::warn("SEED_INIT: Parent {} of node {} has no seed store; created from root", hierarchy.parentId, nodeId);
-        }
-      } else {
-        hierarchy.seedStore = std::make_shared<HierarchicalSeedStore>(rootSeedStore);
-        createdRootStores++;
-        logging::debug("SEED_INIT: Created root seed store for node {} (no parent)", nodeId);
-      }
-    }
-
-    if (!hierarchy.seedStore) {
-      nodesWithoutStores.push_back(nodeId);
-    }
-  }
-
-  logging::info("SEED_INIT: Initialized seed stores: {} root-derived, {} parent-derived", createdRootStores, createdChildStores);
-
-  if (!nodesWithoutStores.empty()) {
-    logging::err("SEED_INIT: Failed to create seed stores for {} nodes", nodesWithoutStores.size());
-    for (size_t i = 0; i < std::min(nodesWithoutStores.size(), size_t(5)); ++i) {
-      logging::err("  - {}", nodesWithoutStores[i]);
-    }
-    if (nodesWithoutStores.size() > 5) {
-      logging::err("  - ... and {} more", nodesWithoutStores.size() - 5);
-    }
-  }
 }
 
 void StateManager::initializeBlockRangeMappings() {
@@ -3992,22 +3464,158 @@ void StateManager::initializeBlockRangeMappings() {
   }
   
   blockRangeMappingsInitialized = true;
-  std::cout << "Initialized " << blockRangeMappings.size() << " block range mappings" << std::endl;
+  // std::cout << "Initialized " << blockRangeMappings.size() << " block range mappings" << std::endl;
+}
+
+std::string StateManager::extractSequence(const std::string& nodeId, int64_t start, 
+                                 int64_t end, bool skipGaps, bool needLock) const {
+    
+  // Get a read lock if needed
+  std::shared_lock<std::shared_mutex> lock(nodeMutex, std::defer_lock);
+  if (needLock) {
+    lock.lock();
+  }
+
+  // Validate the range
+  if (start < 0 || start >= end) {
+    throw std::invalid_argument("Invalid range [" + std::to_string(start) + 
+                               ", " + std::to_string(end) + ") for node " + nodeId);
+  }
+
+  int64_t extractionLength = end - start;
+  std::string result;
+  result.reserve(extractionLength); // initial reservation, might need more for gaps
+  
+  try {
+    // Log the extraction request with minimal info
+    logging::debug("Extracting: node={} range=[{},{})", nodeId, start, end);
+    
+    // Get the node state to check which blocks are active
+    const auto& nodeState = getNodeState(nodeId);
+    
+    // Get ALL block ranges that overlap with our extraction range, regardless of active status
+    std::vector<std::pair<int32_t, coordinates::CoordRange>> overlappingBlocks;
+    
+    for (const auto& [blockId, blockRange] : blockRanges) {
+      // Check if this block overlaps with the requested range
+      if (blockRange.end <= start || blockRange.start >= end) {
+        continue; // No overlap
+      }
+      
+      // Calculate overlap between block and target range
+      coordinates::CoordRange overlapRange{
+        std::max(blockRange.start, start),
+        std::min(blockRange.end, end)
+      };
+      
+      overlappingBlocks.emplace_back(blockId, overlapRange);
+    }
+    
+    if (overlappingBlocks.empty()) {
+      throw std::runtime_error("No blocks found for extraction range [" + 
+                              std::to_string(start) + ", " + std::to_string(end) + ")");
+    }
+    
+    // Sort blocks by start position
+    std::sort(overlappingBlocks.begin(), overlappingBlocks.end(),
+           [](const auto& a, const auto& b) {
+             return a.second.start < b.second.start;
+           });
+           
+    // Verify blocks cover the entire extraction range without gaps
+    int64_t covered = start;
+    for (const auto& [blockId, blockRange] : overlappingBlocks) {
+      if (blockRange.start > covered) {
+        logging::err("Block coverage gap: pos={} to block_start={}", covered, blockRange.start);
+        throw std::runtime_error("Gap in block coverage for extraction range");
+      }
+      covered = std::max(covered, blockRange.end);
+    }
+    
+    if (covered < end) {
+      logging::err("Incomplete coverage: blocks_end={}, extraction_end={}", covered, end);
+      throw std::runtime_error("Blocks don't cover entire extraction range");
+    }
+
+    // Count statistics to help diagnose character issues
+    int gapCount = 0;
+    int charCount = 0;
+    int inactiveBlockGaps = 0;
+    
+    // Process each position in the range
+    for (int64_t pos = start; pos < end; ++pos) {
+      try {
+        // Map the global position to local coordinates
+        auto maybeCoords = fastMapGlobalToLocal(pos);
+        
+        if (!maybeCoords) {
+          logging::err("Position {} mapping failed", pos);
+          throw std::runtime_error("Position mapping failed");
+        }
+        
+        auto [blockId, nucPos, gapPos] = *maybeCoords;
+        
+        // Check if this block is active for the node
+        bool blockActive = isBlockOn_unsafe(nodeId, blockId);
+        
+        // If block is inactive, add a gap character and continue
+        if (!blockActive && !skipGaps) {
+          result.push_back('-');
+          gapCount++;
+          inactiveBlockGaps++;
+          continue;
+        } else if (!blockActive && skipGaps) { // If block is inactive and we skip gaps, do nothing for this pos
+            gapCount++; // Still count it as a conceptual gap encountered
+            continue;
+        }
+        
+        // Get the character at this position (for active blocks)
+        char c = getCharAtPosition(nodeId, blockId, nucPos, gapPos);
+
+        if (skipGaps && (c == '-' || c == 'x')) {
+          gapCount++;
+          continue;
+        } else if (c == '-' || c == 'x') { // Not skipping gaps, but it is a gap char
+            gapCount++;
+        }
+
+        result.push_back(c);
+        if (c != '-' && c != 'x') { // Count non-gap characters added to result
+            charCount++;
+        }
+        
+      } catch (const std::exception& e_inner) { // Changed variable name
+        logging::err("Process error at pos={}: {}", pos, e_inner.what()); // Used e_inner.what()
+        throw;
+      }
+    }
+    
+    // Log summary statistics to help diagnose gap issues
+    double gapPercentage = (extractionLength > 0) ? (100.0 * gapCount / extractionLength) : 0.0;
+    logging::info("Extraction complete: len={}, gaps={} ({:.1f}%), chars={}, inactive_block_gaps={}",
+                 extractionLength, gapCount, gapPercentage, charCount, inactiveBlockGaps);
+    
+  } catch (const std::exception& e_outer) { // Changed variable name
+    logging::err("Extraction failed: {}", e_outer.what()); // Used e_outer.what()
+    throw;
+  }
+  
+  return result;
 }
 
 // Optimize memory usage by shrinking gap list arrays that are mostly zeros
 void StateManager::optimizeGapListMemory() {
   size_t shrunkArrays = 0;
   size_t bytesFreed = 0;
-
+  
   for (size_t blockId = 0; blockId < gapListLengthArray.size(); ++blockId) {
-    auto &innerArray = gapListLengthArray[blockId];
-
+    auto& innerArray = gapListLengthArray[blockId];
+    
     // Skip small arrays - not worth optimizing
     if (innerArray.size() < 100) {
-      continue;
-    }
-
+            continue;
+        }
+        
     // Find the last non-zero element position
     int64_t lastNonZeroPos = -1;
     for (int64_t i = static_cast<int64_t>(innerArray.size()) - 1; i >= 0; --i) {
@@ -4016,90 +3624,223 @@ void StateManager::optimizeGapListMemory() {
         break;
       }
     }
-
+    
     // If we found no non-zero elements, we can shrink to minimum size
     if (lastNonZeroPos == -1) {
       size_t oldSize = innerArray.size();
       size_t newSize = 1; // Minimum size to avoid complete deallocation
       bytesFreed += (oldSize - newSize) * sizeof(size_t);
-
+      
+      // Create a new vector with the smaller size and swap
       std::vector<size_t> newVector(newSize, 0);
       innerArray.swap(newVector);
-
+      
       shrunkArrays++;
-      continue;
-    }
-
+            continue;
+        }
+        
     // If the last non-zero is less than 50% of the capacity, shrink the array
     if (static_cast<size_t>(lastNonZeroPos + 1) < innerArray.size() / 2) {
       size_t oldSize = innerArray.size();
       size_t newSize = static_cast<size_t>(lastNonZeroPos + 1 + 16); // Keep a small buffer
       bytesFreed += (oldSize - newSize) * sizeof(size_t);
-
+      
+      // Resize to just beyond the last non-zero element
       innerArray.resize(newSize);
       innerArray.shrink_to_fit();
-
+      
       shrunkArrays++;
     }
   }
-
+  
   if (shrunkArrays > 0) {
+    // Convert to MB for human-readable output
     double mbFreed = static_cast<double>(bytesFreed) / (1024.0 * 1024.0);
-    logging::info("Optimized gap list memory usage: shrunk {} arrays, freed approximately {:.2f} MB", shrunkArrays, mbFreed);
+    logging::info("Optimized gap list memory usage: shrunk {} arrays, freed approximately {:.2f} MB", 
+                 shrunkArrays, mbFreed);
   }
 }
+
+// Method to flush any pending coordinate mappings
+void StateManager::flushCoordinateMappings() {
+  // TODO: Implement if necessary - currently, mappings are registered directly.
+  // This function might be a remnant of a previous batching approach.
+  // For now, it does nothing to satisfy the linker.
+  logging::debug("StateManager::flushCoordinateMappings() called - currently no-op.");
+}
+
 
 // Helper to build a topologically sorted list of nodes (parents before children)
 std::vector<std::string> StateManager::buildTopologicalOrder(panmanUtils::Tree *tree) {
   std::vector<std::string> sortedNodes;
-
+  
   if (!tree || !tree->root) {
     logging::err("Invalid tree in buildTopologicalOrder");
     return sortedNodes;
   }
-
+  
   // Map to track visited status (0=unvisited, 1=visiting, 2=visited)
   std::unordered_map<std::string, int> visitStatus;
-
+  
   // Pre-populate the map with all nodes to handle disconnected nodes
-  for (const auto &pair : tree->allNodes) {
-    visitStatus[pair.first] = 0;
+  for (const auto& [nodeId, _] : tree->allNodes) {
+    visitStatus[nodeId] = 0; // Mark all as unvisited initially
   }
-
-  // Stack for non-recursive DFS
+  
+  // Stack for non-recursive DFS (faster and safer than recursion)
   std::vector<std::pair<std::string, bool>> stack; // (nodeId, processed)
   stack.emplace_back(tree->root->identifier, false);
-
+  
+  // Process nodes in DFS order
   while (!stack.empty()) {
     auto [nodeId, processed] = stack.back();
     stack.pop_back();
-
+    
     if (processed) {
+      // Node is fully processed, add to sorted list
       sortedNodes.push_back(nodeId);
-      continue;
-    }
-
-    visitStatus[nodeId] = 1; // visiting
+                continue;
+            }
+            
+    // Mark as being processed
+    visitStatus[nodeId] = 1;
+    
+    // Add node again but marked as processed (will be added to result later)
     stack.emplace_back(nodeId, true);
-
+    
+    // Find children through the hierarchy map
     auto hierarchyIt = nodeHierarchy.find(nodeId);
     if (hierarchyIt != nodeHierarchy.end()) {
-      const auto &children = hierarchyIt->second.childrenIds;
+      const auto& children = hierarchyIt->second.childrenIds;
+      
+      // Process children in reverse order (to maintain original order in final result)
       for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        const auto &childId = *it;
-        if (visitStatus[childId] == 2) continue; // visited
-        if (visitStatus[childId] == 1) {
-          logging::warn("Cycle detected in node hierarchy during topological sort: {} -> {}", nodeId, childId);
-          continue;
+        const auto& childId = *it;
+        
+        // Skip if already processed or being processed
+        if (visitStatus[childId] == 2) {
+          continue; // Already fully processed
         }
+        
+        if (visitStatus[childId] == 1) {
+          // Being processed - indicates a cycle which shouldn't happen in a tree
+          logging::warn("Cycle detected in node hierarchy during topological sort: {} -> {}", nodeId, childId);
+          continue; // Skip this child to avoid infinite loop
+        }
+        
+        // Add child to stack
         stack.emplace_back(childId, false);
       }
     }
   }
-
+  
+  // Reverse the result to get parents before children (topological order)
   std::reverse(sortedNodes.begin(), sortedNodes.end());
+  
   logging::info("Built topological order for {} nodes", sortedNodes.size());
   return sortedNodes;
+}
+
+// Get all seeds in a specific block
+const absl::flat_hash_set<int64_t>& StateManager::getBlockSeeds(int32_t blockId) const {
+  static const absl::flat_hash_set<int64_t> emptySet;
+  auto it = blockToSeeds.find(blockId);
+  if (it != blockToSeeds.end()) {
+    return it->second;
+  }
+  return emptySet;
+}
+
+// ... existing code ...
+void diagnoseBlockStatus(const NodeState& nodeState, const std::string& nodeId, int32_t blockId) {
+    logging::debug("Block status diagnosis for block {} in node {}:", blockId, nodeId);
+    
+    // Check local state
+    bool locallyActive = nodeState.activeBlocks.contains(blockId);
+    logging::debug("  - Locally active: {}", locallyActive ? "YES" : "NO");
+    
+    // Check orientation if available
+        auto orientIt = nodeState.blockOrientation.find(blockId);
+        if (orientIt != nodeState.blockOrientation.end()) {
+            if (orientIt->second.has_value()) {
+            logging::debug("  - Local orientation: {}", orientIt->second.value() ? "FORWARD" : "INVERTED");
+            } else {
+            logging::debug("  - Local orientation: UNSPECIFIED (NULL)");
+            }
+        } else {
+        logging::debug("  - Local orientation: NOT SET");
+    }
+    
+    // Log parent ID
+    if (!nodeState.parentId.empty()) {
+        logging::debug("  - Parent node: {}", nodeState.parentId);
+        } else {
+        logging::debug("  - No parent (root node)");
+    }
+}
+
+// Restore the seed storage initialization method with enhanced diagnostics
+void StateManager::initializeSeedStorage() {
+    std::unique_lock<std::shared_mutex> lock(nodeMutex);
+    
+    // Log some diagnostics about the node hierarchy
+    logging::info("SEED_INIT: Initializing seed storage for {} nodes", nodeHierarchy.size());
+    
+    // Track successful initializations
+    size_t createdRootStores = 0;
+    size_t createdChildStores = 0;
+    std::vector<std::string> nodesWithoutStores;
+    
+    // Initialize hierarchical seed storage for all nodes
+    for (auto& [nodeId, hierarchy] : nodeHierarchy) {
+        // Create a new seed store if it doesn't exist
+        if (!hierarchy.seedStore) {
+            // If node has a parent, use parent's seed store as base
+            if (!hierarchy.parentId.empty()) {
+                auto parentIt = nodeHierarchy.find(hierarchy.parentId);
+                if (parentIt != nodeHierarchy.end() && parentIt->second.seedStore) {
+                    hierarchy.seedStore = std::make_shared<HierarchicalSeedStore>(parentIt->second.seedStore);
+                    logging::info("SEED_INIT: Created child seed store for node {} with parent {}", 
+                                 nodeId, hierarchy.parentId);
+                    createdChildStores++;
+    } else {
+                    // Parent exists but doesn't have a seed store yet
+                    // Create a root-level store for this node instead
+                    hierarchy.seedStore = std::make_shared<HierarchicalSeedStore>();
+                    logging::warn("SEED_INIT: Parent {} of node {} has no seed store, created root store instead",
+                                hierarchy.parentId, nodeId);
+                    createdRootStores++;
+                }
+            } else {
+                // For root nodes (or if parent ID is empty), create a root-level store
+                hierarchy.seedStore = std::make_shared<HierarchicalSeedStore>();
+                logging::info("SEED_INIT: Created root seed store for node {} (no parent)", nodeId);
+                createdRootStores++;
+            }
+        } else {
+            logging::debug("SEED_INIT: Seed store already exists for node {}", nodeId);
+        }
+        
+        // Verify the seed store was created successfully
+        if (!hierarchy.seedStore) {
+            nodesWithoutStores.push_back(nodeId);
+        }
+    }
+    
+    // Print summary
+    logging::info("SEED_INIT: Successfully initialized seed stores: {} root stores, {} child stores",
+                createdRootStores, createdChildStores);
+    
+    // Log any failures
+    if (!nodesWithoutStores.empty()) {
+        logging::err("SEED_INIT: Failed to create seed stores for {} nodes:", nodesWithoutStores.size());
+        for (size_t i = 0; i < std::min(nodesWithoutStores.size(), size_t(5)); i++) {
+            logging::err("  - {}", nodesWithoutStores[i]);
+        }
+        if (nodesWithoutStores.size() > 5) {
+            logging::err("  - ... and {} more", nodesWithoutStores.size() - 5);
+        }
+    }
 }
 
 // Add node-specific setSeedAtPosition method
@@ -4311,8 +4052,10 @@ void StateManager::materializeNodeState(const std::string& nodeId) {
                 }
             }
         } else {
+            std::cout << "MATERIALIZE_DEBUG: Parent state not found for parentId='" << nodeState.parentId << "'" << std::endl;
         }
     } else {
+        std::cout << "MATERIALIZE_DEBUG: Node " << nodeId << " has empty parentId" << std::endl;
     }
     
     // Materialize character state
@@ -4327,45 +4070,6 @@ void StateManager::materializeNodeState(const std::string& nodeId) {
     } else {
         // Even if node has no local seedStore, it should inherit parent's materialized seeds
         nodeState.materializeSeedState(parentState, nullptr);
-    }
-    
-    // GAP-AWARE SEED INVALIDATION: Remove inherited seeds that are now at gap positions
-    if (parentState && nodeState.materializedStateComputed) {
-        std::vector<int64_t> seedsToInvalidate;
-        
-        for (const auto& [pos, seed] : nodeState.materializedSeeds) {
-            try {
-                // Extract k-mer at this position to check for gaps
-                auto kmerTuple = extractKmer(nodeId, pos, 32); // Assuming k=32
-                const std::string& kmer = std::get<0>(kmerTuple); // Use gapped k-mer
-                
-                // If k-mer contains gaps or position is a gap, invalidate the seed
-                bool hasGaps = false;
-                for (char c : kmer) {
-                    if (c == '-' || c == 'x') {
-                        hasGaps = true;
-                        break;
-                    }
-                }
-                
-                if (hasGaps) {
-                    seedsToInvalidate.push_back(pos);
-                }
-            } catch (const std::exception& e) {
-                // If we can't extract k-mer, consider the seed invalid
-                seedsToInvalidate.push_back(pos);
-            }
-        }
-        
-        // Remove invalidated seeds
-        for (int64_t pos : seedsToInvalidate) {
-            nodeState.materializedSeeds.erase(pos);
-        }
-        
-        if (!seedsToInvalidate.empty()) {
-            logging::debug("GAP_INVALIDATION: Removed {} inherited seeds at gap positions from node {}", 
-                          seedsToInvalidate.size(), nodeId);
-        }
     }
 }
 
@@ -4443,47 +4147,4 @@ void StateManager::updateMaterializedSeedsAfterRecomputation(const std::string& 
     nodeState.updateMaterializedSeedsAfterRecomputation(detailedSeedChanges);
 }
 
-// Convenience overload used in indexing.cpp for small context snippets
-// Note: our structural extractor takes skipGaps, so invert includeGaps here.
-std::string StateManager::extractSequence(const std::string& nodeId,
-                      int64_t start,
-                      int64_t end,
-                      bool includeGaps,
-                      bool /*unused*/) const {
-  // Clamp to valid coordinate range
-  if (start < 0) start = 0;
-  if (end < 0) end = 0;
-  if (end > static_cast<int64_t>(numCoords)) end = static_cast<int64_t>(numCoords);
-  if (end < start) std::swap(start, end);
-
-  coordinates::CoordRange r{start, end};
-  const bool skipGaps = !includeGaps;
-  auto [seq, _, __, ___] = extractSequence(std::string_view(nodeId), r, skipGaps);
-  return seq;
-}
-
-// Backward-compatible overloads
-std::string StateManager::extractSequence(const std::string& nodeId,
-                      int64_t start,
-                      int64_t end,
-                      bool includeGaps) {
-  return static_cast<const StateManager*>(this)->extractSequence(nodeId, start, end, includeGaps, false);
-}
-
-std::string StateManager::extractSequence(const std::string& nodeId,
-                      int64_t start,
-                      int64_t end) {
-  // Default to including gaps
-  return static_cast<const StateManager*>(this)->extractSequence(nodeId, start, end, /*includeGaps=*/true, /*unused=*/false);
-}
-
-void StateManager::flushCoordinateMappings() {
-  // Finalize/refresh coordinate caches after initialization
-  try {
-    initializeGlobalCache();
-  } catch (const std::exception& e) {
-    logging::warn("flushCoordinateMappings: initializeGlobalCache failed: {}", e.what());
-  }
-}
-
-}
+} // namespace state
