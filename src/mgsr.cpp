@@ -2065,7 +2065,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     }
   }
 
-
   int k = indexBuilder.getK();
   size_t localMutationRangeIndex = 0;
   int offsetsToDelete = -1;
@@ -2117,7 +2116,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         }
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
       }
-      
+
 
       if (!newSyncmerRanges.empty() 
           && globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) <= globalCoords.getScalarFromCoord(curSyncmerRange.endCoord, blockStrand[curSyncmerRange.endCoord.primaryBlockId])
@@ -2152,7 +2151,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     } else if (rightGapMapIt->first != curEndScalar && curEndScalar <= std::prev(rightGapMapIt)->second) {
       rightGapMapIt = std::prev(rightGapMapIt);
     }
-
     while (offset < k - 1) {
       if (curEndScalar == globalCoords.lastScalarCoord) {
         reachedEnd = true;
@@ -2161,14 +2159,19 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
 
       if (rightGapMapIt == gapMap.end()) {
         auto lastGapMapIt = std::prev(gapMap.end());
-        if (curEndScalar <= lastGapMapIt->second && lastGapMapIt->second != globalCoords.lastScalarCoord) {
-          curEndScalar = lastGapMapIt->second + 1;
-          curEndCoord = globalCoords.getCoordFromScalar(curEndScalar);
-          if (!blockStrand[curEndCoord.primaryBlockId]) {
-            curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, false);
+        if (curEndScalar <= lastGapMapIt->second) {
+          if (lastGapMapIt->second != globalCoords.lastScalarCoord) {
+            curEndScalar = lastGapMapIt->second + 1;
+            curEndCoord = globalCoords.getCoordFromScalar(curEndScalar);
+            if (!blockStrand[curEndCoord.primaryBlockId]) {
+              curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, false);
+            }
           }
+        } else {
+          globalCoords.stepForwardScalar(curEndCoord, blockStrand);
+          ++curEndScalar;
         }
-      } else if ((curEndScalar >= rightGapMapIt->first && curEndScalar <= rightGapMapIt->second) || curEndScalar + 1 >= rightGapMapIt->first) {
+      } else if (curEndScalar <= rightGapMapIt->second && (curEndScalar >= rightGapMapIt->first || curEndScalar + 1 >= rightGapMapIt->first)) {
         if (rightGapMapIt->second == globalCoords.lastScalarCoord) {
           if (localMutationRangeIndex == mergedLocalMutationRanges.size() - 1) {
             reachedEnd = true;
@@ -2192,7 +2195,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         globalCoords.stepForwardScalar(curEndCoord, blockStrand);
         ++curEndScalar;
       }
-      
+
       if (!blockExists[curEndCoord.primaryBlockId]) {
         curEndCoord = globalCoords.blockEdgeCoords[curEndCoord.primaryBlockId].end;
         curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
@@ -2233,6 +2236,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     }
     localMutationRangeIndex++;
   }
+
   
   const auto lastScalarCoord = globalCoords.lastScalarCoord;
   for (size_t i = 0; i < newSyncmerRanges.size(); i++) {
@@ -2884,6 +2888,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   }
 }
 
+
 void mgsr::mgsrIndexBuilder::buildIndex() {
   panmapUtils::BlockSequences blockSequences(T);
   panmapUtils::GlobalCoords globalCoords(blockSequences);
@@ -2900,6 +2905,8 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
   uint64_t dfsIndex = 0;
   buildIndexHelper(T->root, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
+
+
   
   // Add unique k-min-mers to index
   capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
