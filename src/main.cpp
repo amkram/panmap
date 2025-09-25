@@ -975,7 +975,7 @@ int main(int argc, char *argv[]) {
 
       std::cout << "Using " << numThreads << " threads" << std::endl;
 
-      // mgsr::mgsrPlacer placer(&liteTree, threadsManager);
+      // mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory);
       // placer.setProgressTracker(&progressTracker, 0);
       // auto start_time_traverseTree = std::chrono::high_resolution_clock::now();
       // placer.traverseTree();
@@ -1032,7 +1032,7 @@ int main(int argc, char *argv[]) {
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
       auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
-      mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, 1000);
+      mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();

@@ -3291,6 +3291,9 @@ void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score) {
   readScores[readIndex] = score;
   if (score > reads[readIndex].maxScore) {
     reads[readIndex].maxScore = score;
+    reads[readIndex].epp = 1;
+  } else if (score == reads[readIndex].maxScore) {
+    ++reads[readIndex].epp;
   }
 }
 
@@ -5008,7 +5011,13 @@ void mgsr::ThreadsManager::printStats() {
   }
 }
 
-mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff) {
+mgsr::squareEM::squareEM(
+  mgsr::ThreadsManager& threadsManager,
+  const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex,
+  const std::string& prefix,
+  uint32_t overlapCoefficientCutoff
+) {
+  this->prefix = prefix;
   numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
 
   auto& kminmerOverlapCoefficients = threadsManager.kminmerOverlapCoefficients;
@@ -5041,11 +5050,12 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
     if (kminmerOverlapCoefficient != kminmerOverlapCoefficientsVector[i - 1].second) {
       ++curRank;
     }
-    if (curRank >= overlapCoefficientCutoff) break;
+    if (curRank >= 999999999999) break;
     significantOverlapNodeIds.push_back(nodeId);
   }
 
 
+  std::vector<double> testScores(significantOverlapNodeIds.size(), 0);
   // get score matrix to find ambiguous nodes with identical scores
   std::vector<std::vector<uint32_t>> scoreMatrix(significantOverlapNodeIds.size(), std::vector<uint32_t>(numReads, 0));
   const size_t chunkSize = (significantOverlapNodeIds.size() + numThreads - 1) / numThreads;
@@ -5064,8 +5074,23 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
       auto significantNodeId = significantOverlapNodeIds[i];
       auto nodeDfsIndex = nodeToDfsIndex.at(significantNodeId);
       threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i], nodeToDfsIndex);
+      double curTestScore = 0;
+      for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
+        if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
+          curTestScore += static_cast<double>(readSeedmersDuplicatesIndex[j].size()) / ((reads[j].seedmersList.size() - reads[j].maxScore + 1) * pow(static_cast<double>(reads[j].epp), 2));
+        }
+      }
+      testScores[i] = curTestScore;
     }
   });
+
+  std::ofstream ofs(prefix + ".testScores.txt");
+  for (size_t i = 0; i < testScores.size(); ++i) {
+    ofs << significantOverlapNodeIds[i] << " " << kminmerOverlapCoefficientsVector[i].second << " " << std::fixed << std::setprecision(10) << testScores[i] << std::endl;
+  }
+  ofs.close();
+  exit(0);
+  
 
 
   // clear memory that are no longer needed
