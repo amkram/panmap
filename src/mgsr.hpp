@@ -224,7 +224,8 @@ class Read {
     std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
     ReadType readType = ReadType::PASS;
-    int32_t maxScore = -1;
+    int32_t maxScore = 0;
+    int32_t epp = 0;
     std::vector<Minichain> maxMinichains;
 };
 
@@ -661,6 +662,8 @@ class mgsrPlacer {
 
 class squareEM {
   public:
+    std::string prefix;
+
     // main prob and prop matrices
     Eigen::MatrixXd probs;
     Eigen::VectorXd props;
@@ -694,7 +697,7 @@ class squareEM {
     size_t numThreads;
     std::vector<std::pair<uint32_t, uint32_t>> threadsRangeByProps;
 
-    squareEM(ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff);
+    squareEM(ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, const std::string& prefix, uint32_t overlapCoefficientCutoff);
 
 
     void runSquareEM(uint64_t maximumIterations);
