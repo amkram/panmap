@@ -370,6 +370,12 @@ struct readScoreDeltaLowMemory {
   }
 };
 
+struct kminmerCoverageBacktrack {
+  size_t seedmer;
+  uint32_t readIndex;
+  bool toDelete;
+};
+
 class ThreadsManager {
   public:
     size_t numThreads;
@@ -419,6 +425,7 @@ class ThreadsManager {
 
     // for squareEM... will be moved from mgsrPlacer to here.
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
+    std::unordered_map<std::string, double> kminmerCoverage;
 
 
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
@@ -442,6 +449,15 @@ class ThreadsManager {
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const;
     void printStats();
+    void computeKminmerCoverage();
+    void computeKminmerCoverageHelper(
+      panmapUtils::LiteNode* node,
+      std::vector<uint32_t>& readScores,
+      const absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>>& seedmerToReads,
+      absl::flat_hash_map<size_t, std::unordered_set<uint32_t>>& coveredKminmers,
+      absl::flat_hash_map<size_t, uint32_t>& refKminmers,
+      size_t& dfsIndex
+    );
 
 };
 
@@ -495,7 +511,7 @@ class mgsrPlacer {
     std::span<mgsr::Read> reads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
     // std::vector<mgsr::readType> readTypes;
-    std::unordered_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
+    absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
     absl::flat_hash_set<size_t>* allSeedmerHashesSet;
 
     // current query score index structures

@@ -4716,6 +4716,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   std::unordered_set<uint64_t> affectedSeedmers;
   updateSeeds(affectedSeedmers);
 
+
   // **** Update gapMap ****
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
@@ -4953,6 +4954,330 @@ void mgsr::mgsrPlacer::preallocateHashCoordInfoCacheTable(uint32_t startReadInde
   }
 }
 
+void mgsr::ThreadsManager::computeKminmerCoverageHelper(
+  panmapUtils::LiteNode* node,
+  std::vector<uint32_t>& readScores,
+  const absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>>& seedmerToReads,
+  absl::flat_hash_map<size_t, std::unordered_set<uint32_t>>& coveredKminmers,
+  absl::flat_hash_map<size_t, uint32_t>& refKminmers,
+  size_t& dfsIndex
+) {
+  size_t readScoresBacktrackIndex = 0;
+  std::vector<std::pair<uint32_t, int16_t>> readScoresBacktrack;
+
+  // Apply read score deltas to readScores
+  for (size_t threadId = 0; threadId < numThreads; ++threadId) {
+    const auto threadReadStart = threadRanges[threadId].first;
+    if (lowMemory) {
+      const auto& curNodeThreadScoreDeltasLowMemory = perNodeScoreDeltasIndexByThreadIdLowMemory[threadId][dfsIndex];
+      for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
+        const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
+        if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
+          readScoresBacktrack.emplace_back(threadReadStart + readIndex, readScores[threadReadStart + readIndex]);
+        } else {
+          readScoresBacktrack[readScoresBacktrackIndex].first = threadReadStart + readIndex;
+          readScoresBacktrack[readScoresBacktrackIndex].second = readScores[threadReadStart + readIndex];
+        }
+        readScoresBacktrackIndex++;
+
+        readScores[threadReadStart + readIndex] += currentScoreDelta;
+        for (size_t i = 0; i < numTrailing; ++i) {
+          int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
+          // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply the trailing delta
+          if (curDecodedTrailingDelta > -8) {
+            if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
+              readScoresBacktrack.emplace_back(threadReadStart + readIndex + i + 1, readScores[threadReadStart + readIndex + i + 1]);
+            } else {
+              readScoresBacktrack[readScoresBacktrackIndex].first = threadReadStart + readIndex + i + 1;
+              readScoresBacktrack[readScoresBacktrackIndex].second = readScores[threadReadStart + readIndex + i + 1];
+            }
+            readScoresBacktrackIndex++;
+
+            readScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + curDecodedTrailingDelta;
+          }
+        }
+      }
+    } else {
+      const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][dfsIndex];
+      for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
+        if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
+          readScoresBacktrack.emplace_back(threadReadStart + scoreDelta.readIndex, readScores[threadReadStart + scoreDelta.readIndex]);
+        } else {
+          readScoresBacktrack[readScoresBacktrackIndex].first = threadReadStart + scoreDelta.readIndex;
+          readScoresBacktrack[readScoresBacktrackIndex].second = readScores[threadReadStart + scoreDelta.readIndex];
+        }
+        readScoresBacktrackIndex++;
+
+        readScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
+      }
+    }
+  }
+
+  size_t coveredKminmersBacktrackIndex = 0;
+  std::vector<mgsr::kminmerCoverageBacktrack> coveredKminmersBacktrack;
+  // inserted seeds
+  for (uint32_t seedIndex : seedInsertions[dfsIndex]) {
+    const auto& seed = seedInfos[seedIndex];
+    auto [refKminmerIt, refKminmerInserted] = refKminmers.try_emplace(seed.hash, 1);
+    if (!refKminmerInserted) refKminmerIt->second++;
+  }
+
+  // deleted seeds
+  for (uint32_t seedIndex : seedDeletions[dfsIndex]) {
+    const auto& seed = seedInfos[seedIndex];
+    auto refKminmerIt = refKminmers.find(seed.hash);
+    if (refKminmerIt == refKminmers.end()) {
+      std::cerr << "Error: seed " << seedIndex << " not found in refKminmers" << std::endl;
+      exit(1);
+    }
+    refKminmerIt->second--;
+    if (refKminmerIt->second == 0) {
+      refKminmers.erase(refKminmerIt);
+      if (coveredKminmers.find(seed.hash) != coveredKminmers.end()) {
+        for (const auto& readIndex : coveredKminmers[seed.hash]) {
+          if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+            coveredKminmersBacktrack.emplace_back(seed.hash, readIndex, false);
+          } else {
+            auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+            coveredKminmerBacktrack.seedmer = seed.hash;
+            coveredKminmerBacktrack.readIndex = readIndex;
+            coveredKminmerBacktrack.toDelete = false;
+          }
+          coveredKminmersBacktrackIndex++;
+        }
+      }
+      coveredKminmers.erase(seed.hash);
+    }
+  }
+
+  // substituted seeds
+  for (const auto& seedSubstitution : seedSubstitutions[dfsIndex]) {
+    const auto& delSeed = seedInfos[seedSubstitution.first];
+    auto delRefKminmerIt = refKminmers.find(delSeed.hash);
+    if (delRefKminmerIt == refKminmers.end()) {
+      std::cerr << "Error: seed " << seedSubstitution.first << " not found in refKminmers" << std::endl;
+      exit(1);
+    }
+    delRefKminmerIt->second--;
+    if (delRefKminmerIt->second == 0) {
+      refKminmers.erase(delRefKminmerIt);
+      if (coveredKminmers.find(delSeed.hash) != coveredKminmers.end()) {
+        for (const auto& readIndex : coveredKminmers[delSeed.hash]) {
+          if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+            coveredKminmersBacktrack.emplace_back(delSeed.hash, readIndex, false);
+          } else {
+            auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+            coveredKminmerBacktrack.seedmer = delSeed.hash;
+            coveredKminmerBacktrack.readIndex = readIndex;
+            coveredKminmerBacktrack.toDelete = false;
+          }
+          coveredKminmersBacktrackIndex++;
+        }
+      }
+      coveredKminmers.erase(delSeed.hash);
+    }
+
+    const auto& newSeed = seedInfos[seedSubstitution.second];
+    auto [newRefKminmerIt, newRefKminmerInserted] = refKminmers.try_emplace(newSeed.hash, 1);
+    if (!newRefKminmerInserted) newRefKminmerIt->second++;
+  }
+
+  for (size_t i = 0; i < readScoresBacktrackIndex; ++i) {
+    const auto [readIndex, oldScore] = readScoresBacktrack[i];
+    const auto newScore = readScores[readIndex];
+    const auto maxScore = reads[readIndex].maxScore;
+    if (oldScore != maxScore && newScore == maxScore) {
+      for (const auto& [seedmer, _] : reads[readIndex].uniqueSeedmers) {
+        if (refKminmers.find(seedmer) == refKminmers.end()) continue;
+        auto [coveredKminmerIt, coveredKminmerInserted] = coveredKminmers.try_emplace(seedmer, std::unordered_set<uint32_t>({readIndex}));
+        if (!coveredKminmerInserted) coveredKminmerIt->second.insert(readIndex);
+        if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+          coveredKminmersBacktrack.emplace_back(seedmer, readIndex, true);
+        } else {
+          auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+          coveredKminmerBacktrack.seedmer = seedmer;
+          coveredKminmerBacktrack.readIndex = readIndex;
+          coveredKminmerBacktrack.toDelete = true;
+        }
+        coveredKminmersBacktrackIndex++;
+      }
+    } else if (oldScore == maxScore && newScore != maxScore) {
+      for (const auto& [seedmer, _] : reads[readIndex].uniqueSeedmers) {
+        auto coveredKminmerIt = coveredKminmers.find(seedmer);
+        if (refKminmers.find(seedmer) == refKminmers.end() || coveredKminmerIt == coveredKminmers.end()) continue;
+        coveredKminmerIt->second.erase(readIndex);
+        if (coveredKminmerIt->second.empty()) coveredKminmers.erase(coveredKminmerIt);
+        if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+          coveredKminmersBacktrack.emplace_back(seedmer, readIndex, false);
+        } else {
+          auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+          coveredKminmerBacktrack.seedmer = seedmer;
+          coveredKminmerBacktrack.readIndex = readIndex;
+          coveredKminmerBacktrack.toDelete = false;
+        }
+        coveredKminmersBacktrackIndex++;
+      }
+    } else if (oldScore == maxScore && newScore == maxScore) {
+      for (const auto& [seedmer, _] : reads[readIndex].uniqueSeedmers) {
+        if (refKminmers.find(seedmer) == refKminmers.end()) continue;
+        auto [coveredKminmerIt, coveredKminmerInserted] = coveredKminmers.try_emplace(seedmer, std::unordered_set<uint32_t>({readIndex}));
+        if (coveredKminmerInserted) {
+          if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+            coveredKminmersBacktrack.emplace_back(seedmer, readIndex, true);
+          } else {
+            auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+            coveredKminmerBacktrack.seedmer = seedmer;
+            coveredKminmerBacktrack.readIndex = readIndex;
+            coveredKminmerBacktrack.toDelete = true;
+          }
+          coveredKminmersBacktrackIndex++;
+        } else {
+          if (coveredKminmerIt->second.find(readIndex) == coveredKminmerIt->second.end()) {
+            if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+              coveredKminmersBacktrack.emplace_back(seedmer, readIndex, true);
+            } else {
+              auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+              coveredKminmerBacktrack.seedmer = seedmer;
+              coveredKminmerBacktrack.readIndex = readIndex;
+              coveredKminmerBacktrack.toDelete = true;
+            }
+            coveredKminmersBacktrackIndex++;
+            coveredKminmerIt->second.insert(readIndex);
+          } 
+        }
+      }
+    }
+  }
+
+
+
+  // // compute coveredKminmersBruteForce
+  // std::unordered_map<size_t, std::unordered_set<uint32_t>> coveredKminmersBruteForce;
+  // for (size_t i = 0; i < reads.size(); ++i) {
+  //   if (readScores[i] == reads[i].maxScore) {
+  //     for (const auto& seedmer : reads[i].uniqueSeedmers) {
+  //       if (refKminmers.find(seedmer.first) != refKminmers.end()) {
+  //         coveredKminmersBruteForce[seedmer.first].insert(i);
+  //       }
+  //     }
+  //   }
+  // }
+
+  // if (coveredKminmersBruteForce.size() != coveredKminmers.size()) {
+  //   std::cout << "Covered kminmers size mismatch: brute force " << coveredKminmersBruteForce.size() << " != dynamic " << coveredKminmers.size() << std::endl;
+  //   exit(1);
+  // }
+  // for (const auto& [seedmer, reads] : coveredKminmersBruteForce) {
+  //   auto coveredKminmerIt = coveredKminmers.find(seedmer);
+  //   if (coveredKminmerIt == coveredKminmers.end()) {
+  //     std::cout << "Covered kminmer " << seedmer << " not found in coveredKminmers" << std::endl;
+  //     exit(1);
+  //   }
+
+  //   if (reads.size() != coveredKminmerIt->second.size()) {
+  //     std::cout << "Covered kminmer " << seedmer << " reads size mismatch: brute force " << reads.size() << " != dynamic " << coveredKminmerIt->second.size() << std::endl;
+  //     exit(1);
+  //   }
+  //   for (const auto& readIndex : reads) {
+  //     if (coveredKminmerIt->second.find(readIndex) == coveredKminmerIt->second.end()) {
+  //       std::cout << "Covered kminmer " << seedmer << " read index " << readIndex << " not found in coveredKminmers" << std::endl;
+  //       exit(1);
+  //     }
+  //   }
+  // }
+
+
+  kminmerCoverage[node->identifier] = static_cast<double>(coveredKminmers.size()) / static_cast<double>(refKminmers.size());
+
+
+  if (dfsIndex % 100 == 0) {
+    std::cout << "\rComputing Kminmer Coverage " << dfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
+  }
+  auto curNodeDfsIndex = dfsIndex;
+  for (auto child : node->children) {
+    ++dfsIndex;
+    computeKminmerCoverageHelper(child, readScores, seedmerToReads, coveredKminmers, refKminmers, dfsIndex);
+  }
+
+  // backtrack
+  for (uint32_t seedInsertion : seedInsertions[curNodeDfsIndex]) {
+    // delete
+    const auto& seed = seedInfos[seedInsertion];
+    auto refKminmerIt = refKminmers.find(seed.hash);
+    if (refKminmerIt == refKminmers.end()) {
+      std::cerr << "Error: backtracking seed " << seedInsertion << " not found in refKminmers" << std::endl;
+      exit(1);
+    }
+    refKminmerIt->second--;
+    if (refKminmerIt->second == 0) refKminmers.erase(refKminmerIt);
+  }
+
+  for (uint32_t seedDeletion : seedDeletions[curNodeDfsIndex]) {
+    // insert
+    const auto& seed = seedInfos[seedDeletion];
+    auto [refKminmerIt, refKminmerInserted] = refKminmers.try_emplace(seed.hash, 1);
+    if (!refKminmerInserted) refKminmerIt->second++;
+  }
+
+  for (const auto& seedSubstitution : seedSubstitutions[curNodeDfsIndex]) {
+    // substitute
+    const auto& insSeed = seedInfos[seedSubstitution.first];
+    auto [insertedRefKminmerIt, insertedRefKminmerInserted] = refKminmers.try_emplace(insSeed.hash, 1);
+    if (!insertedRefKminmerInserted) insertedRefKminmerIt->second++;
+    
+    const auto& delSeed = seedInfos[seedSubstitution.second];
+    auto delRefKminmerIt = refKminmers.find(delSeed.hash);
+    if (delRefKminmerIt == refKminmers.end()) {
+      std::cerr << "Error: backtracking seed " << seedSubstitution.second << " not found in refKminmers" << std::endl;
+      exit(1);
+    }
+    delRefKminmerIt->second--;
+    if (delRefKminmerIt->second == 0) refKminmers.erase(delRefKminmerIt);
+  }
+
+  for (size_t i = 0; i < readScoresBacktrackIndex; ++i) {
+    const auto& [readIdx, score] = readScoresBacktrack[i];
+    readScores[readIdx] = score;
+  }
+
+  for (size_t i = 0; i < coveredKminmersBacktrackIndex; ++i) {
+    const auto& [hash, readIndex, toErase] = coveredKminmersBacktrack[coveredKminmersBacktrackIndex - i - 1];
+    if (toErase) {
+      auto coveredKminmerIt = coveredKminmers.find(hash);
+      if (coveredKminmerIt == coveredKminmers.end()) {
+        std::cerr << "Error: backtracking coveredKminmer " << hash << " not found in coveredKminmers" << std::endl;
+        exit(1);
+      }
+      coveredKminmerIt->second.erase(readIndex);
+      if (coveredKminmerIt->second.empty()) coveredKminmers.erase(coveredKminmerIt);
+    } else {
+      auto [coveredKminmerIt, coveredKminmerInserted] = coveredKminmers.try_emplace(hash, std::unordered_set<uint32_t>({readIndex}));
+      if (!coveredKminmerInserted) coveredKminmerIt->second.insert(readIndex);
+    }
+  }
+
+}
+
+void mgsr::ThreadsManager::computeKminmerCoverage() {
+  absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
+  for (uint32_t i = 0; i < reads.size(); ++i) {
+    for (const auto& seedmer : reads[i].uniqueSeedmers) {
+      for (const auto& seedmerIndex : seedmer.second) {
+        seedmerToReads[seedmer.first].emplace_back(i, seedmerIndex);
+      }
+    }
+  }
+
+  std::vector<uint32_t> readScores(reads.size(), 0);
+  absl::flat_hash_map<size_t, std::unordered_set<uint32_t>> coveredKminmers;
+  absl::flat_hash_map<size_t, uint32_t> refKminmers;
+  size_t dfsIndex = 0;
+
+  computeKminmerCoverageHelper(liteTree->root, readScores, seedmerToReads, coveredKminmers, refKminmers, dfsIndex);
+
+
+
+}
 
 
 std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const {
@@ -5077,7 +5402,8 @@ mgsr::squareEM::squareEM(
       double curTestScore = 0;
       for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
         if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
-          curTestScore += static_cast<double>(readSeedmersDuplicatesIndex[j].size()) / ((reads[j].seedmersList.size() - reads[j].maxScore + 1) * pow(static_cast<double>(reads[j].epp), 2));
+          double curReadScore = static_cast<double>(readSeedmersDuplicatesIndex[j].size()) / ((reads[j].seedmersList.size() - reads[j].maxScore + 1) * pow(static_cast<double>(reads[j].epp), 2));
+          curTestScore += curReadScore;
         }
       }
       testScores[i] = curTestScore;
@@ -5086,7 +5412,10 @@ mgsr::squareEM::squareEM(
 
   std::ofstream ofs(prefix + ".testScores.txt");
   for (size_t i = 0; i < testScores.size(); ++i) {
-    ofs << significantOverlapNodeIds[i] << " " << kminmerOverlapCoefficientsVector[i].second << " " << std::fixed << std::setprecision(10) << testScores[i] << std::endl;
+    ofs << significantOverlapNodeIds[i] << " " << std::fixed << std::setprecision(10) 
+        << kminmerOverlapCoefficientsVector[i].second << " "
+        << threadsManager.kminmerCoverage[significantOverlapNodeIds[i]] << " "
+        << testScores[i] << std::endl;
   }
   ofs.close();
   exit(0);
