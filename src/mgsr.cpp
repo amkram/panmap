@@ -2734,7 +2734,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   curNodeChanges.setNodeIndex(dfsIndex);
 
   // adding inserted/substituted seeds to index
-  capnp::List<SeedDelta>::Builder seedInsubBuilder = curNodeChanges.initSeedDeltas(addedSeedIndices.size());
+  capnp::List<SeedDelta>::Builder seedDeltasBuilder = curNodeChanges.initSeedDeltas(addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
   size_t deltaSeedIndicesIndex = 0, deletedIdx = 0, addedIdx = 0, substitutedIdx = 0;
   
   while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
@@ -2742,21 +2742,21 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
     auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
     if (deletedStartPos <= addedStartPos && deletedStartPos <= substitutedStartPos) {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
       deltaSeedIndicesIndex++;
       deletedIdx++;
     } else if (addedStartPos <= substitutedStartPos) {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
       deltaSeedIndicesIndex++;
       addedIdx++;
     } else {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
       deltaSeedIndicesIndex++;
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
       deltaSeedIndicesIndex++;
       substitutedIdx++;
     }
@@ -2766,13 +2766,13 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
     auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
     if (deletedStartPos <= addedStartPos) {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
       deltaSeedIndicesIndex++;
       deletedIdx++;
     } else {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
       deltaSeedIndicesIndex++;
       addedIdx++;
     }
@@ -2781,16 +2781,16 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
     auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
     if (deletedStartPos <= substitutedStartPos) {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
       deltaSeedIndicesIndex++;
       deletedIdx++;
     } else {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
       deltaSeedIndicesIndex++;
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
       deltaSeedIndicesIndex++;
       substitutedIdx++;
     }
@@ -2799,43 +2799,44 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
     auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
     if (addedStartPos <= substitutedStartPos) {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
       deltaSeedIndicesIndex++;
       addedIdx++;
     } else {
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
       deltaSeedIndicesIndex++;
-      seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
       deltaSeedIndicesIndex++;
       substitutedIdx++;
     }
   }
   
   while (deletedIdx < deletedSeedIndices.size()) {
-    seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-    seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
     deltaSeedIndicesIndex++;
     deletedIdx++;
   }
   while (addedIdx < addedSeedIndices.size()) {
-    seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-    seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
     deltaSeedIndicesIndex++;
     addedIdx++;
   }
   while (substitutedIdx < substitutedSeedIndices.size()) {
-    seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-    seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
     deltaSeedIndicesIndex++;
-    seedInsubBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-    seedInsubBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
     deltaSeedIndicesIndex++;
     substitutedIdx++;
   }
   
+
   // adding coord deltas to index
   capnp::List<CoordDelta>::Builder coordDeltaBuilder = curNodeChanges.initCoordDeltas(gapMapUpdates.size());
   for (size_t i = 0; i < gapMapUpdates.size(); i++) {
@@ -3158,7 +3159,7 @@ void mgsr::mgsrPlacer::backtrackSeeds(uint64_t nodeDfsIndex) {
   const auto& curSeedDeltas = seedDeltas[nodeDfsIndex];
   for (size_t i = 0; i < curSeedDeltas.size(); i++) {
     const auto [seedIndex, toDelete] = curSeedDeltas[i];
-    if (i != curSeedDeltas.size() - 1 && seedIndex == curSeedDeltas[i + 1].first) {
+    if (i != curSeedDeltas.size() - 1 && seedInfos[seedIndex].startPos == seedInfos[curSeedDeltas[i + 1].first].startPos) {
       subSeedAtPosition(seedIndex);
       i++;
     } else {
@@ -4759,6 +4760,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
     progressTracker->incrementProgress(threadId);
   }
 
+  auto parentPositionMap = positionMap;
   // **** Update seeds ****
   std::unordered_set<uint64_t> affectedSeedmers;
   updateSeeds(affectedSeedmers);
@@ -4950,6 +4952,11 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
 
   // Backtrack seeds and delayedRefSeedmerStatus
   backtrackSeeds(nodeDfsIndex);
+
+  if (positionMap.size() != parentPositionMap.size()) {
+    std::cerr << "Error: positionMap size is not equal to parentPositionMap size" << std::endl;
+    exit(1);
+  }
 
   // Backtrack gapMap
   for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {
