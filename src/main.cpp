@@ -1000,6 +1000,7 @@ int main(int argc, char *argv[]) {
       std::cout << "Number of empty nodes: " << numEmptyNodes << " / " << liteTree.allLiteNodes.size() << std::endl;
       std::cout << "Number of updates to skip: " << numUpdatesToSkip << " / " << numTotalUpdates << std::endl;
 
+      
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
         totalNodesPerThread[i] = liteTree.allLiteNodes.size();
