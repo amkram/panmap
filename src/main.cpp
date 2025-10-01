@@ -965,8 +965,41 @@ int main(int argc, char *argv[]) {
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
       threadsManager.initializeQueryData(readSequences);
-      std::cout << "Total unique kminmers: " << threadsManager.allSeedmerHashesSet.size() << std::endl;
       
+      size_t numNodesToSkip = 0;
+      size_t numEmptyNodes = 0;
+      size_t numUpdatesToSkip = 0;
+      size_t numTotalUpdates = 0;
+      const auto& allSeedmerHashesSet = threadsManager.allSeedmerHashesSet;
+      const auto& seedDeltas = threadsManager.seedDeltas;
+      const auto& seedInfos = threadsManager.seedInfos;
+      for (size_t i = 0; i < liteTree.allLiteNodes.size(); ++i) {
+        bool toSkip = true;
+        if (seedDeltas[i].size() == 0) {
+          ++numEmptyNodes;
+          ++numNodesToSkip;
+          continue;
+        }
+
+        for (size_t j = 0; j < seedDeltas[i].size(); ++j) {
+          const auto [seedIndex, _] = seedDeltas[i][j];
+          if (allSeedmerHashesSet.find(seedInfos[seedIndex].hash) != allSeedmerHashesSet.end()) {
+            toSkip = false;
+            break;
+          }
+        }
+
+        numTotalUpdates += seedDeltas[i].size();
+
+        if (toSkip) {
+          ++numNodesToSkip;
+          numUpdatesToSkip += seedDeltas[i].size();
+        }
+      }
+      std::cout << "Number of nodes to skip: " << numNodesToSkip << " / " << liteTree.allLiteNodes.size() << std::endl;
+      std::cout << "Number of empty nodes: " << numEmptyNodes << " / " << liteTree.allLiteNodes.size() << std::endl;
+      std::cout << "Number of updates to skip: " << numUpdatesToSkip << " / " << numTotalUpdates << std::endl;
+
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
         totalNodesPerThread[i] = liteTree.allLiteNodes.size();
@@ -975,23 +1008,6 @@ int main(int argc, char *argv[]) {
 
       std::cout << "Using " << numThreads << " threads" << std::endl;
 
-      // mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory);
-      // placer.setProgressTracker(&progressTracker, 0);
-      // auto start_time_traverseTree = std::chrono::high_resolution_clock::now();
-      // placer.traverseTree();
-      // auto end_time_traverseTree = std::chrono::high_resolution_clock::now();
-      // auto duration_traverseTree = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_traverseTree - start_time_traverseTree);
-      // std::cout << "Traversed tree in " << std::fixed << std::setprecision(3) << static_cast<double>(duration_traverseTree.count()) / 1000.0 << "s\n" << std::endl;
-      // exit(0);
-
-
-      // auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
-      // mgsr::mgsrPlacer placer(&liteTree, threadsManager);
-      // placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
-      // auto end_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
-      // auto duration_computeOverlapCoefficients = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_computeOverlapCoefficients - start_time_computeOverlapCoefficients);
-      // std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
-      // exit(0);
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
       std::atomic<size_t> numGroupsUpdate = 0;

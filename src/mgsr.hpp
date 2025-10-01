@@ -399,9 +399,7 @@ class ThreadsManager {
 
     // mutation structures... shared by all threads during placement
     std::vector<seeding::uniqueKminmer_t> seedInfos;
-    std::vector<std::vector<uint32_t>> seedInsertions;
-    std::vector<std::vector<uint32_t>> seedDeletions;
-    std::vector<std::vector<std::pair<uint32_t, uint32_t>>> seedSubstitutions;
+    std::vector<std::vector<std::pair<uint32_t, bool>>> seedDeltas;
     std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>> coordDeltas; 
     std::vector<std::vector<uint32_t>> invertedBlocks;
 
@@ -465,16 +463,12 @@ class mgsrPlacer {
   public:
     // mutation structures
     std::vector<seeding::uniqueKminmer_t>* seedInfosPtr; 
-    std::vector<std::vector<uint32_t>>* seedInsertionsPtr; 
-    std::vector<std::vector<uint32_t>>* seedDeletionsPtr;
-    std::vector<std::vector<std::pair<uint32_t, uint32_t>>>* seedSubstitutionsPtr; 
+    std::vector<std::vector<std::pair<uint32_t, bool>>>* seedDeltasPtr; 
     std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>* coordDeltasPtr; 
     std::vector<std::vector<uint32_t>>* invertedBlocksPtr;
 
     std::vector<seeding::uniqueKminmer_t>& seedInfos; 
-    std::vector<std::vector<uint32_t>>& seedInsertions; 
-    std::vector<std::vector<uint32_t>>& seedDeletions;
-    std::vector<std::vector<std::pair<uint32_t, uint32_t>>>& seedSubstitutions; 
+    std::vector<std::vector<std::pair<uint32_t, bool>>>& seedDeltas; 
     std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>& coordDeltas; 
     std::vector<std::vector<uint32_t>>& invertedBlocks;
 
@@ -560,12 +554,8 @@ class mgsrPlacer {
       : liteTree(liteTree),
         seedInfos(threadsManager.seedInfos),
         seedInfosPtr(&seedInfos),
-        seedInsertions(threadsManager.seedInsertions),
-        seedInsertionsPtr(&seedInsertions),
-        seedDeletions(threadsManager.seedDeletions),
-        seedDeletionsPtr(&seedDeletions),
-        seedSubstitutions(threadsManager.seedSubstitutions),
-        seedSubstitutionsPtr(&seedSubstitutions),
+        seedDeltas(threadsManager.seedDeltas),
+        seedDeltasPtr(&seedDeltas),
         coordDeltas(threadsManager.coordDeltas), 
         coordDeltasPtr(&coordDeltas),
         invertedBlocks(threadsManager.invertedBlocks),
@@ -582,9 +572,7 @@ class mgsrPlacer {
     mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory)
       : liteTree(liteTree),
         seedInfos(*seedInfosPtr),
-        seedInsertions(*seedInsertionsPtr),
-        seedDeletions(*seedDeletionsPtr),
-        seedSubstitutions(*seedSubstitutionsPtr),
+        seedDeltas(*seedDeltasPtr),
         coordDeltas(*coordDeltasPtr),
         invertedBlocks(*invertedBlocksPtr),
         lowMemory(lowMemory)
