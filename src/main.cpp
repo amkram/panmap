@@ -966,41 +966,6 @@ int main(int argc, char *argv[]) {
       close(fd);
       threadsManager.initializeQueryData(readSequences);
       
-      size_t numNodesToSkip = 0;
-      size_t numEmptyNodes = 0;
-      size_t numUpdatesToSkip = 0;
-      size_t numTotalUpdates = 0;
-      const auto& allSeedmerHashesSet = threadsManager.allSeedmerHashesSet;
-      const auto& seedDeltas = threadsManager.seedDeltas;
-      const auto& seedInfos = threadsManager.seedInfos;
-      for (size_t i = 0; i < liteTree.allLiteNodes.size(); ++i) {
-        bool toSkip = true;
-        if (seedDeltas[i].size() == 0) {
-          ++numEmptyNodes;
-          ++numNodesToSkip;
-          continue;
-        }
-
-        for (size_t j = 0; j < seedDeltas[i].size(); ++j) {
-          const auto [seedIndex, _] = seedDeltas[i][j];
-          if (allSeedmerHashesSet.find(seedInfos[seedIndex].hash) != allSeedmerHashesSet.end()) {
-            toSkip = false;
-            break;
-          }
-        }
-
-        numTotalUpdates += seedDeltas[i].size();
-
-        if (toSkip) {
-          ++numNodesToSkip;
-          numUpdatesToSkip += seedDeltas[i].size();
-        }
-      }
-      std::cout << "Number of nodes to skip: " << numNodesToSkip << " / " << liteTree.allLiteNodes.size() << std::endl;
-      std::cout << "Number of empty nodes: " << numEmptyNodes << " / " << liteTree.allLiteNodes.size() << std::endl;
-      std::cout << "Number of updates to skip: " << numUpdatesToSkip << " / " << numTotalUpdates << std::endl;
-
-      
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
         totalNodesPerThread[i] = liteTree.allLiteNodes.size();

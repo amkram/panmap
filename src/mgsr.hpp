@@ -16,7 +16,9 @@ namespace mgsr {
 
 void updateGapMapStep(
     std::map<uint64_t, uint64_t>& gapMap,
-    const std::pair<bool, std::pair<uint64_t, uint64_t>>& update,
+    uint64_t startPos,
+    uint64_t endPos,
+    bool toGap,
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates,
     bool recordGapMapUpdates
@@ -400,7 +402,7 @@ class ThreadsManager {
     // mutation structures... shared by all threads during placement
     std::vector<seeding::uniqueKminmer_t> seedInfos;
     std::vector<std::vector<std::pair<uint32_t, bool>>> seedDeltas;
-    std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>> coordDeltas; 
+    std::vector<std::vector<std::tuple<uint32_t, uint32_t, bool>>> gapRunDeltas; 
     std::vector<std::vector<uint32_t>> invertedBlocks;
 
     //  thread:   dfsIndex:  scoreDelta
@@ -464,12 +466,12 @@ class mgsrPlacer {
     // mutation structures
     std::vector<seeding::uniqueKminmer_t>* seedInfosPtr; 
     std::vector<std::vector<std::pair<uint32_t, bool>>>* seedDeltasPtr; 
-    std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>* coordDeltasPtr; 
+    std::vector<std::vector<std::tuple<uint32_t, uint32_t, bool>>>* gapRunDeltasPtr; 
     std::vector<std::vector<uint32_t>>* invertedBlocksPtr;
 
     std::vector<seeding::uniqueKminmer_t>& seedInfos; 
     std::vector<std::vector<std::pair<uint32_t, bool>>>& seedDeltas; 
-    std::vector<std::vector<std::pair<uint32_t, std::optional<uint32_t>>>>& coordDeltas; 
+    std::vector<std::vector<std::tuple<uint32_t, uint32_t, bool>>>& gapRunDeltas; 
     std::vector<std::vector<uint32_t>>& invertedBlocks;
 
     // tree pointer
@@ -556,8 +558,8 @@ class mgsrPlacer {
         seedInfosPtr(&seedInfos),
         seedDeltas(threadsManager.seedDeltas),
         seedDeltasPtr(&seedDeltas),
-        coordDeltas(threadsManager.coordDeltas), 
-        coordDeltasPtr(&coordDeltas),
+        gapRunDeltas(threadsManager.gapRunDeltas), 
+        gapRunDeltasPtr(&gapRunDeltas),
         invertedBlocks(threadsManager.invertedBlocks),
         invertedBlocksPtr(&invertedBlocks),
         lowMemory(lowMemory),
@@ -573,7 +575,7 @@ class mgsrPlacer {
       : liteTree(liteTree),
         seedInfos(*seedInfosPtr),
         seedDeltas(*seedDeltasPtr),
-        coordDeltas(*coordDeltasPtr),
+        gapRunDeltas(*gapRunDeltasPtr),
         invertedBlocks(*invertedBlocksPtr),
         lowMemory(lowMemory)
     {
