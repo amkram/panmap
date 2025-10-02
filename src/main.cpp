@@ -953,8 +953,8 @@ int main(int argc, char *argv[]) {
       LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
       size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
       
-      panmapUtils::LiteTree liteTree;
-      liteTree.initialize(liteTreeReader);
+      mgsr::MgsrLiteTree liteTree;
+      liteTree.initialize(indexReader);
 
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
@@ -1013,8 +1013,7 @@ int main(int argc, char *argv[]) {
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-      auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
-      mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, prefix, 1000);
+      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
