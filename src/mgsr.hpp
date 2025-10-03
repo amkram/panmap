@@ -386,6 +386,8 @@ public:
   std::vector<MgsrLiteNode*> children;
   uint32_t dfsIndex;
 
+  std::vector<std::vector<readScoreDelta>> readScoreDeltas;
+  std::vector<std::vector<readScoreDeltaLowMemory>> readScoreDeltasLowMemory;
   std::vector<std::pair<uint32_t, bool>> seedDeltas;
   std::vector<std::tuple<uint32_t, uint32_t, bool>> gapRunDeltas; 
   std::vector<uint32_t> invertedBlocks;
@@ -404,6 +406,9 @@ public:
   int l;
   bool openSyncmer;
 
+  bool lowMemory;
+  size_t numThreads;
+
   // mutation structures...
   std::vector<seeding::uniqueKminmer_t> seedInfos;
 
@@ -414,7 +419,7 @@ public:
   }
   
   void cleanup();
-  void initialize(MGSRIndex::Reader indexReader);
+  void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory);
 
   uint32_t getBlockStartScalar(const uint32_t blockId) const;
   uint32_t getBlockEndScalar(const uint32_t blockId) const;
@@ -445,16 +450,11 @@ class ThreadsManager {
     bool lowMemory;
 
     //  thread:   dfsIndex:  scoreDelta
-    std::vector<std::vector<std::vector<readScoreDelta>>> perNodeScoreDeltasIndexByThreadId; 
-    std::vector<std::vector<std::vector<readScoreDeltaLowMemory>>> perNodeScoreDeltasIndexByThreadIdLowMemory;
     std::vector<uint64_t> readMinichainsAdded;
     std::vector<uint64_t> readMinichainsRemoved;
     std::vector<uint64_t> readMinichainsUpdated;
     std::vector<uint64_t> readMinichainsInitialized;
 
-
-    // readidx:           thread   index
-    std::vector<std::pair<size_t, size_t>> readIndexToThreadLocalIndex;
     std::vector<std::pair<size_t, size_t>> threadRanges;
 
     // for identical parent-child pairs... will be moved from mgsrPlacer to here.
@@ -472,11 +472,6 @@ class ThreadsManager {
     // }
     ThreadsManager(MgsrLiteTree* liteTree,  size_t numThreads, bool skipSingleton, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), skipSingleton(skipSingleton), lowMemory(lowMemory) {
       threadRanges.resize(numThreads);
-      if (lowMemory) {
-        perNodeScoreDeltasIndexByThreadIdLowMemory.resize(numThreads);
-      } else {
-        perNodeScoreDeltasIndexByThreadId.resize(numThreads);
-      }
       readMinichainsInitialized.resize(numThreads);
       readMinichainsAdded.resize(numThreads);
       readMinichainsRemoved.resize(numThreads);
@@ -540,8 +535,6 @@ class mgsrPlacer {
     // current query score index structures
     std::vector<int32_t> readScores;
     std::vector<std::pair<int64_t, int64_t>> kminmerMatches;
-    std::vector<std::vector<readScoreDelta>> perNodeScoreDeltasIndex;
-    std::vector<std::vector<readScoreDeltaLowMemory>> perNodeScoreDeltasIndexLowMemory;
     std::vector<std::vector<std::tuple<size_t, int64_t, int64_t>>> perNodeKminmerMatchesDeltasIndex;
     int64_t totalScore = 0;
     int64_t totalDirectionalKminmerMatches = 0;
@@ -579,7 +572,7 @@ class mgsrPlacer {
 
     uint64_t readMinichainsUpdated = 0;
     
-    mgsrPlacer(MgsrLiteTree* liteTree, ThreadsManager& threadsManager, bool lowMemory)
+    mgsrPlacer(MgsrLiteTree* liteTree, ThreadsManager& threadsManager, bool lowMemory, size_t threadId)
       : liteTree(liteTree),
         lowMemory(lowMemory),
         k(threadsManager.k),
@@ -587,12 +580,14 @@ class mgsrPlacer {
         t(threadsManager.t),
         l(threadsManager.l),
         openSyncmer(threadsManager.openSyncmer),
-        skipSingleton(threadsManager.skipSingleton)
+        skipSingleton(threadsManager.skipSingleton),
+        threadId(threadId)
     {}
     
-    mgsrPlacer(MgsrLiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory)
+    mgsrPlacer(MgsrLiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory, size_t threadId)
       : liteTree(liteTree),
-        lowMemory(lowMemory)
+        lowMemory(lowMemory),
+        threadId(threadId)
     {
       initializeMGSRIndex(indexReader);
     }
