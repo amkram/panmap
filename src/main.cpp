@@ -952,15 +952,15 @@ int main(int argc, char *argv[]) {
       MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
       LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
       size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      bool lowMemory = vm.count("low-memory") > 0;
       
       mgsr::MgsrLiteTree liteTree;
-      liteTree.initialize(indexReader);
+      liteTree.initialize(indexReader, numThreads, lowMemory);
 
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
 
       bool skipSingleton = vm.count("skip-singleton") > 0;
-      bool lowMemory = vm.count("low-memory") > 0;
       mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
@@ -983,19 +983,15 @@ int main(int argc, char *argv[]) {
           auto [start, end] = threadsManager.threadRanges[i];
         
           std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory);
+          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory, i);
           curThreadPlacer.initializeQueryData(curThreadReads);
+
           curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
 
           curThreadPlacer.setProgressTracker(&progressTracker, i);
 
           curThreadPlacer.placeReads();
 
-          if (lowMemory) {
-            threadsManager.perNodeScoreDeltasIndexByThreadIdLowMemory[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndexLowMemory);
-          } else {
-            threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
-          }
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
           threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
           threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;

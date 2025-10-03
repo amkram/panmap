@@ -571,7 +571,9 @@ uint32_t mgsr::MgsrLiteTree::getBlockEndScalar(const uint32_t blockId) const {
   return blockScalarRanges[blockId].second;
 }
 
-void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader) {
+void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory) {
+  this->numThreads = numThreads;
+  this->lowMemory = lowMemory;
 
   k = indexReader.getK();
   s = indexReader.getS();
@@ -645,6 +647,11 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader) {
     it->second->seedDeltas = std::move(seedDeltas[i]);
     it->second->gapRunDeltas = std::move(gapRunDeltas[i]);
     it->second->invertedBlocks = std::move(invertedBlocks[i]);
+    if (lowMemory) {
+      it->second->readScoreDeltasLowMemory.resize(numThreads);
+    } else {
+      it->second->readScoreDeltas.resize(numThreads);
+    }
     if (i == 0) continue;
     const auto parentNodeReader = liteNodesReader[parentIndex];
     const auto& parentNodeId = parentNodeReader.getId();
@@ -1304,9 +1311,6 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     }
   }
 
-
-
-  readIndexToThreadLocalIndex.resize(reads.size());
   const size_t chunkSize = (reads.size() + numThreads - 1) / numThreads;
   for (size_t i = 0; i < numThreads; ++i) {
     size_t start = i * chunkSize;
@@ -1314,9 +1318,6 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     if (start < reads.size()) {
       threadRanges[i].first = start;
       threadRanges[i].second = end;
-    }
-    for (size_t j = start; j < end; j++) {
-      readIndexToThreadLocalIndex[j] = {i, j - start};
     }
   }
 
@@ -1352,11 +1353,6 @@ void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fas
     perNodeKminmerMatchesDeltasIndex.resize(numNodes);
   } else {
     readScores.resize(numReads, 0);
-    if (lowMemory) {
-      perNodeScoreDeltasIndexLowMemory.resize(numNodes);
-    } else {
-      perNodeScoreDeltasIndex.resize(numNodes);
-    }
   }
 }
 
@@ -3203,35 +3199,6 @@ void mgsr::mgsrPlacer::updateGapMap(
     invertGapMap(gapMap, {beg, end}, gapMapBlocksBacktracks, dummyGapMapUpdates);
   }
   gapMapBlocksBacktracks.shrink_to_fit();
-  // gapMapBacktracks.reserve(coordDeltas[curDfsIndex].size());
-  // for (const auto& coordDelta : coordDeltas[curDfsIndex]) {
-  //   const uint32_t& pos = coordDelta.first;
-  //   const auto& endPos = coordDelta.second;
-  //   if (endPos.has_value()) {
-  //     auto endPosValue = endPos.value();
-  //     auto gapMapIt = gapMap.find(pos);
-  //     if (gapMapIt != gapMap.end()) {
-  //       gapMapBacktracks.emplace_back(false, std::make_pair(pos, gapMapIt->second));
-  //       gapMapIt->second = endPosValue;
-  //     } else {
-  //       gapMapBacktracks.emplace_back(true, std::make_pair(pos, endPosValue));
-  //       gapMap[pos] = endPosValue;
-  //     }
-  //   } else {
-  //     gapMapBacktracks.emplace_back(false, std::make_pair(pos, gapMap[pos]));
-  //     gapMap.erase(pos);
-  //   }
-  // }
-  // gapMapBacktracks.shrink_to_fit();
-
-  // gapMapBlocksBacktracks.reserve(invertedBlocks[curDfsIndex].size() * 128);
-  // for (const auto& invertedBlock : invertedBlocks[curDfsIndex]) {
-  //   uint64_t beg = (uint64_t)liteTree->getBlockStartScalar(invertedBlock);
-  //   uint64_t end = (uint64_t)liteTree->getBlockEndScalar(invertedBlock);
-  //   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> tmpGapMapUpdates;
-  //   invertGapMap(gapMap, {beg, end}, gapMapBlocksBacktracks, tmpGapMapUpdates);
-  // }
-  // gapMapBlocksBacktracks.shrink_to_fit();
 }
 
 void mgsr::squareEM::updateProps1() {    
@@ -4426,7 +4393,7 @@ std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeI
 
   std::vector<uint32_t> curNodeScores(readScores.size(), 0);
   for (const auto& node : nodePath) {
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[node->dfsIndex]) {
+    for (const auto& scoreDelta : node->readScoreDeltas[threadId]) {
       curNodeScores[scoreDelta.readIndex] = scoreDelta.scoreDelta;
     }
   }
@@ -4446,7 +4413,7 @@ void mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId, std::vector<ui
   std::reverse(nodePath.begin(), nodePath.end());
 
   for (const auto& node : nodePath) {
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[node->dfsIndex]) {
+    for (const auto& scoreDelta : node->readScoreDeltas[threadId]) {
       curNodeScores[scoreDelta.readIndex] = scoreDelta.scoreDelta;
     }
   }
@@ -4484,14 +4451,14 @@ bool mgsr::mgsrPlacer::identicalReadScores(const std::string& node1, const std::
   std::unordered_map<size_t, std::pair<uint32_t, uint32_t>> changedReads;
   for (size_t i = lcaIndex + 1; i < nodePath1.size(); ++i) {
     MgsrLiteNode* currNode = nodePath1[i];
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[currNode->dfsIndex]) {
+    for (const auto& scoreDelta : currNode->readScoreDeltas[threadId]) {
       changedReads[scoreDelta.readIndex] = {scoreDelta.scoreDelta, lcaScores[scoreDelta.readIndex]};
     }
   }
 
   for (size_t i = lcaIndex + 1; i < nodePath2.size(); ++i) {
     MgsrLiteNode* currNode = nodePath2[i];
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[currNode->dfsIndex]) {
+    for (const auto& scoreDelta : currNode->readScoreDeltas[threadId]) {
       if (changedReads.find(scoreDelta.readIndex) != changedReads.end()) {
         changedReads[scoreDelta.readIndex].second = scoreDelta.scoreDelta;
       } else {
@@ -4923,7 +4890,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
 
 
   if (lowMemory && currentNodeScoreDeltas.size() > 0) {
-    auto& currentNodeScoreDeltasGrouped = perNodeScoreDeltasIndexLowMemory[curDfsIndex];
+    auto& currentNodeScoreDeltasGrouped = node->readScoreDeltasLowMemory[threadId];
     currentNodeScoreDeltasGrouped.reserve(currentNodeScoreDeltas.size());
     std::sort(currentNodeScoreDeltas.begin(), currentNodeScoreDeltas.end(), [&](const auto& a, const auto& b) {
       return a.readIndex < b.readIndex;
@@ -4962,7 +4929,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
     numReadsUpdate += currentNodeScoreDeltas.size();
     std::vector<readScoreDelta>().swap(currentNodeScoreDeltas);
   } else if (!lowMemory) {
-    perNodeScoreDeltasIndex[curDfsIndex] = std::move(currentNodeScoreDeltas);
+    node->readScoreDeltas[threadId] = std::move(currentNodeScoreDeltas);
   }
 
 
@@ -5050,7 +5017,7 @@ void mgsr::ThreadsManager::computeKminmerCoverageHelper(
   for (size_t threadId = 0; threadId < numThreads; ++threadId) {
     const auto threadReadStart = threadRanges[threadId].first;
     if (lowMemory) {
-      const auto& curNodeThreadScoreDeltasLowMemory = perNodeScoreDeltasIndexByThreadIdLowMemory[threadId][dfsIndex];
+      const auto& curNodeThreadScoreDeltasLowMemory = node->readScoreDeltasLowMemory[threadId];
       for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
         const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
         if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
@@ -5079,7 +5046,7 @@ void mgsr::ThreadsManager::computeKminmerCoverageHelper(
         }
       }
     } else {
-      const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][dfsIndex];
+      const auto& curNodeThreadScoreDeltas = node->readScoreDeltas[threadId];
       for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
         if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
           readScoresBacktrack.emplace_back(threadReadStart + scoreDelta.readIndex, readScores[threadReadStart + scoreDelta.readIndex]);
@@ -5394,7 +5361,7 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
     for (size_t threadId = 0; threadId < numThreads; ++threadId) {
       const auto threadReadStart = threadRanges[threadId].first;
       if (lowMemory) {
-        const auto& curNodeThreadScoreDeltasLowMemory = perNodeScoreDeltasIndexByThreadIdLowMemory[threadId][nodeDfsIndex];
+        const auto& curNodeThreadScoreDeltasLowMemory = node->readScoreDeltasLowMemory[threadId];
         for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
           const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
           curNodeScores[threadReadStart + readIndex] += currentScoreDelta;
@@ -5407,7 +5374,7 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
           }
         }
       } else {
-        const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex];
+        const auto& curNodeThreadScoreDeltas = node->readScoreDeltas[threadId];
         for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
           curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
         }
@@ -5509,18 +5476,12 @@ mgsr::squareEM::squareEM(
 
 
   // clear memory that are no longer needed
-  for (size_t threadId = 0; threadId < threadsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
-    if (threadsManager.lowMemory) {
-      for (size_t nodeDfsIndex = 0; nodeDfsIndex < threadsManager.perNodeScoreDeltasIndexByThreadIdLowMemory[threadId].size(); ++nodeDfsIndex) {
-        std::vector<readScoreDeltaLowMemory>().swap(threadsManager.perNodeScoreDeltasIndexByThreadIdLowMemory[threadId][nodeDfsIndex]);
-      }
-    } else {
-      for (size_t nodeDfsIndex = 0; nodeDfsIndex < threadsManager.perNodeScoreDeltasIndexByThreadId[threadId].size(); ++nodeDfsIndex) {
-        std::vector<readScoreDelta>().swap(threadsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
-      }
-    }
-
+  for (auto [nodeId, node] : liteTree.allLiteNodes) {
+    decltype(node->readScoreDeltas)().swap(node->readScoreDeltas);
+    decltype(node->readScoreDeltasLowMemory)().swap(node->readScoreDeltasLowMemory);
   }
+
+
 
   std::unordered_map<std::vector<uint32_t>, std::vector<std::string_view>, mgsr::VectorHash> scoresToNodeIds;
   for (uint32_t i = 0; i < scoreMatrix.size(); ++i) {
