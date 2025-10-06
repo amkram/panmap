@@ -662,6 +662,30 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
   root = allLiteNodes[liteNodesReader[0].getId()];
 }
 
+void mgsr::MgsrLiteTree::mergeNodesPairUp(MgsrLiteNode* node1, MgsrLiteNode* node2) {
+  MgsrLiteNode* upNode = nullptr;
+  if (node1->parent == node2) {
+    upNode = node2;
+  } else if (node2->parent == node1) {
+    upNode = node1;
+  } else {
+    std::cout << "Nodes " << node1->identifier << " and " << node2->identifier << " are not connected" << std::endl;
+    std::exit(1);
+  }
+}
+
+void mgsr::MgsrLiteTree::mergeNodesPairDown(MgsrLiteNode* node1, MgsrLiteNode* node2) {
+  MgsrLiteNode* downNode = nullptr;
+  if (node1->parent == node2) {
+    downNode = node1;
+  } else if (node2->parent == node1) {
+    downNode = node2;
+  } else {
+    std::cout << "Nodes " << node1->identifier << " and " << node2->identifier << " are not connected" << std::endl;
+    std::exit(1);
+  }
+}
+
 int64_t mgsr::mgsrPlacer::getReadBruteForceScore(
   size_t readIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable
 ) {
@@ -4667,7 +4691,7 @@ void mgsr::mgsrPlacer::computeOverlapCoefficientsHelper(
   binaryOverlapKminmerCount = binaryOverlapKminmerCountBacktrack;
 }
 
-void mgsr::mgsrPlacer::computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet) {
+std::vector<std::pair<std::string, double>> mgsr::mgsrPlacer::computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet) {
   curDfsIndex = 0;
   size_t maxIndex = 0;
   const auto& seedInfos = liteTree->seedInfos;
@@ -4696,12 +4720,10 @@ void mgsr::mgsrPlacer::computeOverlapCoefficients(const absl::flat_hash_set<size
     curIndex = i;
   }
 
-  // for (size_t i = 0; i < overlapCoefficients.size(); ++i) {
-  //   std::cout << overlapCoefficients[i].first << " " << overlapCoefficients[i].second << std::endl;
-  // }
+  return overlapCoefficients;
 
-  std::cout << "overlapCoefficientCutoff: " << overlapCoefficientCutoff << " last index to include: " << curIndex << std::endl;
-  exit(0);
+  // std::cout << "overlapCoefficientCutoff: " << overlapCoefficientCutoff << " last index to include: " << curIndex << std::endl;
+  // exit(0);
 }
 
 void mgsr::mgsrPlacer::traverseTreeHelper(MgsrLiteNode* node) {

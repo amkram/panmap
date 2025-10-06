@@ -240,6 +240,53 @@ std::string getStringFromReference(panmanUtils::Tree* tree, std::string referenc
   return seqString;
 }
 
+void simulateSNPsOnSequence(
+  std::string& sequence,
+  std::vector<std::tuple<char, char, uint32_t>>& snpRecords,
+  uint32_t numsnps,
+  std::mt19937& rng
+) {
+  if (numsnps == 0) return;
+  constexpr std::array<char, 3> notA = {'C', 'G', 'T'};
+  constexpr std::array<char, 3> notC = {'A', 'G', 'T'};
+  constexpr std::array<char, 3> notG = {'A', 'C', 'T'};
+  constexpr std::array<char, 3> notT = {'A', 'C', 'G'};
+  std::uniform_int_distribution<uint32_t> distNuc(0, 2);
+  snpRecords.clear();
+  snpRecords.reserve(numsnps);
+  std::uniform_int_distribution<uint32_t> distPos(1000, sequence.size() - 1000);
+  std::unordered_set<uint32_t> visitedPositions;
+  while (snpRecords.size() < numsnps) {
+    uint32_t pos = distPos(rng);
+    if (visitedPositions.find(pos) != visitedPositions.end()) continue;
+    visitedPositions.insert(pos);
+    switch (sequence[pos]) {
+      case 'A':
+        snpRecords.emplace_back('A', notA[distNuc(rng)], pos);
+        break;
+      case 'C':
+        snpRecords.emplace_back('C', notC[distNuc(rng)], pos);
+        break;
+      case 'G':
+        snpRecords.emplace_back('G', notG[distNuc(rng)], pos);
+        break;
+      case 'T':
+        snpRecords.emplace_back('T', notT[distNuc(rng)], pos);
+        break;
+      default:
+        continue;
+    }
+  }
+
+  std::sort(snpRecords.begin(), snpRecords.end(), [](const auto& a, const auto& b) {
+    return std::get<2>(a) < std::get<2>(b);
+  });
+
+  for (const auto& [ref, alt, pos] : snpRecords) {
+    sequence[pos] = alt;
+  }
+
+}
 
 void LiteTree::cleanup() {
   for (auto& pair : allLiteNodes) {

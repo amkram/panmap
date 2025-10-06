@@ -386,6 +386,7 @@ public:
   std::vector<MgsrLiteNode*> children;
   uint32_t dfsIndex;
 
+  std::unordered_set<MgsrLiteNode*> collapsedNodes;
   std::vector<std::vector<readScoreDelta>> readScoreDeltas;
   std::vector<std::vector<readScoreDeltaLowMemory>> readScoreDeltasLowMemory;
   std::vector<std::pair<uint32_t, bool>> seedDeltas;
@@ -423,6 +424,9 @@ public:
 
   uint32_t getBlockStartScalar(const uint32_t blockId) const;
   uint32_t getBlockEndScalar(const uint32_t blockId) const;
+
+  void mergeNodesPairUp(MgsrLiteNode* node1, MgsrLiteNode* node2);
+  void mergeNodesPairDown(MgsrLiteNode* node1, MgsrLiteNode* node2);
 
 private:
   bool cleaned = false;
@@ -604,7 +608,7 @@ class mgsrPlacer {
     void placeReads();
 
     void computeOverlapCoefficientsHelper(MgsrLiteNode* node, const absl::flat_hash_set<size_t>& allSeedmerHashesSet, std::vector<std::pair<std::string, double>>& overlapCoefficients, std::vector<std::optional<size_t>>& kminmerOnRef, std::unordered_map<size_t, size_t>& kminmerOnRefCount);
-    void computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
+    std::vector<std::pair<std::string, double>> computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
 
 
     // for tracking progress

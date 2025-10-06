@@ -7,6 +7,8 @@
 #include "logging.hpp"
 #include <string>
 #include <iostream>
+#include <random>
+
 
 namespace panmapUtils {
 
@@ -39,6 +41,13 @@ std::string getStringFromReference(
   panmanUtils::Tree* tree,
   std::string reference,
   bool aligned
+);
+
+void simulateSNPsOnSequence(
+  std::string& sequence,
+  std::vector<std::tuple<char,char, uint32_t>>& snpRecords,
+  uint32_t numsnps,
+  std::mt19937& rng
 );
 
 class LiteNode {
