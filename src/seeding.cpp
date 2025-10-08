@@ -404,16 +404,9 @@ void seedsFromFastq(
     line = 0;
     int forwardReads = readSequences.size();
     while ((line = kseq_read(seq)) >= 0) {
-      readSequences.push_back(reverseComplement(seq->seq.s));
+      readSequences.push_back(seq->seq.s);
       readNames.push_back(seq->name.s);
       readQuals.push_back(seq->qual.s);
-    }
-
-    if (readSequences.size() != forwardReads * 2) {
-      std::cerr << "Error: File " << fastqPath2
-                << " does not contain the same number of reads as "
-                << fastqPath1 << std::endl;
-      exit(0);
     }
 
     // Shuffle reads together, so that pairs are next to each other

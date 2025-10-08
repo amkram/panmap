@@ -410,6 +410,12 @@ int main(int argc, const char** argv) {
             
             writeCapnp(outMessage, default_index_path);
             msg("Index written to: {}", default_index_path);
+            
+            // If no reads were provided, we're done after building the index
+            if (reads1.empty() && reads2.empty()) {
+                msg("No reads provided - index building complete, exiting");
+                return 0;
+            }
         } catch (const std::exception& e) {
             err("ERROR during indexing: {}", e.what());
             return 1;

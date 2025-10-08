@@ -3,6 +3,7 @@
 #include "capnp/list.h"
 #include "mgsr_index.capnp.h"
 #include "panman.hpp"
+#include "panmap_utils.hpp"
 #include "progress_state.hpp"
 #include "seeding.hpp"
 #include "state.hpp"
@@ -26,6 +27,48 @@ void processNodesByLevel(
     const std::vector<panmanUtils::Node*>& nodes,
     std::function<void(panmanUtils::Node*)> processFunction);
 }
+
+// Forward declarations
+namespace placement {
+    struct PlacementGlobalState;
+}
+
+// Efficient genome state representation for traversal
+// This represents the accumulated genome state at a node in phylogenetic tree
+// The root starts empty (ancestral state), and each node adds phylogenetic mutations
+struct GenomeState {
+  // Core seed count data (this is the main memory consumer)
+  absl::flat_hash_map<size_t, int64_t> seedCounts;
+  absl::flat_hash_set<size_t> uniqueSeeds;
+  
+  // Cached similarity metrics (computed on-demand to avoid recalculation)
+  mutable bool metricsValid = false;
+  mutable int64_t weightedJaccardNumerator = 0;
+  mutable int64_t jaccardNumerator = 0;
+  mutable int64_t jaccardDenominator = 0;
+  mutable double cosineNumerator = 0.0;
+  mutable double cosineDenominator = 0.0;
+  
+  // Efficient copy constructor that preserves cached metrics when possible
+  GenomeState() = default;
+  GenomeState(const GenomeState& parent) : 
+      seedCounts(parent.seedCounts), 
+      uniqueSeeds(parent.uniqueSeeds),
+      metricsValid(false) {} // Always recalculate metrics for child nodes
+      
+  // Apply a node's phylogenetic changes to create child state
+  void applyNodeChanges(const std::vector<std::pair<size_t, int64_t>>& seedDeltas);
+  
+  // Forward declare the method - implementation will be in .cpp with proper namespace
+  void computeMetrics(const placement::PlacementGlobalState& state) const;
+  
+  // Estimate memory usage for monitoring
+  size_t estimateMemoryUsage() const {
+      return seedCounts.size() * (sizeof(size_t) + sizeof(int64_t)) + 
+             uniqueSeeds.size() * sizeof(size_t) + 
+             sizeof(GenomeState);
+  }
+};
 
 namespace placement {
 
@@ -53,6 +96,7 @@ struct PlacementGlobalState {
     float totalReadSeedCount = 0.0f;
     double jaccardDenominator = 0.0;
     size_t readUniqueSeedCount = 0;
+    double readMagnitude = 0.0;  // Precomputed read magnitude for cosine similarity
     std::atomic<bool> stopTraversal{false};
     int kmerSize = 32;  // set from params
 
@@ -62,6 +106,40 @@ struct PlacementGlobalState {
     // MGSR index data
     ::capnp::List<SeedInfo>::Reader seedInfo;
     ::capnp::List<NodeChanges>::Reader perNodeChanges;
+    
+    // Root node pointer for traversal
+    panmapUtils::LiteNode* root = nullptr;
+};
+
+// MGSR-style global genome state (single instance, modified in-place with backtracking)
+struct MgsrGenomeState {
+    // Position-based seed tracking (like MGSR)
+    std::map<uint64_t, uint64_t> positionMap;  // position -> seedIndex
+    absl::flat_hash_map<size_t, std::vector<std::map<uint64_t, uint64_t>::iterator>> hashToPositionMap;  // hash -> list of position iterators
+    
+    // Cached similarity metrics for current node
+    int64_t currentJaccardNumerator = 0;
+    int64_t currentWeightedJaccardNumerator = 0;
+    double currentCosineNumerator = 0.0;
+    absl::flat_hash_map<size_t, int64_t> currentSeedCounts;  // For frequency-based metrics
+    absl::flat_hash_set<size_t> currentUniqueSeeds;          // For presence-based metrics
+    
+    void reset() {
+        positionMap.clear();
+        hashToPositionMap.clear();
+        currentJaccardNumerator = 0;
+        currentWeightedJaccardNumerator = 0;
+        currentCosineNumerator = 0.0;
+        currentSeedCounts.clear();
+        currentUniqueSeeds.clear();
+    }
+    
+    size_t estimateMemoryUsage() const {
+        return positionMap.size() * (sizeof(uint64_t) + sizeof(uint64_t)) +
+               hashToPositionMap.size() * sizeof(size_t) * 8 +  // Rough estimate for vector overhead
+               currentSeedCounts.size() * (sizeof(size_t) + sizeof(int64_t)) +
+               currentUniqueSeeds.size() * sizeof(size_t);
+    }
 };
 
 // Helper class to store score info for a single node during placement
@@ -85,37 +163,43 @@ public:
 struct PlacementResult {
   // Hits-based results (this seems to be the current "weighted Jaccard" numerator)
   int64_t maxHitsInAnyGenome = 0; // This might be better named to reflect its actual calculation if it's not raw hits
-  panmanUtils::Node *maxHitsNode = nullptr;
-  std::vector<panmanUtils::Node *> tiedMaxHitsNodes;
+  std::string maxHitsNodeId;  // Changed from Node* to string ID
+  std::vector<std::string> tiedMaxHitsNodeIds;  // Changed from vector<Node*> to vector<string>
 
   // Raw Seed Match Score (New)
   int64_t bestRawSeedMatchScore = 0;
-  panmanUtils::Node *bestRawSeedMatchNode = nullptr;
-  std::vector<panmanUtils::Node *> tiedRawSeedMatchNodes;
+  std::string bestRawSeedMatchNodeId;  // Changed from Node* to string ID
+  std::vector<std::string> tiedRawSeedMatchNodeIds;  // Changed from vector<Node*> to vector<string>
 
   // Jaccard-based results (current "weighted" Jaccard)
   double bestJaccardScore = 0.0; // This is the weighted Jaccard
-  panmanUtils::Node *bestJaccardNode = nullptr;
-  std::vector<panmanUtils::Node *> tiedJaccardNodes;
+  std::string bestJaccardNodeId;  // Changed from Node* to string ID
+  std::vector<std::string> tiedJaccardNodeIds;  // Changed from vector<Node*> to vector<string>
+
+  // Weighted Jaccard results (separate tracking)
+  double bestWeightedJaccardScore = 0.0;
+  std::string bestWeightedJaccardNodeId;
+  std::vector<std::string> tiedWeightedJaccardNodeIds;
 
   // Jaccard Index (Presence/Absence) (New)
   double bestJaccardPresenceScore = 0.0;
-  panmanUtils::Node *bestJaccardPresenceNode = nullptr;
-  std::vector<panmanUtils::Node *> tiedJaccardPresenceNodes;
+  std::string bestJaccardPresenceNodeId;  // Changed from Node* to string ID
+  std::vector<std::string> tiedJaccardPresenceNodeIds;  // Changed from vector<Node*> to vector<string>
 
   // Cosine-based results
   double bestCosineScore = 0.0;
-  panmanUtils::Node *bestCosineNode = nullptr;
-  std::vector<panmanUtils::Node *> tiedCosineNodes;
+  std::string bestCosineNodeId;  // Changed from Node* to string ID
+  std::vector<std::string> tiedCosineNodeIds;  // Changed from vector<Node*> to vector<string>
 
   // Weighted result
   double bestWeightedScore = 0.0;
-  panmanUtils::Node *bestWeightedNode = nullptr;
-  std::vector<panmanUtils::Node *> tiedWeightedNodes;
+  std::string bestWeightedNodeId;  // Changed from Node* to string ID
+  std::vector<std::string> tiedWeightedNodeIds;  // Changed from vector<Node*> to vector<string>
 
   // Current tracking values
   int64_t hitsInThisGenome = 0;
-  int64_t currentJaccardNumerator = 0;
+  int64_t currentWeightedJaccardNumerator = 0;    // For weighted Jaccard (min frequencies)
+  int64_t currentJaccardNumerator = 0;            // Legacy field, now used for regular Jaccard  
   int64_t currentJaccardDenominator = 0;
   double currentCosineNumerator = 0.0;
   double currentCosineDenominator = 0.0;
@@ -130,53 +214,46 @@ struct PlacementResult {
   int64_t totalReadsProcessed = 0;
   double totalTimeSeconds = 0.0;
   
-  // Helper methods
-  void updateHitsScore(panmanUtils::Node* node, int64_t hits); // This is for the existing "maxHitsInAnyGenome"
-  void updateRawSeedMatchScore(panmanUtils::Node* node, int64_t score); // New
-  void updateJaccardScore(panmanUtils::Node* node, double score); // This is for weighted Jaccard
-  void updateJaccardPresenceScore(panmanUtils::Node* node, double score); // New
-  void updateCosineScore(panmanUtils::Node* node, double score);
-  void updateWeightedScore(panmanUtils::Node* node, double score, double scale);
+  // Helper methods - updated to use node IDs instead of pointers
+  void resetCurrentNodeState() {
+    // Reset per-node tracking values (should be called before evaluating each node)
+    hitsInThisGenome = 0;
+    currentWeightedJaccardNumerator = 0;
+    currentJaccardNumerator = 0;
+    currentJaccardDenominator = 0;
+    currentCosineNumerator = 0.0;
+    currentCosineDenominator = 0.0;
+    currentGenomeSeedCounts.clear();
+    // Note: nodeSeedMap is preserved across nodes as it stores the genome being built
+  }
+  
+  void updateHitsScore(const std::string& nodeId, int64_t hits); // This is for the existing "maxHitsInAnyGenome"
+  void updateRawSeedMatchScore(const std::string& nodeId, int64_t score); // New
+  void updateJaccardScore(const std::string& nodeId, double score); // This is for regular Jaccard
+  void updateWeightedJaccardScore(const std::string& nodeId, double score); // For weighted Jaccard
+  void updateJaccardPresenceScore(const std::string& nodeId, double score); // New
+  void updateCosineScore(const std::string& nodeId, double score);
+  void updateWeightedScore(const std::string& nodeId, double score, double scale);
 };
 
 // Core functions for placement
 // Note: Legacy processNodeMutations and placementTraversal removed 
 // MGSR placement now uses inline traversal in place() function
 
-void place(PlacementResult &result, panmanUtils::Tree *T,
-           ::MGSRIndex::Reader &mgsrIndex, const std::string &reads1,
-           const std::string &reads2,
-           std::vector<std::vector<seeding::seed_t>>& readSeeds,
-           std::vector<std::string>& readSequences,
-           std::vector<std::string>& readNames,
-           std::vector<std::string>& readQuals,
-           std::string &outputPath,
-           const std::string &indexPath,
-           const std::string &debug_node_id_param);
-// Batch mode now accepts path to MGSR index file instead of legacy Index::Reader
-void placeBatch(panmanUtils::Tree *T,
-                ::MGSRIndex::Reader &mgsrIndex,
-                const std::string &batchFilePath,
-                std::string prefixBase, 
-                std::string refFileNameBase,
-                std::string samFileNameBase, 
-                std::string bamFileNameBase,
-                std::string mpileupFileNameBase, 
-                std::string vcfFileNameBase,
-                std::string aligner, 
-                const std::string &refNode,
-                const bool &save_jaccard, 
-                const bool &show_time,
-                const float &score_proportion, 
-                const int &max_tied_nodes,
-                const std::string &indexPath,
-                const std::string &debug_node_id_param);
+// NEW: LiteTree-based placement (avoids loading full panman until after placement)
+void placeLite(PlacementResult &result, 
+               panmapUtils::LiteTree *liteTree,
+               ::MGSRIndex::Reader &mgsrIndex, 
+               const std::string &reads1,
+               const std::string &reads2,
+               std::vector<std::vector<seeding::seed_t>>& readSeeds,
+               std::vector<std::string>& readSequences,
+               std::vector<std::string>& readNames,
+               std::vector<std::string>& readQuals,
+               std::string &outputPath,
+               const std::string &indexPath,
+               const std::string &debug_node_id_param);
 
-// Helper function
-std::pair<double, double> getCosineDelta(
-    bool isRemoval, bool isAddition, size_t seedHash,
-    const absl::flat_hash_map<size_t, int64_t>& readSeedCounts,
-    const absl::flat_hash_map<size_t, int64_t>& genomeSeedCounts);
 
 // NEW: Declaration for placement summary dump function
 void dumpPlacementSummary(const PlacementResult& result, const std::string& outputFilename);
@@ -187,9 +264,9 @@ void dumpKmerDebugData(
     int k,
     const std::string& outputFilename);
 
-// Consolidated seed processing functions (MGSR compatible)
+// Consolidated seed processing functions (MGSR compatible with LiteTree)
 void processSeedOperation(
-    panmanUtils::Node* node,
+    const std::string& nodeId,  // Changed from Node* to string ID
     state::StateManager& stateManager,
     PlacementGlobalState& state,
     PlacementResult& result,
@@ -197,7 +274,7 @@ void processSeedOperation(
     uint32_t seedIndex);
 
 seeding::seed_t createAndProcessSeed(
-    panmanUtils::Node* node,
+    const std::string& nodeId,  // Changed from Node* to string ID
     state::StateManager& stateManager,
     PlacementGlobalState& state,
     PlacementResult& result,
@@ -210,11 +287,20 @@ seeding::seed_t createAndProcessSeed(
     size_t& dictionaryLookups);
 
 std::tuple<double, double, size_t> calculateAndUpdateScores(
-    panmanUtils::Node* node,
+    const std::string& nodeId,  // Changed from Node* to string ID
     PlacementGlobalState& state,
     PlacementResult& result,
     const TraversalParams& params,
     absl::flat_hash_set<size_t>& uniqueSeedHashes);
+
+// LiteTree-specific helper function
+std::tuple<double, double, size_t> calculateAndUpdateScoresLite(
+    const std::string& nodeId,
+    PlacementGlobalState& state,
+    PlacementResult& result,
+    const TraversalParams& params,
+    absl::flat_hash_set<size_t>& uniqueSeedHashes,
+    uint32_t nodeChangeIndex);
 
 // Dumps detailed seed information for debugging placement issues
 void dumpPlacementDebugData(

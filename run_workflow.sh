@@ -1,28 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV_NAME="trying"
-THREADS="${THREADS:-1}"
-TARGETS="${*:-all}"
+ENV_NAME="goodpan"
+ENV_PATH="/home/alex/micromamba/envs/goodpan"
+THREADS="${THREADS:-24}"
+TARGETS="${*:-all}"  # Default to 'all' rule, not --rerun-incomplete
 
-# Initialize micromamba shell hook if needed
-if ! command -v micromamba >/dev/null 2>&1; then
-  echo "micromamba not found in PATH" >&2
-  exit 1
+# Simply add the environment bin directory to PATH
+export PATH="${ENV_PATH}/bin:$PATH"
+
+# Verify the environment is accessible
+if [ ! -f "${ENV_PATH}/bin/python" ]; then
+    echo "Error: goodpan environment not found at ${ENV_PATH}" >&2
+    exit 1
 fi
 
-# Activate env (works in non-interactive script)
-eval "$(micromamba shell hook -s bash)"
-micromamba activate "${ENV_NAME}" || { echo "Failed to activate env ${ENV_NAME}"; exit 1; }
-
 echo "[run] Using env ${ENV_NAME}" 
-which python || true
-snakemake --version || { echo "snakemake not installed in env ${ENV_NAME}"; exit 2; }
+echo "[run] Python: $(which python)"
+echo "[run] Snakemake: $(snakemake --version)"
+echo "[run] ISS: $(which iss)"
 
-# Dry run first for feedback
-echo "[run] Dry run: snakemake -n -j${THREADS} ${TARGETS}" >&2
-snakemake -n -j"${THREADS}" ${TARGETS}
-
-# Real run
-echo "[run] Executing: snakemake -j${THREADS} ${TARGETS}" >&2
-snakemake -j"${THREADS}" ${TARGETS}
+# Real run with rerun-incomplete and increased latency wait
+# The build_all_indexes rule will be built automatically as a dependency
+echo "[run] Executing: snakemake -j${THREADS} --latency-wait 60 --rerun-incomplete ${TARGETS}" >&2
+snakemake -j"${THREADS}" --latency-wait 60 --rerun-incomplete ${TARGETS}

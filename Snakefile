@@ -19,12 +19,12 @@ PANGENOMES = {
 # Experiment parameters - modify these to customize experiments
 CONFIG = {
     'pangenomes': ['rsv_4K'],   # Which datasets to test - multiple pangenomes
-    'k_values': [15,19,31,63],               # k-mer sizes - test different sensitivity levels
-    's_values': [4,8,12],                    # Minimizer spacing - test density vs speed tradeoff
+    'k_values': [18,31],               # k-mer sizes - test different sensitivity levels (reduced from 4 to 2)
+    's_values': [8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
     'include_internal': [False],            # Include internal nodes? [False, True]
-    'coverage_levels': [1,10,100],        # Coverage levels (X coverage)
-    'mutation_rates': [0.0001,0.0005], # Mutation rates per base pair
-    'replicates': 100,                        # Replicates per condition
+    'coverage_levels': [10,100],        # Coverage levels (X coverage) (removed 1x)
+    'mutation_rates': [0.0001], # Mutation rates per base pair (reduced to 1)
+    'replicates': 10,                        # Replicates per condition (reduced from 100 to 10)
     'model': 'NovaSeq',                     # Sequencing model
     'read_length': 150                      # Average read length for coverage calculation
 }
@@ -118,7 +118,6 @@ DETAILED_PLACEMENTS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{co
 PLACEMENT_LOGS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/panmap.log" for (eid, pan_stem, tag, cov, n, rep) in READS]
 ALIGNMENT_ACCURACY = [f"{_exp_root(eid, pan_stem, tag)}/alignments/reads/cov{cov}_{n}_rep{rep}/accuracy.tsv" for (eid, pan_stem, tag, cov, n, rep) in READS]
 AGGREGATION_MARKERS = [f"{OUTPUT_DIR}/results/aggregated/{eid}/{pan_stem}/{tag}/cov{cov}_{n}_rep{rep}.done" for (eid, pan_stem, tag, cov, n, rep) in READS]
-
 
 rule all:
     input:
@@ -240,7 +239,8 @@ rule dump_random_node:
 
 rule index_experiment:
         input:
-                bin="build/bin/panmap"
+                bin="build/bin/panmap",
+                pan=lambda wc: EXP_BY_ID[wc.eid]['panman_path']
         output:
                 index=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi",
                 mm=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/{{pan_stem}}.panman.mm"
@@ -253,8 +253,8 @@ rule index_experiment:
                 echo "[index_experiment] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag}" >&2
                 mkdir -p $(dirname {output.index})
                 {input.bin} -f -k {params.k} -s {params.s} {params.pan} --index-output {output.index}
-                # Copy the generated mutation matrix to our output location
                 cp {params.pan}.mm {output.mm}
+                echo "[index_experiment] Index built successfully: {output.index}" >&2
                 '''
 
 rule simulate_reads:
@@ -1026,8 +1026,11 @@ rule placements_by_metric:
                         tf.write('\t'.join(map(str,[eid, pan_stem, tag, n, rep, true_node, metric, "0", "", "", n]))+"\n")
 
 rule alignment_accuracy_summary:
+    # Relaxed inputs: we intentionally do NOT require every accuracy.tsv file as an input
+    # so that we can summarize partially generated accuracy variant files without
+    # forcing creation of placeholder legacy files for missing replicates.
+    # The rule will iterate over READS and gracefully handle missing variant files.
     input:
-        accuracy_files=ALIGNMENT_ACCURACY,
         metas=RESULT_FILES
     output:
         tsv=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"

@@ -502,7 +502,7 @@ namespace placement {
   class PlacementEngine {
   public:
     PlacementEngine(int k) {}
-    void addSeed(int64_t pos, size_t hash, panmanUtils::Node* node, int32_t blockId) {}
+    void addSeed(int64_t pos, size_t hash, ::panmanUtils::Node* node, int32_t blockId) {}
     void saveIndex() {}
   };
 }
