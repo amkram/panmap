@@ -46,4 +46,3 @@ _deps
 # pixi environments
 .pixi
 *.egg-info
-.snakemake

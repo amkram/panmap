@@ -68,18 +68,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
     GIT_TAG 1.9.5
 )
-
-# Configure JsonCpp options before making it available
-set(JSONCPP_WITH_TESTS OFF CACHE BOOL "Disable JsonCpp tests")
-set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "Disable JsonCpp post build tests")
-set(JSONCPP_WITH_PKGCONFIG_SUPPORT OFF CACHE BOOL "Disable JsonCpp pkgconfig")
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries")
-
 FetchContent_MakeAvailable(jsoncpp)
-
-# Ensure JsonCpp headers are available where panman expects them
-file(MAKE_DIRECTORY ${jsoncpp_BINARY_DIR}/include/json)
-file(COPY ${jsoncpp_SOURCE_DIR}/include/json/ DESTINATION ${jsoncpp_BINARY_DIR}/include/json/)
 
 # Pull in spdlog so its target is available before we define panmap
 FetchContent_Declare(
@@ -112,41 +101,18 @@ include_directories(${tbb_SOURCE_DIR}/include)
 include_directories(${jsoncpp_SOURCE_DIR}/include)
 include_directories(${Protobuf_INCLUDE_DIRS})
 
-# Setup for CapnProto - try system first, then fetch if not found
+# Setup for CapnProto using system-installed tools
 find_program(CAPNP_EXECUTABLE NAMES capnp)
 find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++)
-find_package(CapnProto QUIET)
 
-if(CAPNP_EXECUTABLE AND CAPNPC_CXX_EXECUTABLE AND CapnProto_FOUND)
-    # Use system CapnProto
-    set(CAPNP_LIBRARIES CapnProto::capnp CapnProto::kj)
-    set(USING_SYSTEM_CAPNP TRUE)
-    message(STATUS "Using system CapnProto tools: ${CAPNP_EXECUTABLE}, ${CAPNPC_CXX_EXECUTABLE}")
-    
-    # Create a dummy target for consistency
-    add_custom_target(capnp_tools ALL)
-else()
-    message(STATUS "CapnProto not found on system, fetching from source...")
-    
-    FetchContent_Declare(
-        capnproto
-        GIT_REPOSITORY https://github.com/capnproto/capnproto.git
-        GIT_TAG v1.2.0 # Latest as of Sep 4 2025
-    )
-    
-    set(BUILD_TESTING OFF CACHE BOOL "Disable testing for CapnProto" FORCE)
-    FetchContent_MakeAvailable(capnproto)
-    
-    # Set variables for fetched CapnProto (using generator expressions)
-    set(CAPNP_EXECUTABLE $<TARGET_FILE:capnp_tool>)
-    set(CAPNPC_CXX_EXECUTABLE $<TARGET_FILE:capnpc_cpp>)
-    set(CAPNP_LIBRARIES CapnProto::capnp CapnProto::kj)
-    set(USING_SYSTEM_CAPNP FALSE)
-    message(STATUS "Using fetched CapnProto")
-    
-    # Create a target dependency for the tools
-    add_custom_target(capnp_tools ALL DEPENDS capnp_tool capnpc_cpp)
+if(NOT CAPNP_EXECUTABLE OR NOT CAPNPC_CXX_EXECUTABLE)
+    message(FATAL_ERROR "CapnProto executables not found. Please install CapnProto.")
 endif()
+
+message(STATUS "Using CapnProto tools: ${CAPNP_EXECUTABLE}, ${CAPNPC_CXX_EXECUTABLE}")
+
+# Create a dummy target for consistency with the rest of the build
+add_custom_target(capnp_tools ALL)
 
 # Set up CapnProto include directories
 include_directories(/usr/local/include)
@@ -158,67 +124,35 @@ set(CAPNP_GEN_CPP "${CAPNP_GEN_DIR}/index.capnp.c++")
 set(CAPNP_GEN_H "${CAPNP_GEN_DIR}/index.capnp.h")
 
 # Custom command to generate CapnProto files
-if(USING_SYSTEM_CAPNP)
-    # Use system CapnProto
-    add_custom_command(
-        OUTPUT ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
-        COMMAND ${CAPNP_EXECUTABLE}
-            compile
-            -o${CAPNPC_CXX_EXECUTABLE}
-            --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
-            ${CAPNP_SRC_FILE}
-        DEPENDS ${CAPNP_SRC_FILE}
-        COMMENT "Generating C++ files from index.capnp using system CapnProto"
-        VERBATIM
-    )
-else()
-    # Use fetched CapnProto
-    add_custom_command(
-        OUTPUT ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
-        COMMAND $<TARGET_FILE:capnp_tool>
-            compile
-            -o$<TARGET_FILE:capnpc_cpp>
-            --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
-            ${CAPNP_SRC_FILE}
-        DEPENDS ${CAPNP_SRC_FILE} capnp_tools
-        COMMENT "Generating C++ files from index.capnp using fetched CapnProto"
-        VERBATIM
-    )
-endif()
+add_custom_command(
+    OUTPUT ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
+    COMMAND ${CAPNP_EXECUTABLE}
+        compile
+        -o${CAPNPC_CXX_EXECUTABLE}
+        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+        ${CAPNP_SRC_FILE}
+    DEPENDS ${CAPNP_SRC_FILE} capnp_tools
+    COMMENT "Generating C++ files from index.capnp"
+    VERBATIM
+)
 
 
 set(MGSR_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/mgsr_index.capnp")
 set(MGSR_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(MGSR_CAPNP_GEN_CPP "${MGSR_CAPNP_GEN_DIR}/mgsr_index.capnp.c++")
 set(MGSR_CAPNP_GEN_H "${MGSR_CAPNP_GEN_DIR}/mgsr_index.capnp.h")
-# Custom command to generate CapnProto files for mgsr_index.capnp
-if(USING_SYSTEM_CAPNP)
-    # Use system CapnProto
-    add_custom_command(
-        OUTPUT ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
-        COMMAND ${CAPNP_EXECUTABLE}
-            compile
-            -o${CAPNPC_CXX_EXECUTABLE}
-            --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
-            ${MGSR_CAPNP_SRC_FILE}
-        DEPENDS ${MGSR_CAPNP_SRC_FILE}
-        COMMENT "Generating C++ files from mgsr_index.capnp using system CapnProto"
-        VERBATIM
-    )
-else()
-    # Use fetched CapnProto
-    add_custom_command(
-        OUTPUT ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
-        COMMAND $<TARGET_FILE:capnp_tool>
-            compile
-            -o$<TARGET_FILE:capnpc_cpp>
-            --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
-            ${MGSR_CAPNP_SRC_FILE}
-        DEPENDS ${MGSR_CAPNP_SRC_FILE} capnp_tools
-        COMMENT "Generating C++ files from mgsr_index.capnp using fetched CapnProto"
-        VERBATIM
-    )
-endif()
+# Custom command to generate CapnProto files
+add_custom_command(
+    OUTPUT ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
+    COMMAND ${CAPNP_EXECUTABLE}
+        compile
+        -o${CAPNPC_CXX_EXECUTABLE}
+        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+        ${MGSR_CAPNP_SRC_FILE}
+    DEPENDS ${MGSR_CAPNP_SRC_FILE} capnp_tools
+    COMMENT "Generating C++ files from mgsr_index.capnp"
+    VERBATIM
+)
 
 # Set variables to point to the generated files
 set(CAPNP_SRCS ${CAPNP_GEN_CPP})
@@ -269,123 +203,52 @@ add_custom_command(
 endfunction()
 
 # ===== Setup for Panman =====
-# Create the version.txt file that panman expects
-file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/version.txt "v1.0.0")
-
-# Set up variables that panman's CMakeLists.txt expects
-set(TBB_DIR ${tbb_BINARY_DIR})
-
-# For fetched CapnProto, set up the environment so panman can find the tools
-if(NOT USING_SYSTEM_CAPNP)
-    # Add the CapnProto binary directory to CMAKE_PROGRAM_PATH so find_program() can locate them
-    list(APPEND CMAKE_PROGRAM_PATH "${CMAKE_CURRENT_BINARY_DIR}/bin")
-    
-    # Make sure CapnProto CMake functions are available to panman
-    # Include the CapnProto CMake modules so capnp_generate_cpp function is available
-    list(APPEND CMAKE_MODULE_PATH "${capnproto_SOURCE_DIR}/c++/cmake")
-    
-    # IMPORTANT: Explicitly unset CapnProto_PATH to force panman to use capnp_generate_cpp
-    # This ensures panman goes to the else() branch in its CMakeLists.txt
-    unset(CapnProto_PATH)
-    unset(CapnProto_PATH CACHE)
-    
-    # Also unset the executable variables for panman so it uses capnp_generate_cpp
-    set(PANMAN_CAPNP_EXECUTABLE "")
-    set(PANMAN_CAPNPC_CXX_EXECUTABLE "")
-endif()
-
-# Set up JsonCpp for panman - ensure the include directory exists
-# The issue is that panman expects JsonCpp headers in the build directory
-# but they're actually in the source directory. Create them in the build directory.
-
-# Ensure JsonCpp headers are available where panman expects them
-# This needs to happen before panman's CMakeLists.txt runs
-add_custom_command(
-    OUTPUT ${jsoncpp_BINARY_DIR}/include/json/json.h
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${jsoncpp_BINARY_DIR}/include/json
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${jsoncpp_SOURCE_DIR}/include/json ${jsoncpp_BINARY_DIR}/include/json
-    DEPENDS ${jsoncpp_SOURCE_DIR}/include/json/json.h
-    COMMENT "Copying JsonCpp headers to build directory"
-)
-
-add_custom_target(jsoncpp_headers ALL DEPENDS ${jsoncpp_BINARY_DIR}/include/json/json.h)
-
-# Create a minimal jsoncppConfig.cmake file that panman can find
-file(WRITE ${jsoncpp_BINARY_DIR}/jsoncppConfig.cmake "
-# Minimal jsoncpp config for panman
-if(NOT TARGET JsonCpp::JsonCpp)
-    add_library(JsonCpp::JsonCpp ALIAS jsoncpp_static)
-endif()
-set(jsoncpp_FOUND TRUE)
-set(jsoncpp_VERSION 1.9.5)
-")
-
-# Set paths so panman finds our config instead of system JsonCpp
-set(jsoncpp_DIR ${jsoncpp_BINARY_DIR})
-list(PREPEND CMAKE_PREFIX_PATH ${jsoncpp_BINARY_DIR})
-
-# Ensure CMAKE_TOOLCHAIN_FILE is set to avoid include() errors
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE OR CMAKE_TOOLCHAIN_FILE STREQUAL "")
-    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/dummy_toolchain.cmake")
-    # Create a dummy toolchain file
-    file(WRITE "${CMAKE_TOOLCHAIN_FILE}" "# Dummy toolchain file\n")
-endif()
-
-# Create TBB config files that panman expects
+# First, create the necessary config files for panman
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake)
-file(MAKE_DIRECTORY ${tbb_BINARY_DIR}/cmake)
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/TBBBuild.cmake "
-function(tbb_build)
-    cmake_parse_arguments(TBB \"\" \"TBB_ROOT;CONFIG_DIR\" \"MAKE_ARGS\" \${ARGN})
-    # Empty implementation - TBB is already built by parent
-    set(TBB_IMPORTED_TARGETS \${TBB_LIBRARY} PARENT_SCOPE)
-endfunction()
-")
-# Also create the file in the TBB directory where panman expects it
-file(WRITE ${tbb_BINARY_DIR}/cmake/TBBBuild.cmake "
-function(tbb_build)
-    cmake_parse_arguments(TBB \"\" \"TBB_ROOT;CONFIG_DIR\" \"MAKE_ARGS\" \${ARGN})
-    # Empty implementation - TBB is already built by parent
-    set(TBB_IMPORTED_TARGETS \${TBB_LIBRARY} PARENT_SCOPE)
-endfunction()
-")
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/TBBConfig.cmake "
+# TBB Config File
+set(TBB_FOUND TRUE)
+set(TBB_INCLUDE_DIRS \"${TBB_DIR}/include\")
+set(TBB_LIBRARIES \"${TBB_LIBRARY}\")
+set(TBB_LIBRARY_DIRS \"/usr/lib/x86_64-linux-gnu\")
 
-# Set TBB variables for panman
-set(TBB_IMPORTED_TARGETS ${TBB_LIBRARY})
-
-# Create CapnProto imported targets for panman if using system CapnProto
-if(CapnProto_FOUND AND CAPNP_EXECUTABLE AND CAPNPC_CXX_EXECUTABLE)
-    # Create imported targets for system CapnProto libraries using find_package variables
-    if(NOT TARGET CapnProto::capnp)
-        add_library(CapnProto::capnp SHARED IMPORTED)
-        find_library(CAPNP_LIB NAMES capnp PATHS ${CapnProto_LIBRARY_DIRS} /usr/local/lib /usr/lib)
-        set_target_properties(CapnProto::capnp PROPERTIES
-            IMPORTED_LOCATION "${CAPNP_LIB}"
-            INTERFACE_INCLUDE_DIRECTORIES "${CapnProto_INCLUDE_DIRS}"
-        )
-    endif()
-    
-    if(NOT TARGET CapnProto::kj)
-        add_library(CapnProto::kj SHARED IMPORTED)
-        find_library(KJ_LIB NAMES kj PATHS ${CapnProto_LIBRARY_DIRS} /usr/local/lib /usr/lib)
-        set_target_properties(CapnProto::kj PROPERTIES
-            IMPORTED_LOCATION "${KJ_LIB}"
-            INTERFACE_INCLUDE_DIRECTORIES "${CapnProto_INCLUDE_DIRS}"
-        )
-    endif()
-    
-    set(CAPNP_LIBRARIES CapnProto::capnp CapnProto::kj)
-    
-    # For system CapnProto, don't set CapnProto_PATH to force panman to use capnp_generate_cpp
-    # This ensures compatibility since system CapnProto may not have the modern CMake functions
-    unset(CapnProto_PATH)
-    unset(CapnProto_PATH CACHE)
-else()
-    # For fetched CapnProto, the targets are already available from FetchContent
-    set(CAPNP_LIBRARIES CapnProto::capnp CapnProto::kj)
+if(NOT TARGET TBB::tbb)
+    add_library(TBB::tbb SHARED IMPORTED)
+    set_target_properties(TBB::tbb PROPERTIES
+        IMPORTED_LOCATION \"${TBB_LIBRARY}\"
+        INTERFACE_INCLUDE_DIRECTORIES \"${TBB_DIR}/include\"
+    )
 endif()
 
-# Fetch the panman source code
+")
+
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/jsoncppConfig.cmake "
+# JsonCpp Config File
+set(JSONCPP_FOUND TRUE)
+set(JSONCPP_INCLUDE_DIRS \"${CMAKE_CURRENT_BINARY_DIR}/include\")
+set(JSONCPP_LIBRARIES \"jsoncpp\")
+
+if(NOT TARGET jsoncpp_lib)
+    add_library(jsoncpp_lib INTERFACE IMPORTED)
+endif()
+
+if(NOT TARGET JsonCpp::JsonCpp)
+    add_library(JsonCpp::JsonCpp INTERFACE IMPORTED)
+endif()
+
+")
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/cmake/TBBBuild.cmake "
+function(tbb_build)
+    # Empty implementation
+endfunction()
+")
+
+# Create a dummy JsonCpp library
+add_library(jsoncpp INTERFACE)
+
+# Fetch the panman source code (clone only, disable update)
 FetchContent_Declare(
     panman
     GIT_REPOSITORY https://github.com/TurakhiaLab/panman
@@ -394,147 +257,158 @@ FetchContent_Declare(
     UPDATE_COMMAND ""
 )
 
-# Make panman available but don't automatically add it to the build
-FetchContent_MakeAvailable(panman)
-
-# IMPORTANT: For FetchContent CapnProto, ensure panman uses capnp_generate_cpp
-# We need to prevent panman from finding the CapnProto tools so it falls back to capnp_generate_cpp
-if(NOT USING_SYSTEM_CAPNP)
-    # Temporarily unset these variables so panman doesn't find the tools
-    set(SAVED_CAPNP_EXECUTABLE ${CAPNP_EXECUTABLE})
-    set(SAVED_CAPNPC_CXX_EXECUTABLE ${CAPNPC_CXX_EXECUTABLE})
-    unset(CAPNP_EXECUTABLE)
-    unset(CAPNPC_CXX_EXECUTABLE)
-    unset(CAPNP_EXECUTABLE CACHE)
-    unset(CAPNPC_CXX_EXECUTABLE CACHE)
-    message(STATUS "Temporarily hiding CapnProto tools from panman to force capnp_generate_cpp usage")
-else()
-    # Re-find system CapnProto tools to override any panman-set variables
-    find_program(CAPNP_EXECUTABLE NAMES capnp PATHS /usr/local/bin /usr/bin NO_DEFAULT_PATH)
-    find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++ PATHS /usr/local/bin /usr/bin NO_DEFAULT_PATH)
-    message(STATUS "Restored system CapnProto tools after panman: ${CAPNP_EXECUTABLE}, ${CAPNPC_CXX_EXECUTABLE}")
-endif()
-
-# Copy panman.capnp to the build directory so capnp_generate_cpp can find it
-configure_file(
-    ${panman_SOURCE_DIR}/panman.capnp
-    ${panman_BINARY_DIR}/panman.capnp
-    COPYONLY
-)
-
-# Also copy the proto files for consistency
-configure_file(
-    ${panman_SOURCE_DIR}/usher.proto
-    ${panman_BINARY_DIR}/usher.proto
-    COPYONLY
-)
-configure_file(
-    ${panman_SOURCE_DIR}/panman.proto
-    ${panman_BINARY_DIR}/panman.proto
-    COPYONLY
-)
-
-# Set CapnProto variables that panman's CMakeLists.txt expects
-# These variables control how panman generates its CapnProto files
-if(NOT USING_SYSTEM_CAPNP)
-    # When using fetched CapnProto, we want panman to use capnp_generate_cpp, not capnp_generate
-    # So we DON'T set CapnProto_PATH, which forces panman to use the else() branch
-    # The tools are already available via cached CAPNP_EXECUTABLE variables
+# Force the population of the content
+FetchContent_GetProperties(panman)
+if(NOT panman_POPULATED)
+    FetchContent_Populate(panman)
     
-    # Make sure panman can find the CapnProto CMake files
-    list(APPEND CMAKE_PREFIX_PATH ${capnproto_BINARY_DIR})
+    # Get the source directory
+    FetchContent_GetProperties(panman SOURCE_DIR panman_SOURCE_DIR BINARY_DIR panman_BINARY_DIR)
     
-    message(STATUS "Using fetched CapnProto for panman (via capnp_generate_cpp)")
-endif()
+    # Create a patch file for panman's CMakeLists.txt
+    file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "")
+    file(READ "${panman_SOURCE_DIR}/CMakeLists.txt" PANMAN_CMAKE_CONTENT)
+    file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "${PANMAN_CMAKE_CONTENT}")
+    
+    # Modify the panman CMakeLists.txt
+    file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt" [=[
+cmake_minimum_required (VERSION 3.8)
+project(panmanUtils)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-# Restore CapnProto tools for our main project after panman configuration
-if(NOT USING_SYSTEM_CAPNP)
-    # Restore the saved CapnProto tools for our main project's use
-    set(CAPNP_EXECUTABLE ${SAVED_CAPNP_EXECUTABLE})
-    set(CAPNPC_CXX_EXECUTABLE ${SAVED_CAPNPC_CXX_EXECUTABLE})
-    message(STATUS "Restored fetched CapnProto tools for main project: ${CAPNP_EXECUTABLE}, ${CAPNPC_CXX_EXECUTABLE}")
-endif()
+# Protobuf
+find_package(Protobuf REQUIRED)
+if(Protobuf_FOUND)
+    message(STATUS "Using Protocol Buffers ${Protobuf_VERSION}")
+  endif()
 
-# Create our own panman library from the panman source files
-# Since panman only creates an executable, we need to create a library for linking
-add_library(panman_interface STATIC
-    ${panman_SOURCE_DIR}/src/panman.cpp
-    ${panman_SOURCE_DIR}/src/annotate.cpp
-    ${panman_SOURCE_DIR}/src/chaining.cpp
-    ${panman_SOURCE_DIR}/src/fasta.cpp
-    ${panman_SOURCE_DIR}/src/fitchSankoff.cpp
-    ${panman_SOURCE_DIR}/src/gfa.cpp
-    ${panman_SOURCE_DIR}/src/maf.cpp
-    ${panman_SOURCE_DIR}/src/reroot.cpp
-    ${panman_SOURCE_DIR}/src/rotation.cpp
-    ${panman_SOURCE_DIR}/src/subnet.cpp
-    ${panman_SOURCE_DIR}/src/summary.cpp
-    ${panman_SOURCE_DIR}/src/vcf.cpp
-    ${panman_SOURCE_DIR}/src/aaTrans.cpp
+# Force the correct protobuf library path
+set(Protobuf_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprotobuf.so")
+set(Protobuf_INCLUDE_DIRS "/usr/include/google/protobuf")
+
+include_directories(${Protobuf_INCLUDE_DIRS})
+include_directories("/usr/include")
+
+# Generate Protocol Buffers
+set(PROTO_FILES 
+    "${CMAKE_CURRENT_SOURCE_DIR}/panman.proto"
+    "${CMAKE_CURRENT_SOURCE_DIR}/usher.proto"
 )
 
-# Set include directories for the panman library
-target_include_directories(panman_interface PUBLIC
-    ${panman_SOURCE_DIR}/src
-    ${panman_BINARY_DIR}
-    ${tbb_SOURCE_DIR}/include  # Add TBB include directory
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
+
+# Add proto files to include path
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
+# Boost
+find_package(Boost COMPONENTS program_options iostreams filesystem date_time REQUIRED)
+include_directories(${Boost_INCLUDE_DIRS})
+
+# Define source files
+set(PANMAN_SOURCES
+    src/panman.cpp
+    ${PROTO_SRCS}
 )
 
-# Add TBB preprocessor definitions for panman
-target_compile_definitions(panman_interface PRIVATE
-    -DTBB_SUPPRESS_DEPRECATED_MESSAGES
-    -DTBB_PREVIEW_GLOBAL_CONTROL  # Enable TBB global control features
+# Build both a shared library and an executable
+add_library(panman_lib STATIC ${PANMAN_SOURCES})
+set_target_properties(panman_lib PROPERTIES OUTPUT_NAME "panman")
+target_compile_options(panman_lib PRIVATE -fPIC)
+
+# Define the panmanUtils target with actual sources
+add_executable(panmanUtils
+    src/panmanUtils.cpp
+    ${PROTO_SRCS}
 )
 
-# Add compatibility header to fix missing includes and using declarations
-target_compile_options(panman_interface PRIVATE
-    -include${CMAKE_CURRENT_SOURCE_DIR}/panman_compat.h
+# Generate C++ from panman.capnp
+set(PANMAN_CAPNP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/panman.capnp")
+set(PANMAN_CAPNP_H "${CMAKE_CURRENT_BINARY_DIR}/panman.capnp.h")
+set(PANMAN_CAPNP_CPP "${CMAKE_CURRENT_BINARY_DIR}/panman.capnp.c++")
+
+add_custom_command(
+    OUTPUT "${PANMAN_CAPNP_H}" "${PANMAN_CAPNP_CPP}"
+    COMMAND ${CAPNP_EXECUTABLE} compile -o${CAPNPC_CXX_EXECUTABLE} 
+            --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+            ${PANMAN_CAPNP_SRC}
+            -I${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS "${PANMAN_CAPNP_SRC}"
+    COMMENT "Generating C++ from panman.capnp"
 )
 
-# Add forced include of TBB headers for panman source files
-target_compile_options(panman_interface PRIVATE
-    -include${tbb_SOURCE_DIR}/include/tbb/parallel_for.h
-    -include${tbb_SOURCE_DIR}/include/tbb/parallel_for_each.h
-    -include${tbb_SOURCE_DIR}/include/tbb/parallel_reduce.h
-    -include${tbb_SOURCE_DIR}/include/tbb/parallel_sort.h
-    -include${tbb_SOURCE_DIR}/include/tbb/blocked_range.h
-    -include${tbb_SOURCE_DIR}/include/tbb/concurrent_vector.h
-    -include${tbb_SOURCE_DIR}/include/tbb/concurrent_unordered_set.h
-    -includecmath  # Add missing math functions
-    -includefilesystem  # Add missing filesystem functions
-    -includeutility  # Add std::pair and other utilities
+add_custom_target(generate_panman_capnp_extern ALL
+    DEPENDS "${PANMAN_CAPNP_H}" "${PANMAN_CAPNP_CPP}"
 )
 
-# Link panman_interface with its dependencies
-target_link_libraries(panman_interface PUBLIC
-    jsoncpp_static
-    ${CAPNP_LIBRARIES}
+# Add the generated files to both targets
+target_sources(panman_lib PRIVATE "${PANMAN_CAPNP_CPP}")
+target_sources(panmanUtils PRIVATE "${PANMAN_CAPNP_CPP}")
+
+add_dependencies(panman_lib generate_panman_capnp_extern)
+add_dependencies(panmanUtils generate_panman_capnp_extern)
+
+# Link dependencies for the library
+target_link_libraries(panman_lib
+    capnp
+    kj
+    jsoncpp_lib
     ${Protobuf_LIBRARIES}
     ${Boost_LIBRARIES}
-    ${TBB_IMPORTED_TARGETS}
+    ${TBB_LIBRARY}
+    pthread
 )
 
-# Generate protobuf and capnproto files for panman_interface
-protobuf_generate_cpp(PANMAN_PROTO_SRCS PANMAN_PROTO_HDRS 
-    ${panman_SOURCE_DIR}/usher.proto 
-    ${panman_SOURCE_DIR}/panman.proto
+# Link dependencies for the executable (including the library)
+target_link_libraries(panmanUtils
+    panman_lib
+    capnp
+    kj
+    jsoncpp_lib
+    ${Protobuf_LIBRARIES}
+    ${Boost_LIBRARIES}
+    ${TBB_LIBRARY}
+    pthread
 )
 
-# Note: panman generates its own CapnProto files via its CMakeLists.txt
-# We set the CapnProto_PATH variable above to ensure it uses our fetched version
-
-# Add generated files to the panman library
-target_sources(panman_interface PRIVATE 
-    ${PANMAN_PROTO_SRCS} 
-    ${PANMAN_PROTO_HDRS}
-    # Note: panman.capnp.c++ is handled by panman's own CMakeLists.txt
+# Install targets
+install(TARGETS panmanUtils panman_lib
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
 )
+]=])
 
-message(STATUS "Panman source directory: ${panman_SOURCE_DIR}")
-message(STATUS "Panman binary directory: ${panman_BINARY_DIR}")
+    # Add the subdirectory to the build
+    add_subdirectory(${panman_SOURCE_DIR} ${panman_BINARY_DIR})
+    
+    # Add an explicit dependency to ensure the CapnProto tools are built first
+    add_dependencies(generate_panman_capnp_extern capnp_tools)
+    
+    # Set up the include paths
+    target_include_directories(panmanUtils PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+        ${CAPNP_BUILD_DIR}/include
+        ${Boost_INCLUDE_DIRS}
+    )
+    
+    # Create a dummy library to link against for our main project
+    add_library(panman INTERFACE)
+    target_include_directories(panman INTERFACE
+        ${panman_SOURCE_DIR}/src
+        ${panman_BINARY_DIR}
+        ${CAPNP_BUILD_DIR}/include
+    )
+    
+    # Create panman_capnp_obj target
+    add_library(panman_capnp_obj OBJECT IMPORTED)
+    
+    message(STATUS "Panman source directory: ${panman_SOURCE_DIR}")
+    message(STATUS "Panman binary directory: ${panman_BINARY_DIR}")
+endif()
 
-# Add dependency on panmanUtils in _deps/panman-build/
-add_dependencies(panman_interface panmanUtils)
+# Add dependency on panman_lib in _deps/panman-build/
+add_dependencies(panman panman_lib)
 
 # Define the Minimap2 build target
 add_custom_command(
@@ -735,16 +609,17 @@ FetchContent_MakeAvailable(deflate)
 
 # Link libraries
 target_link_libraries(panmap PRIVATE 
-    panman_interface
+    panman
     bwa
     bcftools
     minimap2 
     samtools 
     htslib 
     docopt
-    # Use consistent CapnProto libraries (either system or fetched)
-    ${CAPNP_LIBRARIES}
-    jsoncpp_static
+    # Link system capnp libs directly
+    /usr/local/lib/libcapnp.a 
+    /usr/local/lib/libkj.a 
+    jsoncpp_lib
     ${Protobuf_LIBRARIES}
     Boost::program_options
     Boost::iostreams
@@ -753,6 +628,8 @@ target_link_libraries(panmap PRIVATE
     ZLIB::ZLIB
     ${TBB_LIBRARY}
     spdlog::spdlog  # Add spdlog
+    # Link panman_lib directly to access the implementation of panmanUtils functions
+    panman_lib
     # Fix libdeflate linking
     libdeflate_shared
     # Link Abseil components
@@ -769,10 +646,10 @@ elseif(OPTION_PROFILE)
     target_compile_options(panmap PUBLIC -g -O2  -fno-omit-frame-pointer)
     target_link_options(panmap PUBLIC  -fno-omit-frame-pointer)
     
-    # Also enable profiling for panmanUtils
-    if(TARGET panmanUtils)
-        target_compile_options(panmanUtils PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
-        target_link_options(panmanUtils PUBLIC -pg -fno-omit-frame-pointer)
+    # Also enable profiling for panman_lib
+    if(TARGET panman_lib)
+        target_compile_options(panman_lib PUBLIC -g -O2 -fno-omit-frame-pointer)
+        target_link_options(panman_lib PUBLIC -fno-omit-frame-pointer)
     endif()
 else()
     target_compile_options(panmap PUBLIC -g -O3)
@@ -794,83 +671,6 @@ configure_file(src/test/data/test.nwk test.nwk COPYONLY)
 configure_file(src/test/data/test.json test.json COPYONLY)
 configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
-
-# Build simulate if requested
-if(OPTION_BUILD_SIMULATE)
-    set(SIMULATE_SOURCES
-        src/test/simulate.cpp
-        src/mgsr.cpp
-        src/conversion.cpp
-        src/panmap_utils.cpp
-        src/genotyping.cpp
-        src/gap_map.cpp
-        src/indexing.cpp
-        src/alignment.cpp
-        src/placement.cpp
-        src/seeding.cpp
-        src/mm_align.c
-        src/pileup.c
-        src/performance.cpp
-        src/state.cpp
-        src/state_helpers.cpp
-    )
-    
-    add_executable(simulate ${SIMULATE_SOURCES})
-    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools)
-    add_dependencies(simulate build-deps index_capnp_generator tbb_build)
-    
-    # Add generated sources to simulate target
-    target_sources(simulate PRIVATE ${CAPNP_SRCS} ${MGSR_CAPNP_SRCS})
-    
-    # Add include directories
-    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-    target_include_directories(simulate PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
-    target_include_directories(simulate PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-    target_include_directories(simulate PUBLIC ${HTSLIB_INSTALL_DIR}/include)
-    
-    # Link libraries for simulate
-    target_link_libraries(simulate PRIVATE 
-    panman_interface
-    bwa
-    bcftools
-    minimap2 
-    samtools 
-    htslib 
-    docopt
-    # Use consistent CapnProto libraries (either system or fetched)
-    ${CAPNP_LIBRARIES}
-    jsoncpp_static
-    ${Protobuf_LIBRARIES}
-    Boost::program_options
-    Boost::iostreams
-    Boost::filesystem
-    Boost::system
-    ZLIB::ZLIB
-    ${TBB_LIBRARY}
-    spdlog::spdlog
-    libdeflate_shared
-    absl::flat_hash_map
-    m
-    pthread
-    )
-    
-    # Set compiler options for simulate
-    if(OPTION_DEBUG)
-        target_compile_options(simulate PUBLIC -g -O0 -ggdb)
-    elseif(OPTION_PROFILE)
-        target_compile_options(simulate PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
-        target_link_options(simulate PUBLIC -pg -fno-omit-frame-pointer)
-    else()
-        target_compile_options(simulate PUBLIC -g -O3)
-        if(OPTION_ENABLE_LTO)
-            target_compile_options(simulate PUBLIC -flto)
-            target_link_options(simulate PUBLIC -flto)
-        endif()
-        target_compile_options(simulate PUBLIC -ftree-vectorize)
-    endif()
-    
-    install(TARGETS simulate RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif()
 
 install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/ DESTINATION ${CMAKE_INSTALL_LIBDIR} FILES_MATCHING PATTERN "*.a" PATTERN "*.so" PATTERN "*.dylib" PATTERN "*.la" PATTERN "*.so.*")
