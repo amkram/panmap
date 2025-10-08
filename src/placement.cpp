@@ -15,7 +15,6 @@
 #include "seeding.hpp"
 #include "caller_logging.hpp"
 #include "index.capnp.h"
-#include "mgsr_index.capnp.h"
 #include <capnp/common.h>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -534,6 +533,15 @@ using ::panmanUtils::Tree;
 // Forward declarations
 class PlacementResult;
 
+// Function declarations
+void dumpPlacementDebugData(
+    state::StateManager& stateManager,
+    PlacementGlobalState& state,
+    const std::vector<std::string>& nodesToDump,
+    size_t maxNodes,
+    const TraversalParams& params,
+    const std::string& outputFilename,
+    const std::vector<std::string>& readSequences);
 
 void dumpKmerDebugData(
     const std::vector<std::string>& readSequences,
@@ -560,9 +568,9 @@ std::shared_ptr<PlacementProgressState> progress_state;
 // Maximum number of nodes for which to dump recomputation range details
 const size_t MAX_NODES_TO_DUMP = 5;
 
-// Helper function to read a packed MGSR index file
-std::unique_ptr<::capnp::MessageReader> loadMgsrIndexFromFile(const std::string& indexPath) {
-    logging::debug("Loading MGSR index from file: {}", indexPath);
+// Helper function to read a packed index file
+std::unique_ptr<::capnp::MessageReader> loadIndexFromFile(const std::string& indexPath) {
+    logging::debug("Loading index from file: {}", indexPath);
     
     // Normalize path to ensure consistent resolution
     boost::filesystem::path normalizedPath = boost::filesystem::absolute(indexPath);
@@ -593,26 +601,25 @@ std::unique_ptr<::capnp::MessageReader> loadMgsrIndexFromFile(const std::string&
         opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max();
         opts.nestingLimit = 1024;
         
-        // Use PackedFdMessageReader directly
+        // Use PackedFdMessageReader directly instead of the wrapper
         auto reader = std::make_unique<::capnp::PackedFdMessageReader>(fd, opts);
         
-        // Validate the MGSR index immediately to ensure it's usable
-        auto mgsrIndex = reader->getRoot<MGSRIndex>();
-        uint32_t k = mgsrIndex.getK();
-        uint32_t s = mgsrIndex.getS();
-        size_t seedCount = mgsrIndex.getSeedInfo().size();
-        bool useRawSeeds = mgsrIndex.getUseRawSeeds();
+        // Validate the index immediately to ensure it's usable
+        auto indexRoot = reader->getRoot<Index>();
+        uint32_t k = indexRoot.getK();
+        uint32_t s = indexRoot.getS();
+        size_t nodeCount = indexRoot.getPerNodeSeedMutations().size();
         
-        if (k <= 0 || seedCount <= 0) {
+        if (k <= 0 || nodeCount <= 0) {
             close(fd); // Close the fd since we're not returning the reader
             throw std::runtime_error(
-                "Invalid MGSR index data: k=" + std::to_string(k) + 
-                ", seeds=" + std::to_string(seedCount) + 
+                "Invalid index data: k=" + std::to_string(k) + 
+                ", nodes=" + std::to_string(nodeCount) + 
                 ". The index appears to be corrupted or incomplete.");
         }
         
-        logging::debug("Successfully loaded MGSR index with k={}, s={}, seeds={}, useRawSeeds={}",
-                    k, s, seedCount, useRawSeeds);
+        logging::debug("Successfully loaded packed index with k={}, s={}, nodes={}",
+                    k, s, nodeCount);
         
         // Return the MessageReader
         return reader;
@@ -623,7 +630,7 @@ std::unique_ptr<::capnp::MessageReader> loadMgsrIndexFromFile(const std::string&
     } catch (const std::exception& e) {
         // Clean up fd on exception
         close(fd);
-        throw std::runtime_error("Error reading MGSR index: " + std::string(e.what()));
+        throw std::runtime_error("Error reading index: " + std::string(e.what()));
     }
 }
 
@@ -648,7 +655,7 @@ void processSeedDeletion(
         result.nodeSeedMap[nodeId].find(pos) != result.nodeSeedMap[nodeId].end()) {
         
         // Get the seed from our map
-        const seed_t& seed = result.nodeSeedMap[nodeId][pos];
+        const seeding::seed_t& seed = result.nodeSeedMap[nodeId][pos];
         const size_t seedHash = seed.hash;
         
         // Remove it from our map
@@ -713,7 +720,7 @@ void processExistingSeedRemoval(
     }
     
     std::string nodeId = node->identifier;
-    std::optional<seed_t> existingSeedOpt;
+    std::optional<seeding::seed_t> existingSeedOpt;
     
     // Check if this seed exists in our map
     if (result.nodeSeedMap.find(nodeId) != result.nodeSeedMap.end() && 
@@ -723,7 +730,7 @@ void processExistingSeedRemoval(
         
         // Process the found seed
         if (existingSeedOpt) {
-            const seed_t& existingSeed = existingSeedOpt.value();
+            const seeding::seed_t& existingSeed = existingSeedOpt.value();
             const size_t seedHash = existingSeed.hash;
             
             // Remove it from our map
@@ -773,6 +780,47 @@ void processExistingSeedRemoval(
     }
 }
 
+// Create seed from dictionary lookup
+seeding::seed_t createSeedFromDictionary(
+    const std::string& kmerStr,
+    int64_t pos,
+    int64_t endPos,
+    int params_k,
+    int params_s) {
+    
+    // Normalize k-mer to uppercase for consistent hashing
+    std::string upperKmer = kmerStr;
+    std::transform(upperKmer.begin(), upperKmer.end(), upperKmer.begin(),
+                  [](unsigned char c){ return std::toupper(c); });
+    
+    auto syncmerResults = seeding::rollingSyncmers(upperKmer, params_k, params_s, false, 0, false);
+    
+    // Create default seed
+    seeding::seed_t seed;
+    
+    // Only if a valid syncmer was found
+    if (!syncmerResults.empty()) {
+        auto [hash, isReversed, isSyncmer, startPos] = syncmerResults[0];
+        
+        // Only use the result if it's actually a syncmer
+        if (isSyncmer) {
+            // Fill in the seed fields
+            seed.hash = hash;
+            seed.reversed = isReversed;
+            seed.endPos = endPos;
+            
+            // Return immediately when we have a valid seed
+            return seed;
+        }
+    }
+    
+    // If we reach here, no valid syncmer was found, return default seed
+    seed.hash = 0;
+    seed.reversed = false;
+    seed.endPos = 0;
+    return seed;
+}
+
 // Add new seed and update scores
 void addSeedAndUpdateScores(
     ::panmanUtils::Node* node,
@@ -781,7 +829,7 @@ void addSeedAndUpdateScores(
     PlacementResult& result,
     absl::flat_hash_set<size_t>& uniqueSeedHashes,
     int64_t pos,
-    const seed_t& newSeed) {
+    const seeding::seed_t& newSeed) {
     
 
     if (!node) {
@@ -832,6 +880,100 @@ void addSeedAndUpdateScores(
 }
 
 // Process new seed addition (quaternary value 2 or part of 3)
+void processNewSeedAddition(
+    panmanUtils::Node* node,
+    state::StateManager& stateManager,
+    PlacementGlobalState& state,
+    PlacementResult& result,
+    absl::flat_hash_set<size_t>& uniqueSeedHashes,
+    int64_t pos,
+    const TraversalParams& params,
+    absl::flat_hash_map<int64_t, uint32_t>& positionToDictId,
+    absl::flat_hash_map<int64_t, uint32_t>& positionToEndOffset,
+    size_t& seedAdditions,
+    size_t& dictionaryLookups) {
+    
+    bool dictLookupOK = false;
+    bool kmerFoundInDict = false;
+    std::string kmerStr = "";
+    seeding::seed_t newSeed = {}; // Initialize
+
+    // ---> TRACE: Log dictionary lookup attempt <---
+    logging::verbose("TRACE_ADD: Attempting lookup for Node={}, Pos={}", node->identifier, pos);
+
+    // CRITICAL FIX: Add detailed diagnostic logging for node_3689
+    bool isTargetNode = (node->identifier == "node_3689");
+    if (isTargetNode) {
+        logging::info("NODE-3689: Dictionary lookup at position {}", pos);
+    }
+
+    // First try to use dictionary lookup if available
+    if (positionToDictId.count(pos) > 0 && positionToEndOffset.count(pos) > 0) {
+        uint32_t dictId = positionToDictId[pos];
+        
+        // ---> TRACE: Log dictionary ID found <---
+        logging::verbose("TRACE_ADD_DICT: Node={}, Pos={}, DictID={}", node->identifier, pos, dictId);
+        // ---> END TRACE <---
+        
+        // ---> DEBUG: Log found Dict ID <---
+        logging::debug("DEBUG_ADD: Node={}, Pos={}, Found DictID={}, EndOffset={}", 
+                     node->identifier, pos, dictId, positionToEndOffset[pos]);
+
+        if (state.kmerDictionary.count(dictId) > 0) {
+            kmerStr = state.kmerDictionary.at(dictId);
+            kmerFoundInDict = true;
+            int64_t endPos = pos + positionToEndOffset[pos];
+            
+            // ---> TRACE: Log k-mer found in dictionary <---
+            logging::verbose("TRACE_ADD_DICT_KMER: Node={}, Pos={}, DictID={}, Kmer='{}'", node->identifier, pos, dictId, kmerStr);
+            // ---> END TRACE <---
+
+            // ---> DEBUG: Log Kmer found in dictionary <---
+            logging::debug("DEBUG_ADD: Node={}, Pos={}, DictID={}, Found Kmer='{}'", 
+                         node->identifier, pos, dictId, kmerStr);
+
+
+            // Create seed using dictionary kmer - function handles normalization now
+            newSeed = createSeedFromDictionary(kmerStr, pos, endPos, params.k, params.s);
+            dictLookupOK = true; // Mark lookup as successful
+            
+            addSeedAndUpdateScores(node, stateManager, state, result, uniqueSeedHashes, pos, newSeed);
+            seedAdditions++;
+            dictionaryLookups++;
+            
+            // ---> TRACE: Log seed added (from dict) and read lookup status <---
+            bool inReads = state.seedFreqInReads.count(newSeed.hash) > 0;
+            logging::verbose("TRACE_ADD_DICT_DONE: Node={}, Pos={}, Hash={}, InReads={}", 
+                           node->identifier, pos, newSeed.hash, inReads);
+            // ---> END TRACE <---
+            
+        } else {
+            // Invalid Dictionary ID - log error
+            logging::warn("Invalid dictionary ID {} for position {} in node {}", 
+                       dictId, pos, node->identifier);
+        }
+    } else {
+        // Missing Position/Offset Info - log issue
+        logging::warn("No dictionary position/offset info for pos {} in node {}", 
+                   pos, node->identifier);
+    }
+    
+    // ---> TRACE: Log final outcome details <---
+    logging::verbose("TRACE_ADD_FINAL: Node={}, Pos={}, Hash={}, Kmer='{}', DictOK={}, KmerInDict={}", 
+                 node->identifier, pos, (dictLookupOK ? newSeed.hash : 0), kmerStr, dictLookupOK, kmerFoundInDict);
+    // ---> END TRACE <---
+
+    // ---> DEBUG: Log final outcome (only reachable on success now) <---
+    if (dictLookupOK) {
+        logging::debug("DEBUG_ADD_SUCCESS: Node={}, Pos={}, Kmer='{}', NewHash={}", 
+                     node->identifier, pos, kmerStr, newSeed.hash);
+    } else {
+        // Log failure without throwing
+        logging::warn("Failed to add seed at position {} in node {}", pos, node->identifier);
+    }
+    // ---> END DEBUG <---
+}
+
 // --- HELPER: Move the getNodeIndex function up here ---
 
 /**
@@ -845,8 +987,44 @@ void addSeedAndUpdateScores(
 bool getNodeIndex(const std::string& nodeId, 
                   const PlacementGlobalState& state, 
                   uint64_t& nodeIndex) {
-    // MGSR format doesn't use nodePathInfo lookup - DFS traversal handles indexing
-    logging::debug("MGSR mode: getNodeIndex called for node '{}' but MGSR uses DFS traversal", nodeId);
+    // First check if nodePathInfo is empty - this is a critical error
+    if (state.nodePathInfo.size() == 0) {
+        logging::err("ERROR: nodePathInfo structure is empty! This means the index was built without node path information.");
+        logging::err("Please rebuild the index with the -f/--reindex flag to fix this issue.");
+        return false;
+    }
+    
+    // Log the search attempt for debugging
+    logging::debug("Searching for node '{}' in index with {} nodePathInfo entries", 
+                 nodeId, state.nodePathInfo.size());
+                 
+    // If this is the first search, log some sample node IDs from the index
+    static bool first_search = true;
+    if (first_search && state.nodePathInfo.size() > 0) {
+        first_search = false;
+        // logging::info("Sample node IDs in index:");
+        for (size_t i = 0; i < std::min<size_t>(5, state.nodePathInfo.size()); i++) {
+            auto indexNodeId = state.nodePathInfo[i].getNodeId();
+            std::string indexNodeIdStr(indexNodeId.begin(), indexNodeId.end());
+            // logging::info("  [{}]: '{}'", i, indexNodeIdStr);
+        }
+    }
+    
+    // Search through nodePathInfo for this node with proper string conversion
+    for (size_t i = 0; i < state.nodePathInfo.size(); i++) {
+        auto indexNodeId = state.nodePathInfo[i].getNodeId();
+        // Convert Text::Reader to std::string for proper comparison
+        std::string indexNodeIdStr(indexNodeId.begin(), indexNodeId.end());
+        
+        if (indexNodeIdStr == nodeId) {
+            logging::debug("Found node '{}' at index {}", nodeId, i);
+            nodeIndex = i;
+            return true;
+        }
+    }
+    
+    logging::debug("Node '{}' not found in index (checked {} entries), using default scoring", 
+                 nodeId, state.nodePathInfo.size());
     return false;
 }
 

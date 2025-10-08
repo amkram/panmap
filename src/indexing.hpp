@@ -177,7 +177,7 @@ inline std::optional<std::string> kmer_utils::extractKmer(
             return std::nullopt;
         }
         
-        // Return the ungapped k-mer (first element of pair)
+        // No need to strip gaps anymore - the StateManager now returns an ungapped k-mer
         return result.first;
     } catch (const std::exception& e) {
         logging::warn("Error in kmer_utils::extractKmer: {}", e.what());
@@ -208,7 +208,7 @@ inline std::optional<std::string_view> kmer_utils::extractKmerView(
             return std::nullopt;
         }
         
-        // Move result into buffer and create view (use ungapped k-mer)
+        // Move result into buffer and create view
         buffer = std::move(result.first);
         std::string_view view(buffer.data(), std::min(k, static_cast<int>(buffer.length())));
         

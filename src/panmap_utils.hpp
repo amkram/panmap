@@ -7,8 +7,6 @@
 #include "logging.hpp"
 #include <string>
 #include <iostream>
-#include <memory>
-#include "capnp/message.h"
 
 namespace panmapUtils {
 
@@ -46,7 +44,7 @@ std::string getStringFromReference(
 class LiteNode {
   public:
     std::string identifier;
-    LiteNode* parent;
+    LiteNode* parent = nullptr;
     std::vector<LiteNode*> children;
 };
 
@@ -283,7 +281,6 @@ struct BlockSequences {
         bool endFlag = false;
         for(size_t k = 0; k < 8; k++) {
           const int nucCode = (((curBlock.consensusSeq[j]) >> (4*(7 - k))) & 15);
-
           if(nucCode == 0) {
             endFlag = true;
             break;
@@ -461,6 +458,7 @@ struct GlobalCoords {
     }
 
     lastScalarCoord = curScalarCoord - 1;
+  
     const auto& lastBlock = sequence.back();
     if (lastBlock.back().second.empty()) {
       // last block's last nuc gap is empty, take the second to last main nuc
@@ -842,9 +840,5 @@ struct GlobalCoords {
     return nextCoord;
   }
 };
-
-// CapnProto utility functions
-void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path);
-std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path);
 
 }
