@@ -15,13 +15,18 @@ struct SeedInfo {
   isReverse @3 :Bool;
 }
 
+struct SeedSubstitutionIndex {
+  oldSeedIndex @0 :UInt32;
+  newSeedIndex @1 :UInt32;
+}
 
 struct NodeChanges {
   nodeIndex @0 :UInt32;
-  seedInsubIndices @1 :List(UInt32);
+  seedInsertions @1 :List(UInt32);
   seedDeletions @2 :List(UInt32);
-  coordDeltas @3 :List(CoordDelta);
-  invertedBlocks @4 :List(UInt32);
+  seedSubstitutions @3 :List(SeedSubstitutionIndex);
+  coordDeltas @4 :List(CoordDelta);
+  invertedBlocks @5 :List(UInt32);
 }
 
 struct LiteNode {
@@ -45,10 +50,9 @@ struct MGSRIndex {
   t @2 :UInt16;
   l @3 :UInt16;
   open @4 :Bool;
-  useRawSeeds @5 :Bool;
 
-  liteTree @6 :LiteTree;
-  seedInfo @7 :List(SeedInfo);
-  perNodeChanges @8 :List(NodeChanges);
-
+  liteTree @5 :LiteTree;
+  seedInfo @6 :List(SeedInfo);
+  perNodeChanges @7 :List(NodeChanges);
+  
 }

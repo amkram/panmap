@@ -1,11 +1,10 @@
 #pragma once
 
 #include "capnp/list.h"
-#include "mgsr_index.capnp.h"
+#include "index.capnp.h"
 #include "panman.hpp"
 #include "panmap_utils.hpp"
 #include "progress_state.hpp"
-#include "seeding.hpp"
 #include "state.hpp"
 #include <atomic>
 #include <cstddef>
@@ -17,9 +16,6 @@
 #include <utility>
 #include <vector>
 #include <absl/container/flat_hash_map.h>
-
-// Type alias for seed structures
-using seed_t = seeding::seed_t;
 
 // Forward declaration for indexing 
 namespace indexing {
@@ -80,15 +76,15 @@ extern std::shared_ptr<PlacementProgressState> progress_state;
 
 // Parameters for traversal - consolidated
 struct TraversalParams {
-  int k = 0;              // k-mer size
-  int s = 0;              // syncmer parameter s
+  int k = 32;              // k-mer size
+  int s = 8;              // syncmer parameter s
   int t = 0;               // t-syncmer parameter
   bool open = false;        // Whether to use open syncmers
   double scoreScale = 1.0; // Scaling factor for scores
   std::string debug_node_id;
 };
 
-// Track global state during placement (MGSR-only simplified)
+// Track global state during placement
 struct PlacementGlobalState {
     // Seed frequencies in reads
     absl::flat_hash_map<size_t, int64_t> seedFreqInReads;      // Hash -> read frequency count
@@ -237,8 +233,29 @@ struct PlacementResult {
 };
 
 // Core functions for placement
-// Note: Legacy processNodeMutations and placementTraversal removed 
-// MGSR placement now uses inline traversal in place() function
+void processNodeMutations(panmanUtils::Node *node,
+                          state::StateManager &stateManager,
+                          PlacementGlobalState &state,
+                          PlacementResult &result,
+                          const TraversalParams &params);
+
+void placementTraversal(state::StateManager &stateManager,
+                        PlacementResult &result,
+                        panmanUtils::Tree *T, 
+                        PlacementGlobalState &state,
+                        const TraversalParams &params,
+                        const std::string &debug_node_id_param);
+
+/**
+ * @brief Load seed information from index into the StateManager for placement
+ * 
+ * This function decodes the quaternary-encoded seed changes from the index
+ * and applies them to the StateManager's hierarchical seed stores.
+ * 
+ * @param stateManager StateManager to populate with seed data
+ * @param index The index to read seed data from
+ */
+void loadSeedsFromIndex(state::StateManager& stateManager, const ::Index::Reader& index);
 
 // NEW: LiteTree-based placement (avoids loading full panman until after placement)
 void placeLite(PlacementResult &result, 
@@ -271,7 +288,10 @@ void processSeedOperation(
     PlacementGlobalState& state,
     PlacementResult& result,
     absl::flat_hash_set<size_t>& uniqueSeedHashes,
-    uint32_t seedIndex);
+    int64_t pos,
+    bool isRemoval,
+    bool isAddition,
+    const seeding::seed_t* newSeed = nullptr);
 
 seeding::seed_t createAndProcessSeed(
     const std::string& nodeId,  // Changed from Node* to string ID
