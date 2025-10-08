@@ -742,7 +742,6 @@ int main(int argc, char *argv[]) {
 
     po::options_description input_opts("Input/output options");
     input_opts.add_options()
-        ("batch,b", po::value<std::string>(), "Path to batch TSV file")
         ("prefix,p", po::value<std::string>()->default_value("panmap"), "Prefix for output files")
         ("outputs,o", po::value<std::string>()->default_value("bam,vcf,assembly"), 
          "Outputs (placement/p, assembly/a, reference/r, spectrum/c, sam/s, bam/b, mpileup/m, vcf/v, all/A)")
@@ -779,6 +778,8 @@ int main(int argc, char *argv[]) {
         ("debug-node-id", po::value<std::string>()->default_value(""), "Log detailed placement debug info for this specific node ID")
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
+        ("use-lite-placement", "Use LiteTree-based placement (avoids loading full panman until after placement)")
+        ("use-full-placement", "Use traditional full Tree-based placement (default for backward compatibility)")
     ;
 
     // Hidden options for positional arguments
@@ -1310,16 +1311,64 @@ int main(int argc, char *argv[]) {
     ::capnp::PackedFdMessageReader mgsrMsg(fd_mgsr, opts);
     ::MGSRIndex::Reader mgsrIndexRoot = mgsrMsg.getRoot<MGSRIndex>();
 
-    // Run placement using new MGSR index format
+    // Run placement using MGSR index format
+    // Control placement method via command line options
+    bool use_lite_placement = vm.count("use-lite-placement") > 0;
+    bool use_full_placement = vm.count("use-full-placement") > 0;
+    
+    // Default to LiteTree placement if neither option is specified (more efficient)
+    if (!use_lite_placement && !use_full_placement) {
+        use_lite_placement = true;
+    }
+    
+    // If both options are specified, prefer full placement for backward compatibility
+    if (use_lite_placement && use_full_placement) {
+        logging::warn("Both --use-lite-placement and --use-full-placement specified. Using full placement.");
+        use_lite_placement = false;
+    }
+    
     placement::PlacementResult result;
     std::vector<std::vector<seeding::seed_t>> readSeeds;
     std::vector<std::string> readSequences;
     std::vector<std::string> readNames;
     std::vector<std::string> readQuals;
     std::string placementFileName = guide + ".placement.tsv";
-    placement::place(result, &T, mgsrIndexRoot, reads1, reads2,
-                     readSeeds, readSequences, readNames, readQuals,
-                     placementFileName, effective_index_output_path, "");
+    
+    if (use_lite_placement) {
+        msg("=== Using LiteTree-based placement (efficient, no full tree loading) ===");
+        
+        // Initialize LiteTree from MGSR index
+        panmapUtils::LiteTree liteTree;
+        auto liteTreeReader = mgsrIndexRoot.getLiteTree();
+        liteTree.initialize(liteTreeReader);
+        
+        msg("Initialized LiteTree with {} nodes and {} block ranges", 
+            liteTree.allLiteNodes.size(), liteTree.blockScalarRanges.size());
+        
+        // Use LiteTree-based placement
+        placement::placeLite(result, &liteTree, mgsrIndexRoot, reads1, reads2,
+                            readSeeds, readSequences, readNames, readQuals,
+                            placementFileName, effective_index_output_path, "");
+        
+        msg("LiteTree-based placement completed successfully");
+        
+        // BENEFIT: The full panman Tree T is already loaded, so it's available here
+        // for any post-placement operations that need the full tree structure
+        // FUTURE OPTIMIZATION: Could defer T loading until this point for maximum efficiency
+        
+    } else {
+        msg("=== Using LiteTree-based placement (fallback) ===");
+        
+        // Initialize LiteTree from MGSR index since original place function was removed
+        panmapUtils::LiteTree liteTree;
+        auto liteTreeReader = mgsrIndexRoot.getLiteTree();
+        liteTree.initialize(liteTreeReader);
+        
+        // Use LiteTree-based placement as fallback
+        placement::placeLite(result, &liteTree, mgsrIndexRoot, reads1, reads2,
+                           readSeeds, readSequences, readNames, readQuals,
+                           placementFileName, effective_index_output_path, "");
+    }
     
     return 0;
 
@@ -1525,27 +1574,6 @@ int main(int argc, char *argv[]) {
             debug_specific_node_id = "";
           }
 
-          // Handle batch file if provided
-          if (vm.count("batch")) {
-            std::string batchFilePath = vm["batch"].as<std::string>();
-            try {
-              msg("=== Starting Batch Placement ===");
-              // Process batch file - keep inMessage alive during the whole process
-              placement::placeBatch(&T, mgsrIndexInput, batchFilePath, prefix,
-                                    refFileName, samFileName, bamFileName,
-                                    mpileupFileName, vcfFileName, aligner, refNode,
-                                    vm.count("save-jaccard") > 0, vm.count("time") > 0,
-                                    vm["candidate-threshold"].as<float>(), 
-                                    vm["max-candidates"].as<int>(),      
-                                    effective_index_input_path, 
-                                    debug_specific_node_id);
-              msg("Batch placement completed.");
-            } catch (const std::exception &e) {
-              err("ERROR during batch processing: {}", e.what());
-            }
-            return 0;
-          }
-
           // Initialize placement variables
           placement::PlacementResult result;
           
@@ -1556,13 +1584,19 @@ int main(int argc, char *argv[]) {
           std::vector<std::string> readQuals;
 
           std::string placementFileName = prefix + ".placement.tsv";
-          // Perform placement - keep inMessage alive during the whole process
-          placement::place(result, &T, mgsrIndexInput, reads1, reads2,
-                         readSeeds, readSequences, readNames, readQuals,
-                         placementFileName, effective_index_input_path, debug_specific_node_id);
+          
+          // Initialize LiteTree from MGSR index since original place function was removed
+          panmapUtils::LiteTree liteTree;
+          auto liteTreeReader = mgsrIndexInput.getLiteTree();
+          liteTree.initialize(liteTreeReader);
+          
+          // Perform placement using LiteTree-based approach
+          placement::placeLite(result, &liteTree, mgsrIndexInput, reads1, reads2,
+                             readSeeds, readSequences, readNames, readQuals,
+                             placementFileName, effective_index_input_path, debug_specific_node_id);
 
           // Get placement results for raw seed matches
-          panmanUtils::Node *bestRawMatchNode = result.bestRawSeedMatchNode;
+          panmanUtils::Node *bestRawMatchNode = result.bestRawSeedMatchNodeId.empty() ? nullptr : T.allNodes[result.bestRawSeedMatchNodeId];
           int64_t bestRawMatchScore = result.bestRawSeedMatchScore;
 
           msg("Best raw seed match: node {} with score {} (sum of read frequencies for matched seeds)",
@@ -1570,13 +1604,13 @@ int main(int argc, char *argv[]) {
 
           // Log all other best scores to console
           msg("Best Jaccard (Presence/Absence): node {} with score {:.4f}",
-              result.bestJaccardPresenceNode ? result.bestJaccardPresenceNode->identifier : "none", result.bestJaccardPresenceScore);
+              result.bestJaccardPresenceNodeId.empty() ? "none" : result.bestJaccardPresenceNodeId, result.bestJaccardPresenceScore);
           msg("Best Weighted Jaccard: node {} with score {:.4f}",
-              result.bestJaccardNode ? result.bestJaccardNode->identifier : "none", result.bestJaccardScore); // bestJaccardScore is Weighted Jaccard
+              result.bestJaccardNodeId.empty() ? "none" : result.bestJaccardNodeId, result.bestJaccardScore); // bestJaccardScore is Weighted Jaccard
           msg("Best Cosine Similarity: node {} with score {:.4f}",
-              result.bestCosineNode ? result.bestCosineNode->identifier : "none", result.bestCosineScore);
+              result.bestCosineNodeId.empty() ? "none" : result.bestCosineNodeId, result.bestCosineScore);
           msg("Overall Best Weighted Score (Jaccard*scale + Cosine*(1-scale)): node {} with score {:.4f}",
-              result.bestWeightedNode ? result.bestWeightedNode->identifier : "none", result.bestWeightedScore);
+              result.bestWeightedNodeId.empty() ? "none" : result.bestWeightedNodeId, result.bestWeightedScore);
         }
         
         // Validate the loaded index
