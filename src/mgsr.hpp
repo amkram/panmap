@@ -428,6 +428,11 @@ public:
   void mergeNodesPairUp(MgsrLiteNode* node1, MgsrLiteNode* node2);
   void mergeNodesPairDown(MgsrLiteNode* node1, MgsrLiteNode* node2);
 
+  std::pair<std::unordered_map<MgsrLiteNode*, MgsrLiteNode*>, std::unordered_map<MgsrLiteNode*, int>> findClosestTargets(
+    const MgsrLiteTree& tree,
+    const std::vector<MgsrLiteNode*>& targets
+  );
+
 private:
   bool cleaned = false;
 };

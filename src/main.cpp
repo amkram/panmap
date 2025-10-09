@@ -1187,8 +1187,7 @@ int main(int argc, char *argv[]) {
       });
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
-
+      std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
       mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
@@ -1288,7 +1287,7 @@ int main(int argc, char *argv[]) {
     if (vm.count("index-mgsr")) {
       std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
       int mgsr_t = 0;
-      int mgsr_l = 3;
+      int mgsr_l = 2;
       bool open = false;
       mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
       mgsrIndexBuilder.buildIndex();

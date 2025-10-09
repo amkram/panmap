@@ -67,7 +67,7 @@ private:
     if (!lock.owns_lock()) return;
     
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGlobalUpdate).count() < 500) {
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGlobalUpdate).count() < 1000) {
       return;
     }
     

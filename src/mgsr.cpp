@@ -686,6 +686,47 @@ void mgsr::MgsrLiteTree::mergeNodesPairDown(MgsrLiteNode* node1, MgsrLiteNode* n
   }
 }
 
+std::pair<std::unordered_map<mgsr::MgsrLiteNode*, mgsr::MgsrLiteNode*>, std::unordered_map<mgsr::MgsrLiteNode*, int>> mgsr::MgsrLiteTree::findClosestTargets(
+  const mgsr::MgsrLiteTree& tree,
+  const std::vector<MgsrLiteNode*>& targets
+) {
+  std::unordered_map<mgsr::MgsrLiteNode*, mgsr::MgsrLiteNode*> closestTarget;
+  std::unordered_map<mgsr::MgsrLiteNode*, int> distance;
+  
+  std::queue<mgsr::MgsrLiteNode*> q;
+  
+  for (mgsr::MgsrLiteNode* target : targets) {
+    closestTarget[target] = target;
+    distance[target] = 0;
+    q.push(target);
+  }
+  
+  while (!q.empty()) {
+    mgsr::MgsrLiteNode* u = q.front();
+    q.pop();
+    
+    if (u->parent && distance.find(u->parent) == distance.end()) {
+      int edgeWeight = u->seedDeltas.size();
+      distance[u->parent] = distance[u] + edgeWeight;
+      closestTarget[u->parent] = closestTarget[u];
+      q.push(u->parent);
+    }
+    
+    for (mgsr::MgsrLiteNode* child : u->children) {
+      if (distance.find(child) == distance.end()) {
+        int edgeWeight = child->seedDeltas.size();
+        distance[child] = distance[u] + edgeWeight;
+        closestTarget[child] = closestTarget[u];
+        q.push(child);
+      }
+    }
+  }
+  
+  return {closestTarget, distance};
+}
+
+
+
 int64_t mgsr::mgsrPlacer::getReadBruteForceScore(
   size_t readIndex, absl::flat_hash_map<size_t, mgsr::hashCoordInfoCache>& hashCoordInfoCacheTable
 ) {
@@ -1345,13 +1386,13 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     }
   }
 
-  std::cout << "Collapsed " << readSequences.size() << " raw reads to " << reads.size() << " sketched kminmer sets" << std::endl;
+  std::cerr << "Collapsed " << readSequences.size() << " raw reads to " << reads.size() << " sketched kminmer sets" << std::endl;
   if (skipSingleton) {
-    std::cout << "SkipSingleton turned on: " << numSingletonReads << " reads with singletons will be skipped during placement and EM... "
+    std::cerr << "SkipSingleton turned on: " << numSingletonReads << " reads with singletons will be skipped during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
   }
   for (size_t i = 0; i < numThreads; ++i) {
-    std::cout << "  Thread " << i << " will process " << threadRanges[i].second - threadRanges[i].first << " reads: " << threadRanges[i].first << " -> " << threadRanges[i].second << std::endl;
+    std::cerr << "  Thread " << i << " will process " << threadRanges[i].second - threadRanges[i].first << " reads: " << threadRanges[i].first << " -> " << threadRanges[i].second << std::endl;
   }
 
 }
@@ -3372,9 +3413,6 @@ void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score) {
   readScores[readIndex] = score;
   if (score > reads[readIndex].maxScore) {
     reads[readIndex].maxScore = score;
-    reads[readIndex].epp = 1;
-  } else if (score == reads[readIndex].maxScore) {
-    ++reads[readIndex].epp;
   }
 }
 
@@ -5427,8 +5465,16 @@ mgsr::squareEM::squareEM(
   size_t numReads = reads.size();
 
 
-  this->identicalGroups.swap(threadsManager.identicalGroups);
-  this->identicalNodeToGroup.swap(threadsManager.identicalNodeToGroup);
+  identicalGroups.swap(threadsManager.identicalGroups);
+  identicalNodeToGroup.swap(threadsManager.identicalNodeToGroup);
+  for (const auto& [nodeId, group] : identicalGroups) {
+    std::cout << nodeId << ": ";
+    for (const auto& member : group) {
+      std::cout << member << " ";
+    }
+    std::cout << std::endl;
+  }
+
 
   std::vector<std::pair<std::string, double>> kminmerOverlapCoefficientsVector;
   for (const auto& [nodeId, kminmerOverlapCoefficient] : kminmerOverlapCoefficients) {
@@ -5451,12 +5497,13 @@ mgsr::squareEM::squareEM(
     if (kminmerOverlapCoefficient != kminmerOverlapCoefficientsVector[i - 1].second) {
       ++curRank;
     }
-    if (curRank >= overlapCoefficientCutoff) break;
+    // if (curRank >= overlapCoefficientCutoff) break;
+    if (curRank >= 9999999) break;
     significantOverlapNodeIds.push_back(nodeId);
   }
 
 
-  // std::vector<double> testScores(significantOverlapNodeIds.size(), 0);
+  std::vector<double> testScores(significantOverlapNodeIds.size(), 0);
   // get score matrix to find ambiguous nodes with identical scores
   std::vector<std::vector<uint32_t>> scoreMatrix(significantOverlapNodeIds.size(), std::vector<uint32_t>(numReads, 0));
   const size_t chunkSize = (significantOverlapNodeIds.size() + numThreads - 1) / numThreads;
@@ -5469,31 +5516,137 @@ mgsr::squareEM::squareEM(
       threadRanges[i].second = end;
     }
   }
+
   tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
     const auto& range = threadRanges[threadIdx];
     for (size_t i = range.first; i < range.second; ++i) {
       auto significantNodeId = significantOverlapNodeIds[i];
       threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i]);
-      // double curTestScore = 0;
-      // for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
-      //   if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
-      //     double curReadScore = static_cast<double>(readSeedmersDuplicatesIndex[j].size()) / ((reads[j].seedmersList.size() - reads[j].maxScore + 1) * pow(static_cast<double>(reads[j].epp), 2));
-      //     curTestScore += curReadScore;
-      //   }
-      // }
-      // testScores[i] = curTestScore;
+      double curTestScore = 0;
+      for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
+        if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
+          reads[j].epp++;
+        }
+      }
     }
   });
 
-  // std::ofstream ofs(prefix + ".testScores.txt");
-  // for (size_t i = 0; i < testScores.size(); ++i) {
-  //   ofs << significantOverlapNodeIds[i] << " " << std::fixed << std::setprecision(10) 
-  //       << kminmerOverlapCoefficientsVector[i].second << " "
-  //       << threadsManager.kminmerCoverage[significantOverlapNodeIds[i]] << " "
-  //       << testScores[i] << std::endl;
-  // }
-  // ofs.close();
-  // exit(0);
+  std::vector<std::vector<uint32_t>> readToMaxScoreNodeIndices(numReads);
+  tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+    const auto& range = threadRanges[threadIdx];
+    for (size_t i = range.first; i < range.second; ++i) {
+      double curTestScore = 0;
+      bool toDebug = false;
+      if (significantOverlapNodeIds[i] == "England/MILK-344FEB3/2022|OV817379.1|2022-01-26") {
+        toDebug = true;
+      }
+      for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
+        if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
+          readToMaxScoreNodeIndices[j].push_back(i);
+          double curReadScore = static_cast<double>(readSeedmersDuplicatesIndex[j].size()) / ((reads[j].seedmersList.size() - reads[j].maxScore + 1) * pow(static_cast<double>(reads[j].epp), 2));
+          curTestScore += curReadScore;
+          if (toDebug) {
+            std::cout << "Read " << j << " parsimonious. Score:" << scoreMatrix[i][j] << ". Max:" << reads[j].maxScore << " epp:" << reads[j].epp << " duplicates:" << readSeedmersDuplicatesIndex[j].size() << std::endl;
+          }
+        } else if (reads[j].maxScore > 0 && toDebug) {
+          std::cout << "Read " << j << " NOT parsimonious. Score:" << scoreMatrix[i][j] << ". Max:" << reads[j].maxScore << " epp:" << reads[j].epp << " duplicates:" << readSeedmersDuplicatesIndex[j].size() << std::endl;
+        }
+      }
+      testScores[i] = curTestScore;
+    }
+  });
+
+
+
+  // std::vector<std::vector<uint32_t>> readToMaxScoreNodeIndices(numReads);
+  // tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+  //   const auto& range = threadRanges[threadIdx];
+  //   for (size_t i = range.first; i < range.second; ++i) {
+  //     auto significantNodeId = significantOverlapNodeIds[i];
+  //     threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i]);
+  //     double curTestScore = 0;
+  //     for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
+  //       if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
+  //         readToMaxScoreNodeIndices[j].push_back(i);
+  //         double curReadScore = static_cast<double>(readSeedmersDuplicatesIndex[j].size()) / ((reads[j].seedmersList.size() - reads[j].maxScore + 1) * pow(static_cast<double>(reads[j].epp), 2));
+  //         curTestScore += curReadScore;
+  //       }
+  //     }
+  //     testScores[i] = curTestScore;
+  //   }
+  // });
+
+  std::ofstream ofs(prefix + ".testScores.txt");
+  for (size_t i = 0; i < testScores.size(); ++i) {
+    ofs << significantOverlapNodeIds[i];
+    if (identicalGroups.find(significantOverlapNodeIds[i]) != identicalGroups.end()) {
+      for (const auto& member : identicalGroups[significantOverlapNodeIds[i]]) {
+        ofs << "," << member;
+      }
+    }
+    ofs << " " << std::fixed << std::setprecision(10) 
+        << kminmerOverlapCoefficientsVector[i].second << " "
+        << testScores[i] << std::endl;
+  }
+  ofs.close();
+
+  uint32_t readsRemaining;
+  for (size_t i = 0; i < numReads; ++i) {
+    if (!readToMaxScoreNodeIndices[i].empty()) {
+      readsRemaining++;
+    }
+  }
+  std::unordered_map<uint32_t, double> selectedNodeIndices;
+  while (readsRemaining > 0) {
+    double curMaxScore = -1;
+    uint32_t curMaxScoreIndex = 0;
+    for (size_t i = 0; i < testScores.size(); ++i) {
+      if (testScores[i] > curMaxScore && selectedNodeIndices.find(i) == selectedNodeIndices.end()) {
+        curMaxScore = testScores[i];
+        curMaxScoreIndex = i;
+      }
+    }
+    selectedNodeIndices[curMaxScoreIndex] = curMaxScore;
+    std::cout << "Selected node " << significantOverlapNodeIds[curMaxScoreIndex] << " with score " << curMaxScore << std::endl;
+
+    std::vector<uint32_t> selectedNodeScores(numReads, 0);
+    threadsManager.getScoresAtNode(significantOverlapNodeIds[curMaxScoreIndex], selectedNodeScores);
+    for (size_t i = 0; i < numReads; ++i) {
+      if (readToMaxScoreNodeIndices[i].empty()) continue;
+      if (selectedNodeScores[i] == reads[i].maxScore && reads[i].maxScore > 0) {
+        double curReadScore = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / ((reads[i].seedmersList.size() - reads[i].maxScore + 1) * pow(static_cast<double>(reads[i].epp), 2));
+        for (auto otherNodeIndex : readToMaxScoreNodeIndices[i]) {
+          if (selectedNodeIndices.find(otherNodeIndex) != selectedNodeIndices.end()) continue;
+          testScores[otherNodeIndex] -= curReadScore;
+        }
+        std::vector<uint32_t>().swap(readToMaxScoreNodeIndices[i]);
+        --readsRemaining;
+      }
+    }
+  }
+  
+  std::vector<std::pair<std::string, double>> selectedNodeIndicesVector;
+  for (const auto& [index, score] : selectedNodeIndices) {
+    selectedNodeIndicesVector.emplace_back(significantOverlapNodeIds[index], score);
+  }
+  std::sort(selectedNodeIndicesVector.begin(), selectedNodeIndicesVector.end(), [](const auto& a, const auto& b) {
+    return a.second > b.second;
+  });
+  std::ofstream ofsSelectedNodesTestScores(prefix + ".selectedNodesTestScores.txt");
+  for (const auto& [nodeId, score] : selectedNodeIndicesVector) {
+    ofsSelectedNodesTestScores << nodeId;
+    if (identicalGroups.find(nodeId) != identicalGroups.end()) {
+      for (const auto& member : identicalGroups[nodeId]) {
+        ofsSelectedNodesTestScores << "," << member;
+      }
+    }
+    ofsSelectedNodesTestScores << " " << score << std::endl;
+  }
+  ofsSelectedNodesTestScores.close();
+
+
+
+  exit(0);
   
 
 
