@@ -216,8 +216,6 @@ enum ReadType : uint8_t {
 
 
 
-
-
 class Read {
   public:
     std::vector<readSeedmer> seedmersList;
@@ -228,6 +226,8 @@ class Read {
     ReadType readType = ReadType::PASS;
     int32_t maxScore = 0;
     int32_t epp = 0;
+    int32_t numForwardMatching = 0;
+    int32_t numReverseMatching = 0;
     std::vector<Minichain> maxMinichains;
 };
 
@@ -378,6 +378,11 @@ struct kminmerCoverageBacktrack {
   bool toDelete;
 };
 
+struct ModifiedReadInfo {
+  int32_t forwardOriginalScore;
+  int32_t reverseOriginalScore;
+};
+
 
 class MgsrLiteNode {
 public:
@@ -398,6 +403,7 @@ class MgsrLiteTree {
 public:
   MgsrLiteNode* root;
   std::unordered_map<std::string, MgsrLiteNode*> allLiteNodes;
+  std::unordered_set<MgsrLiteNode*> detachedNodes;
   std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
   
   // parameters
@@ -425,8 +431,7 @@ public:
   uint32_t getBlockStartScalar(const uint32_t blockId) const;
   uint32_t getBlockEndScalar(const uint32_t blockId) const;
 
-  void mergeNodesPairUp(MgsrLiteNode* node1, MgsrLiteNode* node2);
-  void mergeNodesPairDown(MgsrLiteNode* node1, MgsrLiteNode* node2);
+  void detachNode(MgsrLiteNode* node);
 
   std::pair<std::unordered_map<MgsrLiteNode*, MgsrLiteNode*>, std::unordered_map<MgsrLiteNode*, int>> findClosestTargets(
     const MgsrLiteTree& tree,
@@ -522,11 +527,15 @@ class mgsrPlacer {
     double errorRate = 0.005;
     int64_t maximumGap = 50;
     
-    // dynamic reference kminmer structures
+    // dynamic reference kminmer structures for pseudo-chaining
     std::map<uint64_t, uint64_t> gapMap;
     std::map<uint64_t, uint64_t> positionMap;
     std::unordered_map<size_t, std::vector<std::map<uint64_t, uint64_t>::iterator>> hashToPositionMap;
     std::unordered_map<size_t, RefSeedmerExistStatus> delayedRefSeedmerStatus;
+
+    // dynamic reference kminmer structures for kminmer counting
+    std::vector<std::optional<size_t>> kminmerOnRef;
+    std::unordered_map<size_t, std::pair<uint32_t, int32_t>> kminmerOnRefCount;
 
     // preallocated structures to prevent memory allocation and deletion in tight loops
     std::vector<std::pair<Minichain, bool>> minichainsToUpdate;
@@ -611,6 +620,9 @@ class mgsrPlacer {
 
     void placeReadsHelper(MgsrLiteNode* node);
     void placeReads();
+
+    void scoreReadsHelper(MgsrLiteNode* node);
+    void scoreReads();
 
     void computeOverlapCoefficientsHelper(MgsrLiteNode* node, const absl::flat_hash_set<size_t>& allSeedmerHashesSet, std::vector<std::pair<std::string, double>>& overlapCoefficients, std::vector<std::optional<size_t>>& kminmerOnRef, std::unordered_map<size_t, size_t>& kminmerOnRefCount);
     std::vector<std::pair<std::string, double>> computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);

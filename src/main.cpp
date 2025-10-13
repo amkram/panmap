@@ -132,6 +132,7 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
     dictSize = indexRoot.getKmerDictionary().size();
   }
 
+
   // Keep the original k and s values for later reference
   const uint32_t original_k = k;
   const uint32_t original_s = s;
@@ -1158,6 +1159,8 @@ int main(int argc, char *argv[]) {
       auto start_time_place = std::chrono::high_resolution_clock::now();
       std::atomic<size_t> numGroupsUpdate = 0;
       std::atomic<size_t> numReadsUpdate = 0;
+      std::vector<size_t> numUniqueKminmersPerThread(numThreads, 0);
+      std::vector<size_t> numNodesPostCollapsePerThread(numThreads, 0);
       tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
         for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
           auto [start, end] = threadsManager.threadRanges[i];
@@ -1169,8 +1172,24 @@ int main(int argc, char *argv[]) {
           curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
 
           curThreadPlacer.setProgressTracker(&progressTracker, i);
+          // curThreadPlacer.placeReads();
 
-          curThreadPlacer.placeReads();
+          // const auto& seedmerToReads = curThreadPlacer.seedmerToReads;
+          // size_t numCollapse = 0;
+          // for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
+          //   bool collapse = true;
+          //   for (const auto& [seedIndex, _] : node->seedDeltas) {
+          //     size_t hash = liteTree.seedInfos[seedIndex].hash;
+          //     if (seedmerToReads.find(hash) != seedmerToReads.end()) {
+          //       collapse = false;
+          //       break;
+          //     }
+          //   }
+          //   if (collapse) ++numCollapse;
+          // }
+          // numUniqueKminmersPerThread[i] = seedmerToReads.size();
+          // numNodesPostCollapsePerThread[i] = liteTree.allLiteNodes.size() - numCollapse;
+          curThreadPlacer.scoreReads();
 
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
           threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
@@ -1179,12 +1198,19 @@ int main(int argc, char *argv[]) {
           if (i == 0) {
             threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
             threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
-            threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
+            // threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
           }
           numGroupsUpdate += curThreadPlacer.numGroupsUpdate;
           numReadsUpdate += curThreadPlacer.numReadsUpdate;
         }
       });
+      mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
+      auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+      std::unordered_map<std::string, double>().swap(threadsManager.kminmerOverlapCoefficients);
+      for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
+        threadsManager.kminmerOverlapCoefficients[nodeId] = overlapCoefficient;
+      }
+      
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
