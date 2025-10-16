@@ -962,7 +962,7 @@ int main(int argc, char *argv[]) {
       
       mgsr::MgsrLiteTree liteTree;
       liteTree.initialize(indexReader, numThreads, lowMemory);
-
+      
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
 
@@ -971,14 +971,6 @@ int main(int argc, char *argv[]) {
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
       threadsManager.initializeQueryData(readSequences);
-      
-      std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
-      for (size_t i = 0; i < numThreads; ++i) {
-        totalNodesPerThread[i] = liteTree.allLiteNodes.size();
-      }
-      ProgressTracker progressTracker(numThreads, totalNodesPerThread);
-
-      std::cout << "Using " << numThreads << " threads" << std::endl;
 
       if (vm.count("overlap-coefficients")) {
         auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
@@ -1003,158 +995,15 @@ int main(int argc, char *argv[]) {
         std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
         exit(0);
       }
-      // {
-      //   std::ofstream refMutationFrequencyFile(prefix + ".refMutationFrequency.txt");
-      //   std::unordered_map<size_t, size_t> refMutationFrequency;
-      //   for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
-      //     for (const auto [seedIndex, _] : node->seedDeltas) {
-      //       refMutationFrequency[liteTree.seedInfos[seedIndex].startPos]++;
-      //     }
-      //   }
-      //   std::vector<std::pair<size_t, size_t>> refMutationFrequencySorted(refMutationFrequency.begin(), refMutationFrequency.end());
-      //   std::sort(refMutationFrequencySorted.begin(), refMutationFrequencySorted.end(), [](const auto& a, const auto& b) {
-      //     return a.first < b.first;
-      //   });
-      //   for (const auto& [pos, freq] : refMutationFrequencySorted) {
-      //     refMutationFrequencyFile << pos << " " << freq << std::endl;
-      //   }
-      //   refMutationFrequencyFile.close();
 
-      //   std::vector<uint32_t> binSizes = {1000, 5000, 10000, 50000, 100000, 500000};
-      //   uint32_t hardOffset = 500;
-      //   double ratioOffset = 0.1;
-      //   uint32_t maxStartPos = 0;
-      //   for (const auto& seedInfo : liteTree.seedInfos) {
-      //     uint32_t startPos = seedInfo.startPos;
-      //     if (startPos > maxStartPos) {
-      //       maxStartPos = startPos;
-      //     }
-      //   }
-      //   std::ofstream splitTreeStatsFile(prefix + ".splitTreeStats.txt");
-      //   splitTreeStatsFile << "binSize\toverlap\tnumTrees\ttotalNodes\tavgTreeSize\tmedianTree\tminTree\tminTreeRange\tmaxTree\tmaxTreeRange" << std::endl;
-      //   for (const auto& binSize : binSizes) {
-      //     uint32_t hardStepSize  = binSize - hardOffset;
-      //     uint32_t ratioStepSize = binSize - (ratioOffset * binSize);
-      //     uint32_t hardNumBins  = (maxStartPos - binSize + hardStepSize - 1) / hardStepSize + 1;
-      //     uint32_t ratioNumBins = (maxStartPos - binSize + ratioStepSize - 1) / ratioStepSize + 1;
-      //     std::vector<uint32_t> hardBinNodeCounts(hardNumBins, 0);
-      //     std::vector<uint32_t> ratioBinNodeCounts(ratioNumBins, 0);
-      //     for (auto [_, node] : liteTree.allLiteNodes) {
-      //       std::vector<bool> addToBinHard(hardNumBins, false);
-      //       std::vector<bool> addToBinRatio(ratioNumBins, false);
-      //       for (const auto& [seedIndex, _] : node->seedDeltas) {
-      //         uint32_t startPos = liteTree.seedInfos[seedIndex].startPos;
-      //         int firstBinHard = (startPos >= binSize - 1) ? (startPos - binSize + 1 + hardStepSize - 1) / hardStepSize : 0;
-      //         int lastBinHard = std::min(hardNumBins - 1, startPos / hardStepSize);
-      //         for (int i = firstBinHard; i <= lastBinHard; ++i) {
-      //           addToBinHard[i] = true;
-      //         }
-
-      //         int firstBinRatio = (startPos >= binSize - 1) ? (startPos - binSize + 1 + ratioStepSize - 1) / ratioStepSize : 0;
-      //         int lastBinRatio = std::min(ratioNumBins - 1, startPos / ratioStepSize);
-      //         for (int i = firstBinRatio; i <= lastBinRatio; ++i) {
-      //           addToBinRatio[i] = true;
-      //         }
-      //       }
-      //       for (int i = 0; i < hardNumBins; ++i) {
-      //         if (addToBinHard[i]) {
-      //           hardBinNodeCounts[i]++;
-      //         }
-      //       }
-      //       for (int i = 0; i < ratioNumBins; ++i) {
-      //         if (addToBinRatio[i]) {
-      //           ratioBinNodeCounts[i]++;
-      //         }
-      //       }
-      //     }
-
-      //     uint32_t hardTotalNodes = std::accumulate(hardBinNodeCounts.begin(), hardBinNodeCounts.end(), 0);
-      //     uint32_t hardAvgTreeSize = hardTotalNodes / hardNumBins;
-      //     auto hardMinIt = std::min_element(hardBinNodeCounts.begin(), hardBinNodeCounts.end());
-      //     auto hardMaxIt = std::max_element(hardBinNodeCounts.begin(), hardBinNodeCounts.end());
-      //     int hardMinIdx = std::distance(hardBinNodeCounts.begin(), hardMinIt);
-      //     int hardMaxIdx = std::distance(hardBinNodeCounts.begin(), hardMaxIt);
-      //     uint32_t hardMinBinStart = hardMinIdx * hardStepSize;
-      //     uint32_t hardMinBinEnd = hardMinBinStart + binSize;
-      //     uint32_t hardMaxBinStart = hardMaxIdx * hardStepSize;
-      //     uint32_t hardMaxBinEnd = hardMaxBinStart + binSize;
-      //     std::sort(hardBinNodeCounts.begin(), hardBinNodeCounts.end());
-      //     uint32_t hardMedian = hardBinNodeCounts[hardBinNodeCounts.size() / 2];
-      //     splitTreeStatsFile << binSize << "\t"
-      //                        << hardOffset << "\t"
-      //                        << hardNumBins << "\t"
-      //                        << hardTotalNodes << "\t"
-      //                        << hardAvgTreeSize << "\t"
-      //                        << hardMedian << "\t"
-      //                        << *hardMinIt << "\t"
-      //                        << hardMinBinStart << "," << hardMinBinEnd << "\t"
-      //                        << *hardMaxIt << "\t"
-      //                        << hardMaxBinStart << "," << hardMaxBinEnd
-      //                        << std::endl;
-
-      //     uint32_t ratioTotalNodes = std::accumulate(ratioBinNodeCounts.begin(), ratioBinNodeCounts.end(), 0);
-      //     uint32_t ratioAvgTreeSize = ratioTotalNodes / ratioNumBins;
-      //     auto ratioMinIt = std::min_element(ratioBinNodeCounts.begin(), ratioBinNodeCounts.end());
-      //     auto ratioMaxIt = std::max_element(ratioBinNodeCounts.begin(), ratioBinNodeCounts.end());
-      //     int ratioMinIdx = std::distance(ratioBinNodeCounts.begin(), ratioMinIt);
-      //     int ratioMaxIdx = std::distance(ratioBinNodeCounts.begin(), ratioMaxIt);
-      //     uint32_t ratioMinBinStart = ratioMinIdx * ratioStepSize;
-      //     uint32_t ratioMinBinEnd = ratioMinBinStart + binSize;
-      //     uint32_t ratioMaxBinStart = ratioMaxIdx * ratioStepSize;
-      //     uint32_t ratioMaxBinEnd = ratioMaxBinStart + binSize;
-      //     std::sort(ratioBinNodeCounts.begin(), ratioBinNodeCounts.end());
-      //     uint32_t ratioMedian = ratioBinNodeCounts[ratioBinNodeCounts.size() / 2];
-      //     splitTreeStatsFile << binSize << "\t"
-      //                        << ratioOffset * binSize << "\t"
-      //                        << ratioNumBins << "\t"
-      //                        << ratioTotalNodes << "\t"
-      //                        << ratioAvgTreeSize << "\t"
-      //                        << ratioMedian << "\t"
-      //                        << *ratioMinIt << "\t"
-      //                        << ratioMinBinStart << "," << ratioMinBinEnd << "\t"
-      //                        << *ratioMaxIt << "\t"
-      //                        << ratioMaxBinStart << "," << ratioMaxBinEnd
-      //                        << std::endl;
-      //   }
-      //   splitTreeStatsFile.close();
-
-
-      //   absl::flat_hash_map<size_t, std::vector<uint32_t>> seedmerToReads;
-      //   for (uint32_t i = 0; i < threadsManager.reads.size(); ++i) {
-      //     for (const auto& seedmer : threadsManager.reads[i].uniqueSeedmers) {
-      //       seedmerToReads[seedmer.first].emplace_back(i);
-      //     }
-      //   }
-      //   std::ofstream hashPositionsFile(prefix + ".readMatchPositions.txt");
-      //   std::unordered_map<uint32_t, std::vector<uint32_t>> readMatchPositions;
-      //   for (const auto& seedInfo : liteTree.seedInfos) {
-      //     auto it = seedmerToReads.find(seedInfo.hash);
-      //     if (it != seedmerToReads.end()) {
-      //       for (const auto& read : it->second) {
-      //         readMatchPositions[read].emplace_back(seedInfo.startPos);
-      //       }
-      //     }
-      //   }
-        
-      //   std::vector<std::pair<uint32_t, std::vector<uint32_t>>> readMatchPositionsSorted(readMatchPositions.begin(), readMatchPositions.end());
-      //   std::sort(readMatchPositionsSorted.begin(), readMatchPositionsSorted.end(), [](const auto& a, const auto& b) {
-      //     return a.first < b.first;
-      //   });
-
-      //   for (auto& [read, positions] : readMatchPositionsSorted) {
-      //     std::sort(positions.begin(), positions.end());
-      //     int64_t minPosition = positions.empty()? -1 : positions.front();
-      //     int64_t maxPosition = positions.empty()? -1 : positions.back();
-      //     hashPositionsFile << "Read " << read << " matched positions (" << minPosition << "," << maxPosition << "): ";
-      //     for (const auto& position : positions) {
-      //       hashPositionsFile << position << " ";
-      //     }
-      //     hashPositionsFile << std::endl;
-      //   }
-      //   hashPositionsFile.close();
-      //   exit(0);
-      // }
-
+      liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+            
+      std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
+      for (size_t i = 0; i < numThreads; ++i) {
+        totalNodesPerThread[i] = liteTree.getNumActiveNodes();
+      }
+      ProgressTracker progressTracker(numThreads, totalNodesPerThread);
+      std::cout << "Using " << numThreads << " threads" << std::endl;
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
       std::atomic<size_t> numGroupsUpdate = 0;
@@ -1174,21 +1023,6 @@ int main(int argc, char *argv[]) {
           curThreadPlacer.setProgressTracker(&progressTracker, i);
           // curThreadPlacer.placeReads();
 
-          // const auto& seedmerToReads = curThreadPlacer.seedmerToReads;
-          // size_t numCollapse = 0;
-          // for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
-          //   bool collapse = true;
-          //   for (const auto& [seedIndex, _] : node->seedDeltas) {
-          //     size_t hash = liteTree.seedInfos[seedIndex].hash;
-          //     if (seedmerToReads.find(hash) != seedmerToReads.end()) {
-          //       collapse = false;
-          //       break;
-          //     }
-          //   }
-          //   if (collapse) ++numCollapse;
-          // }
-          // numUniqueKminmersPerThread[i] = seedmerToReads.size();
-          // numNodesPostCollapsePerThread[i] = liteTree.allLiteNodes.size() - numCollapse;
           curThreadPlacer.scoreReads();
 
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
@@ -1204,16 +1038,17 @@ int main(int argc, char *argv[]) {
           numReadsUpdate += curThreadPlacer.numReadsUpdate;
         }
       });
+      auto end_time_place = std::chrono::high_resolution_clock::now();
+      auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
+      std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+
       mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
       auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
       std::unordered_map<std::string, double>().swap(threadsManager.kminmerOverlapCoefficients);
       for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
         threadsManager.kminmerOverlapCoefficients[nodeId] = overlapCoefficient;
       }
-      
-      auto end_time_place = std::chrono::high_resolution_clock::now();
-      auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-      std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+
       mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
