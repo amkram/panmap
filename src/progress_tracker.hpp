@@ -27,7 +27,7 @@ public:
     
     // Reserve space for all thread lines
     for (size_t i = 0; i < numThreads; ++i) {
-      std::cout << "T" << std::setw(2) << i << ": [  0.00%]        0/" 
+      std::cerr << "T" << std::setw(2) << i << ": [  0.00%]        0/" 
                 << std::setw(8) << threadTotals[i] << " (   0.0 n/s)\n";
     }
   }
@@ -67,14 +67,14 @@ private:
     if (!lock.owns_lock()) return;
     
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGlobalUpdate).count() < 500) {
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGlobalUpdate).count() < 1000) {
       return;
     }
     
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
     
     // Save cursor position and clear from cursor to end of screen
-    std::cout << "\033[s\033[J";
+    std::cerr << "\033[s\033[J";
     
     for (size_t i = 0; i < numThreads; ++i) {
       uint64_t threadProg = threadProgress[i].load(std::memory_order_relaxed);
@@ -83,14 +83,14 @@ private:
       double percentComplete = threadTotal > 0 ? (100.0 * threadProg) / threadTotal : 0.0;
       double nodesPerSecond = elapsed > 0 ? static_cast<double>(threadProg) / elapsed : 0.0;
       
-      std::cout << "T" << std::setw(2) << i << ": ["
+      std::cerr << "T" << std::setw(2) << i << ": ["
                 << std::setw(6) << std::fixed << std::setprecision(2) << percentComplete << "%] "
                 << std::setw(8) << threadProg << "/" << std::setw(8) << threadTotal
                 << " (" << std::setw(6) << std::setprecision(1) << nodesPerSecond << " n/s)\n";
     }
     
     // Restore cursor position
-    std::cout << "\033[u" << std::flush;
+    std::cerr << "\033[u" << std::flush;
     
     lastGlobalUpdate = now;
   }
@@ -101,7 +101,7 @@ public:
     
     // Move cursor down past all thread lines
     for (size_t i = 0; i < numThreads; ++i) {
-      std::cout << "\n";
+      std::cerr << "\n";
     }
     
     // Calculate totals
@@ -117,7 +117,7 @@ public:
       std::chrono::steady_clock::now() - startTime).count();
     double nodesPerSecond = elapsed > 0 ? static_cast<double>(totalProgress) / elapsed : 0.0;
     
-    std::cout << "Completed: " << totalProgress << "/" << totalNodes 
+    std::cerr << "Completed: " << totalProgress << "/" << totalNodes 
               << " nodes in " << elapsed << "s (" 
               << std::setprecision(1) << nodesPerSecond << " nodes/s)" << std::endl;
   }
@@ -154,7 +154,7 @@ public:
       double percent = threadTotals[threadId] > 0 ? (100.0 * newProgress) / threadTotals[threadId] : 0.0;
       double rate = elapsed > 0 ? static_cast<double>(newProgress) / elapsed : 0.0;
       
-      std::cout << "Thread " << threadId << ": " << std::setprecision(2) << std::fixed 
+      std::cerr << "Thread " << threadId << ": " << std::setprecision(2) << std::fixed 
                 << percent << "% (" << newProgress << "/" << threadTotals[threadId] 
                 << ") " << std::setprecision(1) << rate << " nodes/s" << std::endl;
     }
@@ -172,7 +172,7 @@ public:
       totalNodes += threadTotals[i];
       
       double percent = threadTotals[i] > 0 ? (100.0 * progress) / threadTotals[i] : 0.0;
-      std::cout << "Thread " << i << " final: " << std::setprecision(2) << std::fixed 
+      std::cerr << "Thread " << i << " final: " << std::setprecision(2) << std::fixed 
                 << percent << "% (" << progress << "/" << threadTotals[i] << ")" << std::endl;
     }
     
@@ -180,7 +180,7 @@ public:
       std::chrono::steady_clock::now() - startTime).count();
     double nodesPerSecond = elapsed > 0 ? static_cast<double>(totalProgress) / elapsed : 0.0;
     
-    std::cout << "Total completed: " << totalProgress << "/" << totalNodes 
+    std::cerr << "Total completed: " << totalProgress << "/" << totalNodes 
               << " nodes in " << elapsed << "s (" 
               << std::setprecision(1) << nodesPerSecond << " nodes/s)" << std::endl;
   }

@@ -1,11 +1,9 @@
 @0xaeb74a09d04c9118;
 
-struct CoordDelta {
-  pos @0 :UInt32;
-  endPos :union {
-    value @1 :UInt32;
-    none @2 :Void;
-  }
+struct GapRunDelta {
+  startPos @0 :UInt32;
+  endPos @1 :UInt32;
+  toGap @2 :Bool;
 }
 
 struct SeedInfo {
@@ -15,18 +13,17 @@ struct SeedInfo {
   isReverse @3 :Bool;
 }
 
-struct SeedSubstitutionIndex {
-  oldSeedIndex @0 :UInt32;
-  newSeedIndex @1 :UInt32;
+struct SeedDelta {
+  seedIndex @0 :UInt32;
+  isDeleted @1 :Bool;
 }
+
 
 struct NodeChanges {
   nodeIndex @0 :UInt32;
-  seedInsertions @1 :List(UInt32);
-  seedDeletions @2 :List(UInt32);
-  seedSubstitutions @3 :List(SeedSubstitutionIndex);
-  coordDeltas @4 :List(CoordDelta);
-  invertedBlocks @5 :List(UInt32);
+  seedDeltas @1 :List(SeedDelta);
+  gapRunDeltas @2 :List(GapRunDelta);
+  invertedBlocks @3 :List(UInt32);
 }
 
 struct LiteNode {
