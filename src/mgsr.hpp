@@ -549,7 +549,7 @@ class ThreadsManager {
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();
 
-    void scoreNodesHelper(MgsrLiteNode* node, std::vector<uint32_t>& readScores, size_t& curNodeSumRawScore, double& curNodeSumWEPPScore);
+    void scoreNodesHelper(MgsrLiteNode* node, std::vector<uint32_t>& readScores, std::vector<double>& readWEPPWeights, size_t& curNodeSumRawScore, double& curNodeSumWEPPScore);
     void scoreNodes();
 
     void computeKminmerCoverage();
