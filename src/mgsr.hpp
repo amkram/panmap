@@ -251,6 +251,9 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
+  size_t sumRawScore = 0;
+  double sumWEPPScore = 0;
+
   std::vector<std::string_view> identicalNodeIdentifiers;
 
   std::vector<std::vector<readScoreDelta>> readScoreDeltas;
@@ -545,6 +548,10 @@ class ThreadsManager {
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();
+
+    void scoreNodesHelper(MgsrLiteNode* node, std::vector<uint32_t>& readScores, size_t& curNodeSumRawScore, double& curNodeSumWEPPScore);
+    void scoreNodes();
+
     void computeKminmerCoverage();
     void computeKminmerCoverageHelper(
       MgsrLiteNode* node,
@@ -674,9 +681,6 @@ class mgsrPlacer {
 
     void calculateEppHelper(MgsrLiteNode* node);
     void calculateEpp();
-
-    void scoreNodesHelper(MgsrLiteNode* node);
-    void scoreNodes();
 
     void computeOverlapCoefficientsHelper(MgsrLiteNode* node, const absl::flat_hash_set<size_t>& allSeedmerHashesSet, std::vector<std::pair<std::string, double>>& overlapCoefficients);
 
