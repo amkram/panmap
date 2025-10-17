@@ -13,21 +13,38 @@ PANGENOMES = {
     'tb_400': {
         'path': 'panmans/tb_400.panman',
         'genome_size': 4000000  # Mycobacterium tuberculosis genome ~4Mb
+    },
+    'sars_8M': {
+        'path': 'panmans/sars_8M.panman',
+        'genome_size': 30000  # SARS-CoV-2 genome ~30kb
     }
 }
 
-# Experiment parameters - modify these to customize experiments
 CONFIG = {
-    'pangenomes': ['rsv_4K'],   # Which datasets to test - multiple pangenomes
-    'k_values': [18,31],               # k-mer sizes - test different sensitivity levels (reduced from 4 to 2)
-    's_values': [8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
-    'include_internal': [False],            # Include internal nodes? [False, True]
-    'coverage_levels': [10,100],        # Coverage levels (X coverage) (removed 1x)
-    'mutation_rates': [0.0001], # Mutation rates per base pair (reduced to 1)
-    'replicates': 10,                        # Replicates per condition (reduced from 100 to 10)
+    'pangenomes': ['rsv_4K', 'sars_20K', 'tb_400', ],   # Which datasets to test - multiple pangenomes
+    'k_values': range(5, 61, 4),  # k-mer sizes from 5 to 61 in steps of 4
+    's_values': [3, 6, 8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
+    'l_values': [1, 3, 5],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
+    'include_internal': [True],            # Include internal nodes? [False, True]
+    'coverage_levels': [1,10,100],        # Coverage levels (X coverage) (removed 1x)
+    'mutation_rates': [0.0001, 0.0005, 0.001], # Mutation rates per base pair (reduced to 1)
+    'replicates': 50,                        # Replicates per condition (reduced from 100 to 10)
     'model': 'NovaSeq',                     # Sequencing model
     'read_length': 150                      # Average read length for coverage calculation
 }
+# Experiment parameters - modify these to customize experiments
+# CONFIG = {
+#     'pangenomes': ['rsv_4K'],   # Which datasets to test - multiple pangenomes
+#     'k_values': [5,9,13,17,21,25,29,33,37,41,45,49,53,57,61],  # k-mer sizes (reduced to 5 for testing)
+#     's_values': [4,8,12],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
+#     'l_values': [1, 3, 4],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
+#     'include_internal': [True],            # Include internal nodes? [False, True]
+#     'coverage_levels': [1,10,100],        # Coverage levels (X coverage) (removed 1x)
+#     'mutation_rates': [0.0001, 0.0005, 0.001], # Mutation rates per base pair (reduced to 1)
+#     'replicates': 50,                        # Replicates per condition (reduced from 100 to 10)
+#     'model': 'NovaSeq',                     # Sequencing model
+#     'read_length': 150                      # Average read length for coverage calculation
+# }
 
 def generate_experiments():
     """Generate all parameter combinations"""
@@ -37,36 +54,37 @@ def generate_experiments():
     for pangenome in CONFIG['pangenomes']:
         for k in CONFIG['k_values']:
             for s in CONFIG['s_values']:
-                for include_internal in CONFIG['include_internal']:
-                    for mutation_rate in CONFIG['mutation_rates']:
-                        tag = f"k{k}_s{s}_{'int' if include_internal else 'noint'}"
-                        if mutation_rate > 0:
-                            tag += f"_mut{mutation_rate}"
-                        
-                        # Calculate read counts for each coverage level
-                        genome_size = PANGENOMES[pangenome]['genome_size']
-                        read_length = CONFIG['read_length']
-                        read_counts = []
-                        for coverage in CONFIG['coverage_levels']:
-                            num_reads = int((genome_size * coverage) / read_length)
-                            read_counts.append(num_reads)
-                        
-                        experiments.append({
-                            'id': f'exp{exp_id}',
-                            'pangenome_name': pangenome,
-                            'panman_path': PANGENOMES[pangenome]['path'],
-                            'genome_size': genome_size,
-                            'pan_stem': pangenome,
-                            'k': k, 's': s,
-                            'include_internal': include_internal,
-                            'mutation_rate': mutation_rate,
-                            'model': CONFIG['model'],
-                            'coverage_levels': CONFIG['coverage_levels'],
-                            'num_reads_values': read_counts,
-                            'replicates': CONFIG['replicates'],
-                            'tag': tag
-                        })
-                        exp_id += 1
+                for l in CONFIG['l_values']:
+                    for include_internal in CONFIG['include_internal']:
+                        for mutation_rate in CONFIG['mutation_rates']:
+                            tag = f"k{k}_s{s}_l{l}_{'int' if include_internal else 'noint'}"
+                            if mutation_rate > 0:
+                                tag += f"_mut{mutation_rate}"
+                            
+                            # Calculate read counts for each coverage level
+                            genome_size = PANGENOMES[pangenome]['genome_size']
+                            read_length = CONFIG['read_length']
+                            read_counts = []
+                            for coverage in CONFIG['coverage_levels']:
+                                num_reads = int((genome_size * coverage) / read_length)
+                                read_counts.append(num_reads)
+                            
+                            experiments.append({
+                                'id': f'exp{exp_id}',
+                                'pangenome_name': pangenome,
+                                'panman_path': PANGENOMES[pangenome]['path'],
+                                'genome_size': genome_size,
+                                'pan_stem': pangenome,
+                                'k': k, 's': s, 'l': l,
+                                'include_internal': include_internal,
+                                'mutation_rate': mutation_rate,
+                                'model': CONFIG['model'],
+                                'coverage_levels': CONFIG['coverage_levels'],
+                                'num_reads_values': read_counts,
+                                'replicates': CONFIG['replicates'],
+                                'tag': tag
+                            })
+                            exp_id += 1
     
     return experiments
 
@@ -116,6 +134,8 @@ MUT_FASTA = [f"{_exp_root(eid, pan_stem, tag)}/mutgenomes/reads/cov{cov}_{n}_rep
 PLACEMENTS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/placements.tsv" for (eid, pan_stem, tag, cov, n, rep) in READS]
 DETAILED_PLACEMENTS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/detailed.tsv" for (eid, pan_stem, tag, cov, n, rep) in READS]
 PLACEMENT_LOGS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/panmap.log" for (eid, pan_stem, tag, cov, n, rep) in READS]
+PLACEMENT_TIME_LOGS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log" for (eid, pan_stem, tag, cov, n, rep) in READS]
+INDEX_TIME_LOGS = [f"{_exp_root(e['id'], e['pangenome_name'], e['tag'])}/indexes/index_time.log" for e in EXPERIMENTS]
 ALIGNMENT_ACCURACY = [f"{_exp_root(eid, pan_stem, tag)}/alignments/reads/cov{cov}_{n}_rep{rep}/accuracy.tsv" for (eid, pan_stem, tag, cov, n, rep) in READS]
 AGGREGATION_MARKERS = [f"{OUTPUT_DIR}/results/aggregated/{eid}/{pan_stem}/{tag}/cov{cov}_{n}_rep{rep}.done" for (eid, pan_stem, tag, cov, n, rep) in READS]
 
@@ -126,6 +146,14 @@ rule all:
         f"{OUTPUT_DIR}/reports/placements_by_metric.tsv",
         f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv",
         f"{OUTPUT_DIR}/plots/placement_accuracy_plots.done",
+        # k-value analysis plots (split by l)
+        f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l1.png",
+        f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l3.png",
+        # Performance summaries and plots
+        f"{OUTPUT_DIR}/reports/index_performance_summary.tsv",
+        f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv",
+        f"{OUTPUT_DIR}/plots/performance/index_time_by_k.png",
+        f"{OUTPUT_DIR}/plots/performance/placement_time_by_k.png",
         *GENOME_FASTA,
         *MUT_FASTA,
         *INDEX_FILES,
@@ -144,12 +172,12 @@ rule experiments_summary:
     run:
         # Ensure output directory's reports path exists
         pathlib.Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
-        header = ['id','tag','pan_stem','panman_path','include_internal','k','s','mutation_rate','genome_size','num_reads_values','replicates','model']
+        header = ['id','tag','pan_stem','panman_path','include_internal','k','s','l','mutation_rate','genome_size','num_reads_values','replicates','model']
         with open(output.tsv, 'w') as tf:
             tf.write('\t'.join(header)+'\n')
             for e in EXPERIMENTS:
                 tf.write('\t'.join([
-                    e['id'], e['tag'], e['pan_stem'], str(e['panman_path']), str(e['include_internal']).lower(), str(e['k']), str(e['s']),
+                    e['id'], e['tag'], e['pan_stem'], str(e['panman_path']), str(e['include_internal']).lower(), str(e['k']), str(e['s']), str(e['l']),
                     str(e['mutation_rate']), str(e['genome_size']), ';'.join(map(str,e['num_reads_values'])), str(e['replicates']), e['model']
                 ])+'\n')
 
@@ -157,6 +185,9 @@ rule dump_random_node:
     input:
         panmap_bin="build/bin/panmap",
         panman=lambda wc: EXP_BY_ID[wc.eid]['panman_path']
+
+        
+
     output:
         f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/genomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/random_node.fasta"
     run:
@@ -242,18 +273,54 @@ rule index_experiment:
                 bin="build/bin/panmap",
                 pan=lambda wc: EXP_BY_ID[wc.eid]['panman_path']
         output:
-                index=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi",
+                index=protected(f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi"),
                 mm=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/{{pan_stem}}.panman.mm"
         params:
                 pan=lambda wc: EXP_BY_ID[wc.eid]['panman_path'],
                 k=lambda wc: EXP_BY_ID[wc.eid]['k'],
-                s=lambda wc: EXP_BY_ID[wc.eid]['s']
+                s=lambda wc: EXP_BY_ID[wc.eid]['s'],
+                l=lambda wc: EXP_BY_ID[wc.eid]['l'],
+                time_log=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/indexes/index_time.log"
+        resources:
+                tmpdir=f"/tmp/panmap_{{eid}}_index"
         shell:
                 r'''
+                set -e
                 echo "[index_experiment] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag}" >&2
+                echo "[index_experiment] k={params.k} s={params.s} l={params.l}" >&2
+                
+                # Create experiment-specific temp directory
+                exp_tmp_dir="/tmp/panmap_{wildcards.eid}_index_$$"
+                mkdir -p "$exp_tmp_dir"
+                trap "rm -rf $exp_tmp_dir" EXIT
+                
                 mkdir -p $(dirname {output.index})
-                {input.bin} -f -k {params.k} -s {params.s} {params.pan} --index-output {output.index}
+                
+                # Check if index already exists and is valid
+                if [[ -f {output.index} && -s {output.index} ]]; then
+                    echo "[index_experiment] Index already exists: {output.index}" >&2
+                    if [[ ! -f {output.mm} ]]; then
+                        cp {params.pan}.mm {output.mm}
+                    fi
+                    exit 0
+                fi
+                
+                # Build index with temporary name first, then move atomically
+                temp_index="$exp_tmp_dir/index.pmi.tmp"
+                /usr/bin/time -v {input.bin} -k {params.k} -s {params.s} -l {params.l} --index-mgsr "$temp_index" {params.pan} 2> {params.time_log}
+                
+                # Verify the index was created and has content
+                if [[ ! -f "$temp_index" || ! -s "$temp_index" ]]; then
+                    echo "[index_experiment] ERROR: Index creation failed" >&2
+                    exit 1
+                fi
+                
+                # Move atomically
+                mv "$temp_index" {output.index}
+                
+                # Copy mutation matrix
                 cp {params.pan}.mm {output.mm}
+                
                 echo "[index_experiment] Index built successfully: {output.index}" >&2
                 '''
 
@@ -273,6 +340,8 @@ rule simulate_reads:
         model='NovaSeq',
         cpus=1,
         mm_type='both'  # Use both SNP and indel matrices
+    resources:
+        tmpdir=f"/tmp/panmap_{{eid}}_simulate_cov{{cov}}_{{n}}_rep{{rep}}"
     run:
         ex = EXP_BY_ID[wildcards.eid]
         print(f"[simulate_reads] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag} cov={wildcards.cov} n={wildcards.n} rep={wildcards.rep}")
@@ -297,21 +366,29 @@ rule simulate_reads:
             
             # Calculate total number of mutations across the genome
             total_snps = int(mutation_rate * genome_size) if mutation_rate > 0 else 0
-            total_indels = int(mutation_rate * genome_size / 4) if mutation_rate > 0 else 0  # Indels = mutation_rate * genome_size / 4
+            # Indels = mutation_rate * genome_size / 4, split equally between insertions and deletions
+            total_indels = int(mutation_rate * genome_size / 4) if mutation_rate > 0 else 0
+            total_insertions = total_indels // 2
+            total_deletions = total_indels - total_insertions  # Handle odd numbers
             
             print(f"[simulate_reads] Mutation rate: {mutation_rate}, Genome size: {genome_size}")
-            print(f"[simulate_reads] Generating {total_snps} SNPs and {total_indels} indels")
+            print(f"[simulate_reads] Generating {total_snps} SNPs, {total_insertions} insertions, and {total_deletions} deletions")
             
             # Use mutation matrix if available
-            mm_flag = f"--in_mm {input.mm}" if pathlib.Path(input.mm).exists() else ""
+            mm_flag = f"--mut_spec {input.mm}" if pathlib.Path(input.mm).exists() else ""
+            mm_type_flag = f"--mut_spec_type {params.mm_type}" if mm_flag else ""
+            
+            # Extract node name from fasta file
+            with open(input.fasta, 'r') as f:
+                node_name = f.readline().strip()[1:]  # Remove '>' from header
             
             # Capture simulate output to parse mutation counts
             import subprocess
             simulate_cmd = (
-                f"{input.simulate_bin} --in_panman {input.panman} --in_fasta {input.fasta} --out_dir {out_dir} "
-                f"--n_reads {wildcards.n} --n_replicates 1 --model {ex['model']} --cpus 4 "
-                f"--seed {seed_int} --mutnum {total_snps} {total_indels} 0 --mm_type {params.mm_type} "
-                f"{mm_flag} {include_internal_flag}"
+                f"{input.simulate_bin} --panmat {input.panman} --ref {node_name} --out_dir {out_dir} "
+                f"--n_reads {wildcards.n} --rep 1 --model {ex['model']} --cpus 4 "
+                f"--seed {seed_int} --mutnum {total_snps} {total_insertions} {total_deletions} "
+                f"{mm_flag} {mm_type_flag}"
             )
             
             print(f"[simulate_reads] Running: {simulate_cmd}")
@@ -433,113 +510,106 @@ rule place_reads:
     output:
         placement=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/placements.tsv",
         detailed=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/detailed.tsv",
-        raw_log=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/panmap.log"
+        raw_log=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/panmap.log",
+        time_log=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/time.log"
     params:
-        prefix=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/placements/reads/cov{wc.cov}_{wc.n}_rep{wc.rep}/result"
+        prefix=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/placements/reads/cov{wc.cov}_{wc.n}_rep{wc.rep}"
+    resources:
+        tmpdir=f"/tmp/panmap_{{eid}}_place_cov{{cov}}_{{n}}_rep{{rep}}"
     run:
         ex = EXP_BY_ID[wildcards.eid]
         print(f"[place_reads] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag} n={wildcards.n} rep={wildcards.rep}")
+        print(f"[place_reads] k={ex['k']}, s={ex['s']}, l={ex['l']}")
         out_dir = pathlib.Path(output.placement).parent
         out_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Check if index file exists and is valid
+        if not pathlib.Path(input.index).exists() or pathlib.Path(input.index).stat().st_size == 0:
+            raise FileNotFoundError(f"Index file missing or empty: {input.index}")
+        
         if not pathlib.Path(input.panmap_bin).exists():
             print(f"[place_reads] panmap_bin missing, writing placeholder for {ex['pan_stem']} n={wildcards.n}")
             pathlib.Path(output.placement).write_text(f"PLACEMENTS placeholder\nindex={input.index}\nr1={input.r1}\nr2={input.r2}\n")
         else:
-            print(f"[place_reads] running panmap placement for {ex['pan_stem']} n={wildcards.n}")
-            import subprocess, re
-            # Capture panmap output directly to parse placement results
+            print(f"[place_reads] running panmap --place mode for {ex['pan_stem']} n={wildcards.n}")
+            print(f"[place_reads] using MGSR index: {input.index}")
+            import subprocess, pandas as pd
+            
+            # Run panmap with --place flag which generates placements.tsv directly
+            # Note: k, s, l parameters are read from the index file, not command line
             try:
                 result = subprocess.run([
-                    input.panmap_bin, input.panman, 
-                    "-i", input.index,
-                    "-k", str(ex['k']), "-s", str(ex['s']),
-                    input.r1, input.r2
-                ], capture_output=True, text=True, timeout=300)
+                    "/usr/bin/time", "-v",
+                    input.panmap_bin, 
+                    "--place",
+                    "--time",
+                    "-m", input.index,  # Pass experiment-specific MGSR index (contains k/s/l)
+                    "-p", params.prefix,
+                    input.panman,
+                    input.r1, 
+                    input.r2
+                ], capture_output=True, text=True, timeout=600)
                 log_output = result.stderr + result.stdout
                 
                 # Save raw panmap log for debugging
                 with open(output.raw_log, 'w') as f:
                     f.write(log_output)
                 
-                # Parse placement results from log output - enhanced to capture more details
-                raw_hits = jaccard_sim = cosine_sim = weighted_score = 0
-                raw_node = jaccard_node = cosine_node = weighted_node = ""
-                all_candidates = []
-                placement_details = {}
+                # Parse and save time/memory stats separately
+                with open(output.time_log, 'w') as f:
+                    f.write(result.stderr)  # /usr/bin/time outputs to stderr
                 
-                for line in log_output.split('\n'):
-                    line = line.strip()
-                    if 'Raw Hits:' in line:
-                        match = re.search(r'Raw Hits:\s*(\d+)\s*\(best:\s*([^)]+)\)', line)
-                        if match:
-                            raw_hits = int(match.group(1))
-                            raw_node = match.group(2)
-                            placement_details["raw"] = {"score": raw_hits, "best_node": raw_node}
-                    elif 'Jaccard Similarity:' in line:
-                        match = re.search(r'Jaccard Similarity:\s*([\d.]+)\s*\(best:\s*([^)]+)\)', line)
-                        if match:
-                            jaccard_sim = float(match.group(1))
-                            jaccard_node = match.group(2)
-                            placement_details["jaccard"] = {"score": jaccard_sim, "best_node": jaccard_node}
-                    elif 'Cosine Similarity:' in line:
-                        match = re.search(r'Cosine Similarity:\s*([\d.]+)\s*\(best:\s*([^)]+)\)', line)
-                        if match:
-                            cosine_sim = float(match.group(1))
-                            cosine_node = match.group(2)
-                            placement_details["cosine"] = {"score": cosine_sim, "best_node": cosine_node}
-                    elif 'Weighted Score:' in line:
-                        match = re.search(r'Weighted Score:\s*([\d.]+)\s*\(best:\s*([^)]+)\)', line)
-                        if match:
-                            weighted_score = float(match.group(1))
-                            weighted_node = match.group(2)
-                            placement_details["weighted"] = {"score": weighted_score, "best_node": weighted_node}
-                    # Look for potential candidate lines or additional placement details
-                    elif re.search(r'node_\d+|[A-Z]{2}\d+\.\d+', line) and ('score' in line.lower() or 'hit' in line.lower()):
-                        all_candidates.append(line)
+                # C++ now writes placements.tsv directly to prefix/placements.tsv
+                placements_file = params.prefix + "/placements.tsv"
+                if not pathlib.Path(placements_file).exists():
+                    raise FileNotFoundError(f"Placements file not generated: {placements_file}")
                 
-                # Write structured TSV with parsed results
-                with open(output.placement, 'w') as f:
-                    f.write("metric\tscore\thits\tnodes\n")
-                    f.write(f"raw\t{raw_hits}\t{raw_hits}\t{raw_node}\n")
-                    f.write(f"jaccard\t{jaccard_sim}\t\t{jaccard_node}\n")
-                    f.write(f"cosine\t{cosine_sim}\t\t{cosine_node}\n")
-                    f.write(f"weighted\t{weighted_score}\t\t{weighted_node}\n")
+                # Read the placements to get best nodes
+                df = pd.read_csv(placements_file, sep='\t')
+                
+                # Get true_node from metadata
+                true_node = "unknown"
+                try:
+                    meta_file = f"{OUTPUT_DIR}/experiments/{wildcards.eid}/{wildcards.pan_stem}/{wildcards.tag}/results/reads/cov{wildcards.cov}_{wildcards.n}_rep{wildcards.rep}.txt"
+                    if pathlib.Path(meta_file).exists():
+                        with open(meta_file) as mf:
+                            meta_line = mf.read().strip()
+                            fields = dict(part.split('=',1) for part in meta_line.split('\t') if '=' in part)
+                            true_node = fields.get("true_node", "unknown")
+                except Exception as e:
+                    print(f"[place_reads] could not read true_node: {e}")
                 
                 # Write detailed placement information
                 with open(output.detailed, 'w') as f:
-                    f.write("experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\ttimestamp\n")
+                    f.write("experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl\n")
                     import time
                     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                    # Get true_node from metadata
-                    true_node = "unknown"
-                    try:
-                        meta_file = f"{OUTPUT_DIR}/experiments/{wildcards.eid}/{wildcards.pan_stem}/{wildcards.tag}/results/reads/cov{wildcards.cov}_{wildcards.n}_rep{wildcards.rep}.txt"
-                        if pathlib.Path(meta_file).exists():
-                            with open(meta_file) as mf:
-                                meta_line = mf.read().strip()
-                                fields = dict(part.split('=',1) for part in meta_line.split('\t') if '=' in part)
-                                true_node = fields.get("true_node", "unknown")
-                    except Exception:
-                        pass
                     
-                    for metric, details in placement_details.items():
-                        score = details["score"]
-                        best_node = details["best_node"]
-                        f.write(f"{wildcards.eid}\t{wildcards.n}\t{wildcards.rep}\t{true_node}\t{metric}\t{score}\t{best_node}\t{timestamp}\n")
+                    # Write each metric's best node
+                    for _, row in df.iterrows():
+                        metric = row['metric']
+                        score = row['score']
+                        node_id = row['nodes']
+                        f.write(f"{wildcards.eid}\t{wildcards.n}\t{wildcards.rep}\t{true_node}\t{metric}\t{score}\t{node_id}\t{node_id}\t{timestamp}\t{ex['k']}\t{ex['s']}\t{ex['l']}\n")
                 
-                print(f"[place_reads] parsed: raw={raw_hits}, jaccard={jaccard_sim}, cosine={cosine_sim}, weighted={weighted_score}")
+                # Print summary
+                jaccard_row = df[df['metric'] == 'jaccard'].iloc[0]
+                cosine_row = df[df['metric'] == 'cosine'].iloc[0]
+                print(f"[place_reads] best nodes - jaccard: {jaccard_row['nodes']} ({jaccard_row['score']:.4f}), cosine: {cosine_row['nodes']} ({cosine_row['score']:.4f})")
                 
             except Exception as e:
                 print(f"[place_reads] panmap failed or parsing error: {e}")
+                import traceback
+                traceback.print_exc()
                 # Write empty results on failure
                 with open(output.placement, 'w') as f:
                     f.write("metric\tscore\thits\tnodes\n")
                     f.write("raw\t0\t0\t\n")
                     f.write("jaccard\t0\t\t\n")
                     f.write("cosine\t0\t\t\n")
-                    f.write("weighted\t0\t\t\n")
+                    f.write("weighted_jaccard\t0\t\t\n")
                 with open(output.detailed, 'w') as f:
-                    f.write("experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\ttimestamp\n")
+                    f.write("experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl\n")
                 with open(output.raw_log, 'w') as f:
                     f.write(f"ERROR: {e}\n")
 
@@ -671,7 +741,8 @@ rule align_placement_accuracy:
                 f.write("metric\ttrue_node\tplacement_node\tgenome_length\tsnps\tindels\ttotal_variants\talignment_length\tidentity\texcluded_bp\n")
         
         
-        for metric in ["raw", "jaccard", "cosine", "weighted"]:
+        # Metrics to evaluate - must match keys in placement_nodes dict
+        for metric in ["raw", "jaccard", "cosine", "weighted_jaccard"]:
             placement_node = placement_nodes.get(metric, "")
             
             if not placement_node or placement_node == true_node:
@@ -860,7 +931,7 @@ rule aggregate_results:
         
         with open(exp_summary_file, 'a') as exp_file:
             if not exp_header_written:
-                exp_file.write("reads\treplicate\ttrue_node\tmetric\tscore\tbest_node\ttimestamp\n")
+                exp_file.write("reads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl\n")
             
             try:
                 with open(input.detailed, 'r') as detailed:
@@ -1104,6 +1175,302 @@ rule alignment_accuracy_summary:
 
 
 
+# =============================================================================
+# Performance (timing and memory) analysis
+# =============================================================================
+
+rule index_performance_summary:
+    input:
+        logs=INDEX_TIME_LOGS
+    output:
+        summary=f"{OUTPUT_DIR}/reports/index_performance_summary.tsv"
+    run:
+        import pathlib, re
+        
+        pathlib.Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
+        
+        def parse_time_log(log_file):
+            """Parse /usr/bin/time -v output"""
+            stats = {}
+            try:
+                with open(log_file) as f:
+                    for line in f:
+                        if 'Elapsed (wall clock) time' in line:
+                            # Format: h:mm:ss or m:ss.cs
+                            time_match = re.search(r'(\d+):(\d+):(\d+\.\d+)', line)
+                            if time_match:
+                                h, m, s = time_match.groups()
+                                stats['wall_time_sec'] = float(h) * 3600 + float(m) * 60 + float(s)
+                            else:
+                                time_match = re.search(r'(\d+):(\d+\.\d+)', line)
+                                if time_match:
+                                    m, s = time_match.groups()
+                                    stats['wall_time_sec'] = float(m) * 60 + float(s)
+                        elif 'Maximum resident set size' in line:
+                            # Format: (kbytes): 12345
+                            mem_match = re.search(r':\s*(\d+)', line)
+                            if mem_match:
+                                stats['max_rss_kb'] = int(mem_match.group(1))
+                                stats['max_rss_mb'] = stats['max_rss_kb'] / 1024.0
+                        elif 'User time (seconds)' in line:
+                            time_match = re.search(r':\s*([\d.]+)', line)
+                            if time_match:
+                                stats['user_time_sec'] = float(time_match.group(1))
+                        elif 'System time (seconds)' in line:
+                            time_match = re.search(r':\s*([\d.]+)', line)
+                            if time_match:
+                                stats['system_time_sec'] = float(time_match.group(1))
+            except FileNotFoundError:
+                pass
+            return stats
+        
+        with open(output.summary, 'w') as tf:
+            tf.write('experiment_id\tpangenome\ttag\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
+            
+            for exp in EXPERIMENTS:
+                eid = exp['id']
+                pan_stem = exp['pan_stem']
+                tag = exp['tag']
+                k, s, l = exp['k'], exp['s'], exp['l']
+                
+                log_file = f"{_exp_root(eid, pan_stem, tag)}/indexes/index_time.log"
+                stats = parse_time_log(log_file)
+                
+                # Only write if we have timing data
+                if stats and 'wall_time_sec' in stats:
+                    tf.write(f"{eid}\t{pan_stem}\t{tag}\t{k}\t{s}\t{l}\t")
+                    tf.write(f"{stats.get('wall_time_sec', 0)}\t")
+                    tf.write(f"{stats.get('user_time_sec', 0)}\t")
+                    tf.write(f"{stats.get('system_time_sec', 0)}\t")
+                    tf.write(f"{stats.get('max_rss_mb', 0)}\n")
+        
+        print(f"[index_performance_summary] Processed {len(EXPERIMENTS)} experiments")
+
+
+rule placement_performance_summary:
+    input:
+        logs=PLACEMENT_TIME_LOGS
+    output:
+        summary=f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv"
+    run:
+        import pathlib, re
+        
+        pathlib.Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
+        
+        def parse_time_log(log_file):
+            """Parse /usr/bin/time -v output"""
+            stats = {}
+            try:
+                with open(log_file) as f:
+                    for line in f:
+                        if 'Elapsed (wall clock) time' in line:
+                            time_match = re.search(r'(\d+):(\d+):(\d+\.\d+)', line)
+                            if time_match:
+                                h, m, s = time_match.groups()
+                                stats['wall_time_sec'] = float(h) * 3600 + float(m) * 60 + float(s)
+                            else:
+                                time_match = re.search(r'(\d+):(\d+\.\d+)', line)
+                                if time_match:
+                                    m, s = time_match.groups()
+                                    stats['wall_time_sec'] = float(m) * 60 + float(s)
+                        elif 'Maximum resident set size' in line:
+                            mem_match = re.search(r':\s*(\d+)', line)
+                            if mem_match:
+                                stats['max_rss_kb'] = int(mem_match.group(1))
+                                stats['max_rss_mb'] = stats['max_rss_kb'] / 1024.0
+                        elif 'User time (seconds)' in line:
+                            time_match = re.search(r':\s*([\d.]+)', line)
+                            if time_match:
+                                stats['user_time_sec'] = float(time_match.group(1))
+                        elif 'System time (seconds)' in line:
+                            time_match = re.search(r':\s*([\d.]+)', line)
+                            if time_match:
+                                stats['system_time_sec'] = float(time_match.group(1))
+            except FileNotFoundError:
+                pass
+            return stats
+        
+        with open(output.summary, 'w') as tf:
+            tf.write('experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
+            
+            for (eid, pan_stem, tag, cov, n, rep) in READS:
+                exp = EXP_BY_ID[eid]
+                k, s, l = exp['k'], exp['s'], exp['l']
+                
+                log_file = f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log"
+                stats = parse_time_log(log_file)
+                
+                # Only write if we have timing data
+                if stats and 'wall_time_sec' in stats:
+                    tf.write(f"{eid}\t{pan_stem}\t{tag}\t{cov}\t{n}\t{rep}\t{k}\t{s}\t{l}\t")
+                    tf.write(f"{stats.get('wall_time_sec', 0)}\t")
+                    tf.write(f"{stats.get('user_time_sec', 0)}\t")
+                    tf.write(f"{stats.get('system_time_sec', 0)}\t")
+                    tf.write(f"{stats.get('max_rss_mb', 0)}\n")
+        
+        print(f"[placement_performance_summary] Processed {len(READS)} placement runs")
+
+
+rule plot_performance:
+    input:
+        index_perf=f"{OUTPUT_DIR}/reports/index_performance_summary.tsv",
+        placement_perf=f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv",
+        index_logs=INDEX_TIME_LOGS,
+        placement_logs=PLACEMENT_TIME_LOGS
+    output:
+        index_time_l1=f"{OUTPUT_DIR}/plots/performance/index_time_by_k_l1.png",
+        index_time_l3=f"{OUTPUT_DIR}/plots/performance/index_time_by_k_l3.png",
+        index_time=f"{OUTPUT_DIR}/plots/performance/index_time_by_k.png",
+        index_memory=f"{OUTPUT_DIR}/plots/performance/index_memory_by_k.png",
+        placement_time_l1=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k_l1.png",
+        placement_time_l3=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k_l3.png",
+        placement_time=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k.png",
+        placement_memory=f"{OUTPUT_DIR}/plots/performance/placement_memory_by_k.png"
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        from pathlib import Path
+        
+        Path(output.index_time).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Read performance data
+        index_df = pd.read_csv(input.index_perf, sep='\t')
+        placement_df = pd.read_csv(input.placement_perf, sep='\t')
+        
+        print(f"[plot_performance] Index records: {len(index_df)}")
+        print(f"[plot_performance] Placement records: {len(placement_df)}")
+        
+        # Helper function to create box plots
+        def plot_boxplot(data, x_col, y_col, title, ylabel, output_file, hue_col=None):
+            plt.figure(figsize=(10, 6))
+            sns.set_style('whitegrid')
+            
+            if len(data) == 0:
+                # Create empty plot with message
+                plt.text(0.5, 0.5, 'No data available yet', 
+                        horizontalalignment='center', verticalalignment='center',
+                        transform=plt.gca().transAxes, fontsize=14)
+                plt.xlabel('k-mer size (k)')
+                plt.ylabel(ylabel)
+                plt.title(title)
+            else:
+                if hue_col:
+                    sns.boxplot(data=data, x=x_col, y=y_col, hue=hue_col, palette='Set2')
+                else:
+                    sns.boxplot(data=data, x=x_col, y=y_col, palette='Set2')
+                
+                plt.xlabel('k-mer size (k)')
+                plt.ylabel(ylabel)
+                plt.title(title)
+                if hue_col:
+                    plt.legend(title=hue_col, bbox_to_anchor=(1.05, 1), loc='upper left')
+            
+            plt.tight_layout()
+            plt.savefig(output_file, dpi=300)
+            plt.savefig(output_file.replace('.png', '.pdf'))
+            plt.close()
+            print(f"[plot_performance] Saved {output_file}")
+        
+        # Index performance plots
+        # Combined plot
+        plot_boxplot(index_df, 'k', 'wall_time_sec', 
+                    'Index Build Time by k-mer Size',
+                    'Wall time (seconds)',
+                    output.index_time, hue_col='l')
+        
+        # Split by l (l=1)
+        data_l1 = index_df[index_df['l'] == 1] if len(index_df) > 0 else pd.DataFrame()
+        plot_boxplot(data_l1, 'k', 'wall_time_sec',
+                    'Index Build Time (l=1)',
+                    'Wall time (seconds)',
+                    output.index_time_l1)
+        
+        # Split by l (l=3)
+        data_l3 = index_df[index_df['l'] == 3] if len(index_df) > 0 else pd.DataFrame()
+        plot_boxplot(data_l3, 'k', 'wall_time_sec',
+                    'Index Build Time (l=3)',
+                    'Wall time (seconds)',
+                    output.index_time_l3)
+        
+        # Memory plot
+        plot_boxplot(index_df, 'k', 'max_rss_mb',
+                    'Index Build Memory by k-mer Size',
+                    'Peak memory (MB)',
+                    output.index_memory, hue_col='l')
+        
+        # Placement performance plots - line plots with error bars
+        def plot_time_lineplot(data, title, output_file, l_value=None):
+            plt.figure(figsize=(10, 6))
+            sns.set_style('whitegrid')
+            
+            if len(data) == 0:
+                plt.text(0.5, 0.5, 'No data available yet', 
+                        horizontalalignment='center', verticalalignment='center',
+                        transform=plt.gca().transAxes, fontsize=14)
+                plt.xlabel('Number of reads')
+                plt.ylabel('Wall time (seconds)')
+                plt.title(title)
+            else:
+                # Group by reads and k, calculate mean and std
+                stats = data.groupby(['reads', 'k'])['wall_time_sec'].agg(['mean', 'std']).reset_index()
+                
+                # Plot line for each k value
+                k_values = sorted(stats['k'].unique())
+                colors = plt.cm.Set2(range(len(k_values)))
+                
+                for idx, k_val in enumerate(k_values):
+                    k_data = stats[stats['k'] == k_val]
+                    plt.errorbar(k_data['reads'], k_data['mean'], yerr=k_data['std'],
+                                label=f'k={k_val}', marker='o', capsize=5, 
+                                color=colors[idx], linewidth=2, markersize=8)
+                
+                plt.xlabel('Number of reads', fontsize=12)
+                plt.ylabel('Wall time (seconds)', fontsize=12)
+                plt.title(title, fontsize=14)
+                plt.legend(title='k-mer size', fontsize=10)
+                plt.xscale('log')
+                plt.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(output_file, dpi=300)
+            plt.savefig(output_file.replace('.png', '.pdf'))
+            plt.close()
+            print(f"[plot_performance] Saved {output_file}")
+        
+        # Time plots split by l value
+        if len(placement_df) > 0:
+            # l=1
+            data_l1 = placement_df[placement_df['l'] == 1]
+            plot_time_lineplot(data_l1, 'Placement Time vs Number of Reads (l=1)', 
+                              output.placement_time_l1)
+            
+            # l=3
+            data_l3 = placement_df[placement_df['l'] == 3]
+            plot_time_lineplot(data_l3, 'Placement Time vs Number of Reads (l=3)', 
+                              output.placement_time_l3)
+            
+            # Combined (for compatibility)
+            plot_time_lineplot(placement_df, 'Placement Time vs Number of Reads (All l)', 
+                              output.placement_time)
+        else:
+            # Create empty plots
+            plot_time_lineplot(pd.DataFrame(), 'Placement Time vs Number of Reads (l=1)', 
+                              output.placement_time_l1)
+            plot_time_lineplot(pd.DataFrame(), 'Placement Time vs Number of Reads (l=3)', 
+                              output.placement_time_l3)
+            plot_time_lineplot(pd.DataFrame(), 'Placement Time vs Number of Reads (All l)', 
+                              output.placement_time)
+        
+        # Memory plot (keep as box plot grouped by k)
+        plot_boxplot(placement_df, 'k', 'max_rss_mb',
+                    'Placement Memory by k-mer Size',
+                    'Peak memory (MB)',
+                    output.placement_memory, hue_col=None if len(placement_df) == 0 else 'l')
+        
+        print(f"[plot_performance] Performance plots complete")
+
+
 rule compare_variants:
     input:
         panmap_bin="build/bin/panmap",
@@ -1244,10 +1611,9 @@ rule compare_variants:
 
 rule plot_placement_accuracy:
     input:
-        accuracy_files=ALIGNMENT_ACCURACY
+        accuracy_summary=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
     output:
-        done=touch(f"{OUTPUT_DIR}/plots/placement_accuracy_plots.done"),
-        plots_dir=directory(f"{OUTPUT_DIR}/plots")
+        done=touch(f"{OUTPUT_DIR}/plots/placement_accuracy_plots.done")
     run:
         import pandas as pd
         import numpy as np
@@ -1256,198 +1622,62 @@ rule plot_placement_accuracy:
         warnings.filterwarnings('ignore')
         
         # Create plots directory
-        plots_dir = Path(output.plots_dir)
+        plots_dir = Path(f"{OUTPUT_DIR}/plots")
         plots_dir.mkdir(parents=True, exist_ok=True)
         
-        # Filter for files that actually exist
-        existing_files = [f for f in input.accuracy_files if Path(f).exists()]
-        
-        print(f"[plot_placement_accuracy] Input specified {len(input.accuracy_files)} accuracy files")
-        print(f"[plot_placement_accuracy] Found {len(existing_files)} existing accuracy files")
-        
-        if len(existing_files) == 0:
-            print(f"[plot_placement_accuracy] No accuracy files found, creating empty plots directory")
-            # Create a summary file indicating no data
+        # Check if summary file exists
+        if not Path(input.accuracy_summary).exists():
+            print(f"[plot_placement_accuracy] Summary file not found: {input.accuracy_summary}")
             summary_file = plots_dir / "summary.txt"
             with open(summary_file, 'w') as f:
                 f.write("No accuracy data available for plotting.\n")
             return
         
-        # Load and combine all available accuracy data
-        all_data = []
-        for accuracy_file in existing_files:
-            try:
-                print(f"[plot_placement_accuracy] Loading {accuracy_file}")
-                df = pd.read_csv(accuracy_file, sep='\t')
-                
-                # Extract experiment info from file path
-                # Format: workflow_output/experiments/{eid}/{pan_stem}/{tag}/alignments/reads/cov{cov}_{n}_rep{rep}/accuracy.tsv
-                path_parts = Path(accuracy_file).parts
-                if len(path_parts) >= 8:
-                    eid = path_parts[2]
-                    pan_stem = path_parts[3] 
-                    tag = path_parts[4]
-                    reads_info = path_parts[7]  # cov{cov}_{n}_rep{rep}
-                    
-                    # Parse cov{cov}_{n}_rep{rep}
-                    import re
-                    match = re.match(r'cov([\d.]+)_(\d+)_rep(\d+)', reads_info)
-                    if match:
-                        coverage = float(match.group(1))
-                        reads = int(match.group(2))
-                        replicate = int(match.group(3))
-                        
-                        # Add metadata to dataframe
-                        df['experiment'] = eid
-                        df['pan_stem'] = pan_stem
-                        df['tag'] = tag
-                        df['coverage'] = coverage
-                        df['reads'] = reads
-                        df['replicate'] = replicate
-                        
-                        # Extract k, s, and mutation rate from tag
-                        # Tag format: k{k}_s{s}_noint_mut{rate}
-                        k_match = re.search(r'k(\d+)', tag)
-                        s_match = re.search(r's(\d+)', tag)
-                        mut_match = re.search(r'mut([\d.]+)', tag)
-                        
-                        df['k'] = int(k_match.group(1)) if k_match else 0
-                        df['s'] = int(s_match.group(1)) if s_match else 0
-                        df['k_s_params'] = f"k{df['k'].iloc[0]}_s{df['s'].iloc[0]}"
-                        
-                        if mut_match:
-                            df['mutation_rate'] = float(mut_match.group(1))
-                        else:
-                            df['mutation_rate'] = 0.0
-                        
-                        # Try to read detailed mutation info from metadata file
-                        # Format coverage to match the original file naming convention
-                        coverage_str = str(int(coverage)) if coverage == int(coverage) else str(coverage)
-                        meta_file = f"workflow_output/experiments/{eid}/{pan_stem}/{tag}/results/reads/cov{coverage_str}_{reads}_rep{replicate}.txt"
-                        mutation_breakdown = "unknown"
-                        calculated_mutation_rate = 0.0
-                        calculated_genome_size = 0
-                        try:
-                            if pathlib.Path(meta_file).exists():
-                                with open(meta_file, 'r') as mf:
-                                    meta_line = mf.read().strip()
-                                    # Split on both tabs and spaces, then filter for parts with '='
-                                    all_parts = re.split(r'[\t\s]+', meta_line)
-                                    fields = dict(part.split('=',1) for part in all_parts if '=' in part)
-                                    
-                                    # Extract mutation rate and genome size for consistent calculation
-                                    meta_mutation_rate = float(fields.get('mutation_rate', 0.0))
-                                    meta_genome_size = int(fields.get('genome_size', 0))
-                                    
-                                    if meta_mutation_rate > 0 and meta_genome_size > 0:
-                                        # Use the same calculation as in simulation
-                                        calculated_snps = int(meta_mutation_rate * meta_genome_size)
-                                        calculated_indels = int(meta_mutation_rate * meta_genome_size / 4)
-                                        calculated_mutation_rate = meta_mutation_rate
-                                        calculated_genome_size = meta_genome_size
-                                        
-                                        # Create breakdown based on calculated values for consistency
-                                        parts = []
-                                        if calculated_snps > 0:
-                                            parts.append(f"{calculated_snps}snp")
-                                        if calculated_indels > 0:
-                                            parts.append(f"{calculated_indels}indel")
-                                        
-                                        if parts:
-                                            mutation_breakdown = '+'.join(parts)
-                                        else:
-                                            mutation_breakdown = "0mut"
-                                    else:
-                                        # Fallback to applied values if no mutation rate/genome size
-                                        applied_snps = int(fields.get('applied_snps', 0))
-                                        applied_insertions = int(fields.get('applied_insertions', 0))
-                                        applied_deletions = int(fields.get('applied_deletions', 0))
-                                        
-                                        parts = []
-                                        if applied_snps > 0:
-                                            parts.append(f"{applied_snps}snp")
-                                        if applied_insertions > 0:
-                                            parts.append(f"{applied_insertions}ins")
-                                        if applied_deletions > 0:
-                                            parts.append(f"{applied_deletions}del")
-                                        
-                                        if parts:
-                                            mutation_breakdown = '+'.join(parts)
-                                        else:
-                                            mutation_breakdown = "0mut"
-                                        
-                        except Exception as e:
-                            print(f"[plot_placement_accuracy] Could not parse metadata {meta_file}: {e}")
-                            print(f"[plot_placement_accuracy] Meta line: {meta_line if 'meta_line' in locals() else 'NO_LINE'}")
-                            mutation_breakdown = "unknown"
-                        
-                        df['mutation_breakdown'] = mutation_breakdown
-                        df['calculated_mutation_rate'] = calculated_mutation_rate
-                        df['calculated_genome_size'] = calculated_genome_size
-                        
-                        all_data.append(df)
-                        
-            except Exception as e:
-                print(f"[plot_placement_accuracy] Error loading {accuracy_file}: {e}")
-                continue
+        # Load the pre-aggregated accuracy summary
+        print(f"[plot_placement_accuracy] Loading {input.accuracy_summary}")
+        df = pd.read_csv(input.accuracy_summary, sep='\t')
         
-        if len(all_data) == 0:
-            print(f"[plot_placement_accuracy] No valid data loaded")
-            summary_file = plots_dir / "summary.txt"
-            with open(summary_file, 'w') as f:
-                f.write("No valid accuracy data could be loaded for plotting.\n")
-            return
-        
-        # Combine all data
-        df = pd.concat(all_data, ignore_index=True)
-        print(f"[plot_placement_accuracy] Combined {len(df)} records from {len(all_data)} files")
+        print(f"[plot_placement_accuracy] Loaded {len(df)} records")
         print(f"[plot_placement_accuracy] Columns: {list(df.columns)}")
         
-        # Calculate distance from expected genome (total variants)
-        if 'total_variants' in df.columns:
-            df['distance'] = df['total_variants']
-        else:
-            df['distance'] = df.get('snps', 0) + df.get('indels', 0)
+        if len(df) == 0:
+            print(f"[plot_placement_accuracy] No data in summary file")
+            summary_file = plots_dir / "summary.txt"
+            with open(summary_file, 'w') as f:
+                f.write("No valid accuracy data in summary file.\n")
+            return
+        
+        # Extract k, s, l from tag
+        import re
+        def extract_ksl(tag):
+            k_match = re.search(r'k(\d+)', tag)
+            s_match = re.search(r's(\d+)', tag)
+            l_match = re.search(r'l(\d+)', tag)
+            k = int(k_match.group(1)) if k_match else 0
+            s = int(s_match.group(1)) if s_match else 0
+            l = int(l_match.group(1)) if l_match else 1
+            return k, s, l
+        
+        df[['k', 's', 'l']] = df['tag'].apply(lambda x: pd.Series(extract_ksl(x)))
+        df['k_s_l_params'] = df.apply(lambda row: f"k{row['k']}_s{row['s']}_l{row['l']}", axis=1)
+        
+        # Calculate distance from expected genome (total variants already in the data)
+        df['distance'] = df['total_variants']
         
         # Count replicates for each combination to add to legend
-        # Group by reads and mutation rate to count replicates
-        if 'calculated_mutation_rate' in df.columns and 'reads' in df.columns and 'replicate' in df.columns:
-            replicate_counts = df.groupby(['reads', 'calculated_mutation_rate'])['replicate'].nunique().reset_index()
-            replicate_counts.columns = ['reads', 'calculated_mutation_rate', 'n_replicates']
-            df = df.merge(replicate_counts, on=['reads', 'calculated_mutation_rate'], how='left')
-        elif 'mutation_breakdown' in df.columns and 'reads' in df.columns and 'replicate' in df.columns:
-            replicate_counts = df.groupby(['reads', 'mutation_breakdown'])['replicate'].nunique().reset_index()
-            replicate_counts.columns = ['reads', 'mutation_breakdown', 'n_replicates']
-            df = df.merge(replicate_counts, on=['reads', 'mutation_breakdown'], how='left')
-        else:
-            # Default to counting unique replicates per reads
-            if 'replicate' in df.columns and 'reads' in df.columns:
-                replicate_counts = df.groupby(['reads'])['replicate'].nunique().reset_index()
-                replicate_counts.columns = ['reads', 'n_replicates']
-                df = df.merge(replicate_counts, on=['reads'], how='left')
-            else:
-                df['n_replicates'] = 1
+        replicate_counts = df.groupby(['reads', 'mutation_rate'])['replicate'].nunique().reset_index()
+        replicate_counts.columns = ['reads', 'mutation_rate', 'n_replicates']
+        df = df.merge(replicate_counts, on=['reads', 'mutation_rate'], how='left')
         
         # Create read count + mutation rate categories for legend with replicate count
-        if 'calculated_mutation_rate' in df.columns and 'reads' in df.columns:
-            # Format mutation rate for legend (e.g., "1e-4" or "0.0001")
-            df['mutation_rate_str'] = df['calculated_mutation_rate'].apply(
-                lambda x: f"{x:.0e}" if x > 0 and x < 0.001 else f"{x:.4f}" if x > 0 else "0"
-            )
-            df['category'] = df['reads'].astype(str) + ' reads, μ=' + df['mutation_rate_str'].astype(str) + ' (n=' + df['n_replicates'].astype(str) + ')'
-            # Add separate columns for proper sorting
-            df['reads_sort'] = df['reads']
-            df['mutations_sort'] = df['calculated_mutation_rate'] * 10000  # Use mutation rate for sorting
-        elif 'mutation_breakdown' in df.columns and 'reads' in df.columns:
-            # Fallback to mutation breakdown if mutation rate not available
-            df['category'] = df['reads'].astype(str) + ' reads, ' + df['mutation_breakdown'].astype(str) + ' (n=' + df['n_replicates'].astype(str) + ')'
-            # Add separate columns for proper sorting
-            df['reads_sort'] = df['reads']
-            df['mutations_sort'] = df.get('mutation_rate', 0) * 10000  # Use mutation rate for sorting
-        else:
-            df['category'] = df.get('reads', 'unknown').astype(str) + ' reads (n=' + df['n_replicates'].astype(str) + ')'
-            df['reads_sort'] = df.get('reads', 0)
-            df['mutations_sort'] = 0
+        # Format mutation rate for legend (e.g., "1e-4" or "0.0001")
+        df['mutation_rate_str'] = df['mutation_rate'].apply(
+            lambda x: f"{x:.0e}" if x > 0 and x < 0.001 else f"{x:.4f}" if x > 0 else "0"
+        )
+        df['category'] = df['reads'].astype(str) + ' reads, μ=' + df['mutation_rate_str'].astype(str) + ' (n=' + df['n_replicates'].astype(str) + ')'
+        # Add separate columns for proper sorting
+        df['reads_sort'] = df['reads']
+        df['mutations_sort'] = df['mutation_rate'] * 10000  # Use mutation rate for sorting
         
         # Create a detailed summary TSV file instead of plots for now
         summary_file = plots_dir / "placement_accuracy_summary.tsv"
@@ -1517,7 +1747,6 @@ rule plot_placement_accuracy:
         with open(report_file, 'w') as f:
             f.write("Placement Accuracy Analysis Report\n")
             f.write("==================================\n\n")
-            f.write(f"Total accuracy files processed: {len(all_data)}\n")
             f.write(f"Total records: {len(df)}\n")
             f.write(f"Metrics analyzed: {', '.join(metrics)}\n")
             f.write(f"Categories found: {len(df['category'].unique())}\n\n")
@@ -1552,36 +1781,36 @@ rule plot_placement_accuracy:
             else:
                 df['distance'] = df.get('snps', 0) + df.get('indels', 0)
             
-            # Get unique (k,s) parameter combinations
-            k_s_combinations = df['k_s_params'].unique() if 'k_s_params' in df.columns else ['all']
+            # Get unique (k,s,l) parameter combinations
+            k_s_l_combinations = df['k_s_l_params'].unique() if 'k_s_l_params' in df.columns else ['all']
             
-            for k_s_params in k_s_combinations:
-                print(f"[plot_placement_accuracy] Creating plots for {k_s_params}")
+            for k_s_l_params in k_s_l_combinations:
+                print(f"[plot_placement_accuracy] Creating plots for {k_s_l_params}")
                 
-                # Filter data for this (k,s) combination
-                if k_s_params != 'all':
-                    k_s_data = df[df['k_s_params'] == k_s_params].copy()
+                # Filter data for this (k,s,l) combination
+                if k_s_l_params != 'all':
+                    k_s_l_data = df[df['k_s_l_params'] == k_s_l_params].copy()
                 else:
-                    k_s_data = df.copy()
+                    k_s_l_data = df.copy()
                 
-                if len(k_s_data) == 0:
-                    print(f"[plot_placement_accuracy] No data for {k_s_params}")
+                if len(k_s_l_data) == 0:
+                    print(f"[plot_placement_accuracy] No data for {k_s_l_params}")
                     continue
                 
-                # Create plots for each metric within this (k,s) combination
-                metrics = k_s_data['metric'].unique() if 'metric' in k_s_data.columns else ['combined']
+                # Create plots for each metric within this (k,s,l) combination
+                metrics = k_s_l_data['metric'].unique() if 'metric' in k_s_l_data.columns else ['combined']
                 
                 for metric in metrics:
-                    print(f"[plot_placement_accuracy] Creating plot for {k_s_params}, metric: {metric}")
+                    print(f"[plot_placement_accuracy] Creating plot for {k_s_l_params}, metric: {metric}")
                     
                     # Filter data for this metric
                     if metric != 'combined':
-                        metric_data = k_s_data[k_s_data['metric'] == metric].copy()
+                        metric_data = k_s_l_data[k_s_l_data['metric'] == metric].copy()
                     else:
-                        metric_data = k_s_data.copy()
+                        metric_data = k_s_l_data.copy()
                     
                     if len(metric_data) == 0:
-                        print(f"[plot_placement_accuracy] No data for {k_s_params}, metric {metric}")
+                        print(f"[plot_placement_accuracy] No data for {k_s_l_params}, metric {metric}")
                         continue
                     
                     # Create the plot
@@ -1634,7 +1863,7 @@ rule plot_placement_accuracy:
                     # Customize the plot
                     ax.set_xlabel('Dist. from expected genome (# SNPs + Indels)', fontsize=12)
                     ax.set_ylabel('Proportion of samples', fontsize=12)
-                    ax.set_title(f'Placement accuracy, {k_s_params}, {metric} metric', fontsize=14, fontweight='bold')
+                    ax.set_title(f'Placement accuracy, {k_s_l_params}, {metric} metric', fontsize=14, fontweight='bold')
                     ax.set_xticks(x)
                     ax.set_xticklabels([str(d) for d in distance_bins])
                     ax.set_ylim(0, 1.0)
@@ -1651,28 +1880,29 @@ rule plot_placement_accuracy:
                     # Tight layout
                     plt.tight_layout()
                     
-                    # Save the plot with (k,s) parameter in filename
-                    plot_file = plots_dir / f"placement_accuracy_{k_s_params}_{metric}.png"
+                    # Save the plot with (k,s,l) parameters in filename
+                    plot_file = plots_dir / f"placement_accuracy_{k_s_l_params}_{metric}.png"
                     plt.savefig(plot_file, dpi=300, bbox_inches='tight')
                     print(f"[plot_placement_accuracy] Saved plot: {plot_file}")
                     
                     # Also save as PDF
-                    plot_file_pdf = plots_dir / f"placement_accuracy_{k_s_params}_{metric}.pdf"
+                    plot_file_pdf = plots_dir / f"placement_accuracy_{k_s_l_params}_{metric}.pdf"
                     plt.savefig(plot_file_pdf, bbox_inches='tight')
                     
                     plt.close()
             
-            print(f"[plot_placement_accuracy] Created visual plots for {len(k_s_combinations)} (k,s) combinations")
+            print(f"[plot_placement_accuracy] Created visual plots for {len(k_s_l_combinations)} (k,s,l) combinations")
             
             # Create comprehensive PDF with all plots in a grid
             print(f"[plot_placement_accuracy] Creating comprehensive PDF with all plots...")
             
-            metrics = ['raw', 'jaccard', 'cosine', 'weighted']
+            # Get metrics dynamically from the data
+            metrics = df['metric'].unique().tolist() if 'metric' in df.columns else ['combined']
             n_metrics = len(metrics)
-            n_k_s_combinations = len(k_s_combinations)
+            n_k_s_l_combinations = len(k_s_l_combinations)
             
-            # Calculate grid dimensions (rows=k_s combinations, cols=metrics)
-            n_rows = n_k_s_combinations
+            # Calculate grid dimensions (rows=k_s_l combinations, cols=metrics)
+            n_rows = n_k_s_l_combinations
             n_cols = n_metrics
             
             # Create large figure for comprehensive view
@@ -1689,19 +1919,20 @@ rule plot_placement_accuracy:
                 axes = [[ax] for ax in axes]
             
             # Plot each combination
-            for row_idx, k_s_params in enumerate(k_s_combinations):
-                k_s_data = df[df['k_s_params'] == k_s_params]
+            for row_idx, k_s_l_params in enumerate(k_s_l_combinations):
+                k_s_l_data = df[df['k_s_l_params'] == k_s_l_params]
                 
                 for col_idx, metric in enumerate(metrics):
                     ax = axes[row_idx][col_idx]
                     
-                    if metric != 'combined':
-                        metric_data = k_s_data[k_s_data['metric'] == metric].copy()
+                    # Filter by metric column if it exists in the dataframe
+                    if 'metric' in k_s_l_data.columns:
+                        metric_data = k_s_l_data[k_s_l_data['metric'] == metric].copy()
                     else:
-                        metric_data = k_s_data.copy()
+                        metric_data = k_s_l_data.copy()
                     
                     if len(metric_data) == 0:
-                        ax.text(0.5, 0.5, f'No data\n{k_s_params}\n{metric}', 
+                        ax.text(0.5, 0.5, f'No data\n{k_s_l_params}\n{metric}', 
                                ha='center', va='center', transform=ax.transAxes)
                         ax.set_xticks([])
                         ax.set_yticks([])
@@ -1762,27 +1993,32 @@ rule plot_placement_accuracy:
                             ax.set_ylabel('Proportion of samples', fontsize=10)
                         
                         # Add title for each subplot
-                        ax.set_title(f'{k_s_params}, {metric}', fontsize=11, fontweight='bold')
+                        ax.set_title(f'{k_s_l_params}, {metric}', fontsize=11, fontweight='bold')
                         
                         # Add reference line at y=1.0
                         ax.axhline(y=1.0, color='black', linestyle='--', alpha=0.3)
                     else:
-                        ax.text(0.5, 0.5, f'No data\n{k_s_params}\n{metric}', 
+                        ax.text(0.5, 0.5, f'No data\n{k_s_l_params}\n{metric}', 
                                ha='center', va='center', transform=ax.transAxes)
                         ax.set_xticks([])
                         ax.set_yticks([])
             
             # Add overall title
-            fig.suptitle('Placement Accuracy Analysis by (k,s) Parameters and Metrics', 
+            fig.suptitle('Placement Accuracy Analysis by (k,s,l) Parameters and Metrics', 
                         fontsize=16, fontweight='bold', y=0.98)
             
             # Create a legend for the entire figure (use data from first non-empty plot)
             legend_categories = None
             legend_colors = None
-            for k_s_params in k_s_combinations:
-                k_s_data = df[df['k_s_params'] == k_s_params]
-                if len(k_s_data) > 0:
-                    metric_data = k_s_data[k_s_data['metric'] == 'raw']  # Use raw metric for legend
+            for k_s_l_params in k_s_l_combinations:
+                k_s_l_data = df[df['k_s_l_params'] == k_s_l_params]
+                if len(k_s_l_data) > 0:
+                    # Filter by metric if the column exists (use first available metric for legend)
+                    if 'metric' in k_s_l_data.columns:
+                        first_metric = k_s_l_data['metric'].iloc[0]
+                        metric_data = k_s_l_data[k_s_l_data['metric'] == first_metric]  # Use first metric for legend
+                    else:
+                        metric_data = k_s_l_data
                     if len(metric_data) > 0 and 'category' in metric_data.columns:
                         if 'reads_sort' in metric_data.columns and 'mutations_sort' in metric_data.columns:
                             category_order = metric_data[['category', 'reads_sort', 'mutations_sort']].drop_duplicates()
@@ -1813,14 +2049,112 @@ rule plot_placement_accuracy:
             # Also save as PNG for quick viewing
             comprehensive_png = plots_dir / "placement_accuracy_comprehensive.png"
             plt.savefig(comprehensive_png, bbox_inches='tight', dpi=300)
-            print(f"[plot_placement_accuracy] Saved comprehensive PNG: {comprehensive_png}")
-            
-            plt.close()
-            
-        except ImportError:
-            print(f"[plot_placement_accuracy] Note: Install matplotlib/seaborn for visual plots")
+        except Exception as e:
+            # Catch plotting errors so the rule can fail gracefully and report
+            print(f"[plot_placement_accuracy] plotting error: {e}")
+            err_file = plots_dir / "plotting_error.txt"
+            try:
+                with open(err_file, 'w') as ef:
+                    ef.write(str(e) + '\n')
+            except Exception:
+                pass
         
-        print(f"[plot_placement_accuracy] Completed analysis of {len(df)} records")
+
+# -----------------------------------------------------------------------------
+# K-value analysis plots: accuracy vs k, split by l
+# -----------------------------------------------------------------------------
+rule plot_accuracy_by_k:
+    input:
+        summary=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
+    output:
+        png_l1=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l1.png",
+        pdf_l1=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l1.pdf",
+        png_l3=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l3.png",
+        pdf_l3=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l3.pdf",
+    params:
+        title_prefix="Placement Accuracy vs k",
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        from pathlib import Path
+
+        Path(output.png_l1).parent.mkdir(parents=True, exist_ok=True)
+
+        # Read summary 
+        df = pd.read_csv(input.summary, sep='\t')
+        
+        print(f"[plot_accuracy_by_k] Loaded {len(df)} records")
+        print(f"[plot_accuracy_by_k] Columns: {list(df.columns)}")
+
+        # Use total_variants as distance measure
+        if 'total_variants' not in df.columns:
+            raise ValueError(f"Expected 'total_variants' column in {input.summary}")
+        
+        df['distance'] = df['total_variants']
+        df['correct'] = (df['distance'] == 0).astype(int)
+
+        # Extract k, l from tag column (format: k{k}_s{s}_l{l}_...)
+        import re
+        def extract_k(tag):
+            match = re.search(r'k(\d+)', tag)
+            return int(match.group(1)) if match else 0
+        
+        def extract_l(tag):
+            match = re.search(r'l(\d+)', tag)
+            return int(match.group(1)) if match else 1
+        
+        df['k'] = df['tag'].apply(extract_k)
+        df['l'] = df['tag'].apply(extract_l)
+        
+        # Ensure numeric types
+        df['k'] = df['k'].astype(int)
+        df['l'] = df['l'].astype(int)
+        df['reads'] = df['reads'].astype(int)
+
+        # Aggregate: mean accuracy per k, l, metric, reads
+        agg = df.groupby(['k','l','metric','reads'], as_index=False).agg({'correct':'mean'})
+        agg['accuracy'] = agg['correct'] * 100
+
+        # Category label for legend
+        agg['category'] = agg['metric'].astype(str) + ":" + agg['reads'].astype(str)
+
+        # Helper to plot for a given l value
+        def plot_for_l(l_value, png_out, pdf_out):
+            sub = agg[agg['l'] == l_value]
+            if sub.empty:
+                print(f"[plot_accuracy_by_k] No data for l={l_value}, skipping")
+                return
+
+            plt.figure(figsize=(10,6))
+            sns.set_style('whitegrid')
+
+            categories = sorted(sub['category'].unique())
+            palette = sns.color_palette('tab20', n_colors=max(3, len(categories)))
+            color_map = {cat: palette[i % len(palette)] for i,cat in enumerate(categories)}
+
+            for cat in categories:
+                m, r = cat.split(":")
+                dat = sub[(sub['metric'] == m) & (sub['reads'] == int(r))]
+                if dat.empty:
+                    continue
+                dat = dat.sort_values('k')
+                plt.plot(dat['k'], dat['accuracy'], marker='o', label=f"{m} ({r} reads)", color=color_map[cat])
+
+            plt.xlabel('k (k-mer size)')
+            plt.ylabel('Accuracy (%)')
+            plt.title(f"{params.title_prefix} (l={l_value})")
+            plt.xticks(sorted(sub['k'].unique()))
+            plt.ylim(0, 100)
+            plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
+            plt.tight_layout()
+            plt.savefig(png_out, dpi=300)
+            plt.savefig(pdf_out)
+            plt.close()
+            print(f"[plot_accuracy_by_k] Wrote {png_out} and {pdf_out}")
+
+        plot_for_l(1, output.png_l1, output.pdf_l1)
+        plot_for_l(3, output.png_l3, output.pdf_l3)
 
 
 rule clean:

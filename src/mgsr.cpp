@@ -1094,7 +1094,27 @@ void mgsr::mgsrPlacer::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   }
 }
 
+void mgsr::mgsrPlacer::buildNodeToDfsIndexHelper(panmapUtils::LiteNode* node, int64_t& dfsIndex) {
+  nodeToDfsIndex[node->identifier] = dfsIndex;
+  for (auto* child : node->children) {
+    dfsIndex++;
+    buildNodeToDfsIndexHelper(child, dfsIndex);
+  }
+}
+
+void mgsr::mgsrPlacer::buildNodeToDfsIndex() {
+  nodeToDfsIndex.clear();
+  if (liteTree && liteTree->root) {
+    int64_t dfsIndex = 0;
+    buildNodeToDfsIndexHelper(liteTree->root, dfsIndex);
+    std::cout << "DEBUG: Built nodeToDfsIndex with " << nodeToDfsIndex.size() << " nodes" << std::endl;
+  }
+}
+
 void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, bool fast_mode) {
+  std::cout << "DEBUG initializeQueryData: Starting with " << readSequences.size() << " raw read sequences" << std::endl;
+  std::cout << "DEBUG initializeQueryData: k=" << k << ", s=" << s << ", t=" << t << ", l=" << l << ", openSyncmer=" << openSyncmer << std::endl;
+  
   std::unordered_map<std::string_view, std::vector<size_t>> seqToIndex;
   for (size_t i = 0; i < readSequences.size(); ++i) {
     seqToIndex[readSequences[i]].push_back(i);
@@ -1106,6 +1126,8 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     seqToIndexVec[seqToIndexVecIndex].second = std::move(index);
     ++seqToIndexVecIndex;
   }
+  
+  std::cout << "DEBUG initializeQueryData: Collapsed to " << seqToIndexVec.size() << " unique sequences" << std::endl;
 
   // seedmers for each unique read sequence
   size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
@@ -1115,6 +1137,12 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
       const auto& seq = seqToIndexVec[i].first;
       const auto& syncmers = seeding::rollingSyncmers(seq, k, s, openSyncmer, t, false);
       mgsr::Read& curRead = uniqueReadSeedmers[i];
+      
+      if (i == 0) {
+        std::cout << "DEBUG initializeQueryData: First unique seq length=" << seq.length() 
+                  << ", syncmers.size()=" << syncmers.size() << ", l=" << l << std::endl;
+      }
+      
       if (syncmers.size() < l) continue;
 
       size_t forwardRolledHash = 0;
@@ -1125,8 +1153,21 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
         reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-i-1]);
       }
 
+      // Debug first k-minmer
+      static int debugCount = 0;
+      if (debugCount < 5) {
+        std::cout << "DEBUG kminmer " << debugCount << ": l=" << l 
+                  << ", forwardHash=" << forwardRolledHash 
+                  << ", reverseHash=" << reverseRolledHash
+                  << ", equal=" << (forwardRolledHash == reverseRolledHash) << std::endl;
+        debugCount++;
+      }
+
       uint32_t iorder = 0;
-      if (forwardRolledHash != reverseRolledHash) {
+      // For l=1 (syncmers), the hash is already canonical (min of forward/reverse),
+      // so we don't filter palindromes. For l>1, we need to filter.
+      bool isPalindrome = (l > 1) && (forwardRolledHash == reverseRolledHash);
+      if (!isPalindrome) {
         size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
         curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
         curRead.seedmersList.emplace_back(mgsr::readSeedmer{
@@ -1145,7 +1186,9 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
         forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
         reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
 
-        if (forwardRolledHash != reverseRolledHash) {
+        // For l=1, don't filter palindromes; for l>1, filter them
+        isPalindrome = (l > 1) && (forwardRolledHash == reverseRolledHash);
+        if (!isPalindrome) {
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
           auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
           if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
@@ -1344,6 +1387,13 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
   }
 
   std::cout << "Collapsed " << readSequences.size() << " raw reads to " << reads.size() << " sketched kminmer sets" << std::endl;
+  
+  // DEBUG: Check final read state
+  if (!reads.empty()) {
+    std::cout << "DEBUG initializeQueryData: Final check - reads[0].seedmersList.size()=" << reads[0].seedmersList.size() 
+              << ", reads[0].uniqueSeedmers.size()=" << reads[0].uniqueSeedmers.size() << std::endl;
+  }
+  
   if (skipSingleton) {
     std::cout << "SkipSingleton turned on: " << numSingletonReads << " reads with singletons will be skipped during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
@@ -2385,6 +2435,18 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
     return newKminmerRanges;
   }
 
+  // Special case for l=1 (raw syncmers): each syncmer change creates a range of length 1
+  if (indexBuilder.getL() == 1) {
+    for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
+      auto it = refOnSyncmersMap.find(syncmerPos);
+      if (it != refOnSyncmersMap.end()) {
+        auto nextIt = std::next(it);
+        newKminmerRanges.emplace_back(it, nextIt);
+      }
+    }
+    return newKminmerRanges;
+  }
+
   
   std::sort(refOnSyncmersChangeRecord.begin(), refOnSyncmersChangeRecord.end(), [](const auto& a, const auto& b) {
     return std::get<0>(a) < std::get<0>(b);
@@ -2638,26 +2700,40 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     size_t reverseHash = 0;
     bool shortRange = false;
 
-    std::vector<size_t> startingSyncmerHashes;
-    for (size_t j = 0; j < l; j++) {
-      if (curIt == refOnSyncmersMap.end()) {
-        break;
-      } else if (endIt != refOnSyncmersMap.end() && *curIt == *endIt && j != l - 1) {
-        break;
+    // For l=1, directly use the syncmer hash without complex computation
+    if (l == 1) {
+      forwardHash = reverseHash = refOnSyncmers[*curIt].value().hash;
+    } else {
+      // For l>1, compute k-min-mer hash from l syncmers
+      std::vector<size_t> startingSyncmerHashes;
+      for (size_t j = 0; j < l; j++) {
+        if (curIt == refOnSyncmersMap.end()) {
+          break;
+        } else if (endIt != refOnSyncmersMap.end() && *curIt == *endIt && j != l - 1) {
+          break;
+        }
+        startingSyncmerHashes.push_back(refOnSyncmers[*curIt].value().hash);
+        if (j != l - 1) ++curIt;
       }
-      startingSyncmerHashes.push_back(refOnSyncmers[*curIt].value().hash);
-      if (j != l - 1) ++curIt;
+      if (startingSyncmerHashes.size() < l) {
+        continue;
+      }
+      for (size_t j = 0; j < l; j++) {
+        forwardHash = seeding::rol(forwardHash, k) ^ startingSyncmerHashes[j];
+        reverseHash = seeding::rol(reverseHash, k) ^ startingSyncmerHashes[l - j - 1];
+      }
     }
-    if (startingSyncmerHashes.size() < l) {
-      continue;
-    }
-    for (size_t j = 0; j < l; j++) {
-      forwardHash = seeding::rol(forwardHash, k) ^ startingSyncmerHashes[j];
-      reverseHash = seeding::rol(reverseHash, k) ^ startingSyncmerHashes[l - j - 1];
-    }
+    
     auto& curRefOnKminmer = refOnKminmers[*indexingIt];
-    if (forwardHash != reverseHash) {
-      seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
+    
+    // For l=1 (raw syncmers), the hash is just the syncmer hash and we always keep it
+    // For l>1, we check if forward != reverse (canonical form)
+    bool isValidSeed = (l == 1) || (forwardHash != reverseHash);
+    
+    if (isValidSeed) {
+      // For l=1, preserve the original syncmer's isReverse flag
+      bool seedIsReverse = (l == 1) ? refOnSyncmers[*curIt].value().isReverse : (reverseHash < forwardHash);
+      seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), seedIsReverse};
       bool substitution = curRefOnKminmer.has_value();
       if (substitution) {
         refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
@@ -2694,6 +2770,9 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 
     if (curIt == endIt) continue;
     
+    // For l=1, each range contains exactly one syncmer, so skip rolling hash
+    if (l == 1) continue;
+    
     while (curIt != endIt) {
       ++curIt;
       if (curIt == refOnSyncmersMap.end()) break;
@@ -2702,8 +2781,14 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       ++indexingIt;
 
       auto& curRefOnKminmer = refOnKminmers[*indexingIt];
-      if (forwardHash != reverseHash) {
-        seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
+      
+      // For l=1 (raw syncmers), always valid; for l>1, check canonical form
+      bool isValidSeed = (l == 1) || (forwardHash != reverseHash);
+      
+      if (isValidSeed) {
+        // For l=1, preserve the original syncmer's isReverse flag
+        bool seedIsReverse = (l == 1) ? refOnSyncmers[*curIt].value().isReverse : (reverseHash < forwardHash);
+        seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), seedIsReverse};
         bool substitution = curRefOnKminmer.has_value();
         if (substitution) {
           refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
@@ -2738,7 +2823,9 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       }
     }
   }
-  if (!newKminmerRanges.empty() && newKminmerRanges.back().second == refOnSyncmersMap.end()) {
+  // For l>1, cleanup k-min-mers at the end that may need deletion
+  // For l=1, each syncmer is independent, so no cleanup needed
+  if (l > 1 && !newKminmerRanges.empty() && newKminmerRanges.back().second == refOnSyncmersMap.end()) {
     auto delIt = newKminmerRanges.back().second;
     for (size_t j = 0; j < l - 1; j++) {
       --delIt;
@@ -5197,4 +5284,192 @@ mgsr::squareEM::squareEM(
 
   std::cout << "Probs matrix size: " << probs.rows() << "x" << probs.cols() << std::endl;
   std::cout << "Props vector size: " << props.size() << std::endl;
+}
+
+// Simple placement: compute similarity scores for all nodes
+std::vector<mgsr::mgsrPlacer::NodeSimilarityScores> mgsr::mgsrPlacer::computeAllNodeSimilarities() {
+  std::vector<NodeSimilarityScores> results;
+  
+  // Collect all read seeds into a single set
+  absl::flat_hash_map<size_t, size_t> readSeedCounts;  // hash -> count
+  size_t totalReadSeeds = 0;
+  
+  for (const auto& read : reads) {
+    for (const auto& seedmer : read.seedmersList) {
+      readSeedCounts[seedmer.hash]++;
+      totalReadSeeds++;
+    }
+  }
+  
+  std::cout << "DEBUG: Total reads: " << reads.size() << std::endl;
+  std::cout << "DEBUG: Unique read seed hashes: " << readSeedCounts.size() << std::endl;
+  std::cout << "DEBUG: Total read seeds (with duplicates): " << totalReadSeeds << std::endl;
+  std::cout << "DEBUG: Total seedInfos: " << seedInfos.size() << std::endl;
+  std::cout << "DEBUG: nodeToDfsIndex size: " << nodeToDfsIndex.size() << std::endl;
+  
+  // Show first 5 read seed hashes
+  if (!readSeedCounts.empty()) {
+    std::cout << "DEBUG: First 5 read seed hashes: ";
+    int count = 0;
+    for (const auto& [hash, cnt] : readSeedCounts) {
+      std::cout << hash << "(" << cnt << ") ";
+      if (++count >= 5) break;
+    }
+    std::cout << std::endl;
+  }
+  
+  // Compute read magnitude for cosine similarity
+  double readMagnitude = 0.0;
+  for (const auto& [hash, count] : readSeedCounts) {
+    readMagnitude += count * count;
+  }
+  readMagnitude = std::sqrt(readMagnitude);
+  
+  // Traverse all nodes and compute scores
+  std::function<void(panmapUtils::LiteNode*, std::unordered_set<uint32_t>&)> traverseNode;
+  traverseNode = [&](panmapUtils::LiteNode* node, std::unordered_set<uint32_t>& currentSeeds) {
+    // Apply node changes
+    std::unordered_set<uint32_t> seedsToRemove;
+    std::unordered_set<uint32_t> seedsToAdd;
+    
+    auto nodeIndex = nodeToDfsIndex[node->identifier];
+    
+    // Remove deleted seeds
+    for (uint32_t seedIdx : seedDeletions[nodeIndex]) {
+      seedsToRemove.insert(seedIdx);
+    }
+    
+    // Add inserted seeds
+    for (uint32_t seedIdx : seedInsertions[nodeIndex]) {
+      seedsToAdd.insert(seedIdx);
+    }
+    
+    // Handle substitutions
+    for (const auto& [oldIdx, newIdx] : seedSubstitutions[nodeIndex]) {
+      seedsToRemove.insert(oldIdx);
+      seedsToAdd.insert(newIdx);
+    }
+    
+    // Apply changes
+    for (uint32_t idx : seedsToRemove) {
+      currentSeeds.erase(idx);
+    }
+    for (uint32_t idx : seedsToAdd) {
+      currentSeeds.insert(idx);
+    }
+    
+    // Compute similarity scores for this node
+    absl::flat_hash_map<size_t, size_t> nodeSeedCounts;  // hash -> count
+    size_t totalNodeSeeds = 0;
+    
+    for (uint32_t seedIdx : currentSeeds) {
+      const auto& seed = seedInfos[seedIdx];
+      nodeSeedCounts[seed.hash]++;
+      totalNodeSeeds++;
+    }
+    
+    // Debug output for first node
+    static bool firstNodeDebug = true;
+    if (firstNodeDebug && !nodeSeedCounts.empty()) {
+      std::cout << "DEBUG Node " << node->identifier << ": First 5 node seed hashes: ";
+      int count = 0;
+      for (const auto& [hash, cnt] : nodeSeedCounts) {
+        std::cout << hash << "(" << cnt << ") ";
+        if (++count >= 5) break;
+      }
+      std::cout << std::endl;
+      std::cout << "DEBUG: Node " << node->identifier << " has " << nodeSeedCounts.size() << " unique seeds, " << totalNodeSeeds << " total" << std::endl;
+      firstNodeDebug = false;
+    }
+    
+    // Compute metrics
+    size_t uniqueIntersection = 0;  // Count of unique seeds in both (for true Jaccard)
+    size_t rawMatches = 0;           // Sum of min counts (for raw match metric)
+    double dotProduct = 0.0;         // For cosine similarity
+    double weightedJaccardNum = 0.0; // Σmin(readCount, nodeCount)
+    double weightedJaccardDen = 0.0; // Σmax(readCount, nodeCount)
+    
+    // Count unique seeds in read collection
+    size_t uniqueReadSeeds = readSeedCounts.size();
+    size_t uniqueNodeSeeds = nodeSeedCounts.size();
+    
+    // Process seeds in both collections
+    for (const auto& [hash, nodeCount] : nodeSeedCounts) {
+      auto it = readSeedCounts.find(hash);
+      if (it != readSeedCounts.end()) {
+        // Seed is in both
+        size_t readCount = it->second;
+        uniqueIntersection++;  // Count unique seed
+        rawMatches += std::min(nodeCount, readCount);  // Sum of minimums
+        dotProduct += static_cast<double>(nodeCount) * static_cast<double>(readCount);  // Dot product
+        weightedJaccardNum += std::min(nodeCount, readCount);  // min for numerator
+        weightedJaccardDen += std::max(nodeCount, readCount);  // max for denominator
+      } else {
+        // Seed only in node
+        weightedJaccardDen += nodeCount;  // Add node-only seeds to denominator
+      }
+    }
+    
+    // Debug output for first few nodes with matches
+    static int debugNodeCount = 0;
+    if (uniqueIntersection > 0 && debugNodeCount < 5) {
+      std::cout << "DEBUG Node " << node->identifier << ": uniqueReadSeeds=" << uniqueReadSeeds 
+                << ", uniqueNodeSeeds=" << uniqueNodeSeeds << ", intersection=" << uniqueIntersection 
+                << ", rawMatches=" << rawMatches << std::endl;
+      debugNodeCount++;
+    }
+    
+    // Process seeds only in reads (for weighted Jaccard denominator)
+    for (const auto& [hash, readCount] : readSeedCounts) {
+      auto it = nodeSeedCounts.find(hash);
+      if (it == nodeSeedCounts.end()) {
+        // Seed only in reads
+        weightedJaccardDen += readCount;
+      }
+    }
+    
+    // Compute node magnitude for cosine
+    double nodeMagnitude = 0.0;
+    for (const auto& [hash, count] : nodeSeedCounts) {
+      nodeMagnitude += static_cast<double>(count) * static_cast<double>(count);
+    }
+    nodeMagnitude = std::sqrt(nodeMagnitude);
+    
+    // Compute final scores using CORRECT formulas
+    // 1. True Jaccard: |A ∩ B| / |A ∪ B| = |A ∩ B| / (|A| + |B| - |A ∩ B|)
+    size_t unionSize = uniqueReadSeeds + uniqueNodeSeeds - uniqueIntersection;
+    double jaccard = (unionSize > 0) ? static_cast<double>(uniqueIntersection) / static_cast<double>(unionSize) : 0.0;
+    
+    // 2. Cosine similarity: A·B / (||A|| ||B||)
+    double cosine = (readMagnitude > 0 && nodeMagnitude > 0) ? dotProduct / (readMagnitude * nodeMagnitude) : 0.0;
+    
+    // 3. Weighted Jaccard: Σmin(xi,yi) / Σmax(xi,yi)
+    double weightedJaccard = (weightedJaccardDen > 0) ? weightedJaccardNum / weightedJaccardDen : 0.0;
+
+    results.push_back({node->identifier, jaccard, cosine, weightedJaccard, rawMatches});
+
+    // Recursively process children
+    for (auto* child : node->children) {
+      traverseNode(child, currentSeeds);
+    }
+    
+    // Backtrack: restore seeds for sibling processing
+    for (uint32_t idx : seedsToAdd) {
+      currentSeeds.erase(idx);
+    }
+    for (uint32_t idx : seedsToRemove) {
+      currentSeeds.insert(idx);
+    }
+  };
+  
+  // Start from root with root's seeds
+  std::unordered_set<uint32_t> rootSeeds;
+  auto rootIndex = nodeToDfsIndex[liteTree->root->identifier];
+  for (uint32_t seedIdx : seedInsertions[rootIndex]) {
+    rootSeeds.insert(seedIdx);
+  }
+  
+  traverseNode(liteTree->root, rootSeeds);
+  
+  return results;
 }
