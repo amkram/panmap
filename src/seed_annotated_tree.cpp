@@ -2649,8 +2649,7 @@ void processGapMutationsForPlacement(
         
         // Apply the update
         int64_t newValue = maybeValue.getValue();
-        nodeState.gapRunUpdates.emplace_back(
-            std::make_pair(true, std::make_pair(pos, newValue)));
+        nodeState.gapRunUpdates.emplace_back(pos, newValue, true);
       } else {
         // This is a deletion operation
         auto it = manager.getGapMap().find(pos);
@@ -3101,7 +3100,7 @@ void processBlockRun(
       // During indexing, mark the entire region as a gap
       
       // Add the range to updates without scanning each position
-      gapRunUpdates.emplace_back(false, std::make_pair(startScalar, endScalar - startScalar + 1));
+      gapRunUpdates.emplace_back(startScalar, endScalar - startScalar + 1, false);
       msg("Added entire off-block run as gap: start={}, length={}", 
           startScalar, endScalar - startScalar + 1);
     }

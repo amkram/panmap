@@ -265,6 +265,17 @@ if(NOT panman_POPULATED)
     # Get the source directory
     FetchContent_GetProperties(panman SOURCE_DIR panman_SOURCE_DIR BINARY_DIR panman_BINARY_DIR)
     
+    # Generate version.hpp file for panman
+    file(WRITE "${panman_SOURCE_DIR}/src/version.hpp" 
+        "#ifndef VERSION_HPP\n"
+        "#define VERSION_HPP\n"
+        "\n"
+        "#define PROJECT_VERSION \"1.0.0\"\n"
+        "#define PMAT_VERSION \"1.0.0\"\n"
+        "\n"
+        "#endif // VERSION_HPP\n"
+    )
+    
     # Create a patch file for panman's CMakeLists.txt
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "")
     file(READ "${panman_SOURCE_DIR}/CMakeLists.txt" PANMAN_CMAKE_CONTENT)
@@ -576,6 +587,38 @@ find_package(ZLIB REQUIRED)
 
 add_executable(panmap ${PANMAP_SOURCES_MAIN})
 add_dependencies(panmap build-deps index_capnp_generator tbb_build)
+
+# Build simulate tool if enabled
+if(OPTION_BUILD_SIMULATE)
+    add_executable(simulate 
+        src/test/simulate.cpp
+        src/simulate_utils.cpp
+    )
+    
+    add_dependencies(simulate panman_lib)
+    
+    target_include_directories(simulate PRIVATE 
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_BINARY_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+        ${panman_SOURCE_DIR}/src
+        ${panman_BINARY_DIR}
+    )
+    
+    target_link_libraries(simulate PRIVATE
+        panman_lib
+        ${Boost_LIBRARIES}
+        ${PROTOBUF_LIBRARIES}
+        spdlog::spdlog
+        absl::flat_hash_map
+        absl::flat_hash_set
+    )
+    
+    # Set output directory to build/bin
+    set_target_properties(simulate PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endif()
 
 # Add generated sources to panmap target
   target_sources(panmap PRIVATE ${CAPNP_SRCS} ${MGSR_CAPNP_SRCS})

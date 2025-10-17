@@ -80,6 +80,7 @@ struct TraversalParams {
   int s = 8;              // syncmer parameter s
   int t = 0;               // t-syncmer parameter
   bool open = false;        // Whether to use open syncmers
+  bool useRawSeeds = false; // Whether to use raw syncmers instead of k-min-mers
   double scoreScale = 1.0; // Scaling factor for scores
   std::string debug_node_id;
 };
@@ -102,6 +103,7 @@ struct PlacementGlobalState {
     // MGSR index data
     ::capnp::List<SeedInfo>::Reader seedInfo;
     ::capnp::List<NodeChanges>::Reader perNodeChanges;
+    ::capnp::List<LiteNode>::Reader liteNodes;  // For node ID lookups
     
     // Root node pointer for traversal
     panmapUtils::LiteNode* root = nullptr;

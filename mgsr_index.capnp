@@ -54,5 +54,6 @@ struct MGSRIndex {
   liteTree @5 :LiteTree;
   seedInfo @6 :List(SeedInfo);
   perNodeChanges @7 :List(NodeChanges);
+  useRawSeeds @8 :Bool;
   
 }

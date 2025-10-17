@@ -447,6 +447,15 @@ class ThreadsManager {
 
 class mgsrPlacer {
   public:
+    // Struct to hold similarity scores for a node
+    struct NodeSimilarityScores {
+      std::string nodeId;
+      double jaccard;
+      double cosine;
+      double weightedJaccard;
+      size_t rawMatches;
+    };
+
     // mutation structures
     std::vector<seeding::uniqueKminmer_t>* seedInfosPtr; 
     std::vector<std::vector<uint32_t>>* seedInsertionsPtr; 
@@ -561,7 +570,10 @@ class mgsrPlacer {
         l(threadsManager.l),
         openSyncmer(threadsManager.openSyncmer),
         skipSingleton(threadsManager.skipSingleton)
-    {}
+    {
+      // Build nodeToDfsIndex from tree structure
+      buildNodeToDfsIndex();
+    }
     
     mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory)
       : liteTree(liteTree),
@@ -579,6 +591,10 @@ class mgsrPlacer {
     void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
+    
+    // Build nodeToDfsIndex mapping from tree
+    void buildNodeToDfsIndex();
+    void buildNodeToDfsIndexHelper(panmapUtils::LiteNode* node, int64_t& dfsIndex);
 
 
     void traverseTreeHelper(panmapUtils::LiteNode* node);
@@ -624,6 +640,9 @@ class mgsrPlacer {
     bool identicalReadScores(const std::string& node1, const std::string& node2, bool fast_mode = false) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
+
+    // For fast placement mode: compute similarity scores for all nodes without EM
+    std::vector<NodeSimilarityScores> computeAllNodeSimilarities();
     
 
 
