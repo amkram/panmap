@@ -7,6 +7,8 @@
 #include "logging.hpp"
 #include <string>
 #include <iostream>
+#include <random>
+
 
 namespace panmapUtils {
 
@@ -41,6 +43,13 @@ std::string getStringFromReference(
   bool aligned
 );
 
+void simulateSNPsOnSequence(
+  std::string& sequence,
+  std::vector<std::tuple<char,char, uint32_t>>& snpRecords,
+  uint32_t numsnps,
+  std::mt19937& rng
+);
+
 class LiteNode {
   public:
     std::string identifier;
@@ -54,6 +63,7 @@ class LiteTree {
     std::unordered_map<std::string, LiteNode*> allLiteNodes;
     std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
+    
 
     ~LiteTree() {
       for (auto& pair : allLiteNodes) {

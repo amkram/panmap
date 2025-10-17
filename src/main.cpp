@@ -132,6 +132,7 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
     dictSize = indexRoot.getKmerDictionary().size();
   }
 
+
   // Keep the original k and s values for later reference
   const uint32_t original_k = k;
   const uint32_t original_s = s;
@@ -761,13 +762,18 @@ int main(int argc, char *argv[]) {
         ("save-kminmer-binary-coverage", "Save kminmer binary coverage")
         ("parallel-tester", "Run parallel tester")
         ("eval", po::value<std::string>(), "Evaluate placement accuracy (path to TSV)")
+        ("random-seed", po::value<std::string>(), "Seed for rng (read in as string then hashed). If not provided, a random seed will be used.")
         ("dump-sequence", po::value<std::string>(), "Dump sequence for a specific node ID")
+        ("dump-sequences",po::value<std::vector<std::string>>()->multitoken(), "Dump sequences for a list of node IDs")
+        ("simulate-snps",po::value<std::vector<uint32_t>>()->multitoken(), "Simulate number of SNPs for node IDs, parameter position is relative to dump-sequences")
+        ("dump-random-nodeIDs", po::value<uint32_t>(), "Dump specified number of random node IDs from the tree")
         ("dump-random-node", "Dump sequence for a random node")
         ("debug-node-id", po::value<std::string>()->default_value(""), "Log detailed placement debug info for this specific node ID")
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
         ("use-lite-placement", "Use LiteTree-based placement (avoids loading full panman until after placement)")
         ("use-full-placement", "Use traditional full Tree-based placement (default for backward compatibility)")
+        ("overlap-coefficients", "Output overlap coefficients then exit")
     ;
 
     // Hidden options for positional arguments
@@ -976,15 +982,15 @@ int main(int argc, char *argv[]) {
       MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
       LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
       size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      bool lowMemory = vm.count("low-memory") > 0;
       
-      panmapUtils::LiteTree liteTree;
-      liteTree.initialize(liteTreeReader);
-
+      mgsr::MgsrLiteTree liteTree;
+      liteTree.initialize(indexReader, numThreads, lowMemory);
+      
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
 
       bool skipSingleton = vm.count("skip-singleton") > 0;
-      bool lowMemory = vm.count("low-memory") > 0;
       mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
@@ -1098,35 +1104,60 @@ int main(int argc, char *argv[]) {
       
       std::cout << "\n=== Running full MGSR placement with EM ===" << std::endl;
       
+
+      if (vm.count("overlap-coefficients")) {
+        auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+        mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory, 0);
+        auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+        std::ofstream overlapCoefficientsFile(prefix + ".overlapCoefficients.txt");
+        std::sort(overlapCoefficients.begin(), overlapCoefficients.end(), [](const auto& a, const auto& b) {
+          return a.second > b.second;
+        });
+        uint32_t rank = 0;
+        double currentOverlapCoefficient = overlapCoefficients[0].second;
+        for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
+          if (overlapCoefficient != currentOverlapCoefficient) {
+            currentOverlapCoefficient = overlapCoefficient;
+            ++rank;
+          }
+          overlapCoefficientsFile << nodeId << "\t" << std::fixed << std::setprecision(6) << overlapCoefficient << "\t" << rank <<  std::endl;
+        }
+        overlapCoefficientsFile.close();
+        auto end_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+        auto duration_computeOverlapCoefficients = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_computeOverlapCoefficients - start_time_computeOverlapCoefficients);
+        std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
+        exit(0);
+      }
+
+      liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+            
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
-        totalNodesPerThread[i] = liteTree.allLiteNodes.size();
+        totalNodesPerThread[i] = liteTree.getNumActiveNodes();
       }
       ProgressTracker progressTracker(numThreads, totalNodesPerThread);
-
       std::cout << "Using " << numThreads << " threads" << std::endl;
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
       std::atomic<size_t> numGroupsUpdate = 0;
       std::atomic<size_t> numReadsUpdate = 0;
+      std::vector<size_t> numUniqueKminmersPerThread(numThreads, 0);
+      std::vector<size_t> numNodesPostCollapsePerThread(numThreads, 0);
       tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
         for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
           auto [start, end] = threadsManager.threadRanges[i];
         
           std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory);
+          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory, i);
           curThreadPlacer.initializeQueryData(curThreadReads);
+
           curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
 
           curThreadPlacer.setProgressTracker(&progressTracker, i);
+          // curThreadPlacer.placeReads();
 
-          curThreadPlacer.placeReads();
+          curThreadPlacer.scoreReads();
 
-          if (lowMemory) {
-            threadsManager.perNodeScoreDeltasIndexByThreadIdLowMemory[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndexLowMemory);
-          } else {
-            threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
-          }
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
           threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
           threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
@@ -1134,7 +1165,7 @@ int main(int argc, char *argv[]) {
           if (i == 0) {
             threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
             threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
-            threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
+            // threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
           }
           numGroupsUpdate += curThreadPlacer.numGroupsUpdate;
           numReadsUpdate += curThreadPlacer.numReadsUpdate;
@@ -1142,10 +1173,18 @@ int main(int argc, char *argv[]) {
       });
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+      std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-      auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
-      mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, prefix, 1000);
+      threadsManager.scoreNodes();
+      
+      mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
+      auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+      std::unordered_map<std::string, double>().swap(threadsManager.kminmerOverlapCoefficients);
+      for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
+        threadsManager.kminmerOverlapCoefficients[nodeId] = overlapCoefficient;
+      }
+
+      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
@@ -1206,8 +1245,15 @@ int main(int argc, char *argv[]) {
       msg("Parsed command-line parameters: k={}, s={}, l={}, t={}, open={}", k, s, l, t, open);
     }
 
-    std::random_device rd;
-    std::mt19937 rng(rd());
+    std::mt19937 rng;
+    if (vm.count("random-seed")) {
+      std::string seed_str = vm["random-seed"].as<std::string>();
+      std::hash<std::string> hasher;
+      rng = std::mt19937(hasher(seed_str));
+    } else {
+      std::random_device rd;
+      rng = std::mt19937(rd());
+    }
 
 
     // Load pangenome
@@ -1297,6 +1343,29 @@ int main(int argc, char *argv[]) {
       }
     }
 
+
+    if (vm.count("dump-random-nodeIDs")) {
+      uint32_t num_nodes = vm["dump-random-nodeIDs"].as<uint32_t>();
+      std::vector<std::string_view> allNodeIDs;
+      allNodeIDs.reserve(T.allNodes.size());
+      for (const auto& [nodeID, node] : T.allNodes) {
+        if (node->children.empty()) {
+          allNodeIDs.push_back(nodeID);
+        }
+      }
+      allNodeIDs.shrink_to_fit();
+
+      std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
+
+      std::ofstream outFile(prefix + ".randomNodeIDs.txt");
+      for (size_t i = 0; i < num_nodes; i++) {
+        outFile << allNodeIDs[i] << std::endl;
+      }
+      outFile.close();
+      msg("Random node IDs written to {}", prefix + ".randomNodeIDs.txt");
+      exit(0);
+    }
+
     // Handle --dump-sequence parameter if provided
     if (vm.count("dump-sequence")) {
       std::string nodeID = vm["dump-sequence"].as<std::string>();
@@ -1319,6 +1388,53 @@ int main(int argc, char *argv[]) {
         err("Failed to open file {} for writing", outputFileName);
         return 1;
       }
+    }
+
+    if (vm.count("dump-sequences")) {
+      auto nodeIDs = vm["dump-sequences"].as<std::vector<std::string>>();
+      std::vector<uint32_t> numsnps;
+      if (vm.count("simulate-snps")) {
+        numsnps = vm["simulate-snps"].as<std::vector<uint32_t>>();
+        if (numsnps.size() != nodeIDs.size()) {
+          err("Number of SNP parameters does not match number of node IDs");
+          return 1;
+        }
+      }
+
+      for (size_t i = 0; i < nodeIDs.size(); i++) {
+        const auto& nodeID = nodeIDs[i];
+        uint32_t numsnp = (numsnps.empty() ? 0 : numsnps[i]);
+        if (T.allNodes.find(nodeID) == T.allNodes.end()) {
+          err("Node ID {} not found in the tree", nodeID);
+          return 1;
+        }
+
+        std::string sequence = panmapUtils::getStringFromReference(&T, nodeID, false);
+        std::vector<std::tuple<char, char, uint32_t>> snpRecords;
+        panmapUtils::simulateSNPsOnSequence(sequence, snpRecords, numsnp, rng);
+        std::string nodeIDClean = nodeID;
+        std::replace(nodeIDClean.begin(), nodeIDClean.end(), '/', '_');
+        std::replace(nodeIDClean.begin(), nodeIDClean.end(), '|', '_');
+        std::string outputFileName = prefix + "." + nodeIDClean + "." + std::to_string(numsnp) + "snps.fa";
+        std::ofstream outFile(outputFileName);
+
+        if (outFile.is_open()) {
+          outFile << ">" << nodeID << " ";
+          for (const auto& [ref, alt, pos] : snpRecords) {
+            outFile << ref << pos << alt << " ";
+          }
+          outFile << "\n";
+          for (size_t i = 0; i < sequence.size(); i += 80) {
+            outFile << sequence.substr(i, 80) << "\n";
+          }
+          outFile.close();
+          msg("Sequence for node {} with {} SNPs written to {}", nodeID, numsnp, outputFileName);
+        } else {
+          err("Failed to open file {} for writing", outputFileName);
+          return 1;
+        }
+      }
+      exit(0);
     }
 
     // Log settings

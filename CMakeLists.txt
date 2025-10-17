@@ -255,6 +255,8 @@ FetchContent_Declare(
     GIT_TAG main
     GIT_SHALLOW TRUE
     UPDATE_COMMAND ""
+    PATCH_COMMAND sed -i "15d" <SOURCE_DIR>/src/panmanUtils.cpp &&
+                  sed -i "s/PROJECT_VERSION/\\\"1.0\\\"/g" <SOURCE_DIR>/src/panmanUtils.cpp
 )
 
 # Force the population of the content
@@ -459,14 +461,23 @@ add_dependencies(htslib htslib_ext)
 set(SAMTOOLS_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/samtools_install)
 ExternalProject_Add(samtools_ext
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools
-    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${SAMTOOLS_INSTALL_DIR} --with-htslib=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic
-    # Explicitly build only the libst.a target
-    BUILD_COMMAND     ${CMAKE_COMMAND} -E env SHELL=/bin/bash make libst.a
-    # Explicitly set INSTALL_COMMAND to nothing to prevent default make install
-    INSTALL_COMMAND   ""
-    BUILD_IN_SOURCE 1 # samtools needs to be built in source
-    UPDATE_COMMAND "" # Don't try to update the source
-    DEPENDS htslib_ext # Ensure htslib is built first
+    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env 
+        LDFLAGS=-L/usr/local/lib
+        LD_LIBRARY_PATH=/usr/local/lib
+        <SOURCE_DIR>/configure 
+        --prefix=${SAMTOOLS_INSTALL_DIR} 
+        --with-htslib=/usr/local
+        --disable-lzma 
+        --disable-bz2 
+        --disable-libcurl 
+        --disable-shared 
+        --with-pic
+        --without-curses
+    BUILD_COMMAND ${CMAKE_COMMAND} -E env SHELL=/bin/bash make libst.a
+    INSTALL_COMMAND ""
+    BUILD_IN_SOURCE 1
+    UPDATE_COMMAND ""
+    DEPENDS htslib_ext
 )
 # Create an imported target for samtools
 add_library(samtools STATIC IMPORTED GLOBAL)
@@ -650,6 +661,10 @@ FetchContent_Declare(deflate
 )
 FetchContent_MakeAvailable(deflate)
 
+# Find CapnProto libraries
+find_library(CAPNP_LIBRARY NAMES capnp PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu REQUIRED)
+find_library(KJ_LIBRARY NAMES kj PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu REQUIRED)
+
 # Link libraries
 target_link_libraries(panmap PRIVATE 
     panman
@@ -660,8 +675,8 @@ target_link_libraries(panmap PRIVATE
     htslib 
     docopt
     # Link system capnp libs directly
-    /usr/local/lib/libcapnp.a 
-    /usr/local/lib/libkj.a 
+    ${CAPNP_LIBRARY}
+    ${KJ_LIBRARY}
     jsoncpp_lib
     ${Protobuf_LIBRARIES}
     Boost::program_options
