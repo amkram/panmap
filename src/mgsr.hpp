@@ -251,8 +251,16 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
-  size_t sumRawScore = 0;
+  size_t sumRawScore  = 0;
+  double sumMPScore   = 0;
+  size_t sumMPReads   = 0;
   double sumWEPPScore = 0;
+  double sumEPPWeightedScore = 0;
+
+  double sumMPScoreCorrected   = 0;
+  size_t sumMPReadsCorrected   = 0;
+  double sumWEPPScoreCorrected = 0;
+  double sumEPPWeightedScoreCorrected = 0;
 
   std::vector<std::string_view> identicalNodeIdentifiers;
 
@@ -314,6 +322,9 @@ public:
   void collapseEmptyNodes(bool ignoreGapRunDeltas);
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
+
+  void buildNewickRecursive(const MgsrLiteNode* node, std::ostringstream& oss, bool useCollapsed) const;
+  std::string toNewick(bool useCollapsed = false) const;
 
   uint32_t getBlockStartScalar(const uint32_t blockId) const;
   uint32_t getBlockEndScalar(const uint32_t blockId) const;
@@ -549,7 +560,15 @@ class ThreadsManager {
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();
 
-    void scoreNodesHelper(MgsrLiteNode* node, std::vector<uint32_t>& readScores, std::vector<double>& readWEPPWeights, size_t& curNodeSumRawScore, double& curNodeSumWEPPScore);
+    void scoreNodesHelper(
+      MgsrLiteNode* node,
+      std::vector<uint32_t>& readScores,
+      std::vector<double>& readWEPPWeights,
+      size_t& curNodeSumRawScore,
+      double& curNodeSumMPScore,
+      size_t& curNodeSumMPReads,
+      double& curNodeSumWEPPScore,
+      double& curNodeSumEPPWeightedScore);
     void scoreNodes();
 
     void computeKminmerCoverage();
@@ -675,7 +694,7 @@ class mgsrPlacer {
     void placeReadsHelper(MgsrLiteNode* node);
     void placeReads();
 
-    void scoreReadsHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode, std::unordered_set<uint32_t>& readsToCheckAfterBacktracking);
+    void scoreReadsHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode);
     void scoreReads();
 
 
