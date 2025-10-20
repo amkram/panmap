@@ -1051,6 +1051,57 @@ int main(int argc, char *argv[]) {
         threadsManager.kminmerOverlapCoefficients[nodeId] = overlapCoefficient;
       }
 
+      std::string collapsedNewick = liteTree.toNewick(true);
+      std::ofstream of("collapsed.newick");
+      of << collapsedNewick;
+      of.close();
+      std::ofstream scoresOut(prefix + ".nodeScores.tsv");
+      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tsumMPScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
+      for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
+        if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {
+          continue;
+        }
+        bool localMaxRawScore = true;
+        bool localMaxWEPPScore = true;
+        if (node->collapsedParent != nullptr && node->collapsedParent->sumRawScore > node->sumRawScore) {
+          localMaxRawScore = false;
+        }
+        if (node->collapsedParent != nullptr && node->collapsedParent->sumWEPPScore > node->sumWEPPScore) {
+          localMaxWEPPScore = false;
+        }
+        for (auto child : node->collapsedChildren) {
+          if (child->sumRawScore > node->sumRawScore) {
+            localMaxRawScore = false;
+          }
+          if (child->sumWEPPScore > node->sumWEPPScore) {
+            localMaxWEPPScore = false;
+          }
+        }
+
+        scoresOut << nodeId
+                  << "\t" << threadsManager.kminmerOverlapCoefficients[nodeId]
+                  << "\t" << node->sumRawScore
+                  << "\t" << node->sumWEPPScore
+                  << "\t" << node->sumMPScore
+                  << "\t" << node->sumMPReads
+                  << "\t" << node->sumEPPWeightedScore
+                  << "\t" << localMaxRawScore
+                  << "\t" << localMaxWEPPScore << "\t";
+        if (node->identicalNodeIdentifiers.empty()) {
+          scoresOut << "." << std::endl;
+        } else {
+          for (size_t i = 0; i < node->identicalNodeIdentifiers.size(); ++i) {
+            scoresOut << node->identicalNodeIdentifiers[i];
+            if (i != node->identicalNodeIdentifiers.size() - 1) {
+              scoresOut << ",";
+            }
+          }
+          scoresOut << std::endl;
+        }
+      }
+      scoresOut.close();
+      exit(0);
+
       mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
