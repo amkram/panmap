@@ -251,6 +251,7 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
+  size_t numCoveredKminmers = 0;
   size_t sumRawScore  = 0;
   double sumMPScore   = 0;
   size_t sumMPReads   = 0;
@@ -260,10 +261,12 @@ public:
   double sumMPScoreCorrected   = 0;
   size_t sumMPReadsCorrected   = 0;
   double sumWEPPScoreCorrected = 0;
+  double sumWEPPScoreCorrectedFinal = 0;
   double sumEPPWeightedScoreCorrected = 0;
 
   std::vector<std::string_view> identicalNodeIdentifiers;
 
+  size_t totalKminmerNum = 0;
   std::vector<std::vector<readScoreDelta>> readScoreDeltas;
   std::vector<std::vector<readScoreDeltaLowMemory>> readScoreDeltasLowMemory;
   std::vector<std::pair<uint32_t, bool>> seedDeltas;
@@ -357,6 +360,12 @@ private:
 };
 
 
+struct EPPNodeRange {
+  MgsrLiteNode* startNode;
+  MgsrLiteNode* endNode;
+  bool endNodeInclusive;
+};
+
 class Read {
   public:
     std::vector<readSeedmer> seedmersList;
@@ -370,6 +379,7 @@ class Read {
     int32_t numForwardMatching = 0;
     int32_t numReverseMatching = 0;
     MgsrLiteNode* lastParsimoniousNode = nullptr;
+    std::vector<EPPNodeRange> eppNodeRanges;
 };
 
 struct RDGNode {
@@ -560,8 +570,19 @@ class ThreadsManager {
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();
 
+    void correctNodeScoresAfterSelection(
+      mgsr::MgsrLiteNode* node,
+      mgsr::MgsrLiteNode*& topWEPPNode,
+      const std::unordered_set<mgsr::MgsrLiteNode*>& selectedNodes,
+      const std::unordered_set<uint32_t>& activeReads,
+      std::vector<uint32_t>& readScores,
+      const std::vector<double>& readWEPPWeights,
+      double& curNodeSumWEPPScoreCorrected
+    );
     void scoreNodesHelper(
       MgsrLiteNode* node,
+      MgsrLiteNode*& topWEPPNode,
+      MgsrLiteNode*& processingNode,
       std::vector<uint32_t>& readScores,
       std::vector<double>& readWEPPWeights,
       size_t& curNodeSumRawScore,

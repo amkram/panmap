@@ -1052,11 +1052,11 @@ int main(int argc, char *argv[]) {
       }
 
       std::string collapsedNewick = liteTree.toNewick(true);
-      std::ofstream of("collapsed.newick");
+      std::ofstream of(prefix + ".collapsed.newick");
       of << collapsedNewick;
       of.close();
       std::ofstream scoresOut(prefix + ".nodeScores.tsv");
-      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tsumMPScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
+      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tsumMPScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
       for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
         if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {
           continue;
@@ -1082,6 +1082,8 @@ int main(int argc, char *argv[]) {
                   << "\t" << threadsManager.kminmerOverlapCoefficients[nodeId]
                   << "\t" << node->sumRawScore
                   << "\t" << node->sumWEPPScore
+                  << "\t" << node->sumWEPPScoreCorrectedFinal
+                  << "\t" << (node->sumWEPPScoreCorrectedFinal > 0 ? true : false)
                   << "\t" << node->sumMPScore
                   << "\t" << node->sumMPReads
                   << "\t" << node->sumEPPWeightedScore
@@ -1201,7 +1203,7 @@ int main(int argc, char *argv[]) {
     if (vm.count("index-mgsr")) {
       std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
       int mgsr_t = 0;
-      int mgsr_l = 2;
+      int mgsr_l = 3;
       bool open = false;
       mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
       mgsrIndexBuilder.buildIndex();
