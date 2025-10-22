@@ -710,6 +710,7 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
     auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new MgsrLiteNode(nodeIdentifier, nullptr, {}, i));
     if (inserted) {
       it->second->initializeMutationData(seedDeltas[i], gapRunDeltas[i], invertedBlocks[i], numThreads, lowMemory);
+      it->second->sumWEPPScoresByThread.resize(numThreads, 0.0);
     } else {
       std::cerr << "Error: duplicate node identifier " << it->first << " found in lite tree!" << std::endl;
       exit(1);
@@ -5169,6 +5170,114 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
 
 }
 
+void mgsr::mgsrPlacer::scoreNodesHelper(
+  MgsrLiteNode* node,
+  MgsrLiteNode*& processingNode,
+  const std::vector<double>& readWEPPWeights,
+  std::vector<uint32_t>& readScores,
+  double& curNodeSumWEPPScore
+) {
+  if (progressTracker) {
+    progressTracker->incrementProgress(threadId);
+  }
+
+  processingNode = node;
+
+  auto curNodeSumWEPPScoreBacktrack = curNodeSumWEPPScore;
+
+  const auto& curNodeScoreDeltas = node->readScoreDeltas[threadId];
+
+  size_t numModifiedReads = curNodeScoreDeltas.size();
+
+  std::vector<std::pair<uint32_t, uint32_t>> readScoresBacktrack;
+  readScoresBacktrack.resize(numModifiedReads);
+
+  size_t backtrackIndex = 0;
+  for (const auto& scoreDelta : curNodeScoreDeltas) {
+    const auto readIndex = scoreDelta.readIndex;
+    auto& curRead = reads[readIndex];
+
+    const auto  curMaxScore = curRead.maxScore;
+    if (curMaxScore == 0) continue;
+
+    const auto oldScore   = readScores[readIndex];
+    const auto newScore   = scoreDelta.scoreDelta;
+    readScores[readIndex] = newScore;
+
+    readScoresBacktrack[backtrackIndex] = {readIndex, oldScore};
+    ++backtrackIndex;
+
+    auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
+    if (newScore == curMaxScore && newScore > oldScore) {
+      curNodeSumWEPPScore += readWEPPWeights[readIndex];
+      lastParsimoniousNode = node;
+    } else if (oldScore == curMaxScore && oldScore > newScore) {
+      curNodeSumWEPPScore -= readWEPPWeights[readIndex];
+      if (lastParsimoniousNode != nullptr) {
+        if (lastParsimoniousNode != node) {
+          curRead.eppNodeRanges.emplace_back(lastParsimoniousNode, node, false);
+        }
+        lastParsimoniousNode = nullptr;
+      }
+    }
+  }
+
+  node->sumWEPPScoresByThread[threadId] = curNodeSumWEPPScore;
+
+  if (node == liteTree->lastNodeDFSCollapsed) {
+    for (auto& read : reads) {
+      if (read.lastParsimoniousNode != nullptr) {
+        read.eppNodeRanges.emplace_back(read.lastParsimoniousNode, node, true);
+        read.lastParsimoniousNode = nullptr;
+      }
+    }
+  }
+
+  for (auto child : node->collapsedChildren) {
+    scoreNodesHelper(child, processingNode, readWEPPWeights, readScores, curNodeSumWEPPScore);
+  }
+  
+  curNodeSumWEPPScore = curNodeSumWEPPScoreBacktrack;
+  for (const auto& [readIdx, score] : readScoresBacktrack) {
+    readScores[readIdx] = score;
+    auto& curRead = reads[readIdx];
+    auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
+    if (score == curRead.maxScore) {
+      // assume that the next node is also max
+      if (lastParsimoniousNode == nullptr) {
+        lastParsimoniousNode = processingNode->nextNodeDfsCollapsed;
+      }
+    } else {
+      // assume that the next node is not max
+      if (lastParsimoniousNode != nullptr) {
+        if (lastParsimoniousNode == processingNode->nextNodeDfsCollapsed) {
+          lastParsimoniousNode = nullptr;
+        } else {
+          curRead.eppNodeRanges.emplace_back(lastParsimoniousNode, processingNode->nextNodeDfsCollapsed, false);
+          lastParsimoniousNode = nullptr;
+        }
+      }
+    }
+  }
+  
+}
+
+void mgsr::mgsrPlacer::scoreNodes() {
+  std::vector<uint32_t> readScores(reads.size(), 0);
+  std::vector<double> readWEPPWeights(reads.size(), 0.0);
+    for (size_t i = 0; i < reads.size(); ++i) {
+    const auto& curRead = reads[i];
+    if (curRead.maxScore == 0) continue;
+    double numDuplicates = static_cast<double>(threadsManager->readSeedmersDuplicatesIndex[threadsManager->threadRanges[threadId].first+i].size());
+    // readWEPPWeights[i] = numDuplicates / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
+    readWEPPWeights[i] = numDuplicates / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+
+  }
+  double curNodeSumWEPPScore = 0.0;
+  mgsr::MgsrLiteNode* processingNode = nullptr;
+  scoreNodesHelper(liteTree->root, processingNode, readWEPPWeights, readScores, curNodeSumWEPPScore);
+}
+
 
 void mgsr::ThreadsManager::scoreNodesHelper(
   MgsrLiteNode* node,
@@ -5226,7 +5335,7 @@ void mgsr::ThreadsManager::scoreNodesHelper(
       if (newScore > oldScore) {
         curNodeSumRawScore += (newScore - oldScore) * numDuplicates;
         if (newScore == curMaxScore) {
-          curNodeSumWEPPScore += static_cast<double>(numDuplicates) * readWEPPWeights[readIndex];
+          curNodeSumWEPPScore += readWEPPWeights[readIndex];
           curNodeSumMPScore += static_cast<double>(numDuplicates) / static_cast<double>(curRead.seedmersList.size() - curMaxScore + 1);
           curNodeSumMPReads += numDuplicates;
           curNodeSumEPPWeightedScore += static_cast<double>(numDuplicates) / static_cast<double>(curRead.epp * curRead.epp);
@@ -5235,7 +5344,7 @@ void mgsr::ThreadsManager::scoreNodesHelper(
       } else if (oldScore > newScore) {
         curNodeSumRawScore -= (oldScore - newScore) * numDuplicates;
         if (oldScore == curMaxScore) {
-          curNodeSumWEPPScore -= static_cast<double>(numDuplicates) * readWEPPWeights[readIndex];
+          curNodeSumWEPPScore -= readWEPPWeights[readIndex];
           curNodeSumMPScore -= static_cast<double>(numDuplicates) / static_cast<double>(curRead.seedmersList.size() - curMaxScore + 1);
           curNodeSumMPReads -= numDuplicates;
           curNodeSumEPPWeightedScore -= static_cast<double>(numDuplicates) / static_cast<double>(curRead.epp * curRead.epp);
@@ -5388,8 +5497,9 @@ void mgsr::ThreadsManager::scoreNodes() {
   // precompute read WEPP weights
   for (size_t i = 0; i < reads.size(); ++i) {
     const auto& curRead = reads[i];
-    if (curRead.readType != mgsr::ReadType::PASS) continue;
-    readWEPPWeights[i] = static_cast<double>(1) / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
+    if (curRead.maxScore == 0) continue;
+    // readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
+    readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
   }
 
   size_t curNodeSumRawScore  = 0; // Sum of k-min-mer matches of all reads... read weight = kminmer score
@@ -5435,7 +5545,7 @@ void mgsr::ThreadsManager::scoreNodes() {
             }
 
             if (selectedNodes.find(curNode) == selectedNodes.end()) {
-              curNode->sumWEPPScoreCorrected -= static_cast<double>(readSeedmersDuplicatesIndex[i].size()) * readWEPPWeights[i];
+              curNode->sumWEPPScoreCorrected -= readWEPPWeights[i];
             }
 
             if (endNodeInclusive && curNode == endNode) {
@@ -5463,6 +5573,154 @@ void mgsr::ThreadsManager::scoreNodes() {
     }
   }
 }
+
+void mgsr::ThreadsManager::scoreNodesMultithreaded() {
+  auto start_time_scoreNodes = std::chrono::high_resolution_clock::now();
+  std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
+  for (size_t i = 0; i < numThreads; ++i) {
+    totalNodesPerThread[i] = liteTree->getNumActiveNodes();
+  }
+  ProgressTracker progressTrackerScoreNodes(numThreads, totalNodesPerThread);
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+    for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+      auto [start, end] = threadRanges[i];
+    
+      std::span<mgsr::Read> curThreadReads(reads.data() + start, end - start);
+      mgsr::mgsrPlacer curThreadPlacer(liteTree, *this, lowMemory, i);
+      curThreadPlacer.reads = curThreadReads;
+
+      curThreadPlacer.setProgressTracker(&progressTrackerScoreNodes, i);
+
+      curThreadPlacer.scoreNodes();
+    }
+  });
+  auto end_time_scoreNodes = std::chrono::high_resolution_clock::now();
+  auto duration_scoreNodes = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_scoreNodes - start_time_scoreNodes);
+  std::cerr << "\n\nScored nodes in " << static_cast<double>(duration_scoreNodes.count()) / 1000.0 << "s\n" << std::endl;
+
+  auto start_time_selectNodes = std::chrono::high_resolution_clock::now();
+
+  std::vector<double> readWEPPWeights(reads.size(), 0.0);
+  // precompute read WEPP weights
+  for (size_t i = 0; i < reads.size(); ++i) {
+    const auto& curRead = reads[i];
+    if (curRead.maxScore == 0) continue;
+    // readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
+    readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+  }
+
+
+  std::unordered_set<uint32_t> activeReads;
+  activeReads.reserve(reads.size());
+  for (size_t i = 0; i < reads.size(); ++i) {
+    if (reads[i].maxScore == 0) continue;
+    activeReads.insert(i);
+  }
+
+  std::unordered_set<mgsr::MgsrLiteNode*> selectedNodes;
+  mgsr::MgsrLiteNode* topWEPPNode = nullptr;
+  double topWEPPScore = 0;
+  for (auto& [_, node] : liteTree->allLiteNodes) {
+    const double curNodeSumWEPPScore = std::accumulate(node->sumWEPPScoresByThread.begin(), node->sumWEPPScoresByThread.end(), 0.0);
+    node->sumWEPPScore = curNodeSumWEPPScore;
+    node->sumWEPPScoreCorrected = curNodeSumWEPPScore;
+    if (curNodeSumWEPPScore > topWEPPScore) {
+      topWEPPNode = node;
+      topWEPPScore = curNodeSumWEPPScore;
+    }
+  }
+
+  while (true) {
+    selectedNodes.insert(topWEPPNode);
+    std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << std::endl;
+    if (selectedNodes.size() == 300) break;
+    std::vector<uint32_t> curTopNodeScore = getScoresAtNode(topWEPPNode->identifier);
+
+    std::vector<uint32_t> readsToSubtract;
+    for (size_t i = 0; i < reads.size(); ++i) {
+      if (reads[i].maxScore == 0 || activeReads.find(i) == activeReads.end()) continue;
+      if (curTopNodeScore[i] == reads[i].maxScore) {
+        activeReads.erase(i);
+        readsToSubtract.push_back(i);
+      }
+    }
+
+    std::vector<std::pair<size_t, size_t>> threadRangesForReadsToSubtract;
+    if (readsToSubtract.size() > numThreads) {
+      threadRangesForReadsToSubtract.resize(numThreads, {0,0});
+      const size_t chunk_size = (readsToSubtract.size() + numThreads - 1) / numThreads;
+      size_t numThreadsUsed = 0;
+      for (size_t i = 0; i < numThreads; ++i) {
+        size_t start = i * chunk_size;
+        size_t end = (i == numThreads - 1) ? readsToSubtract.size() : (i + 1) * chunk_size;
+        end = std::min(end, readsToSubtract.size());
+        if (start < readsToSubtract.size()) {
+          ++numThreadsUsed;
+          threadRangesForReadsToSubtract[i].first = start;
+          threadRangesForReadsToSubtract[i].second = end;
+        }
+      }
+      threadRangesForReadsToSubtract.resize(numThreadsUsed);
+    } else {
+      threadRangesForReadsToSubtract.emplace_back(0, readsToSubtract.size());
+    }
+
+
+    std::vector<std::unordered_map<mgsr::MgsrLiteNode*, double>> nodeScoreChangesByThread(numThreads);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, threadRangesForReadsToSubtract.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+      for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+        auto [start, end] = threadRangesForReadsToSubtract[i];
+        for (size_t j = start; j < end; ++j) {
+          const uint32_t readIndex = readsToSubtract[j];
+          const auto& curRead = reads[readIndex];
+          for (const auto& eppRange : curRead.eppNodeRanges) {
+            auto curNode = eppRange.startNode;
+            const auto endNode = eppRange.endNode;
+            const bool endNodeInclusive = eppRange.endNodeInclusive;
+            while (true) {
+              if (!endNodeInclusive && curNode == endNode) {
+                break;
+              }
+
+              if (selectedNodes.find(curNode) == selectedNodes.end()) {
+                nodeScoreChangesByThread[i][curNode] -= readWEPPWeights[readIndex];
+              }
+
+              if (endNodeInclusive && curNode == endNode) {
+                break;
+              }
+
+              curNode = curNode->nextNodeDfsCollapsed;
+            }
+          }
+        }
+      }
+    });
+
+    for (const auto& nodeScoreChanges : nodeScoreChangesByThread) {
+      for (const auto& [node, scoreChange] : nodeScoreChanges) {
+        node->sumWEPPScoreCorrected += scoreChange;
+      }
+    }
+
+    topWEPPNode = nullptr;
+    for (auto& [_, node] : liteTree->allLiteNodes) {
+      if (selectedNodes.find(node) != selectedNodes.end()) {
+        continue;
+      }
+      if (topWEPPNode == nullptr || node->sumWEPPScoreCorrected > topWEPPNode->sumWEPPScoreCorrected) {
+        topWEPPNode = node;
+      }
+    }
+
+    if (activeReads.empty()) break;
+  }
+  auto end_time_selectNodes = std::chrono::high_resolution_clock::now();
+  auto duration_selectNodes = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_selectNodes - start_time_selectNodes);
+  std::cerr << "\n\nSelected nodes in " << static_cast<double>(duration_selectNodes.count()) / 1000.0 << "s\n" << std::endl;
+
+}
+
 
 void mgsr::mgsrPlacer::placeReads() {
   gapMap.clear();
