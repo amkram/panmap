@@ -251,6 +251,8 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
+  std::vector<double> sumWEPPScoresByThread;
+
   size_t numCoveredKminmers = 0;
   size_t sumRawScore  = 0;
   double sumMPScore   = 0;
@@ -592,6 +594,8 @@ class ThreadsManager {
       double& curNodeSumEPPWeightedScore);
     void scoreNodes();
 
+    void scoreNodesMultithreaded();
+
     void computeKminmerCoverage();
     void computeKminmerCoverageHelper(
       MgsrLiteNode* node,
@@ -608,6 +612,7 @@ class mgsrPlacer {
   public:
     // tree pointer
     MgsrLiteTree *liteTree;
+    ThreadsManager *threadsManager;
 
     int k;
     int s;
@@ -686,6 +691,7 @@ class mgsrPlacer {
     
     mgsrPlacer(MgsrLiteTree* liteTree, ThreadsManager& threadsManager, bool lowMemory, size_t threadId)
       : liteTree(liteTree),
+        threadsManager(&threadsManager),
         lowMemory(lowMemory),
         k(threadsManager.k),
         s(threadsManager.s),
@@ -708,6 +714,8 @@ class mgsrPlacer {
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
 
+    void scoreNodesHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode, const std::vector<double>& readWEPPWeights, std::vector<uint32_t>& readScores, double& curNodeSumWEPPScore);
+    void scoreNodes();
 
     void traverseTreeHelper(MgsrLiteNode* node);
     void traverseTree();

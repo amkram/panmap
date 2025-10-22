@@ -747,6 +747,7 @@ int main(int argc, char *argv[]) {
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
         ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
         ("skip-singleton", "Skip singleton reads")
+        ("mask-seed-phred", po::value<int>()->default_value(20), "Mask seed containing base with phred quality below this threshold")
         ("low-memory", "Use low memory mode")
     ;
 
@@ -1032,7 +1033,6 @@ int main(int argc, char *argv[]) {
           if (i == 0) {
             threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
             threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
-            // threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
           }
           numGroupsUpdate += curThreadPlacer.numGroupsUpdate;
           numReadsUpdate += curThreadPlacer.numReadsUpdate;
@@ -1042,7 +1042,8 @@ int main(int argc, char *argv[]) {
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-      threadsManager.scoreNodes();
+      // threadsManager.scoreNodes();
+      threadsManager.scoreNodesMultithreaded();
       
       mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
       auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
@@ -1056,7 +1057,7 @@ int main(int argc, char *argv[]) {
       of << collapsedNewick;
       of.close();
       std::ofstream scoresOut(prefix + ".nodeScores.tsv");
-      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tsumMPScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
+      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tWEPPScoreThreads\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tsumMPScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
       for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
         if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {
           continue;
@@ -1082,8 +1083,9 @@ int main(int argc, char *argv[]) {
                   << "\t" << threadsManager.kminmerOverlapCoefficients[nodeId]
                   << "\t" << node->sumRawScore
                   << "\t" << node->sumWEPPScore
-                  << "\t" << node->sumWEPPScoreCorrectedFinal
-                  << "\t" << (node->sumWEPPScoreCorrectedFinal > 0 ? true : false)
+                  << "\t" << std::accumulate(node->sumWEPPScoresByThread.begin(), node->sumWEPPScoresByThread.end(), 0.0)
+                  << "\t" << node->sumWEPPScoreCorrected
+                  << "\t" << (node->sumWEPPScoreCorrected > 0 ? true : false)
                   << "\t" << node->sumMPScore
                   << "\t" << node->sumMPReads
                   << "\t" << node->sumEPPWeightedScore
