@@ -549,6 +549,8 @@ class ThreadsManager {
     std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
     std::unordered_map<std::string, std::string> identicalNodeToGroup;
 
+    std::unordered_set<MgsrLiteNode*> selectedNodes;
+
 
     // for squareEM... will be moved from mgsrPlacer to here.
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
@@ -567,7 +569,7 @@ class ThreadsManager {
     }
 
     void initializeMGSRIndex(MGSRIndex::Reader indexReader);
-    void initializeQueryData(std::span<const std::string> readSequences, bool fast_mode = false);
+    void initializeQueryData(std::span<const std::string> readSequences, uint32_t maskSeedThreshold, bool fast_mode = false);
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();

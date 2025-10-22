@@ -1321,7 +1321,7 @@ void mgsr::mgsrPlacer::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   openSyncmer = indexReader.getOpen();
 }
 
-void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, bool fast_mode) {
+void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, uint32_t maskSeedThreshold, bool fast_mode) {
   std::unordered_map<std::string_view, std::vector<size_t>> seqToIndex;
   for (size_t i = 0; i < readSequences.size(); ++i) {
     seqToIndex[readSequences[i]].push_back(i);
@@ -5617,7 +5617,6 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     activeReads.insert(i);
   }
 
-  std::unordered_set<mgsr::MgsrLiteNode*> selectedNodes;
   mgsr::MgsrLiteNode* topWEPPNode = nullptr;
   double topWEPPScore = 0;
   for (auto& [_, node] : liteTree->allLiteNodes) {
@@ -5630,6 +5629,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     }
   }
 
+  selectedNodes.clear();
   while (true) {
     selectedNodes.insert(topWEPPNode);
     std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << std::endl;

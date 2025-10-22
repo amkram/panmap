@@ -747,7 +747,8 @@ int main(int argc, char *argv[]) {
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
         ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
         ("skip-singleton", "Skip singleton reads")
-        ("mask-seed-phred", po::value<int>()->default_value(20), "Mask seed containing base with phred quality below this threshold")
+        ("mask-seeds", po::value<uint32_t>()->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
+
         ("low-memory", "Use low memory mode")
     ;
 
@@ -968,10 +969,11 @@ int main(int argc, char *argv[]) {
       mgsr::extractReadSequences(reads1, reads2, readSequences);
 
       bool skipSingleton = vm.count("skip-singleton") > 0;
+      uint32_t maskSeedThreshold = vm["mask-seeds"].as<uint32_t>();
       mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
-      threadsManager.initializeQueryData(readSequences);
+      threadsManager.initializeQueryData(readSequences, maskSeedThreshold);
 
       if (vm.count("overlap-coefficients")) {
         auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
@@ -1056,6 +1058,7 @@ int main(int argc, char *argv[]) {
       std::ofstream of(prefix + ".collapsed.newick");
       of << collapsedNewick;
       of.close();
+      const auto& selectedNodes = threadsManager.selectedNodes;
       std::ofstream scoresOut(prefix + ".nodeScores.tsv");
       scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tWEPPScoreThreads\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tsumMPScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
       for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
@@ -1085,7 +1088,7 @@ int main(int argc, char *argv[]) {
                   << "\t" << node->sumWEPPScore
                   << "\t" << std::accumulate(node->sumWEPPScoresByThread.begin(), node->sumWEPPScoresByThread.end(), 0.0)
                   << "\t" << node->sumWEPPScoreCorrected
-                  << "\t" << (node->sumWEPPScoreCorrected > 0 ? true : false)
+                  << "\t" << (selectedNodes.find(node) == selectedNodes.end() ? false : true)
                   << "\t" << node->sumMPScore
                   << "\t" << node->sumMPReads
                   << "\t" << node->sumEPPWeightedScore
