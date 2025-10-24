@@ -15,6 +15,7 @@
 #include "seeding.hpp"
 #include "caller_logging.hpp"
 #include "index.capnp.h"
+#include "mgsr_index.capnp.h"
 #include <capnp/common.h>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -152,30 +153,25 @@ void GenomeState::computeMetrics(const placement::PlacementGlobalState& state) c
 void applyNodeChangesToGenomeState(GenomeState& genomeState, 
                                   const auto& nodeChanges, 
                                   const placement::PlacementGlobalState& state) {
-    // Process seed deletions (deletions are positions, not indices)
+    // Process seed deletions
     auto deletions = nodeChanges.getSeedDeletions();
-    for (uint32_t pos : deletions) {
-        // Find the seed at this position to get its hash
-        // Since we don't have direct access to positionMap here, we need to search seedInfo
-        for (size_t seedIdx = 0; seedIdx < state.seedInfo.size(); seedIdx++) {
+    for (uint32_t seedIdx : deletions) {
+        if (seedIdx < state.seedInfo.size()) {
             auto seedReader = state.seedInfo[seedIdx];
-            if (seedReader.getStartPos() == pos) {
-                size_t seedHash = seedReader.getHash();
-                auto it = genomeState.seedCounts.find(seedHash);
-                if (it != genomeState.seedCounts.end()) {
-                    it->second--;
-                    if (it->second <= 0) {
-                        genomeState.seedCounts.erase(it);
-                        genomeState.uniqueSeeds.erase(seedHash);
-                    }
+            size_t seedHash = seedReader.getHash();
+            auto it = genomeState.seedCounts.find(seedHash);
+            if (it != genomeState.seedCounts.end()) {
+                it->second--;
+                if (it->second <= 0) {
+                    genomeState.seedCounts.erase(it);
+                    genomeState.uniqueSeeds.erase(seedHash);
                 }
-                break;
             }
         }
     }
     
-    // Process seed additions (called seedInsertions in Cap'n Proto schema)
-    auto additions = nodeChanges.getSeedInsertions();
+    // Process seed additions (called seedInsubIndices in Cap'n Proto schema)
+    auto additions = nodeChanges.getSeedInsubIndices();
     for (uint32_t seedIdx : additions) {
         if (seedIdx < state.seedInfo.size()) {
             auto seedReader = state.seedInfo[seedIdx];
@@ -533,15 +529,6 @@ using ::panmanUtils::Tree;
 // Forward declarations
 class PlacementResult;
 
-// Function declarations
-void dumpPlacementDebugData(
-    state::StateManager& stateManager,
-    PlacementGlobalState& state,
-    const std::vector<std::string>& nodesToDump,
-    size_t maxNodes,
-    const TraversalParams& params,
-    const std::string& outputFilename,
-    const std::vector<std::string>& readSequences);
 
 void dumpKmerDebugData(
     const std::vector<std::string>& readSequences,
@@ -568,9 +555,9 @@ std::shared_ptr<PlacementProgressState> progress_state;
 // Maximum number of nodes for which to dump recomputation range details
 const size_t MAX_NODES_TO_DUMP = 5;
 
-// Helper function to read a packed index file
-std::unique_ptr<::capnp::MessageReader> loadIndexFromFile(const std::string& indexPath) {
-    logging::debug("Loading index from file: {}", indexPath);
+// Helper function to read a packed MGSR index file
+std::unique_ptr<::capnp::MessageReader> loadMgsrIndexFromFile(const std::string& indexPath) {
+    logging::debug("Loading MGSR index from file: {}", indexPath);
     
     // Normalize path to ensure consistent resolution
     boost::filesystem::path normalizedPath = boost::filesystem::absolute(indexPath);
@@ -601,25 +588,26 @@ std::unique_ptr<::capnp::MessageReader> loadIndexFromFile(const std::string& ind
         opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max();
         opts.nestingLimit = 1024;
         
-        // Use PackedFdMessageReader directly instead of the wrapper
+        // Use PackedFdMessageReader directly
         auto reader = std::make_unique<::capnp::PackedFdMessageReader>(fd, opts);
         
-        // Validate the index immediately to ensure it's usable
-        auto indexRoot = reader->getRoot<Index>();
-        uint32_t k = indexRoot.getK();
-        uint32_t s = indexRoot.getS();
-        size_t nodeCount = indexRoot.getPerNodeSeedMutations().size();
+        // Validate the MGSR index immediately to ensure it's usable
+        auto mgsrIndex = reader->getRoot<MGSRIndex>();
+        uint32_t k = mgsrIndex.getK();
+        uint32_t s = mgsrIndex.getS();
+        size_t seedCount = mgsrIndex.getSeedInfo().size();
+        bool useRawSeeds = mgsrIndex.getUseRawSeeds();
         
-        if (k <= 0 || nodeCount <= 0) {
+        if (k <= 0 || seedCount <= 0) {
             close(fd); // Close the fd since we're not returning the reader
             throw std::runtime_error(
-                "Invalid index data: k=" + std::to_string(k) + 
-                ", nodes=" + std::to_string(nodeCount) + 
+                "Invalid MGSR index data: k=" + std::to_string(k) + 
+                ", seeds=" + std::to_string(seedCount) + 
                 ". The index appears to be corrupted or incomplete.");
         }
         
-        logging::debug("Successfully loaded packed index with k={}, s={}, nodes={}",
-                    k, s, nodeCount);
+        logging::debug("Successfully loaded MGSR index with k={}, s={}, seeds={}, useRawSeeds={}",
+                    k, s, seedCount, useRawSeeds);
         
         // Return the MessageReader
         return reader;
@@ -630,7 +618,7 @@ std::unique_ptr<::capnp::MessageReader> loadIndexFromFile(const std::string& ind
     } catch (const std::exception& e) {
         // Clean up fd on exception
         close(fd);
-        throw std::runtime_error("Error reading index: " + std::string(e.what()));
+        throw std::runtime_error("Error reading MGSR index: " + std::string(e.what()));
     }
 }
 
@@ -780,47 +768,6 @@ void processExistingSeedRemoval(
     }
 }
 
-// Create seed from dictionary lookup
-seeding::seed_t createSeedFromDictionary(
-    const std::string& kmerStr,
-    int64_t pos,
-    int64_t endPos,
-    int params_k,
-    int params_s) {
-    
-    // Normalize k-mer to uppercase for consistent hashing
-    std::string upperKmer = kmerStr;
-    std::transform(upperKmer.begin(), upperKmer.end(), upperKmer.begin(),
-                  [](unsigned char c){ return std::toupper(c); });
-    
-    auto syncmerResults = seeding::rollingSyncmers(upperKmer, params_k, params_s, false, 0, false);
-    
-    // Create default seed
-    seeding::seed_t seed;
-    
-    // Only if a valid syncmer was found
-    if (!syncmerResults.empty()) {
-        auto [hash, isReversed, isSyncmer, startPos] = syncmerResults[0];
-        
-        // Only use the result if it's actually a syncmer
-        if (isSyncmer) {
-            // Fill in the seed fields
-            seed.hash = hash;
-            seed.reversed = isReversed;
-            seed.endPos = endPos;
-            
-            // Return immediately when we have a valid seed
-            return seed;
-        }
-    }
-    
-    // If we reach here, no valid syncmer was found, return default seed
-    seed.hash = 0;
-    seed.reversed = false;
-    seed.endPos = 0;
-    return seed;
-}
-
 // Add new seed and update scores
 void addSeedAndUpdateScores(
     ::panmanUtils::Node* node,
@@ -880,100 +827,6 @@ void addSeedAndUpdateScores(
 }
 
 // Process new seed addition (quaternary value 2 or part of 3)
-void processNewSeedAddition(
-    panmanUtils::Node* node,
-    state::StateManager& stateManager,
-    PlacementGlobalState& state,
-    PlacementResult& result,
-    absl::flat_hash_set<size_t>& uniqueSeedHashes,
-    int64_t pos,
-    const TraversalParams& params,
-    absl::flat_hash_map<int64_t, uint32_t>& positionToDictId,
-    absl::flat_hash_map<int64_t, uint32_t>& positionToEndOffset,
-    size_t& seedAdditions,
-    size_t& dictionaryLookups) {
-    
-    bool dictLookupOK = false;
-    bool kmerFoundInDict = false;
-    std::string kmerStr = "";
-    seeding::seed_t newSeed = {}; // Initialize
-
-    // ---> TRACE: Log dictionary lookup attempt <---
-    logging::verbose("TRACE_ADD: Attempting lookup for Node={}, Pos={}", node->identifier, pos);
-
-    // CRITICAL FIX: Add detailed diagnostic logging for node_3689
-    bool isTargetNode = (node->identifier == "node_3689");
-    if (isTargetNode) {
-        logging::info("NODE-3689: Dictionary lookup at position {}", pos);
-    }
-
-    // First try to use dictionary lookup if available
-    if (positionToDictId.count(pos) > 0 && positionToEndOffset.count(pos) > 0) {
-        uint32_t dictId = positionToDictId[pos];
-        
-        // ---> TRACE: Log dictionary ID found <---
-        logging::verbose("TRACE_ADD_DICT: Node={}, Pos={}, DictID={}", node->identifier, pos, dictId);
-        // ---> END TRACE <---
-        
-        // ---> DEBUG: Log found Dict ID <---
-        logging::debug("DEBUG_ADD: Node={}, Pos={}, Found DictID={}, EndOffset={}", 
-                     node->identifier, pos, dictId, positionToEndOffset[pos]);
-
-        if (state.hashToKmer.count(dictId) > 0) {
-            kmerStr = state.hashToKmer.at(dictId);
-            kmerFoundInDict = true;
-            int64_t endPos = pos + positionToEndOffset[pos];
-            
-            // ---> TRACE: Log k-mer found in dictionary <---
-            logging::verbose("TRACE_ADD_DICT_KMER: Node={}, Pos={}, DictID={}, Kmer='{}'", node->identifier, pos, dictId, kmerStr);
-            // ---> END TRACE <---
-
-            // ---> DEBUG: Log Kmer found in dictionary <---
-            logging::debug("DEBUG_ADD: Node={}, Pos={}, DictID={}, Found Kmer='{}'", 
-                         node->identifier, pos, dictId, kmerStr);
-
-
-            // Create seed using dictionary kmer - function handles normalization now
-            newSeed = createSeedFromDictionary(kmerStr, pos, endPos, params.k, params.s);
-            dictLookupOK = true; // Mark lookup as successful
-            
-            addSeedAndUpdateScores(node, stateManager, state, result, uniqueSeedHashes, pos, newSeed);
-            seedAdditions++;
-            dictionaryLookups++;
-            
-            // ---> TRACE: Log seed added (from dict) and read lookup status <---
-            bool inReads = state.seedFreqInReads.count(newSeed.hash) > 0;
-            logging::verbose("TRACE_ADD_DICT_DONE: Node={}, Pos={}, Hash={}, InReads={}", 
-                           node->identifier, pos, newSeed.hash, inReads);
-            // ---> END TRACE <---
-            
-        } else {
-            // Invalid Dictionary ID - log error
-            logging::warn("Invalid dictionary ID {} for position {} in node {}", 
-                       dictId, pos, node->identifier);
-        }
-    } else {
-        // Missing Position/Offset Info - log issue
-        logging::warn("No dictionary position/offset info for pos {} in node {}", 
-                   pos, node->identifier);
-    }
-    
-    // ---> TRACE: Log final outcome details <---
-    logging::verbose("TRACE_ADD_FINAL: Node={}, Pos={}, Hash={}, Kmer='{}', DictOK={}, KmerInDict={}", 
-                 node->identifier, pos, (dictLookupOK ? newSeed.hash : 0), kmerStr, dictLookupOK, kmerFoundInDict);
-    // ---> END TRACE <---
-
-    // ---> DEBUG: Log final outcome (only reachable on success now) <---
-    if (dictLookupOK) {
-        logging::debug("DEBUG_ADD_SUCCESS: Node={}, Pos={}, Kmer='{}', NewHash={}", 
-                     node->identifier, pos, kmerStr, newSeed.hash);
-    } else {
-        // Log failure without throwing
-        logging::warn("Failed to add seed at position {} in node {}", pos, node->identifier);
-    }
-    // ---> END DEBUG <---
-}
-
 // --- HELPER: Move the getNodeIndex function up here ---
 
 /**
@@ -987,50 +840,8 @@ void processNewSeedAddition(
 bool getNodeIndex(const std::string& nodeId, 
                   const PlacementGlobalState& state, 
                   uint64_t& nodeIndex) {
-    // First check if perNodeChanges is empty - this is a critical error
-    if (state.perNodeChanges.size() == 0) {
-        logging::err("ERROR: perNodeChanges structure is empty! This means the index was built without node path information.");
-        logging::err("Please rebuild the index with the -f/--reindex flag to fix this issue.");
-        return false;
-    }
-    
-    // Log the search attempt for debugging
-    logging::debug("Searching for node '{}' in index with {} perNodeChanges entries", 
-                 nodeId, state.perNodeChanges.size());
-                 
-    // If this is the first search, log some sample node IDs from the index
-    static bool first_search = true;
-    if (first_search && state.perNodeChanges.size() > 0) {
-        first_search = false;
-        // logging::info("Sample node IDs in index:");
-        for (size_t i = 0; i < std::min<size_t>(5, state.perNodeChanges.size()); i++) {
-            uint32_t liteNodeIdx = state.perNodeChanges[i].getNodeIndex();
-            if (liteNodeIdx < state.liteNodes.size()) {
-                auto nodeIdText = state.liteNodes[liteNodeIdx].getId();
-                std::string indexNodeIdStr(nodeIdText.begin(), nodeIdText.end());
-                // logging::info("  [{}]: '{}'", i, indexNodeIdStr);
-            }
-        }
-    }
-    
-    // Search through perNodeChanges for this node with proper string conversion
-    for (size_t i = 0; i < state.perNodeChanges.size(); i++) {
-        uint32_t liteNodeIdx = state.perNodeChanges[i].getNodeIndex();
-        if (liteNodeIdx >= state.liteNodes.size()) continue;
-        
-        // Get node ID from LiteNode
-        auto nodeIdText = state.liteNodes[liteNodeIdx].getId();
-        std::string indexNodeIdStr(nodeIdText.begin(), nodeIdText.end());
-        
-        if (indexNodeIdStr == nodeId) {
-            logging::debug("Found node '{}' at index {}", nodeId, i);
-            nodeIndex = i;
-            return true;
-        }
-    }
-    
-    logging::debug("Node '{}' not found in index (checked {} entries), using default scoring", 
-                 nodeId, state.perNodeChanges.size());
+    // MGSR format doesn't use nodePathInfo lookup - DFS traversal handles indexing
+    logging::debug("MGSR mode: getNodeIndex called for node '{}' but MGSR uses DFS traversal", nodeId);
     return false;
 }
 
@@ -1259,15 +1070,18 @@ std::tuple<double, double, size_t> calculateAndUpdateScoresLite(
     if (nodeChangeIndex < state.perNodeChanges.size()) {
         auto nodeChanges = state.perNodeChanges[nodeChangeIndex];
         
-        // Process seed deletions (deletions are positions, not indices)
-        auto deletions = nodeChanges.getSeedDeletions();
-        for (uint32_t pos : deletions) {
-            // Find the seed at this position to get its hash
-            for (size_t seedIdx = 0; seedIdx < state.seedInfo.size(); seedIdx++) {
+        // Process seed deltas (combined insertions and deletions)
+        auto seedDeltas = nodeChanges.getSeedDeltas();
+        for (auto delta : seedDeltas) {
+            uint32_t seedIdx = delta.getSeedIndex();
+            bool isDeleted = delta.getIsDeleted();
+            
+            if (seedIdx < state.seedInfo.size()) {
                 auto seedInfo = state.seedInfo[seedIdx];
-                if (seedInfo.getStartPos() == pos) {
-                    size_t seedHash = seedInfo.getHash();
-                    
+                size_t seedHash = seedInfo.getHash();
+                
+                if (isDeleted) {
+                    // Process deletion
                     // Remove from unique seed hashes
                     uniqueSeedHashes.erase(seedHash);
                     
@@ -1279,79 +1093,70 @@ std::tuple<double, double, size_t> calculateAndUpdateScoresLite(
                         // Get current genome count before modification
                         auto genomeIt = result.currentGenomeSeedCounts.find(seedHash);
                         int64_t oldGenomeCount = (genomeIt != result.currentGenomeSeedCounts.end()) ? genomeIt->second : 0;
-                    int64_t newGenomeCount = std::max(0L, oldGenomeCount - 1);
-                    
-                    // Update weighted Jaccard numerator: subtract old contribution, add new contribution
-                    int64_t oldMinCount = std::min(readCount, oldGenomeCount);
-                    int64_t newMinCount = std::min(readCount, newGenomeCount);
-                    result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
-                    
-                    // Update regular Jaccard numerator (if seed becomes absent, decrease by readCount)
-                    if (oldGenomeCount > 0 && newGenomeCount == 0) {
-                        result.currentJaccardNumerator -= readCount;
-                    }
-                    
-                    // Update raw match score: subtract old contribution, add new contribution
-                    result.hitsInThisGenome += (readCount * newGenomeCount) - (readCount * oldGenomeCount);
-                    
-                    // Update cosine similarity components (numerator: readCount * genomeCount)
-                    double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount);
-                    double newCosineTerm = static_cast<double>(readCount * newGenomeCount);
-                    result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
-                    
-                    // Update genome seed counts
-                    if (genomeIt != result.currentGenomeSeedCounts.end()) {
-                        if (--(genomeIt->second) <= 0) {
-                            result.currentGenomeSeedCounts.erase(genomeIt);
+                        int64_t newGenomeCount = std::max(0L, oldGenomeCount - 1);
+                        
+                        // Update weighted Jaccard numerator: subtract old contribution, add new contribution
+                        int64_t oldMinCount = std::min(readCount, oldGenomeCount);
+                        int64_t newMinCount = std::min(readCount, newGenomeCount);
+                        result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
+                        
+                        // Update regular Jaccard numerator (if seed becomes absent, decrease by readCount)
+                        if (oldGenomeCount > 0 && newGenomeCount == 0) {
+                            result.currentJaccardNumerator -= readCount;
+                        }
+                        
+                        // Update raw match score: subtract old contribution, add new contribution
+                        result.hitsInThisGenome += (readCount * newGenomeCount) - (readCount * oldGenomeCount);
+                        
+                        // Update cosine similarity components (numerator: readCount * genomeCount)
+                        double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount);
+                        double newCosineTerm = static_cast<double>(readCount * newGenomeCount);
+                        result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
+                        
+                        // Update genome seed counts
+                        if (genomeIt != result.currentGenomeSeedCounts.end()) {
+                            if (--(genomeIt->second) <= 0) {
+                                result.currentGenomeSeedCounts.erase(genomeIt);
+                            }
                         }
                     }
-                }
-                    break; // Found the seed at this position, no need to continue searching
-                }
-            }
-        }
-        
-        // Process seed insertions/substitutions
-        auto insertions = nodeChanges.getSeedInsertions();
-        for (uint32_t seedIdx : insertions) {
-            if (seedIdx < state.seedInfo.size()) {
-                auto seedInfo = state.seedInfo[seedIdx];
-                size_t seedHash = seedInfo.getHash();
-                
-                // Add to unique seed hashes
-                uniqueSeedHashes.insert(seedHash);
-                
-                // Update metrics if this seed exists in reads
-                auto readIt = state.seedFreqInReads.find(seedHash);
-                if (readIt != state.seedFreqInReads.end()) {
-                    int64_t readCount = readIt->second;
+                } else {
+                    // Process insertion/substitution
+                    // Add to unique seed hashes
+                    uniqueSeedHashes.insert(seedHash);
                     
-                    // Get current genome count before modification
-                    auto genomeIt = result.currentGenomeSeedCounts.find(seedHash);
-                    int64_t oldGenomeCount = (genomeIt != result.currentGenomeSeedCounts.end()) ? genomeIt->second : 0;
-                    int64_t newGenomeCount = oldGenomeCount + 1;
-                    
-                    // Update weighted Jaccard numerator: subtract old contribution, add new contribution
-                    int64_t oldMinCount = std::min(readCount, oldGenomeCount);
-                    int64_t newMinCount = std::min(readCount, newGenomeCount);
-                    result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
-                    
-                    // Update regular Jaccard numerator (if seed becomes present, increase by readCount)
-                    if (oldGenomeCount == 0 && newGenomeCount > 0) {
-                        result.currentJaccardNumerator += readCount;
+                    // Update metrics if this seed exists in reads
+                    auto readIt = state.seedFreqInReads.find(seedHash);
+                    if (readIt != state.seedFreqInReads.end()) {
+                        int64_t readCount = readIt->second;
+                        
+                        // Get current genome count before modification
+                        auto genomeIt = result.currentGenomeSeedCounts.find(seedHash);
+                        int64_t oldGenomeCount = (genomeIt != result.currentGenomeSeedCounts.end()) ? genomeIt->second : 0;
+                        int64_t newGenomeCount = oldGenomeCount + 1;
+                        
+                        // Update weighted Jaccard numerator: subtract old contribution, add new contribution
+                        int64_t oldMinCount = std::min(readCount, oldGenomeCount);
+                        int64_t newMinCount = std::min(readCount, newGenomeCount);
+                        result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
+                        
+                        // Update regular Jaccard numerator (if seed becomes present, increase by readCount)
+                        if (oldGenomeCount == 0 && newGenomeCount > 0) {
+                            result.currentJaccardNumerator += readCount;
+                        }
+                        
+                        // Update raw match score: subtract old contribution, add new contribution
+                        result.hitsInThisGenome += (readCount * newGenomeCount) - (readCount * oldGenomeCount);
+                        
+                        // Update cosine similarity components (numerator: readCount * genomeCount)
+                        double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount);
+                        double newCosineTerm = static_cast<double>(readCount * newGenomeCount);
+                        result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
+                        
+                        // Update genome seed counts
+                        auto [it, inserted] = result.currentGenomeSeedCounts.try_emplace(seedHash, 0);
+                        it->second++;
                     }
-                    
-                    // Update raw match score: subtract old contribution, add new contribution
-                    result.hitsInThisGenome += (readCount * newGenomeCount) - (readCount * oldGenomeCount);
-                    
-                    // Update cosine similarity components (numerator: readCount * genomeCount)
-                    double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount);
-                    double newCosineTerm = static_cast<double>(readCount * newGenomeCount);
-                    result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
-                    
-                    // Update genome seed counts
-                    auto [it, inserted] = result.currentGenomeSeedCounts.try_emplace(seedHash, 0);
-                    it->second++;
                 }
             }
         }
@@ -1540,18 +1345,20 @@ void placeLiteHelper(panmapUtils::LiteNode* node,
     if (dfsIndex < state.perNodeChanges.size()) {
         auto nodeChanges = state.perNodeChanges[dfsIndex];
         
-        // Apply seed additions (like MGSR addSeedAtPosition)
-        auto additions = nodeChanges.getSeedInsertions();
-        for (uint32_t seedIdx : additions) {
-            if (seedIdx < state.seedInfo.size()) {
-                addSeedToGenomeState(seedIdx, genomeState, state, seedBacktracks, affectedSeedHashes);
+        // Apply seed deltas
+        auto seedDeltas = nodeChanges.getSeedDeltas();
+        for (auto delta : seedDeltas) {
+            if (delta.getIsDeleted()) {
+                // Apply seed deletions
+                uint32_t deletionPos = delta.getSeedIndex();
+                delSeedFromGenomeState(deletionPos, genomeState, state, seedBacktracks, affectedSeedHashes);
+            } else {
+                // Apply seed additions
+                uint32_t seedIdx = delta.getSeedIndex();
+                if (seedIdx < state.seedInfo.size()) {
+                    addSeedToGenomeState(seedIdx, genomeState, state, seedBacktracks, affectedSeedHashes);
+                }
             }
-        }
-        
-        // Apply seed deletions (like MGSR delSeedAtPosition)
-        auto deletions = nodeChanges.getSeedDeletions();
-        for (uint32_t deletionPos : deletions) {
-            delSeedFromGenomeState(deletionPos, genomeState, state, seedBacktracks, affectedSeedHashes);
         }
     }
     
@@ -1595,11 +1402,12 @@ void placeLite(placement::PlacementResult &result,
     
     logging::info("Starting MGSR-style recursive placement");
     
+    auto time_init_start = std::chrono::high_resolution_clock::now();
+    
     // Initialize placement global state
     PlacementGlobalState state;
     state.seedInfo = mgsrIndex.getSeedInfo();
     state.perNodeChanges = mgsrIndex.getPerNodeChanges();
-    state.liteNodes = mgsrIndex.getLiteTree().getLiteNodes();
     state.kmerSize = mgsrIndex.getK();
     
     // Set traversal parameters
@@ -1608,10 +1416,15 @@ void placeLite(placement::PlacementResult &result,
     params.s = mgsrIndex.getS();
     params.t = mgsrIndex.getT();
     params.open = mgsrIndex.getOpen();
-    params.useRawSeeds = mgsrIndex.getUseRawSeeds();
     params.debug_node_id = debug_node_id_param;
     
+    auto time_init_end = std::chrono::high_resolution_clock::now();
+    auto duration_init = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_init_end - time_init_start);
+    logging::info("[TIME] Placement initialization: {}ms", duration_init.count());
+    
     // Process reads and extract seeds (same as before)
+    auto time_read_start = std::chrono::high_resolution_clock::now();
     std::vector<std::string> allReadSequences;
     
     if (!reads1.empty()) {
@@ -1645,12 +1458,25 @@ void placeLite(placement::PlacementResult &result,
         logging::info("Extracted {} unique seeds from provided sequences", state.seedFreqInReads.size());
     }
     
+    auto time_read_end = std::chrono::high_resolution_clock::now();
+    auto duration_read = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_read_end - time_read_start);
+    logging::info("[TIME] Read processing & seed extraction: {}ms", duration_read.count());
+    
     // Precompute read magnitude for cosine similarity
+    auto time_precomp_start = std::chrono::high_resolution_clock::now();
     for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
         state.readMagnitude += static_cast<double>(readCount * readCount);
     }
     state.readMagnitude = std::sqrt(state.readMagnitude);
     logging::info("Precomputed read magnitude: {:.6f}", state.readMagnitude);
+    
+    auto time_precomp_end = std::chrono::high_resolution_clock::now();
+    auto duration_precomp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_precomp_end - time_precomp_start);
+    if (duration_precomp.count() > 0) {
+        logging::info("[TIME] Magnitude precomputation: {}ms", duration_precomp.count());
+    }
     
     // Set root pointer in state
     state.root = liteTree->root;
@@ -1667,10 +1493,13 @@ void placeLite(placement::PlacementResult &result,
         std::vector<std::pair<uint64_t, uint8_t>> dummy_backtrack;
         std::unordered_set<size_t> dummy_affected;
         
-        auto additions = rootChanges.getSeedInsertions();
-        for (uint32_t seedIdx : additions) {
-            if (seedIdx < state.seedInfo.size()) {
-                addSeedToGenomeState(seedIdx, globalGenomeState, state, dummy_backtrack, dummy_affected);
+        auto seedDeltas = rootChanges.getSeedDeltas();
+        for (auto delta : seedDeltas) {
+            if (!delta.getIsDeleted()) {  // If not deleted, it's an addition
+                uint32_t seedIdx = delta.getSeedIndex();
+                if (seedIdx < state.seedInfo.size()) {
+                    addSeedToGenomeState(seedIdx, globalGenomeState, state, dummy_backtrack, dummy_affected);
+                }
             }
         }
         
@@ -1684,12 +1513,18 @@ void placeLite(placement::PlacementResult &result,
                   state.perNodeChanges.size());
     
     // Start recursive traversal from root
+    auto time_traversal_start = std::chrono::high_resolution_clock::now();
     if (liteTree && liteTree->root) {
         placeLiteHelper(liteTree->root, globalGenomeState, currentDfsIndex, state, result, params);
     } else {
         logging::err("LiteTree or root is null, cannot perform placement");
         return;
     }
+    
+    auto time_traversal_end = std::chrono::high_resolution_clock::now();
+    auto duration_traversal = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_traversal_end - time_traversal_start);
+    logging::info("[TIME] Tree traversal & scoring: {}ms", duration_traversal.count());
     
     // Performance metrics
     result.totalReadsProcessed = allReadSequences.size();
@@ -1700,22 +1535,6 @@ void placeLite(placement::PlacementResult &result,
                  result.bestCosineScore, result.bestCosineNodeId);
     logging::info("Best Weighted score: {} (node: {})", 
                  result.bestWeightedScore, result.bestWeightedNodeId);
-    
-    // Write placements.tsv file
-    if (!outputPath.empty()) {
-        std::ofstream outFile(outputPath);
-        if (outFile.is_open()) {
-            outFile << "metric\tscore\thits\tnodes\n";
-            outFile << "raw\t" << result.bestRawSeedMatchScore << "\t" << result.bestRawSeedMatchScore << "\t" << result.bestRawSeedMatchNodeId << "\n";
-            outFile << "jaccard\t" << result.bestJaccardScore << "\t\t" << result.bestJaccardNodeId << "\n";
-            outFile << "cosine\t" << result.bestCosineScore << "\t\t" << result.bestCosineNodeId << "\n";
-            outFile << "weighted_jaccard\t" << result.bestWeightedJaccardScore << "\t\t" << result.bestWeightedJaccardNodeId << "\n";
-            outFile.close();
-            logging::info("Wrote placements to: {}", outputPath);
-        } else {
-            logging::err("Failed to open placements file: {}", outputPath);
-        }
-    }
 }
 
 } // namespace placement

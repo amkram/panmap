@@ -74,13 +74,13 @@ int main(int argc, char *argv[]) {
 
         // Check mut_spec
        seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
-        if (out_dir != "") {
+        if (mut_spec != "") {
             if (fs::exists(mut_spec)) {
                 std::ifstream mminf(mut_spec);
                seed_annotated_tree::fillMutationMatricesFromFile(mutMat, mminf);
                 mminf.close();
             } else {
-                throw std::invalid_argument("--mut_sepc input file doesn't exist");
+                throw std::invalid_argument("--mut_spec input file doesn't exist");
             }
         }
 

@@ -20,24 +20,11 @@ PANGENOMES = {
     }
 }
 
-CONFIG = {
-    'pangenomes': ['rsv_4K', 'sars_20K', 'tb_400', ],   # Which datasets to test - multiple pangenomes
-    'k_values': range(5, 61, 4),  # k-mer sizes from 5 to 61 in steps of 4
-    's_values': [3, 6, 8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
-    'l_values': [1, 3, 5],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
-    'include_internal': [True],            # Include internal nodes? [False, True]
-    'coverage_levels': [1,10,100],        # Coverage levels (X coverage) (removed 1x)
-    'mutation_rates': [0.0001, 0.0005, 0.001], # Mutation rates per base pair (reduced to 1)
-    'replicates': 50,                        # Replicates per condition (reduced from 100 to 10)
-    'model': 'NovaSeq',                     # Sequencing model
-    'read_length': 150                      # Average read length for coverage calculation
-}
-# Experiment parameters - modify these to customize experiments
 # CONFIG = {
-#     'pangenomes': ['rsv_4K'],   # Which datasets to test - multiple pangenomes
-#     'k_values': [5,9,13,17,21,25,29,33,37,41,45,49,53,57,61],  # k-mer sizes (reduced to 5 for testing)
-#     's_values': [4,8,12],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
-#     'l_values': [1, 3, 4],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
+#     'pangenomes': ['rsv_4K', 'sars_20K', 'tb_400'],   # Which datasets to test - multiple pangenomes
+#     'k_values': range(5, 61, 4),  # k-mer sizes from 5 to 61 in steps of 4
+#     's_values': [3, 6, 8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
+#     'l_values': [1, 3, 5],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
 #     'include_internal': [True],            # Include internal nodes? [False, True]
 #     'coverage_levels': [1,10,100],        # Coverage levels (X coverage) (removed 1x)
 #     'mutation_rates': [0.0001, 0.0005, 0.001], # Mutation rates per base pair (reduced to 1)
@@ -45,6 +32,19 @@ CONFIG = {
 #     'model': 'NovaSeq',                     # Sequencing model
 #     'read_length': 150                      # Average read length for coverage calculation
 # }
+# Experiment parameters - modify these to customize experiments
+CONFIG = {
+    'pangenomes': ['rsv_4K', 'sars_20K', 'tb_400'],   # Which datasets to test - multiple pangenomes
+    'k_values': range(7, 41, 6),
+    's_values': [8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
+    'l_values': [1, 3],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
+    'include_internal': [True],            # Include internal nodes? [False, True]
+    'coverage_levels': [1, 10, 100, 10000],        # Coverage levels (X coverage) (removed 1x)
+    'mutation_rates': [0.0001, 0.0005, 0.001], # Mutation rates per base pair (reduced to 1)
+    'replicates': 30,                        # Replicates per condition (reduced from 100 to 30)
+    'model': 'NovaSeq',                     # Sequencing model
+    'read_length': 150                      # Average read length for coverage calculation
+}
 
 def generate_experiments():
     """Generate all parameter combinations"""
@@ -220,10 +220,22 @@ rule dump_random_node:
             original_cwd = os.getcwd()
             try:
                 os.chdir(tmpdir)
-                result = shell(f"{panmap_bin_abs} {temp_panman} --dump-random-node --seed {seed_int}", check=False)
+                print(f"[dump_random_node] running: {panmap_bin_abs} {temp_panman} --dump-random-node --seed {seed_int}")
+                
+                import subprocess
+                result = subprocess.run(
+                    [panmap_bin_abs, str(temp_panman), "--dump-random-node", "--seed", str(seed_int)],
+                    capture_output=True,
+                    text=True
+                )
+                print(f"[dump_random_node] panmap exit code: {result.returncode}")
+                if result.returncode != 0:
+                    print(f"[dump_random_node] STDERR: {result.stderr}")
+                    print(f"[dump_random_node] STDOUT: {result.stdout}")
                 
                 # Find generated random node fasta in temp directory
                 candidates = list(tmpdir_path.glob("*.random.*.fa"))
+                print(f"[dump_random_node] found {len(candidates)} candidate files: {[c.name for c in candidates]}")
                 
                 if candidates:
                     # Sort by modification time and take the newest
@@ -261,9 +273,13 @@ rule dump_random_node:
                         raise RuntimeError(f"Failed to copy random node sequence for {ex['pan_stem']}")
                         
                 else:
-                    print(f"[dump_random_node] panmap failed (exit code {result}) or no candidates found for {ex['pan_stem']}")
-                    print(f"[dump_random_node] candidates found: {candidates}")
-                    raise RuntimeError(f"Failed to generate random node sequence for {ex['pan_stem']}")
+                    print(f"[dump_random_node] ERROR: No output files generated")
+                    print(f"[dump_random_node] panmap exit code: {result.returncode}")
+                    print(f"[dump_random_node] temp directory contents: {list(tmpdir_path.iterdir())}")
+                    print(f"[dump_random_node] experiment: {ex['id']}, pangenome: {ex['pan_stem']}, seed: {seed_int}")
+                    print(f"[dump_random_node] panmap stderr: {result.stderr[:500]}")
+                    print(f"[dump_random_node] panmap stdout: {result.stdout[:500]}")
+                    raise RuntimeError(f"Failed to generate random node sequence for {ex['pan_stem']} (experiment {ex['id']}, replicate {wildcards.rep})")
                     
             finally:
                 os.chdir(original_cwd)
@@ -273,14 +289,14 @@ rule index_experiment:
                 bin="build/bin/panmap",
                 pan=lambda wc: EXP_BY_ID[wc.eid]['panman_path']
         output:
-                index=protected(f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi"),
-                mm=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/{{pan_stem}}.panman.mm"
+                index=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi",
+                mm=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/{{pan_stem}}.panman.mm",
+                time_log=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index_time.log"
         params:
                 pan=lambda wc: EXP_BY_ID[wc.eid]['panman_path'],
                 k=lambda wc: EXP_BY_ID[wc.eid]['k'],
                 s=lambda wc: EXP_BY_ID[wc.eid]['s'],
-                l=lambda wc: EXP_BY_ID[wc.eid]['l'],
-                time_log=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/indexes/index_time.log"
+                l=lambda wc: EXP_BY_ID[wc.eid]['l']
         resources:
                 tmpdir=f"/tmp/panmap_{{eid}}_index"
         shell:
@@ -307,7 +323,7 @@ rule index_experiment:
                 
                 # Build index with temporary name first, then move atomically
                 temp_index="$exp_tmp_dir/index.pmi.tmp"
-                /usr/bin/time -v {input.bin} -k {params.k} -s {params.s} -l {params.l} --index-mgsr "$temp_index" {params.pan} 2> {params.time_log}
+                /usr/bin/time -v {input.bin} -k {params.k} -s {params.s} -l {params.l} --index-mgsr "$temp_index" {params.pan} 2> {output.time_log}
                 
                 # Verify the index was created and has content
                 if [[ ! -f "$temp_index" || ! -s "$temp_index" ]]; then
@@ -339,7 +355,7 @@ rule simulate_reads:
     params:
         model='NovaSeq',
         cpus=1,
-        mm_type='both'  # Use both SNP and indel matrices
+        mm_type='snp'  # Use SNP matrices (simulate only supports 'snp')
     resources:
         tmpdir=f"/tmp/panmap_{{eid}}_simulate_cov{{cov}}_{{n}}_rep{{rep}}"
     run:
@@ -540,15 +556,15 @@ rule place_reads:
             try:
                 result = subprocess.run([
                     "/usr/bin/time", "-v",
-                    input.panmap_bin, 
-                    "--place",
+                    input.panmap_bin,
+                    "-o", "placement",  # Only run placement, not full alignment
                     "--time",
                     "-m", input.index,  # Pass experiment-specific MGSR index (contains k/s/l)
                     "-p", params.prefix,
                     input.panman,
                     input.r1, 
                     input.r2
-                ], capture_output=True, text=True, timeout=600)
+                ], capture_output=True, text=True, timeout=21600)  # 6 hours timeout
                 log_output = result.stderr + result.stdout
                 
                 # Save raw panmap log for debugging
@@ -1183,7 +1199,8 @@ rule index_performance_summary:
     input:
         logs=INDEX_TIME_LOGS
     output:
-        summary=f"{OUTPUT_DIR}/reports/index_performance_summary.tsv"
+        summary=f"{OUTPUT_DIR}/reports/index_performance_summary.tsv",
+        per_pan=expand(f"{OUTPUT_DIR}/reports/{{pan}}/index_performance_summary.tsv", pan=[p for p in PANGENOMES.keys()])
     run:
         import pathlib, re
         
@@ -1244,6 +1261,33 @@ rule index_performance_summary:
                     tf.write(f"{stats.get('system_time_sec', 0)}\t")
                     tf.write(f"{stats.get('max_rss_mb', 0)}\n")
         
+        # Generate per-pangenome summaries
+        for pan_name in PANGENOMES.keys():
+            pan_dir = pathlib.Path(f"{OUTPUT_DIR}/reports/{pan_name}")
+            pan_dir.mkdir(parents=True, exist_ok=True)
+            
+            with open(pan_dir / 'index_performance_summary.tsv', 'w') as tf:
+                tf.write('experiment_id\tpangenome\ttag\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
+                
+                for exp in EXPERIMENTS:
+                    if exp['pan_stem'] != pan_name:
+                        continue
+                    
+                    eid = exp['id']
+                    pan_stem = exp['pan_stem']
+                    tag = exp['tag']
+                    k, s, l = exp['k'], exp['s'], exp['l']
+                    
+                    log_file = f"{_exp_root(eid, pan_stem, tag)}/indexes/index_time.log"
+                    stats = parse_time_log(log_file)
+                    
+                    if stats and 'wall_time_sec' in stats:
+                        tf.write(f"{eid}\t{pan_stem}\t{tag}\t{k}\t{s}\t{l}\t")
+                        tf.write(f"{stats.get('wall_time_sec', 0)}\t")
+                        tf.write(f"{stats.get('user_time_sec', 0)}\t")
+                        tf.write(f"{stats.get('system_time_sec', 0)}\t")
+                        tf.write(f"{stats.get('max_rss_mb', 0)}\n")
+        
         print(f"[index_performance_summary] Processed {len(EXPERIMENTS)} experiments")
 
 
@@ -1251,7 +1295,8 @@ rule placement_performance_summary:
     input:
         logs=PLACEMENT_TIME_LOGS
     output:
-        summary=f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv"
+        summary=f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv",
+        per_pan=expand(f"{OUTPUT_DIR}/reports/{{pan}}/placement_performance_summary.tsv", pan=[p for p in PANGENOMES.keys()])
     run:
         import pathlib, re
         
@@ -1308,6 +1353,31 @@ rule placement_performance_summary:
                     tf.write(f"{stats.get('system_time_sec', 0)}\t")
                     tf.write(f"{stats.get('max_rss_mb', 0)}\n")
         
+        # Generate per-pangenome summaries
+        for pan_name in PANGENOMES.keys():
+            pan_dir = pathlib.Path(f"{OUTPUT_DIR}/reports/{pan_name}")
+            pan_dir.mkdir(parents=True, exist_ok=True)
+            
+            with open(pan_dir / 'placement_performance_summary.tsv', 'w') as tf:
+                tf.write('experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
+                
+                for (eid, pan_stem, tag, cov, n, rep) in READS:
+                    if pan_stem != pan_name:
+                        continue
+                    
+                    exp = EXP_BY_ID[eid]
+                    k, s, l = exp['k'], exp['s'], exp['l']
+                    
+                    log_file = f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log"
+                    stats = parse_time_log(log_file)
+                    
+                    if stats and 'wall_time_sec' in stats:
+                        tf.write(f"{eid}\t{pan_stem}\t{tag}\t{cov}\t{n}\t{rep}\t{k}\t{s}\t{l}\t")
+                        tf.write(f"{stats.get('wall_time_sec', 0)}\t")
+                        tf.write(f"{stats.get('user_time_sec', 0)}\t")
+                        tf.write(f"{stats.get('system_time_sec', 0)}\t")
+                        tf.write(f"{stats.get('max_rss_mb', 0)}\n")
+        
         print(f"[placement_performance_summary] Processed {len(READS)} placement runs")
 
 
@@ -1325,7 +1395,10 @@ rule plot_performance:
         placement_time_l1=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k_l1.png",
         placement_time_l3=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k_l3.png",
         placement_time=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k.png",
-        placement_memory=f"{OUTPUT_DIR}/plots/performance/placement_memory_by_k.png"
+        placement_memory=f"{OUTPUT_DIR}/plots/performance/placement_memory_by_k.png",
+        # Per-pangenome plots
+        index_time_per_pan=expand(f"{OUTPUT_DIR}/plots/performance/{{pan}}/index_time_by_k.png", pan=[p for p in PANGENOMES.keys()]),
+        placement_time_per_pan=expand(f"{OUTPUT_DIR}/plots/performance/{{pan}}/placement_time_by_k.png", pan=[p for p in PANGENOMES.keys()])
     run:
         import pandas as pd
         import matplotlib.pyplot as plt
@@ -1467,6 +1540,28 @@ rule plot_performance:
                     'Placement Memory by k-mer Size',
                     'Peak memory (MB)',
                     output.placement_memory, hue_col=None if len(placement_df) == 0 else 'l')
+        
+        # Generate per-pangenome plots
+        for pan_name in PANGENOMES.keys():
+            pan_dir = Path(f"{OUTPUT_DIR}/plots/performance/{pan_name}")
+            pan_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Filter data for this pangenome
+            pan_index_df = index_df[index_df['pangenome'] == pan_name] if len(index_df) > 0 else pd.DataFrame()
+            pan_placement_df = placement_df[placement_df['pangenome'] == pan_name] if len(placement_df) > 0 else pd.DataFrame()
+            
+            # Index time plot for this pangenome
+            plot_boxplot(pan_index_df, 'k', 'wall_time_sec',
+                        f'Index Build Time - {pan_name}',
+                        'Wall time (seconds)',
+                        str(pan_dir / 'index_time_by_k.png'), hue_col='l' if len(pan_index_df) > 0 else None)
+            
+            # Placement time plot for this pangenome
+            plot_time_lineplot(pan_placement_df, 
+                             f'Placement Time vs Number of Reads - {pan_name}',
+                             str(pan_dir / 'placement_time_by_k.png'))
+            
+            print(f"[plot_performance] Generated plots for {pan_name}")
         
         print(f"[plot_performance] Performance plots complete")
 
@@ -2123,7 +2218,10 @@ rule plot_accuracy_by_k:
         def plot_for_l(l_value, png_out, pdf_out):
             sub = agg[agg['l'] == l_value]
             if sub.empty:
-                print(f"[plot_accuracy_by_k] No data for l={l_value}, skipping")
+                print(f"[plot_accuracy_by_k] No data for l={l_value}, creating empty placeholder files")
+                # Create empty placeholder files so Snakemake doesn't fail
+                Path(png_out).touch()
+                Path(pdf_out).touch()
                 return
 
             plt.figure(figsize=(10,6))
@@ -2188,3 +2286,674 @@ rule clean:
                         os.remove(f)
                     except FileNotFoundError:
                         pass
+
+# =============================================================================
+# Timing Benchmarks (on-demand rule)
+# =============================================================================
+
+rule timing_benchmarks:
+    """
+    Run timing benchmarks for indexing and placement across all pangenomes.
+    Usage: snakemake timing_benchmarks
+    
+    This rule:
+    1. Times indexing for each pangenome with the first k,s,l combination in CONFIG
+    2. Times placement runs for one replicate at each coverage level
+    3. Aggregates timing data into a summary report
+    """
+    input:
+        f"{OUTPUT_DIR}/reports/timing_benchmarks.tsv",
+        f"{OUTPUT_DIR}/plots/timing/benchmark_summary.png"
+    
+rule run_timing_benchmarks:
+    output:
+        summary=f"{OUTPUT_DIR}/reports/timing_benchmarks.tsv"
+    run:
+        import subprocess
+        import pandas as pd
+        import pathlib
+        import re
+        import time
+        
+        pathlib.Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Use first k,s,l combination for all pangenomes
+        k = CONFIG['k_values'][0]
+        s = CONFIG['s_values'][0]
+        l = CONFIG['l_values'][0]
+        
+        results = []
+        
+        print(f"[timing_benchmarks] Running benchmarks with k={k}, s={s}, l={l}")
+        
+        # Parse /usr/bin/time output
+        def parse_time_output(output_text):
+            stats = {}
+            for line in output_text.split('\n'):
+                if 'Elapsed (wall clock) time' in line:
+                    # Format: "Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.23"
+                    # Extract everything after the last colon before the time value
+                    try:
+                        # Find the actual time value - it's after ": " 
+                        time_match = re.search(r':\s+(\d+:\d+:\d+\.\d+|\d+:\d+\.\d+)', line)
+                        if time_match:
+                            time_str = time_match.group(1)
+                            if time_str.count(':') == 2:  # h:mm:ss.ms
+                                h, m, s = time_str.split(':')
+                                stats['wall_time_sec'] = int(h) * 3600 + int(m) * 60 + float(s)
+                            elif time_str.count(':') == 1:  # m:ss.ms
+                                m, s = time_str.split(':')
+                                stats['wall_time_sec'] = int(m) * 60 + float(s)
+                    except Exception as e:
+                        print(f"[timing_benchmarks] Warning: Could not parse wall time from: {line}")
+                elif 'User time (seconds)' in line:
+                    try:
+                        stats['user_time_sec'] = float(line.split(':')[1].strip())
+                    except:
+                        pass
+                elif 'System time (seconds)' in line:
+                    try:
+                        stats['system_time_sec'] = float(line.split(':')[1].strip())
+                    except:
+                        pass
+                elif 'Maximum resident set size (kbytes)' in line:
+                    try:
+                        stats['max_rss_mb'] = float(line.split(':')[1].strip()) / 1024.0
+                    except:
+                        pass
+            return stats
+        
+        # Parse panmap --time output for detailed timing
+        def parse_panmap_timing(output_text):
+            timing_info = {}
+            for line in output_text.split('\n'):
+                if '[TIME]' in line:
+                    # Format: [TIME] Phase name: XXXms
+                    match = re.search(r'\[TIME\]\s+([^:]+):\s+(\d+)ms', line)
+                    if match:
+                        phase = match.group(1).strip()
+                        ms = int(match.group(2))
+                        timing_info[phase] = ms
+            return timing_info
+        
+        # Get absolute paths
+        import os
+        panmap_bin = os.path.abspath("build/bin/panmap")
+        simulate_bin = os.path.abspath("build/bin/simulate")
+        
+        # Filter pangenomes if specified in config
+        timing_pangenomes = config.get('timing_pangenomes', None)
+        if timing_pangenomes:
+            selected_pangenomes = {k: v for k, v in PANGENOMES.items() if k in timing_pangenomes}
+            print(f"[timing_benchmarks] Running for selected pangenomes: {list(selected_pangenomes.keys())}")
+        else:
+            selected_pangenomes = PANGENOMES
+            print(f"[timing_benchmarks] Running for all pangenomes: {list(selected_pangenomes.keys())}")
+        
+        # Benchmark indexing for each pangenome
+        print(f"[timing_benchmarks] === INDEXING BENCHMARKS ===")
+        for pan_name, pan_info in selected_pangenomes.items():
+            print(f"[timing_benchmarks] Checking index for {pan_name}...")
+            
+            try:
+                panman_path = os.path.abspath(pan_info['path'])
+                temp_index = f"/tmp/timing_bench_{pan_name}_{k}_{s}_{l}.pmi"
+                
+                # Check if index already exists and is valid
+                if pathlib.Path(temp_index).exists():
+                    print(f"[timing_benchmarks]   Index exists, skipping rebuild: {temp_index}")
+                    # Still record it in results with zero time (or load from previous run)
+                    benchmark = {
+                        'pangenome': pan_name,
+                        'phase': 'indexing',
+                        'k': k,
+                        's': s,
+                        'l': l,
+                        'coverage': 'N/A',
+                        'num_reads': 0,
+                        'wall_time_sec': 0,
+                        'user_time_sec': 0,
+                        'system_time_sec': 0,
+                        'max_rss_mb': 0,
+                    }
+                    results.append(benchmark)
+                    print(f"[timing_benchmarks]   {pan_name} indexing: skipped (existing)")
+                    continue
+                
+                print(f"[timing_benchmarks] Indexing {pan_name}...")
+                
+                # Run indexing with timing
+                cmd = [
+                    "/usr/bin/time", "-v",
+                    panmap_bin,
+                    "-k", str(k),
+                    "-s", str(s),
+                    "-l", str(l),
+                    "--time",
+                    "-f",
+                    "--index-mgsr", temp_index,
+                    panman_path
+                ]
+                
+                start_time = time.time()
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+                end_time = time.time()
+                
+                # Parse timing
+                print(f"[timing_benchmarks]   Parsing time output...")
+                time_stats = parse_time_output(result.stderr)
+                print(f"[timing_benchmarks]   Parsing panmap timing...")
+                panmap_timing = parse_panmap_timing(result.stdout + result.stderr)
+                
+                # Store result
+                print(f"[timing_benchmarks]   Storing results...")
+                benchmark = {
+                    'pangenome': pan_name,
+                    'phase': 'indexing',
+                    'k': k,
+                    's': s,
+                    'l': l,
+                    'coverage': 'N/A',
+                    'num_reads': 0,
+                    'wall_time_sec': time_stats.get('wall_time_sec', end_time - start_time),
+                    'user_time_sec': time_stats.get('user_time_sec', 0),
+                    'system_time_sec': time_stats.get('system_time_sec', 0),
+                    'max_rss_mb': time_stats.get('max_rss_mb', 0),
+                }
+                
+                # Add detailed panmap timing if available
+                for phase_name, phase_ms in panmap_timing.items():
+                    benchmark[f'panmap_{phase_name.replace(" ", "_").lower()}_ms'] = phase_ms
+                
+                results.append(benchmark)
+                print(f"[timing_benchmarks]   {pan_name} indexing: {benchmark['wall_time_sec']:.2f}s, {benchmark['max_rss_mb']:.1f}MB")
+                
+                # Clean up temp index
+                if pathlib.Path(temp_index).exists():
+                    pathlib.Path(temp_index).unlink()
+                    
+            except subprocess.TimeoutExpired:
+                print(f"[timing_benchmarks]   {pan_name} indexing TIMEOUT (>1 hour)")
+                results.append({
+                    'pangenome': pan_name,
+                    'phase': 'indexing',
+                    'k': k, 's': s, 'l': l,
+                    'coverage': 'N/A',
+                    'num_reads': 0,
+                    'wall_time_sec': -1,
+                    'user_time_sec': -1,
+                    'system_time_sec': -1,
+                    'max_rss_mb': -1,
+                    'status': 'timeout'
+                })
+            except Exception as e:
+                import traceback
+                print(f"[timing_benchmarks]   {pan_name} indexing ERROR: {e}")
+                print(f"[timing_benchmarks]   Traceback: {traceback.format_exc()}")
+                results.append({
+                    'pangenome': pan_name,
+                    'phase': 'indexing',
+                    'k': k, 's': s, 'l': l,
+                    'coverage': 'N/A',
+                    'num_reads': 0,
+                    'wall_time_sec': -1,
+                    'user_time_sec': -1,
+                    'system_time_sec': -1,
+                    'max_rss_mb': -1,
+                    'status': 'error',
+                    'error': str(e)
+                })
+        
+        # Save results now (indexing complete)
+        df = pd.DataFrame(results)
+        df.to_csv(output.summary, sep='\t', index=False)
+        print(f"\n[timing_benchmarks] Indexing results saved to {output.summary}")
+        print(f"[timing_benchmarks] Total indexing benchmarks: {len(results)}")
+        
+        # Benchmark placement for each pangenome at each coverage level
+        print(f"\n[timing_benchmarks] === PLACEMENT BENCHMARKS ===")
+        
+        for pan_name, pan_info in selected_pangenomes.items():
+            panman_path = os.path.abspath(pan_info['path'])
+            genome_size = pan_info['genome_size']
+            
+            # Skip very large genomes for placement timing (too many reads)
+            if genome_size > 100000:  # Skip if > 100kb (like tb_400 with 4Mb)
+                print(f"[timing_benchmarks] Skipping {pan_name} placement (genome too large: {genome_size} bp)")
+                continue
+            
+            # Reuse index from indexing benchmark
+            temp_index = f"/tmp/timing_bench_{pan_name}_{k}_{s}_{l}.pmi"
+            
+            # Check if index exists from indexing phase, if not build it
+            if not pathlib.Path(temp_index).exists():
+                print(f"[timing_benchmarks] Building index for {pan_name} placement tests...")
+                try:
+                    cmd_index = [
+                        panmap_bin,
+                        "-k", str(k), "-s", str(s), "-l", str(l),
+                        "-f",
+                        "--index-mgsr", temp_index,
+                        panman_path
+                    ]
+                    subprocess.run(cmd_index, capture_output=True, text=True, timeout=3600, check=True)
+                except Exception as e:
+                    print(f"[timing_benchmarks]   Failed to build index for {pan_name}: {e}")
+                    continue
+            else:
+                print(f"[timing_benchmarks] Reusing existing index for {pan_name} placement tests")
+            
+            # Test placement at each coverage level
+            for cov in CONFIG['coverage_levels']:
+                num_reads = int((genome_size * cov) / CONFIG['read_length'])
+                print(f"[timing_benchmarks] Placement {pan_name} @ {cov}x coverage ({num_reads} reads)...")
+                
+                # Generate test reads (reuse existing simulate rule logic)
+                temp_dir = pathlib.Path(f"/tmp/timing_bench_{pan_name}_cov{cov}")
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                
+                try:
+                    # Copy panman file to temp dir to control where random node is written
+                    import shutil
+                    temp_panman = temp_dir / f"{pan_name}_temp.panman"
+                    shutil.copy2(panman_path, temp_panman)
+                    
+                    # Try multiple seeds to find a node with a valid filename (no slashes)
+                    random_fasta = None
+                    for seed in [12345, 999, 54321, 11111, 22222]:
+                        # Dump a random node - it will be written next to the temp panman file
+                        cmd_dump = f"{panmap_bin} {temp_panman} --dump-random-node --seed {seed}"
+                        result_dump = subprocess.run(cmd_dump, shell=True, capture_output=True, text=True, timeout=300)
+                        
+                        # Find generated fasta in temp directory
+                        fasta_files = list(temp_dir.glob("*.random.*.fa"))
+                        
+                        if fasta_files:
+                            random_fasta = fasta_files[0]
+                            print(f"[timing_benchmarks]   Random node found with seed {seed}")
+                            break
+                        
+                        # Check if it failed due to invalid filename
+                        if "Failed to save random node" in result_dump.stdout or "Failed to save random node" in result_dump.stderr:
+                            print(f"[timing_benchmarks]   Seed {seed} generated node with invalid filename, trying another...")
+                            continue
+                    
+                    if not random_fasta:
+                        print(f"[timing_benchmarks]   No valid random node generated for {pan_name} after trying multiple seeds")
+                        print(f"[timing_benchmarks]   Last error: {result_dump.stderr}")
+                        continue
+                    
+                    # Extract node name from fasta header
+                    with open(random_fasta, 'r') as f:
+                        node_name = f.readline().strip()[1:]  # Remove '>' from header
+                    
+                    print(f"[timing_benchmarks]   Generated random node: {node_name}")
+                    
+                    # Simulate reads using temp panman
+                    if pathlib.Path(simulate_bin).exists():
+                        cmd_sim = (
+                            f"{simulate_bin} --panmat {temp_panman} --ref {node_name} "
+                            f"--out_dir {str(temp_dir)} --n_reads {num_reads} --rep 1 "
+                            f"--model {CONFIG['model']} --cpus 4 --seed 12345 "
+                            f"--mutnum 0 0 0"  # No mutations for timing test
+                        )
+                        result_sim = subprocess.run(cmd_sim, shell=True, capture_output=True, text=True, timeout=600)
+                        if result_sim.returncode != 0:
+                            print(f"[timing_benchmarks]   Simulate failed: {result_sim.stderr}")
+                            continue
+                    else:
+                        print(f"[timing_benchmarks]   Simulate binary not found at {simulate_bin}")
+                        continue
+                    
+                    # Find generated reads
+                    r1_files = list(temp_dir.glob("*_R1.fastq")) + list(temp_dir.glob("*/*_R1.fastq"))
+                    r2_files = list(temp_dir.glob("*_R2.fastq")) + list(temp_dir.glob("*/*_R2.fastq"))
+                    
+                    if not r1_files or not r2_files:
+                        print(f"[timing_benchmarks]   No reads generated for {pan_name} @ {cov}x")
+                        continue
+                    
+                    r1_path = r1_files[0]
+                    r2_path = r2_files[0]
+                    
+                    # Run placement with timing
+                    placement_prefix = temp_dir / "placement"
+                    cmd_place = [
+                        "/usr/bin/time", "-v",
+                        panmap_bin,
+                        "-o", "placement",
+                        "--time",
+                        "-m", temp_index,
+                        "-p", str(placement_prefix),
+                        panman_path,
+                        str(r1_path),
+                        str(r2_path)
+                    ]
+                    
+                    start_time = time.time()
+                    result_place = subprocess.run(cmd_place, capture_output=True, text=True, timeout=3600)
+                    end_time = time.time()
+                    
+                    # Parse timing
+                    time_stats = parse_time_output(result_place.stderr)
+                    panmap_timing = parse_panmap_timing(result_place.stdout + result_place.stderr)
+                    
+                    # Store result
+                    benchmark = {
+                        'pangenome': pan_name,
+                        'phase': 'placement',
+                        'k': k,
+                        's': s,
+                        'l': l,
+                        'coverage': cov,
+                        'num_reads': num_reads,
+                        'wall_time_sec': time_stats.get('wall_time_sec', end_time - start_time),
+                        'user_time_sec': time_stats.get('user_time_sec', 0),
+                        'system_time_sec': time_stats.get('system_time_sec', 0),
+                        'max_rss_mb': time_stats.get('max_rss_mb', 0),
+                    }
+                    
+                    # Add detailed panmap timing
+                    for phase_name, phase_ms in panmap_timing.items():
+                        benchmark[f'panmap_{phase_name.replace(" ", "_").lower()}_ms'] = phase_ms
+                    
+                    results.append(benchmark)
+                    print(f"[timing_benchmarks]   {pan_name} @ {cov}x ({num_reads} reads): {benchmark['wall_time_sec']:.2f}s, {benchmark['max_rss_mb']:.1f}MB")
+                    
+                except subprocess.TimeoutExpired:
+                    print(f"[timing_benchmarks]   {pan_name} @ {cov}x TIMEOUT")
+                    results.append({
+                        'pangenome': pan_name,
+                        'phase': 'placement',
+                        'k': k, 's': s, 'l': l,
+                        'coverage': cov,
+                        'num_reads': num_reads,
+                        'wall_time_sec': -1,
+                        'user_time_sec': -1,
+                        'system_time_sec': -1,
+                        'max_rss_mb': -1,
+                        'status': 'timeout'
+                    })
+                except Exception as e:
+                    print(f"[timing_benchmarks]   {pan_name} @ {cov}x ERROR: {e}")
+                    results.append({
+                        'pangenome': pan_name,
+                        'phase': 'placement',
+                        'k': k, 's': s, 'l': l,
+                        'coverage': cov,
+                        'num_reads': num_reads,
+                        'wall_time_sec': -1,
+                        'user_time_sec': -1,
+                        'system_time_sec': -1,
+                        'max_rss_mb': -1,
+                        'status': 'error',
+                        'error': str(e)
+                    })
+                finally:
+                    # Cleanup temp dir
+                    import shutil
+                    if temp_dir.exists():
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            # Clean up index
+            if pathlib.Path(temp_index).exists():
+                pathlib.Path(temp_index).unlink()
+        
+        # Save results
+        df = pd.DataFrame(results)
+        df.to_csv(output.summary, sep='\t', index=False)
+        print(f"\n[timing_benchmarks] Results saved to {output.summary}")
+        print(f"[timing_benchmarks] Total benchmarks run: {len(results)}")
+
+rule plot_timing_benchmarks:
+    input:
+        summary=f"{OUTPUT_DIR}/reports/timing_benchmarks.tsv"
+    output:
+        summary_plot=f"{OUTPUT_DIR}/plots/timing/benchmark_summary.png",
+        index_plot=f"{OUTPUT_DIR}/plots/timing/indexing_benchmarks.png",
+        placement_plot=f"{OUTPUT_DIR}/plots/timing/placement_benchmarks.png",
+        # Per-pangenome plots
+        per_pan_plots=expand(f"{OUTPUT_DIR}/plots/timing/{{pan}}/benchmarks.png", pan=[p for p in PANGENOMES.keys()])
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        from pathlib import Path
+        
+        Path(output.summary_plot).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load data
+        df = pd.read_csv(input.summary, sep='\t')
+        
+        print(f"[plot_timing_benchmarks] Loaded {len(df)} benchmark results")
+        
+        # Filter out errors/timeouts
+        df_valid = df[df['wall_time_sec'] > 0].copy()
+        
+        # Create summary plot
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # 1. Indexing time by pangenome
+        index_data = df_valid[df_valid['phase'] == 'indexing']
+        if len(index_data) > 0:
+            ax = axes[0, 0]
+            index_data.plot(x='pangenome', y='wall_time_sec', kind='bar', ax=ax, legend=False)
+            ax.set_ylabel('Wall Time (seconds)')
+            ax.set_xlabel('Pangenome')
+            ax.set_title('Indexing Time by Pangenome')
+            ax.tick_params(axis='x', rotation=45)
+        
+        # 2. Indexing memory by pangenome
+        if len(index_data) > 0:
+            ax = axes[0, 1]
+            index_data.plot(x='pangenome', y='max_rss_mb', kind='bar', ax=ax, legend=False, color='orange')
+            ax.set_ylabel('Peak Memory (MB)')
+            ax.set_xlabel('Pangenome')
+            ax.set_title('Indexing Memory by Pangenome')
+            ax.tick_params(axis='x', rotation=45)
+        
+        # 3. Placement time by coverage
+        place_data = df_valid[df_valid['phase'] == 'placement']
+        if len(place_data) > 0:
+            ax = axes[1, 0]
+            for pan in place_data['pangenome'].unique():
+                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
+                ax.plot(pan_data['coverage'], pan_data['wall_time_sec'], marker='o', label=pan, linewidth=2, markersize=8)
+                # Add number of reads as text labels
+                for _, row in pan_data.iterrows():
+                    ax.annotate(f"{int(row['num_reads'])} reads", 
+                               xy=(row['coverage'], row['wall_time_sec']),
+                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
+            ax.set_ylabel('Wall Time (seconds)')
+            ax.set_xlabel('Coverage')
+            ax.set_title('Placement Time by Coverage')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # 4. Placement memory by coverage
+        if len(place_data) > 0:
+            ax = axes[1, 1]
+            for pan in place_data['pangenome'].unique():
+                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
+                ax.plot(pan_data['coverage'], pan_data['max_rss_mb'], marker='o', label=pan, linewidth=2, markersize=8)
+                # Add number of reads as text labels
+                for _, row in pan_data.iterrows():
+                    ax.annotate(f"{int(row['num_reads'])} reads", 
+                               xy=(row['coverage'], row['max_rss_mb']),
+                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
+            ax.set_ylabel('Peak Memory (MB)')
+            ax.set_xlabel('Coverage')
+            ax.set_title('Placement Memory by Coverage')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output.summary_plot, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Create detailed indexing plot
+        if len(index_data) > 0:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            x = range(len(index_data))
+            width = 0.35
+            
+            ax.bar([i - width/2 for i in x], index_data['wall_time_sec'], width, label='Wall Time')
+            ax.bar([i + width/2 for i in x], index_data['user_time_sec'], width, label='User Time')
+            
+            ax.set_ylabel('Time (seconds)')
+            ax.set_xlabel('Pangenome')
+            ax.set_title(f'Indexing Performance (k={index_data.iloc[0]["k"]}, s={index_data.iloc[0]["s"]}, l={index_data.iloc[0]["l"]})')
+            ax.set_xticks(x)
+            ax.set_xticklabels(index_data['pangenome'], rotation=45, ha='right')
+            ax.legend()
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            plt.tight_layout()
+            plt.savefig(output.index_plot, dpi=300, bbox_inches='tight')
+            plt.close()
+        else:
+            # Create empty placeholder
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.text(0.5, 0.5, 'No valid indexing benchmark data available', 
+                   ha='center', va='center', fontsize=14)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis('off')
+            plt.savefig(output.index_plot, dpi=300, bbox_inches='tight')
+            plt.close()
+        
+        # Create detailed placement plot
+        if len(place_data) > 0:
+            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+            
+            # Time vs coverage
+            ax = axes[0]
+            for pan in place_data['pangenome'].unique():
+                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
+                ax.plot(pan_data['coverage'], pan_data['wall_time_sec'], marker='o', label=pan, linewidth=2, markersize=8)
+                # Add number of reads annotation
+                for _, row in pan_data.iterrows():
+                    ax.annotate(f"{int(row['num_reads'])} reads", 
+                               xy=(row['coverage'], row['wall_time_sec']),
+                               xytext=(5, 5), textcoords='offset points', fontsize=9, alpha=0.7)
+            ax.set_xlabel('Coverage', fontsize=12)
+            ax.set_ylabel('Wall Time (seconds)', fontsize=12)
+            ax.set_title('Placement Time by Coverage', fontsize=13)
+            ax.legend(fontsize=10)
+            ax.grid(True, alpha=0.3)
+            
+            # Memory vs coverage
+            ax = axes[1]
+            for pan in place_data['pangenome'].unique():
+                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
+                ax.plot(pan_data['coverage'], pan_data['max_rss_mb'], marker='o', label=pan, linewidth=2, markersize=8)
+                # Add number of reads annotation
+                for _, row in pan_data.iterrows():
+                    ax.annotate(f"{int(row['num_reads'])} reads", 
+                               xy=(row['coverage'], row['max_rss_mb']),
+                               xytext=(5, 5), textcoords='offset points', fontsize=9, alpha=0.7)
+            ax.set_xlabel('Coverage', fontsize=12)
+            ax.set_ylabel('Peak Memory (MB)', fontsize=12)
+            ax.set_title('Placement Memory by Coverage', fontsize=13)
+            ax.legend(fontsize=10)
+            ax.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(output.placement_plot, dpi=300, bbox_inches='tight')
+            plt.close()
+        else:
+            # Create empty placeholder
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.text(0.5, 0.5, 'No valid placement benchmark data available', 
+                   ha='center', va='center', fontsize=14)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis('off')
+            plt.savefig(output.placement_plot, dpi=300, bbox_inches='tight')
+            plt.close()
+        
+        # Generate per-pangenome plots
+        for pan_name in PANGENOMES.keys():
+            pan_dir = Path(f"{OUTPUT_DIR}/plots/timing/{pan_name}")
+            pan_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Filter data for this pangenome
+            pan_index_data = index_data[index_data['pangenome'] == pan_name] if len(index_data) > 0 else pd.DataFrame()
+            pan_place_data = place_data[place_data['pangenome'] == pan_name] if len(place_data) > 0 else pd.DataFrame()
+            
+            # Create combined plot for this pangenome
+            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+            fig.suptitle(f'Timing Benchmarks - {pan_name}', fontsize=16, fontweight='bold')
+            
+            # 1. Indexing time
+            if len(pan_index_data) > 0:
+                ax = axes[0, 0]
+                ax.bar(range(len(pan_index_data)), pan_index_data['wall_time_sec'], color='steelblue')
+                ax.set_ylabel('Wall Time (seconds)')
+                ax.set_xlabel('Run')
+                ax.set_title('Indexing Time')
+                ax.grid(True, alpha=0.3, axis='y')
+            else:
+                axes[0, 0].text(0.5, 0.5, 'No indexing data', ha='center', va='center')
+                axes[0, 0].axis('off')
+            
+            # 2. Indexing memory
+            if len(pan_index_data) > 0:
+                ax = axes[0, 1]
+                ax.bar(range(len(pan_index_data)), pan_index_data['max_rss_mb'], color='darkorange')
+                ax.set_ylabel('Peak Memory (MB)')
+                ax.set_xlabel('Run')
+                ax.set_title('Indexing Memory')
+                ax.grid(True, alpha=0.3, axis='y')
+            else:
+                axes[0, 1].text(0.5, 0.5, 'No indexing data', ha='center', va='center')
+                axes[0, 1].axis('off')
+            
+            # 3. Placement time by coverage
+            if len(pan_place_data) > 0:
+                ax = axes[1, 0]
+                pan_place_sorted = pan_place_data.sort_values('coverage')
+                ax.plot(pan_place_sorted['coverage'], pan_place_sorted['wall_time_sec'], 
+                       marker='o', linewidth=2, markersize=8, color='steelblue')
+                # Add read count labels
+                for _, row in pan_place_sorted.iterrows():
+                    ax.annotate(f"{int(row['num_reads'])} reads", 
+                               xy=(row['coverage'], row['wall_time_sec']),
+                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
+                ax.set_ylabel('Wall Time (seconds)')
+                ax.set_xlabel('Coverage (x)')
+                ax.set_title('Placement Time by Coverage')
+                ax.grid(True, alpha=0.3)
+            else:
+                axes[1, 0].text(0.5, 0.5, 'No placement data', ha='center', va='center')
+                axes[1, 0].axis('off')
+            
+            # 4. Placement memory by coverage
+            if len(pan_place_data) > 0:
+                ax = axes[1, 1]
+                pan_place_sorted = pan_place_data.sort_values('coverage')
+                ax.plot(pan_place_sorted['coverage'], pan_place_sorted['max_rss_mb'], 
+                       marker='o', linewidth=2, markersize=8, color='darkorange')
+                # Add read count labels
+                for _, row in pan_place_sorted.iterrows():
+                    ax.annotate(f"{int(row['num_reads'])} reads", 
+                               xy=(row['coverage'], row['max_rss_mb']),
+                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
+                ax.set_ylabel('Peak Memory (MB)')
+                ax.set_xlabel('Coverage (x)')
+                ax.set_title('Placement Memory by Coverage')
+                ax.grid(True, alpha=0.3)
+            else:
+                axes[1, 1].text(0.5, 0.5, 'No placement data', ha='center', va='center')
+                axes[1, 1].axis('off')
+            
+            plt.tight_layout()
+            plt.savefig(pan_dir / 'benchmarks.png', dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            print(f"[plot_timing_benchmarks] Generated plots for {pan_name}")
+        
+        print(f"[plot_timing_benchmarks] Plots saved to {Path(output.summary_plot).parent}")
+        print(f"[plot_timing_benchmarks] Summary: {output.summary_plot}")
+        print(f"[plot_timing_benchmarks] Indexing: {output.index_plot}")
+        print(f"[plot_timing_benchmarks] Placement: {output.placement_plot}")

@@ -88,6 +88,10 @@ struct rsyncmer_t {
 
   rsyncmer_t(size_t hash, uint64_t endPos, bool isReverse) : hash(hash), endPos(endPos), isReverse(isReverse) {}
   rsyncmer_t() : hash(0), endPos(0), isReverse(false) {}
+  
+  bool operator==(const rsyncmer_t& other) const {
+    return hash == other.hash && endPos == other.endPos && isReverse == other.isReverse;
+  }
 };
 
 
@@ -866,6 +870,24 @@ namespace std {
       seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
       seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
       seed ^= h4 + 0x9e3779b9 + (seed << 6) + (seed >> 2); // Include h4
+      return seed;
+    }
+  };
+  
+  // Hash specialization for rsyncmer_t
+  template <>
+  struct hash<seeding::rsyncmer_t> {
+    std::size_t operator()(const seeding::rsyncmer_t& rsyncmer) const noexcept {
+      // Combine hashes of all member variables
+      size_t h1 = std::hash<size_t>{}(rsyncmer.hash);
+      size_t h2 = std::hash<uint64_t>{}(rsyncmer.endPos);
+      size_t h3 = std::hash<bool>{}(rsyncmer.isReverse);
+      
+      // Combine hashes using the same pattern
+      size_t seed = 0;
+      seed ^= h1 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+      seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+      seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
       return seed;
     }
   };
