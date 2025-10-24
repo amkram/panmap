@@ -1000,6 +1000,7 @@ int main(int argc, char *argv[]) {
       }
 
       liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+      // liteTree.collapseEmptyNodes(true);
             
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
@@ -1060,7 +1061,7 @@ int main(int argc, char *argv[]) {
       of.close();
       const auto& selectedNodes = threadsManager.selectedNodes;
       std::ofstream scoresOut(prefix + ".nodeScores.tsv");
-      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tWEPPScoreThreads\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tsumMPScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
+      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tWEPPScoreThreads\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tsumEPPRawScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
       for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
         if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {
           continue;
@@ -1089,7 +1090,7 @@ int main(int argc, char *argv[]) {
                   << "\t" << std::accumulate(node->sumWEPPScoresByThread.begin(), node->sumWEPPScoresByThread.end(), 0.0)
                   << "\t" << node->sumWEPPScoreCorrected
                   << "\t" << (selectedNodes.find(node) == selectedNodes.end() ? false : true)
-                  << "\t" << node->sumMPScore
+                  << "\t" << node->sumEPPRawScore
                   << "\t" << node->sumMPReads
                   << "\t" << node->sumEPPWeightedScore
                   << "\t" << localMaxRawScore

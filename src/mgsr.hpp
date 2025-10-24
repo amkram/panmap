@@ -252,9 +252,12 @@ public:
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
   std::vector<double> sumWEPPScoresByThread;
+  std::vector<size_t> sumRawScoresByThread; 
+  std::vector<size_t> sumEPPRawScoresByThread;
 
   size_t numCoveredKminmers = 0;
   size_t sumRawScore  = 0;
+  size_t sumEPPRawScore = 0;
   double sumMPScore   = 0;
   size_t sumMPReads   = 0;
   double sumWEPPScore = 0;
@@ -266,7 +269,7 @@ public:
   double sumWEPPScoreCorrectedFinal = 0;
   double sumEPPWeightedScoreCorrected = 0;
 
-  std::vector<std::string_view> identicalNodeIdentifiers;
+  std::vector<std::string> identicalNodeIdentifiers;
 
   size_t totalKminmerNum = 0;
   std::vector<std::vector<readScoreDelta>> readScoreDeltas;
@@ -326,6 +329,7 @@ public:
   void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory);
   void collapseEmptyNodes(bool ignoreGapRunDeltas);
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
+  void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
 
   void buildNewickRecursive(const MgsrLiteNode* node, std::ostringstream& oss, bool useCollapsed) const;
@@ -463,6 +467,7 @@ class mgsrIndexBuilder {
   private:
     void buildIndexHelper(
       panmanUtils::Node *node,
+      std::unordered_set<std::string_view>& emptyNodes,
       panmapUtils::BlockSequences &blockSequences,
       std::vector<char> &blockExistsDelayed,
       std::vector<char> &blockStrandDelayed,
@@ -716,7 +721,15 @@ class mgsrPlacer {
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
 
-    void scoreNodesHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode, const std::vector<double>& readWEPPWeights, std::vector<uint32_t>& readScores, double& curNodeSumWEPPScore);
+    void scoreNodesHelper(
+      MgsrLiteNode* node,
+      MgsrLiteNode*& processingNode,
+      const std::vector<uint32_t>& numDuplicates,
+      const std::vector<double>& readWEPPWeights,
+      std::vector<uint32_t>& readScores,
+      size_t& curNodeSumRawScore,
+      size_t& curNodeSumEPPRawScore,
+      double& curNodeSumWEPPScore);
     void scoreNodes();
 
     void traverseTreeHelper(MgsrLiteNode* node);
