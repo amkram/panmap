@@ -4,6 +4,7 @@
 #include <boost/iostreams/filter/lzma.hpp>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -131,7 +132,6 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
   if (indexRoot.hasKmerDictionary()) {
     dictSize = indexRoot.getKmerDictionary().size();
   }
-
 
   // Keep the original k and s values for later reference
   const uint32_t original_k = k;
@@ -325,35 +325,28 @@ std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path) {
       // FIXED: Create wrapper that properly manages reader and fd lifetimes
       auto wrapper = std::make_unique<IndexReaderWrapper>(fd, opts);
       
-      // Validate the root structure
-      auto root = wrapper->getRoot<Index>();
+      // Validate the root structure as MGSRIndex (new format)
+      auto root = wrapper->getRoot<MGSRIndex>();
       
       // Validate essential fields
       uint32_t k = root.getK();
       uint32_t s = root.getS();
-      size_t nodeCount = root.getPerNodeSeedMutations().size();
+      auto liteTree = root.getLiteTree();
+      size_t nodeCount = liteTree.getLiteNodes().size();
+      size_t seedCount = root.getSeedInfo().size();
         
       if (k == 0 || s == 0 || nodeCount == 0) {
         // Don't close fd here - will be closed by wrapper destructor
-        throw std::runtime_error("Invalid index data: k=" + std::to_string(k) + 
+        throw std::runtime_error("Invalid MGSRIndex data: k=" + std::to_string(k) + 
                               ", s=" + std::to_string(s) + 
               ", nodes=" + std::to_string(nodeCount));
         }
         
-      // Log additional validation checks
-      logging::debug("Validated index structure: k={}, s={}, nodes={}, gapMutations={}, dictionary={}",
-                    k, s, nodeCount, root.getPerNodeGapMutations().size(), root.getKmerDictionary().size());
+      // Log validation checks for MGSRIndex format
+      logging::debug("Validated MGSRIndex structure: k={}, s={}, nodes={}, seeds={}, nodeChanges={}",
+                    k, s, nodeCount, seedCount, root.getPerNodeChanges().size());
       
-      // Check optional fields if they're expected to be set
-      if (root.hasNodePathInfo() && root.getNodePathInfo().size() == 0) {
-        logging::warn("Index has empty nodePathInfo list");
-      }
-      
-      if (root.hasBlockInfo() && root.getBlockInfo().size() == 0) {
-        logging::warn("Index has empty blockInfo list");
-      }
-      
-      logging::info("Successfully read and validated index from {}", resolvedPath);
+      logging::info("Successfully read and validated MGSRIndex from {}", resolvedPath);
       
       // Return the wrapper as a MessageReader (it will be upcast)
       return std::unique_ptr<::capnp::MessageReader>(wrapper.release());
@@ -712,7 +705,7 @@ int main(int argc, char *argv[]) {
         ("verbose,v", "Run in verbose mode")
         ("log-level", po::value<std::string>()->default_value("info"), 
          "Set logging level (trace, debug, info, warn, error, critical, off)")
-        ("time,t", "Show time taken at each step")
+        ("time", "Show time taken at each step")
         ("cpus,c", po::value<int>()->default_value(1), "Number of CPUs to use")
         ("stop-after,x", po::value<std::string>()->default_value(""), 
          "Stop after stage (indexing/i, placement/p, mapping/m, genotyping/g, assembly/a)")
@@ -737,6 +730,7 @@ int main(int argc, char *argv[]) {
         ("ref,r", po::value<std::string>()->default_value(""), "Reference node ID to align to (skip placement)")
         ("prior,P", "Use mutation spectrum prior for genotyping")
         ("reindex,f", "Force index rebuild")
+        ("no-mm", "Skip mutation matrix building during indexing")
         
     ;
 
@@ -747,8 +741,6 @@ int main(int argc, char *argv[]) {
         ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
         ("skip-singleton", "Skip singleton reads")
         ("low-memory", "Use low memory mode")
-        ("mgsr-place", "Run full MGSR placement with EM (requires --mgsr-index)")
-        ("place", "Run fast placement mode (similarity scores without EM, requires --mgsr-index)")
     ;
 
     po::options_description dev_opts("Developer options");
@@ -762,18 +754,13 @@ int main(int argc, char *argv[]) {
         ("save-kminmer-binary-coverage", "Save kminmer binary coverage")
         ("parallel-tester", "Run parallel tester")
         ("eval", po::value<std::string>(), "Evaluate placement accuracy (path to TSV)")
-        ("random-seed", po::value<std::string>(), "Seed for rng (read in as string then hashed). If not provided, a random seed will be used.")
         ("dump-sequence", po::value<std::string>(), "Dump sequence for a specific node ID")
-        ("dump-sequences",po::value<std::vector<std::string>>()->multitoken(), "Dump sequences for a list of node IDs")
-        ("simulate-snps",po::value<std::vector<uint32_t>>()->multitoken(), "Simulate number of SNPs for node IDs, parameter position is relative to dump-sequences")
-        ("dump-random-nodeIDs", po::value<uint32_t>(), "Dump specified number of random node IDs from the tree")
         ("dump-random-node", "Dump sequence for a random node")
         ("debug-node-id", po::value<std::string>()->default_value(""), "Log detailed placement debug info for this specific node ID")
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
         ("use-lite-placement", "Use LiteTree-based placement (avoids loading full panman until after placement)")
         ("use-full-placement", "Use traditional full Tree-based placement (default for backward compatibility)")
-        ("overlap-coefficients", "Output overlap coefficients then exit")
     ;
 
     // Hidden options for positional arguments
@@ -817,9 +804,6 @@ int main(int argc, char *argv[]) {
 
     // --- End Boost.Program_options Setup ---
 
-    // Check if timing is enabled
-    bool timing_enabled = vm.count("time") > 0;
-    
     // Set up parallel processing
     tbb::global_control c(tbb::global_control::max_allowed_parallelism,
                           vm["cpus"].as<int>());
@@ -956,131 +940,11 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // Determine MGSR index path early (needed for placement modes)
-    std::string mgsr_index_path;
+    // Get timing flag early for use in all code paths
+    bool show_time = vm.count("time") > 0;
+
     if (vm.count("mgsr-index")) {
-      mgsr_index_path = vm["mgsr-index"].as<std::string>();
-    } else {
-      // Auto-detect: <panman>.pmi
-      boost::filesystem::path guidePath = boost::filesystem::absolute(guide);
-      mgsr_index_path = guidePath.string() + ".pmi";
-    }
-
-    // Handle fast placement mode (--place): metric-based similarity scores without EM
-    if (vm.count("place")) {
-      // Check if MGSR index exists
-      if (!fs::exists(mgsr_index_path)) {
-        err("MGSR index not found at: {}", mgsr_index_path);
-        msg("Please build an MGSR index first using --index-mgsr, or specify one with --mgsr-index/-m");
-        return 1;
-      }
-      
-      msg("Loading MGSR index from: {}", mgsr_index_path);
-      int fd = mgsr::open_file(mgsr_index_path);
-      ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
-      ::capnp::PackedFdMessageReader reader(fd, readerOptions);
-      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
-      LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
-      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-      bool lowMemory = vm.count("low-memory") > 0;
-      
-      mgsr::MgsrLiteTree liteTree;
-      liteTree.initialize(indexReader, numThreads, lowMemory);
-      
-      std::vector<std::string> readSequences;
-      mgsr::extractReadSequences(reads1, reads2, readSequences);
-
-      bool skipSingleton = vm.count("skip-singleton") > 0;
-      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton, lowMemory);
-      threadsManager.initializeMGSRIndex(indexReader);
-      close(fd);
-      threadsManager.initializeQueryData(readSequences);
-      std::cout << "Total unique kminmers: " << threadsManager.allSeedmerHashesSet.size() << std::endl;
-      
-      std::cout << "\n=== Running fast placement mode ===" << std::endl;
-      std::cout << "Computing 4 similarity metrics:" << std::endl;
-      std::cout << "  1. Jaccard: |A∩B| / (|A|+|B|-|A∩B|)" << std::endl;
-      std::cout << "  2. Cosine: A·B / (||A|| ||B||)" << std::endl;
-      std::cout << "  3. Weighted Jaccard: Σmin(xi,yi) / Σmax(xi,yi)" << std::endl;
-      std::cout << "  4. Raw Matches: Σmin(read_count, node_count)" << std::endl;
-      std::cout << std::endl;
-
-      // Create a placer and run fast placement
-      mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory);
-      placer.initializeQueryData(std::span<mgsr::Read>(threadsManager.reads.data(), threadsManager.reads.size()));
-      placer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
-      
-      auto start_time = std::chrono::high_resolution_clock::now();
-      auto results = placer.computeAllNodeSimilarities();
-      auto end_time = std::chrono::high_resolution_clock::now();
-      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-      
-      std::cout << "Computed similarity scores for " << results.size() << " nodes in " 
-                << static_cast<double>(duration.count()) / 1000.0 << "s" << std::endl;
-      
-      // Find best nodes for each metric
-      std::string bestJaccardNode = "";
-      std::string bestCosineNode = "";
-      std::string bestWeightedJaccardNode = "";
-      std::string bestRawMatchNode = "";
-      
-      double maxJaccard = -1.0;
-      double maxCosine = -1.0;
-      double maxWeightedJaccard = -1.0;
-      size_t maxRawMatch = 0;
-      
-      for (const auto& score : results) {
-        if (score.jaccard > maxJaccard) {
-          maxJaccard = score.jaccard;
-          bestJaccardNode = score.nodeId;
-        }
-        if (score.cosine > maxCosine) {
-          maxCosine = score.cosine;
-          bestCosineNode = score.nodeId;
-        }
-        if (score.weightedJaccard > maxWeightedJaccard) {
-          maxWeightedJaccard = score.weightedJaccard;
-          bestWeightedJaccardNode = score.nodeId;
-        }
-        if (score.rawMatches > maxRawMatch) {
-          maxRawMatch = score.rawMatches;
-          bestRawMatchNode = score.nodeId;
-        }
-      }
-      
-      // Output results
-      std::cout << "\n=== Best Node by Metric ===" << std::endl;
-      std::cout << "Jaccard:          " << bestJaccardNode << " (score: " << maxJaccard << ")" << std::endl;
-      std::cout << "Cosine:           " << bestCosineNode << " (score: " << maxCosine << ")" << std::endl;
-      std::cout << "Weighted Jaccard: " << bestWeightedJaccardNode << " (score: " << maxWeightedJaccard << ")" << std::endl;
-      std::cout << "Raw Matches:      " << bestRawMatchNode << " (count: " << maxRawMatch << ")" << std::endl;
-      
-      // Save placements in Snakemake-expected format: metric\tscore\thits\tnodes
-      std::ofstream outFile(prefix + "/placements.tsv");
-      outFile << "metric\tscore\thits\tnodes\n";
-      outFile << std::setprecision(6) << std::fixed;
-      outFile << "raw\t" << maxRawMatch << "\t" << maxRawMatch << "\t" << bestRawMatchNode << "\n";
-      outFile << "jaccard\t" << maxJaccard << "\t\t" << bestJaccardNode << "\n";
-      outFile << "cosine\t" << maxCosine << "\t\t" << bestCosineNode << "\n";
-      outFile << "weighted_jaccard\t" << maxWeightedJaccard << "\t\t" << bestWeightedJaccardNode << "\n";
-      outFile.close();
-      
-      std::cout << "\nPlacements saved to " << prefix << "/placements.tsv" << std::endl;
-      
-      std::cout << "\nDetailed scores saved to " << prefix << "/placement_scores.tsv" << std::endl;
-      return 0;
-    }
-    
-    // Handle full MGSR placement mode (--mgsr-place): placement with EM
-    if (vm.count("mgsr-place")) {
-      // Check if MGSR index exists
-      if (!fs::exists(mgsr_index_path)) {
-        err("MGSR index not found at: {}", mgsr_index_path);
-        msg("Please build an MGSR index first using --index-mgsr, or specify one with --mgsr-index/-m");
-        return 1;
-      }
-      
-      msg("Loading MGSR index from: {}", mgsr_index_path);
+      std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
       int fd = mgsr::open_file(mgsr_index_path);
       ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
       ::capnp::PackedFdMessageReader reader(fd, readerOptions);
@@ -1102,62 +966,51 @@ int main(int argc, char *argv[]) {
       threadsManager.initializeQueryData(readSequences);
       std::cout << "Total unique kminmers: " << threadsManager.allSeedmerHashesSet.size() << std::endl;
       
-      std::cout << "\n=== Running full MGSR placement with EM ===" << std::endl;
-      
-
-      if (vm.count("overlap-coefficients")) {
-        auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
-        mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory, 0);
-        auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
-        std::ofstream overlapCoefficientsFile(prefix + ".overlapCoefficients.txt");
-        std::sort(overlapCoefficients.begin(), overlapCoefficients.end(), [](const auto& a, const auto& b) {
-          return a.second > b.second;
-        });
-        uint32_t rank = 0;
-        double currentOverlapCoefficient = overlapCoefficients[0].second;
-        for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
-          if (overlapCoefficient != currentOverlapCoefficient) {
-            currentOverlapCoefficient = overlapCoefficient;
-            ++rank;
-          }
-          overlapCoefficientsFile << nodeId << "\t" << std::fixed << std::setprecision(6) << overlapCoefficient << "\t" << rank <<  std::endl;
-        }
-        overlapCoefficientsFile.close();
-        auto end_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
-        auto duration_computeOverlapCoefficients = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_computeOverlapCoefficients - start_time_computeOverlapCoefficients);
-        std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
-        exit(0);
-      }
-
-      liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
-            
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
-        totalNodesPerThread[i] = liteTree.getNumActiveNodes();
+        totalNodesPerThread[i] = liteTree.allLiteNodes.size();
       }
       ProgressTracker progressTracker(numThreads, totalNodesPerThread);
+
       std::cout << "Using " << numThreads << " threads" << std::endl;
+
+      // mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory);
+      // placer.setProgressTracker(&progressTracker, 0);
+      // auto start_time_traverseTree = std::chrono::high_resolution_clock::now();
+      // placer.traverseTree();
+      // auto end_time_traverseTree = std::chrono::high_resolution_clock::now();
+      // auto duration_traverseTree = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_traverseTree - start_time_traverseTree);
+      // std::cout << "Traversed tree in " << std::fixed << std::setprecision(3) << static_cast<double>(duration_traverseTree.count()) / 1000.0 << "s\n" << std::endl;
+      // exit(0);
+
+
+      // auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+      // mgsr::mgsrPlacer placer(&liteTree, threadsManager);
+      // placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+      // auto end_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+      // auto duration_computeOverlapCoefficients = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_computeOverlapCoefficients - start_time_computeOverlapCoefficients);
+      // std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
+      // exit(0);
 
       auto start_time_place = std::chrono::high_resolution_clock::now();
       std::atomic<size_t> numGroupsUpdate = 0;
       std::atomic<size_t> numReadsUpdate = 0;
-      std::vector<size_t> numUniqueKminmersPerThread(numThreads, 0);
-      std::vector<size_t> numNodesPostCollapsePerThread(numThreads, 0);
       tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
         for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
           auto [start, end] = threadsManager.threadRanges[i];
         
           std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory, i);
+          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory);
           curThreadPlacer.initializeQueryData(curThreadReads);
-
           curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
+          curThreadPlacer.setShowTime(show_time);
 
           curThreadPlacer.setProgressTracker(&progressTracker, i);
-          // curThreadPlacer.placeReads();
 
-          curThreadPlacer.scoreReads();
+          curThreadPlacer.placeReads();
 
+          // Move score deltas from placer to thread manager
+          threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
           threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
           threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
@@ -1165,26 +1018,17 @@ int main(int argc, char *argv[]) {
           if (i == 0) {
             threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
             threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
-            // threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
+            threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
           }
-          numGroupsUpdate += curThreadPlacer.numGroupsUpdate;
-          numReadsUpdate += curThreadPlacer.numReadsUpdate;
+          // Note: numGroupsUpdate and numReadsUpdate removed from mgsrPlacer
         }
       });
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-      std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-      threadsManager.scoreNodes();
-      
-      mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
-      auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
-      std::unordered_map<std::string, double>().swap(threadsManager.kminmerOverlapCoefficients);
-      for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
-        threadsManager.kminmerOverlapCoefficients[nodeId] = overlapCoefficient;
-      }
-
-      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
+      auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
+      mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
@@ -1222,7 +1066,7 @@ int main(int argc, char *argv[]) {
       auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
       std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
 
-      return 0;
+      exit(0);
     }
 
     // Get remaining parameters
@@ -1230,87 +1074,82 @@ int main(int argc, char *argv[]) {
     bool prior = vm.count("prior") > 0;
     bool genotype_from_sam = vm.count("genotype-from-sam") > 0;
     bool save_jaccard = vm.count("save-jaccard") > 0;
-    bool show_time = vm.count("time") > 0;
+    // show_time already declared earlier for use in MGSR section
     bool dump_random_node = vm.count("dump-random-node") > 0;
 
     int k = vm["k"].as<int>(); // Default handled by boost
     int s = vm["s"].as<int>(); // Default handled by boost
-    int l = vm["l"].as<int>(); // Default handled by boost
-    int t = 0;  // t parameter for syncmers (typically 0)
-    bool open = false;  // open parameter for syncmers
     std::string index_path = vm["index"].as<std::string>(); // Default handled by boost
+
+    std::random_device rd;
+    std::mt19937 rng(rd());
+
+    // OPTIMIZATION: Defer loading the full panman Tree until actually needed.
+    // LiteTree-based placement doesn't require the full Tree, so we only load it for:
+    // - Index building (--index-mgsr or when index doesn't exist)
+    // - Diagnostic operations (--dump-sequence, --dump-random-node)
+    // - Post-placement operations (alignment, genotyping)
+    // This significantly reduces memory usage and startup time for placement-only workflows.
     
-    // Debug: Print parsed parameters
-    if (vm.count("index-mgsr") || vm.count("place")) {
-      msg("Parsed command-line parameters: k={}, s={}, l={}, t={}, open={}", k, s, l, t, open);
-    }
-
-    std::mt19937 rng;
-    if (vm.count("random-seed")) {
-      std::string seed_str = vm["random-seed"].as<std::string>();
-      std::hash<std::string> hasher;
-      rng = std::mt19937(hasher(seed_str));
-    } else {
-      std::random_device rd;
-      rng = std::mt19937(rd());
-    }
-
-
-    // Load pangenome
-    msg("Loading reference pangenome from: {}", guide);
-    auto time_pangenome_start = std::chrono::high_resolution_clock::now();
-
+    // Helper lambda to load Tree when needed
     std::unique_ptr<panmanUtils::TreeGroup> TG;
-
-    try {
-      TG = std::unique_ptr<panmanUtils::TreeGroup>(loadPanMAN(guide));
-
-      if (!TG || TG->trees.empty()) {
-        throw std::runtime_error(
-            "No valid trees found in the loaded PanMAN file.");
-      }
-
-      // Debug log for tree structure
-      for (size_t i = 0; i < TG->trees.size(); i++) {
-        panmanUtils::Tree &T = TG->trees[i];
-        logging::debug(
-            "[DEBUG] Tree {} details: blocks.size={}, gaps.size={}, "
-            "blockGaps.blockPosition.size={}, allNodes.size={}, root={}",
-            i, T.blocks.size(), T.gaps.size(), T.blockGaps.blockPosition.size(),
-            T.allNodes.size(), T.root ? T.root->identifier : "null");
-      }
-
-      msg("Successfully loaded pangenome with {} trees:", TG->trees.size());
-    } catch (const std::exception &e) {
-      err("Failed to load reference PanMAN: {}", e.what());
-      return 1;
-    }
-
-    auto time_pangenome_end = std::chrono::high_resolution_clock::now();
-    if (timing_enabled) {
-      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_pangenome_end - time_pangenome_start);
-      msg("[TIME] Loading pangenome: {:.2f}s", duration.count() / 1000.0);
-    }
-
-    msg("Using first tree as reference.");
-    panmanUtils::Tree &T = TG->trees[0];
+    panmanUtils::Tree* T_ptr = nullptr;
     
-    // Handle MGSR index building (--index-mgsr)
+    auto ensureTreeLoaded = [&]() -> panmanUtils::Tree& {
+      if (!TG) {
+        auto time_pangenome_start = std::chrono::high_resolution_clock::now();
+        msg("Loading reference pangenome from: {}", guide);
+        
+        try {
+          TG = std::unique_ptr<panmanUtils::TreeGroup>(loadPanMAN(guide));
+          
+          if (!TG || TG->trees.empty()) {
+            throw std::runtime_error("No valid trees found in the loaded PanMAN file.");
+          }
+          
+          // Debug log for tree structure
+          for (size_t i = 0; i < TG->trees.size(); i++) {
+            panmanUtils::Tree &T = TG->trees[i];
+            logging::debug(
+                "[DEBUG] Tree {} details: blocks.size={}, gaps.size={}, "
+                "blockGaps.blockPosition.size={}, allNodes.size={}, root={}",
+                i, T.blocks.size(), T.gaps.size(), T.blockGaps.blockPosition.size(),
+                T.allNodes.size(), T.root ? T.root->identifier : "null");
+          }
+          
+          msg("Successfully loaded pangenome with {} trees:", TG->trees.size());
+          T_ptr = &TG->trees[0];
+          
+          auto time_pangenome_end = std::chrono::high_resolution_clock::now();
+          auto duration_pangenome = std::chrono::duration_cast<std::chrono::milliseconds>(
+              time_pangenome_end - time_pangenome_start);
+          if (show_time) {
+            msg("[TIME] Pangenome loading: {}ms", duration_pangenome.count());
+          }
+        } catch (const std::exception &e) {
+          err("Failed to load reference PanMAN: {}", e.what());
+          throw;
+        }
+      }
+      return *T_ptr;
+    };
+
     if (vm.count("index-mgsr")) {
-      std::string build_mgsr_index_path = vm["index-mgsr"].as<std::string>();
-      int mgsr_t = t;  // Use command-line t parameter
-      int mgsr_l = l;  // Use command-line l parameter
-      bool open_mgsr = open;  // Use command-line open parameter
-      msg("Building MGSR index with k={}, s={}, t={}, l={}, open={}", k, s, mgsr_t, mgsr_l, open_mgsr);
-      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l, open_mgsr);
+      panmanUtils::Tree &T = ensureTreeLoaded();
+      std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
+      int mgsr_t = 0;
+      int mgsr_l = 3;
+      bool open = false;
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
       mgsrIndexBuilder.buildIndex();
-      mgsrIndexBuilder.writeIndex(build_mgsr_index_path);
-      msg("MGSR index written to: {}", build_mgsr_index_path);
-      return 0; 
+      mgsrIndexBuilder.writeIndex(mgsr_index_path);
+      msg("MGSR index written to: {}", mgsr_index_path);
+      return 0;
     }
 
-    // Handle --dump-random-node parameter if provided (skip index building)
+    // Handle --dump-random-node parameter if provided
     if (dump_random_node) {
+      ensureTreeLoaded(); // Ensure TG is loaded
       panmanUtils::Node *randomNode = getRandomNode(TG.get(), rng);
       if (!randomNode) {
         err("Failed to select a random node");
@@ -1331,8 +1170,12 @@ int main(int argc, char *argv[]) {
         return 1;
       }
 
+      // Sanitize node identifier for use in filename (replace / with _)
+      std::string sanitizedNodeId = randomNode->identifier;
+      std::replace(sanitizedNodeId.begin(), sanitizedNodeId.end(), '/', '_');
+      
       std::string outputFileName =
-          guide + ".random." + randomNode->identifier + ".fa";
+          guide + ".random." + sanitizedNodeId + ".fa";
       if (saveNodeSequence(nodeTree, randomNode, outputFileName)) {
         msg("Random node {} sequence written to {}", randomNode->identifier,
             outputFileName);
@@ -1343,31 +1186,9 @@ int main(int argc, char *argv[]) {
       }
     }
 
-
-    if (vm.count("dump-random-nodeIDs")) {
-      uint32_t num_nodes = vm["dump-random-nodeIDs"].as<uint32_t>();
-      std::vector<std::string_view> allNodeIDs;
-      allNodeIDs.reserve(T.allNodes.size());
-      for (const auto& [nodeID, node] : T.allNodes) {
-        if (node->children.empty()) {
-          allNodeIDs.push_back(nodeID);
-        }
-      }
-      allNodeIDs.shrink_to_fit();
-
-      std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
-
-      std::ofstream outFile(prefix + ".randomNodeIDs.txt");
-      for (size_t i = 0; i < num_nodes; i++) {
-        outFile << allNodeIDs[i] << std::endl;
-      }
-      outFile.close();
-      msg("Random node IDs written to {}", prefix + ".randomNodeIDs.txt");
-      exit(0);
-    }
-
     // Handle --dump-sequence parameter if provided
     if (vm.count("dump-sequence")) {
+      panmanUtils::Tree &T = ensureTreeLoaded();
       std::string nodeID = vm["dump-sequence"].as<std::string>();
       if (T.allNodes.find(nodeID) == T.allNodes.end()) {
         err("Node ID {} not found in the tree", nodeID);
@@ -1390,59 +1211,12 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    if (vm.count("dump-sequences")) {
-      auto nodeIDs = vm["dump-sequences"].as<std::vector<std::string>>();
-      std::vector<uint32_t> numsnps;
-      if (vm.count("simulate-snps")) {
-        numsnps = vm["simulate-snps"].as<std::vector<uint32_t>>();
-        if (numsnps.size() != nodeIDs.size()) {
-          err("Number of SNP parameters does not match number of node IDs");
-          return 1;
-        }
-      }
-
-      for (size_t i = 0; i < nodeIDs.size(); i++) {
-        const auto& nodeID = nodeIDs[i];
-        uint32_t numsnp = (numsnps.empty() ? 0 : numsnps[i]);
-        if (T.allNodes.find(nodeID) == T.allNodes.end()) {
-          err("Node ID {} not found in the tree", nodeID);
-          return 1;
-        }
-
-        std::string sequence = panmapUtils::getStringFromReference(&T, nodeID, false);
-        std::vector<std::tuple<char, char, uint32_t>> snpRecords;
-        panmapUtils::simulateSNPsOnSequence(sequence, snpRecords, numsnp, rng);
-        std::string nodeIDClean = nodeID;
-        std::replace(nodeIDClean.begin(), nodeIDClean.end(), '/', '_');
-        std::replace(nodeIDClean.begin(), nodeIDClean.end(), '|', '_');
-        std::string outputFileName = prefix + "." + nodeIDClean + "." + std::to_string(numsnp) + "snps.fa";
-        std::ofstream outFile(outputFileName);
-
-        if (outFile.is_open()) {
-          outFile << ">" << nodeID << " ";
-          for (const auto& [ref, alt, pos] : snpRecords) {
-            outFile << ref << pos << alt << " ";
-          }
-          outFile << "\n";
-          for (size_t i = 0; i < sequence.size(); i += 80) {
-            outFile << sequence.substr(i, 80) << "\n";
-          }
-          outFile.close();
-          msg("Sequence for node {} with {} SNPs written to {}", nodeID, numsnp, outputFileName);
-        } else {
-          err("Failed to open file {} for writing", outputFileName);
-          return 1;
-        }
-      }
-      exit(0);
-    }
-
     // Log settings
     msg("--- Settings ---");
     msg("Reads: {}",
         (reads1.empty() ? "<none>"
                         : reads1 + (reads2.empty() ? "" : " + " + reads2)));
-    msg("Reference PanMAN: {} ({} nodes)", guide, T.allNodes.size());
+    msg("Reference PanMAN: {}", guide);
     msg("Using {} threads", vm["cpus"].as<int>());
     msg("k={}, s={}", k, s);
 
@@ -1497,8 +1271,44 @@ int main(int argc, char *argv[]) {
       logging::debug("DEBUG-INDEX: Will build new index. Reason: {}", 
                   reindex ? "Reindex flag set" : "No existing index found");
     }
-    std::cout << "HUERERE" << std::endl;
+
+    int mgsr_t = 0;
+    int mgsr_l = 0;
+    bool open = false;
+    bool use_raw_seeds = true; // true for panmap, false for panmama
     
+    // Only load tree if we need to build the index
+    if (build) {
+      panmanUtils::Tree &T = ensureTreeLoaded();
+      auto time_index_build_start = std::chrono::high_resolution_clock::now();
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l, open, use_raw_seeds);
+      mgsrIndexBuilder.buildIndex();
+      auto time_index_build_end = std::chrono::high_resolution_clock::now();
+      auto duration_index_build = std::chrono::duration_cast<std::chrono::milliseconds>(
+          time_index_build_end - time_index_build_start);
+      
+      if (show_time) {
+        msg("[TIME] Index building: {}ms", duration_index_build.count());
+      }
+      
+      // Log unique seed/k-mer count
+      if (use_raw_seeds) {
+        msg("Built raw seeds index with {} unique seeds", mgsrIndexBuilder.uniqueSyncmers.size());
+      } else {
+        msg("Built k-minmers index with {} unique k-minmers", mgsrIndexBuilder.uniqueKminmers.size());
+      }
+      
+      // Use the effective output path for MGSR index
+      auto time_index_write_start = std::chrono::high_resolution_clock::now();
+      mgsrIndexBuilder.writeIndex(effective_index_path);
+      auto time_index_write_end = std::chrono::high_resolution_clock::now();
+      auto duration_index_write = std::chrono::duration_cast<std::chrono::milliseconds>(
+          time_index_write_end - time_index_write_start);
+      
+      if (show_time) {
+        msg("[TIME] Index writing: {}ms", duration_index_write.count());
+      }
+    }
 
     // Handle --test-placement if provided
     if (vm.count("test-placement")) {
@@ -1518,54 +1328,75 @@ int main(int argc, char *argv[]) {
 
     // Generate mutation matrices during indexing if requested
     std::string mm_path = guide + ".mm";
-    if (reindex || !fs::exists(mm_path)) {
+    bool skip_mm = vm.count("no-mm") > 0;
+    
+    if (skip_mm) {
+      msg("Skipping mutation matrix generation (--no-mm flag set)");
+    } else if (reindex || !fs::exists(mm_path)) {
       msg("=== Generating Mutation Matrices ===");
+      panmanUtils::Tree &T = ensureTreeLoaded();
+      auto time_mutmat_start = std::chrono::high_resolution_clock::now();
       genotyping::mutationMatrices mutMat;
       msg("Building mutation matrices from tree");
       genotyping::fillMutationMatricesFromTree_test(mutMat, &T, mm_path);
+      auto time_mutmat_end = std::chrono::high_resolution_clock::now();
+      auto duration_mutmat = std::chrono::duration_cast<std::chrono::milliseconds>(
+          time_mutmat_end - time_mutmat_start);
+      
       msg("Mutation matrices written to: {}", mm_path);
+      if (show_time) {
+        msg("[TIME] Mutation matrix generation: {}ms", duration_mutmat.count());
+      }
     }
 
-    // Load MGSRIndex for placement
-    int fd_mgsr = ::open(mgsr_index_path.c_str(), O_RDONLY);
+    // Exit if no reads were provided - indexing is complete
+    if (reads1.empty()) {
+      msg("Index building complete. No reads provided, skipping placement.");
+      
+      auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::high_resolution_clock::now() - main_start);
+      if (show_time) {
+        msg("=== TIMING SUMMARY ===");
+        msg("Total runtime: {}ms", total_duration.count());
+      }
+      
+      return 0;
+    }
+
+    // Prepare MGSRIndex reader for placement
+    int fd_mgsr = ::open(effective_index_path.c_str(), O_RDONLY);
     if (fd_mgsr < 0) {
-      throw std::runtime_error("Failed to open MGSR index file: " + mgsr_index_path);
+      throw std::runtime_error("Failed to open MGSR index file: " + effective_index_path);
     }
     ::capnp::ReaderOptions opts; opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max(); opts.nestingLimit = 1024;
     ::capnp::PackedFdMessageReader mgsrMsg(fd_mgsr, opts);
     ::MGSRIndex::Reader mgsrIndexRoot = mgsrMsg.getRoot<MGSRIndex>();
 
-    // Check if fast placement mode (--place) is requested
-    if (vm.count("place")) {
-        auto time_place_mode_start = std::chrono::high_resolution_clock::now();
-        
-        std::cout << "\n=== Running fast placement mode ===" << std::endl;
-        
-        // Read index parameters and warn if command-line parameters don't match
-        int index_k = mgsrIndexRoot.getK();
-        int index_s = mgsrIndexRoot.getS();
-        int index_l = mgsrIndexRoot.getL();
-        int index_t = mgsrIndexRoot.getT();
-        bool index_open = mgsrIndexRoot.getOpen();
-        
-        std::cout << "Index parameters: k=" << index_k << " s=" << index_s << " l=" << index_l 
-                  << " t=" << index_t << " open=" << index_open << std::endl;
-        
-        // Warn if command-line parameters differ from index
-        if (k != index_k || s != index_s || l != index_l) {
-          std::cout << "WARNING: Command-line parameters (k=" << k << " s=" << s << " l=" << l 
-                    << ") differ from index parameters." << std::endl;
-          std::cout << "         Using index parameters for placement." << std::endl;
-        }
-        
-        std::cout << "\nComputing 4 similarity metrics:" << std::endl;
-        std::cout << "  1. Jaccard: |A∩B| / (|A|+|B|-|A∩B|)" << std::endl;
-        std::cout << "  2. Cosine: A·B / (||A|| ||B||)" << std::endl;
-        std::cout << "  3. Weighted Jaccard: Σmin(xi,yi) / Σmax(xi,yi)" << std::endl;
-        std::cout << "  4. Raw Matches: Σmin(read_count, node_count)" << std::endl;
-        std::cout << std::endl;
-        
-        auto time_reads_extract_start = std::chrono::high_resolution_clock::now();
+    // Run placement using MGSR index format
+    // Control placement method via command line options
+    bool use_lite_placement = vm.count("use-lite-placement") > 0;
+    bool use_full_placement = vm.count("use-full-placement") > 0;
+    
+    // Default to LiteTree placement if neither option is specified (more efficient)
+    if (!use_lite_placement && !use_full_placement) {
+        use_lite_placement = true;
+    }
+    
+    // If both options are specified, prefer full placement for backward compatibility
+    if (use_lite_placement && use_full_placement) {
+        logging::warn("Both --use-lite-placement and --use-full-placement specified. Using full placement.");
+        use_lite_placement = false;
+    }
+    
+    placement::PlacementResult result;
+    std::vector<std::vector<seeding::seed_t>> readSeeds;
+    std::vector<std::string> readSequences;
+    std::vector<std::string> readNames;
+    std::vector<std::string> readQuals;
+    std::string placementFileName = guide + ".placement.tsv";
+    
+    if (use_lite_placement) {
+        msg("=== Using LiteTree-based placement (efficient, no full tree loading) ===");
         
         // Initialize LiteTree from MGSR index
         panmapUtils::LiteTree liteTree;
@@ -1575,119 +1406,38 @@ int main(int argc, char *argv[]) {
         msg("Initialized LiteTree with {} nodes and {} block ranges", 
             liteTree.allLiteNodes.size(), liteTree.blockScalarRanges.size());
         
-        // Extract read sequences
-        std::vector<std::string> readSequences;
-        mgsr::extractReadSequences(reads1, reads2, readSequences);
+        // Use LiteTree-based placement
+        placement::placeLite(result, &liteTree, mgsrIndexRoot, reads1, reads2,
+                            readSeeds, readSequences, readNames, readQuals,
+                            placementFileName, effective_index_path, "");
         
-        auto time_reads_extract_end = std::chrono::high_resolution_clock::now();
-        if (timing_enabled) {
-          auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_reads_extract_end - time_reads_extract_start);
-          msg("[TIME] Reading sequences: {:.2f}s", duration.count() / 1000.0);
-        }
+        msg("LiteTree-based placement completed successfully");
         
-        auto time_init_start = std::chrono::high_resolution_clock::now();
+        // BENEFIT: The full panman Tree T is already loaded, so it's available here
+        // for any post-placement operations that need the full tree structure
+        // FUTURE OPTIMIZATION: Could defer T loading until this point for maximum efficiency
         
-        // Initialize ThreadsManager and placer
-        size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-        bool skipSingleton = vm.count("skip-singleton") > 0;
-        bool lowMemory = vm.count("low-memory") > 0;
-        mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton, lowMemory);
-        threadsManager.initializeMGSRIndex(mgsrIndexRoot);
-        threadsManager.initializeQueryData(readSequences);
+    } else {
+        msg("=== Using LiteTree-based placement (fallback) ===");
         
-        // Create placer and compute similarities
-        mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory);
-        placer.initializeQueryData(std::span<mgsr::Read>(threadsManager.reads.data(), threadsManager.reads.size()));
-        placer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
+        // Initialize LiteTree from MGSR index since original place function was removed
+        panmapUtils::LiteTree liteTree;
+        auto liteTreeReader = mgsrIndexRoot.getLiteTree();
+        liteTree.initialize(liteTreeReader);
         
-        // Copy the DFS index mapping (with type conversion from uint32_t to int64_t)
-        for (const auto& [nodeId, dfsIdx] : liteTree.nodeToDfsIndex) {
-            placer.nodeToDfsIndex[nodeId] = static_cast<int64_t>(dfsIdx);
-        }
-        
-        auto time_init_end = std::chrono::high_resolution_clock::now();
-        if (timing_enabled) {
-          auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_init_end - time_init_start);
-          msg("[TIME] Initializing placer: {:.2f}s", duration.count() / 1000.0);
-        }
-        
-        auto time_compute_start = std::chrono::high_resolution_clock::now();
-        auto results = placer.computeAllNodeSimilarities();
-        auto time_compute_end = std::chrono::high_resolution_clock::now();
-        auto duration_compute = std::chrono::duration_cast<std::chrono::milliseconds>(time_compute_end - time_compute_start);
-        
-        std::cout << "Computed similarity scores for " << results.size() << " nodes in " 
-                  << static_cast<double>(duration_compute.count()) / 1000.0 << "s" << std::endl;
-        
-        if (timing_enabled) {
-          msg("[TIME] Computing similarities: {:.2f}s", duration_compute.count() / 1000.0);
-        }
-        
-        // Find best nodes for each metric
-        std::string bestJaccardNode = "";
-        std::string bestCosineNode = "";
-        std::string bestWeightedJaccardNode = "";
-        std::string bestRawMatchNode = "";
-        
-        double maxJaccard = -1.0;
-        double maxCosine = -1.0;
-        double maxWeightedJaccard = -1.0;
-        size_t maxRawMatch = 0;
-        
-        for (const auto& score : results) {
-          if (score.jaccard > maxJaccard) {
-            maxJaccard = score.jaccard;
-            bestJaccardNode = score.nodeId;
-          }
-          if (score.cosine > maxCosine) {
-            maxCosine = score.cosine;
-            bestCosineNode = score.nodeId;
-          }
-          if (score.weightedJaccard > maxWeightedJaccard) {
-            maxWeightedJaccard = score.weightedJaccard;
-            bestWeightedJaccardNode = score.nodeId;
-          }
-          if (score.rawMatches > maxRawMatch) {
-            maxRawMatch = score.rawMatches;
-            bestRawMatchNode = score.nodeId;
-          }
-        }
-        
-        // Output results
-        std::cout << "\n=== Best Node by Metric ===" << std::endl;
-        std::cout << "Jaccard:          " << bestJaccardNode << " (score: " << maxJaccard << ")" << std::endl;
-        std::cout << "Cosine:           " << bestCosineNode << " (score: " << maxCosine << ")" << std::endl;
-        std::cout << "Weighted Jaccard: " << bestWeightedJaccardNode << " (score: " << maxWeightedJaccard << ")" << std::endl;
-        std::cout << "Raw Matches:      " << bestRawMatchNode << " (count: " << maxRawMatch << ")" << std::endl;
-        
-        // Save placements in Snakemake-expected format: metric\tscore\thits\tnodes
-        std::ofstream outFile(prefix + "/placements.tsv");
-        outFile << "metric\tscore\thits\tnodes\n";
-        outFile << std::setprecision(6) << std::fixed;
-        outFile << "raw\t" << maxRawMatch << "\t" << maxRawMatch << "\t" << bestRawMatchNode << "\n";
-        outFile << "jaccard\t" << maxJaccard << "\t\t" << bestJaccardNode << "\n";
-        outFile << "cosine\t" << maxCosine << "\t\t" << bestCosineNode << "\n";
-        outFile << "weighted_jaccard\t" << maxWeightedJaccard << "\t\t" << bestWeightedJaccardNode << "\n";
-        outFile.close();
-        
-        std::cout << "\nPlacements saved to " << prefix << "/placements.tsv" << std::endl;
-        
-        auto time_place_mode_end = std::chrono::high_resolution_clock::now();
-        if (timing_enabled) {
-          auto duration_total = std::chrono::duration_cast<std::chrono::milliseconds>(time_place_mode_end - time_place_mode_start);
-          msg("[TIME] Total placement mode: {:.2f}s", duration_total.count() / 1000.0);
-        }
-        
-        close(fd_mgsr);
-        return 0;
+        // Use LiteTree-based placement as fallback
+        placement::placeLite(result, &liteTree, mgsrIndexRoot, reads1, reads2,
+                           readSeeds, readSequences, readNames, readQuals,
+                           placementFileName, effective_index_path, "");
     }
-
     
+    return 0;
+
     // Build index if needed
     if (build) {
       logging::debug("DEBUG-INDEX: Starting index build process");
-      auto time_index_start = std::chrono::high_resolution_clock::now();
       try {
+        panmanUtils::Tree &T = ensureTreeLoaded();
         Index::Builder index = outMessage.initRoot<Index>();
         logging::debug("DEBUG-INDEX: Initialized root for new index");
         
@@ -1704,16 +1454,13 @@ int main(int argc, char *argv[]) {
             std::chrono::high_resolution_clock::now() - start_indexing); // Use renamed variable
         
         logging::debug("DEBUG-INDEX: Index built in memory in {}ms", duration.count());
+        if (show_time) {
+          msg("[TIME] Index building: {}ms", duration.count());
+        }
 
         // The index function now writes the index file directly when given a path
         // No need to call writeCapnp here anymore
         msg("Index written to: {}", effective_index_path);
-        
-        auto time_index_end = std::chrono::high_resolution_clock::now();
-        if (timing_enabled) {
-          auto duration_total = std::chrono::duration_cast<std::chrono::milliseconds>(time_index_end - time_index_start);
-          msg("[TIME] Index building: {:.2f}s", duration_total.count() / 1000.0);
-        }
         
         // Try to immediately read back the index to confirm it's valid
         logging::debug("DEBUG-INDEX: Verifying newly written index");
@@ -1736,13 +1483,10 @@ int main(int argc, char *argv[]) {
         logging::debug("DEBUG-INDEX: Exception during index build/write: {}", e.what());
         return 1;
       }
-    } else if (timing_enabled) {
-      msg("[TIME] Index loading: 0.00s (already loaded)");
     }
 
     // Load mutation matrices
     msg("=== Loading Mutation Matrices ===");
-    auto time_mutmat_start = std::chrono::high_resolution_clock::now();
     genotyping::mutationMatrices mutMat;
     // Assuming --mutmat isn't needed with boost (wasn't in original docopt?)
     // If needed, add: ("mutmat", po::value<std::string>(), "Path to mutation matrix") to input_opts
@@ -1758,15 +1502,10 @@ int main(int argc, char *argv[]) {
       std::ifstream mutmat_file(default_mutmat_path);
       genotyping::fillMutationMatricesFromFile(mutMat, mutmat_file);
     } else {
+      panmanUtils::Tree &T = ensureTreeLoaded();
       msg("Building new mutation matrices");
       genotyping::fillMutationMatricesFromTree_test(mutMat, &T,
                                                     default_mutmat_path);
-    }
-    
-    auto time_mutmat_end = std::chrono::high_resolution_clock::now();
-    if (timing_enabled) {
-      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_mutmat_end - time_mutmat_start);
-      msg("[TIME] Mutation matrices: {:.2f}s", duration.count() / 1000.0);
     }
 
     if (!eval.empty()) {
@@ -1777,10 +1516,6 @@ int main(int argc, char *argv[]) {
     // Placement phase
     msg("=== Starting Read Placement ===");
     auto start = std::chrono::high_resolution_clock::now();
-    auto time_reads_start = std::chrono::high_resolution_clock::now();
-    auto time_placement_start = std::chrono::high_resolution_clock::now();
-    auto time_alignment_start = std::chrono::high_resolution_clock::now();
-    auto time_genotyping_start = std::chrono::high_resolution_clock::now();
 
     try {
       // Ensure index is loaded
@@ -1847,9 +1582,10 @@ int main(int argc, char *argv[]) {
       }
       
       auto time_index_load_end = std::chrono::high_resolution_clock::now();
-      if (timing_enabled) {
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_index_load_end - time_index_load_start);
-        msg("[TIME] Index loading for placement: {:.2f}s", duration.count() / 1000.0);
+      auto duration_index_load = std::chrono::duration_cast<std::chrono::milliseconds>(
+          time_index_load_end - time_index_load_start);
+      if (show_time) {
+        msg("[TIME] Index loading: {}ms", duration_index_load.count());
       }
       
       logging::debug("DEBUG-PLACE: inMessage is valid, proceeding to extract root");
@@ -1884,6 +1620,7 @@ int main(int argc, char *argv[]) {
                               mpileupFileName, vcfFileName, mutMat);
         } else {
           if (!refNode.empty()) {
+            panmanUtils::Tree &T = ensureTreeLoaded();
             msg("Using reference node: {}", refNode);
             if (T.allNodes.find(refNode) == T.allNodes.end()) {
               throw std::runtime_error("Reference node not found in pangenome");
@@ -1903,24 +1640,26 @@ int main(int argc, char *argv[]) {
           std::vector<std::string> readNames;
           std::vector<std::string> readQuals;
 
-          std::string placementFileName = prefix + ".placement.tsv";
+          std::string placementFileName = prefix + "/placements.tsv";
           
           // Initialize LiteTree from MGSR index since original place function was removed
+          auto time_placement_start = std::chrono::high_resolution_clock::now();
           panmapUtils::LiteTree liteTree;
           auto liteTreeReader = mgsrIndexRoot.getLiteTree();
           liteTree.initialize(liteTreeReader);
           
-          time_placement_start = std::chrono::high_resolution_clock::now();
           // Perform placement using LiteTree-based approach
           placement::placeLite(result, &liteTree, mgsrIndexRoot, reads1, reads2,
                              readSeeds, readSequences, readNames, readQuals,
                              placementFileName, effective_index_path, debug_specific_node_id);
 
           auto time_placement_end = std::chrono::high_resolution_clock::now();
-          if (timing_enabled) {
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_placement_end - time_placement_start);
-            msg("[TIME] Read placement: {:.2f}s", duration.count() / 1000.0);
+          auto duration_placement = std::chrono::duration_cast<std::chrono::milliseconds>(
+              time_placement_end - time_placement_start);
+          if (show_time) {
+            msg("[TIME] Placement computation: {}ms", duration_placement.count());
           }
+
 
           /* @Alan this is the end of placement
             -> next step is pass seeds of target node to Nico's alignment code
@@ -1931,8 +1670,8 @@ int main(int argc, char *argv[]) {
             TODO: I'm not sure k-mer end positions are correct yet
           */
           
-          time_alignment_start = std::chrono::high_resolution_clock::now();
-
+          // Now load the tree for post-placement operations (alignment, genotyping)
+          panmanUtils::Tree &T = ensureTreeLoaded();
           std::string bestMatchSequence = panmapUtils::getStringFromReference(&T, result.bestJaccardPresenceNodeId, false);
           logging::info("Best match sequence built for {} with length {}", result.bestJaccardPresenceNodeId, bestMatchSequence.size());
 
@@ -1972,6 +1711,7 @@ int main(int argc, char *argv[]) {
           bool pairedEndReads = reads1.size() > 0 && reads2.size() > 0;
           std::vector<char *> samAlignments;
           std::string samHeader;
+          auto time_alignment_start = std::chrono::high_resolution_clock::now();
           if (k > 28) {
             if (shortenSyncmers) {
               createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, seedToRefPositions, samFileName, 28, shortenSyncmers, pairedEndReads, samAlignments, samHeader);
@@ -1987,29 +1727,34 @@ int main(int argc, char *argv[]) {
           createBam(samAlignments, samHeader, bamFileName, header, bamRecords);
 
           auto time_alignment_end = std::chrono::high_resolution_clock::now();
-          if (timing_enabled) {
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_alignment_end - time_alignment_start);
-            msg("[TIME] Alignment/SAM/BAM creation: {:.2f}s", duration.count() / 1000.0);
+          auto duration_alignment = std::chrono::duration_cast<std::chrono::milliseconds>(
+              time_alignment_end - time_alignment_start);
+          if (show_time) {
+            msg("[TIME] SAM/BAM creation: {}ms", duration_alignment.count());
           }
 
-          time_genotyping_start = std::chrono::high_resolution_clock::now();
+          auto time_genotyping_start = std::chrono::high_resolution_clock::now();
           createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName);
 
           createVcfWithMutationMatrices(prefix, mpileupFileName, mutMat, vcfFileName, 0.0011);
 
           auto time_genotyping_end = std::chrono::high_resolution_clock::now();
-          if (timing_enabled) {
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(time_genotyping_end - time_genotyping_start);
-            msg("[TIME] Genotyping/VCF creation: {:.2f}s", duration.count() / 1000.0);
+          auto duration_genotyping = std::chrono::duration_cast<std::chrono::milliseconds>(
+              time_genotyping_end - time_genotyping_start);
+          if (show_time) {
+            msg("[TIME] Genotyping/VCF creation: {}ms", duration_genotyping.count());
           }
 
+          std::string placementSummaryFileName = prefix + ".placement.summary.md";
+          placement::dumpPlacementSummary(result, placementSummaryFileName);
 
           // Report the top 3 metrics as requested
           msg("=== TOP PLACEMENT RESULTS ===");
           
           // 1. Raw number of matches (set, no frequency) - using raw count
-          msg("Top by raw seed matches (unique count): node {} with Jaccard score {:.4f}",
+          msg("Top by raw seed matches (unique count): node {} with {} matches (Jaccard score {:.4f})",
               result.bestJaccardPresenceNodeId.empty() ? "none" : result.bestJaccardPresenceNodeId, 
+              result.bestJaccardPresenceScore,
               result.bestJaccardPresenceScore);
           
           // 2. Number of matches scaled by read frequency 
@@ -2068,18 +1813,16 @@ int main(int argc, char *argv[]) {
 
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start);
-    if (!timing_enabled) {
-      msg("Placement completed in {}ms", duration.count());
-    }
+    msg("Placement completed in {}ms", duration.count());
 
     auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - main_start);
-    msg("=== panmap run completed ===");
-    if (timing_enabled) {
-      msg("[TIME] Total runtime: {:.2f}s", total_duration.count() / 1000.0);
-    } else {
-      msg("Total runtime: {}ms", total_duration.count());
+    
+    if (show_time) {
+      msg("=== TIMING SUMMARY ===");
     }
+    msg("=== panmap run completed ===");
+    msg("Total runtime: {}ms", total_duration.count());
 
     
     return 0;
