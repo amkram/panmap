@@ -121,6 +121,25 @@ struct RefSeedmerChangeCountStatsHash {
   }
 };
 
+struct KahanSum {
+  double sum = 0.0;
+  double c = 0.0;
+  
+  void add(double value) {
+    double y = value - c;
+    double t = sum + y;
+    c = (t - sum) - y;
+    sum = t;
+  }
+  
+  void subtract(double value) {
+    add(-value);
+  }
+  
+  operator double() const { return sum; }
+};
+
+
 struct IteratorComparator {
   bool operator()(const std::map<uint64_t, uint64_t>::iterator& lhs,
                   const std::map<uint64_t, uint64_t>::iterator& rhs) const {
@@ -251,22 +270,24 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
-  std::vector<double> sumWEPPScoresByThread;
+  std::vector<KahanSum> sumWEPPScoresByThread;
   std::vector<size_t> sumRawScoresByThread; 
   std::vector<size_t> sumEPPRawScoresByThread;
+
+  size_t seedDistance = 0;
 
   size_t numCoveredKminmers = 0;
   size_t sumRawScore  = 0;
   size_t sumEPPRawScore = 0;
   double sumMPScore   = 0;
   size_t sumMPReads   = 0;
-  double sumWEPPScore = 0;
+  KahanSum sumWEPPScore;
   double sumEPPWeightedScore = 0;
 
   double sumMPScoreCorrected   = 0;
   size_t sumMPReadsCorrected   = 0;
-  double sumWEPPScoreCorrected = 0;
-  double sumWEPPScoreCorrectedFinal = 0;
+  KahanSum sumWEPPScoreCorrected;
+  KahanSum sumWEPPScoreCorrectedFinal;
   double sumEPPWeightedScoreCorrected = 0;
 
   std::vector<std::string> identicalNodeIdentifiers;
@@ -282,6 +303,7 @@ public:
     std::vector<std::pair<uint32_t, bool>>& seedDeltas,
     std::vector<std::tuple<uint32_t, uint32_t, bool>>& gapRunDeltas,
     std::vector<uint32_t>& invertedBlocks,
+    const std::vector<seeding::uniqueKminmer_t>& seedInfos,
     size_t numThreads,
     bool lowMemory);
   
@@ -326,7 +348,7 @@ public:
   }
   
   void cleanup();
-  void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory);
+  void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
   void collapseEmptyNodes(bool ignoreGapRunDeltas);
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
@@ -365,6 +387,17 @@ private:
   bool cleaned = false;
 };
 
+
+std::vector<MgsrLiteNode*> getNearestNodes(
+  MgsrLiteNode* node,
+  uint32_t numNodes,
+  bool leafNodesOnly);
+
+std::vector<MgsrLiteNode*> getNearestNodes(
+  MgsrLiteNode* node,
+  const std::unordered_set<std::string_view>& selectedNodes,
+  uint32_t numNodes,
+  bool leafNodesOnly);
 
 struct EPPNodeRange {
   MgsrLiteNode* startNode;
@@ -539,7 +572,7 @@ class ThreadsManager {
     int t;
     int l;
     bool openSyncmer;
-    bool skipSingleton;
+    uint32_t maskReads;
     bool lowMemory;
 
     //  thread:   dfsIndex:  scoreDelta
@@ -565,7 +598,7 @@ class ThreadsManager {
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(MgsrLiteTree* liteTree,  size_t numThreads, bool skipSingleton, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), skipSingleton(skipSingleton), lowMemory(lowMemory) {
+    ThreadsManager(MgsrLiteTree* liteTree,  size_t numThreads, uint32_t maskReads, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), maskReads(maskReads), lowMemory(lowMemory) {
       threadRanges.resize(numThreads);
       readMinichainsInitialized.resize(numThreads);
       readMinichainsAdded.resize(numThreads);
@@ -628,7 +661,7 @@ class mgsrPlacer {
     bool openSyncmer;
 
     // parameters from user input... preset for now
-    bool skipSingleton;
+    uint32_t maskReads;
     bool lowMemory;
     double excludeDuplicatesThreshold = 0.5;
     double errorRate = 0.005;
@@ -705,7 +738,7 @@ class mgsrPlacer {
         t(threadsManager.t),
         l(threadsManager.l),
         openSyncmer(threadsManager.openSyncmer),
-        skipSingleton(threadsManager.skipSingleton),
+        maskReads(threadsManager.maskReads),
         threadId(threadId)
     {}
     
@@ -729,7 +762,7 @@ class mgsrPlacer {
       std::vector<uint32_t>& readScores,
       size_t& curNodeSumRawScore,
       size_t& curNodeSumEPPRawScore,
-      double& curNodeSumWEPPScore);
+      KahanSum& curNodeSumWEPPScore);
     void scoreNodes();
 
     void traverseTreeHelper(MgsrLiteNode* node);

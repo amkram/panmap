@@ -555,15 +555,30 @@ static void printTopN(const Eigen::VectorXd& myVector, size_t n) {
 
 
 void mgsr::MgsrLiteNode::initializeMutationData(
-    std::vector<std::pair<uint32_t, bool>>& seedDeltas,
-    std::vector<std::tuple<uint32_t, uint32_t, bool>>& gapRunDeltas,
-    std::vector<uint32_t>& invertedBlocks,
+    std::vector<std::pair<uint32_t, bool>>& seedDeltas_,
+    std::vector<std::tuple<uint32_t, uint32_t, bool>>& gapRunDeltas_,
+    std::vector<uint32_t>& invertedBlocks_,
+    const std::vector<seeding::uniqueKminmer_t>& seedInfos,
     size_t numThreads,
     bool lowMemory
 ) {
-  this->seedDeltas = std::move(seedDeltas);
-  this->gapRunDeltas = std::move(gapRunDeltas);
-  this->invertedBlocks = std::move(invertedBlocks);
+  seedDeltas = std::move(seedDeltas_);
+  gapRunDeltas = std::move(gapRunDeltas_);
+  invertedBlocks = std::move(invertedBlocks_);
+
+
+  size_t seedDeltaSize = 0;
+  for (size_t i = 0; i < seedDeltas.size(); ++i) {
+    const auto seedDeltaIndex = seedDeltas[i].first;
+    seedDeltaSize++;
+    if (i != seedDeltas.size() - 1) {
+      const auto nextSeedDeltaIndex = seedDeltas[i + 1].first;
+      if (seedInfos[nextSeedDeltaIndex].startPos == seedInfos[seedDeltaIndex].startPos) {
+        i++;
+      }
+    }
+  }
+  this->seedDistance = seedDeltaSize;
 
   if (lowMemory) {
     this->readScoreDeltasLowMemory.resize(numThreads);
@@ -621,7 +636,7 @@ uint32_t mgsr::MgsrLiteTree::getBlockEndScalar(const uint32_t blockId) const {
   return blockScalarRanges[blockId].second;
 }
 
-void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory) {
+void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes) {
   std::cerr << "Starting to initialize MgsrLiteTree from index..." << std::endl;
   this->numThreads = numThreads;
   this->lowMemory = lowMemory;
@@ -711,8 +726,8 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
     const auto isIdenticalToParent = liteNodeReader.getIdenticalToParent();
     auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new MgsrLiteNode(nodeIdentifier, nullptr, {}, i));
     if (inserted) {
-      it->second->initializeMutationData(seedDeltas[i], gapRunDeltas[i], invertedBlocks[i], numThreads, lowMemory);
-      it->second->sumWEPPScoresByThread.resize(numThreads, 0.0);
+      it->second->initializeMutationData(seedDeltas[i], gapRunDeltas[i], invertedBlocks[i], seedInfos, numThreads, lowMemory);
+      it->second->sumWEPPScoresByThread.resize(numThreads);
       it->second->sumRawScoresByThread.resize(numThreads, 0);
       it->second->sumEPPRawScoresByThread.resize(numThreads, 0);
       if (isIdenticalToParent) {
@@ -739,34 +754,35 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
   lastNodeDFS = allLiteNodes[liteNodesReader[liteNodesReader.size() - 1].getId()];
   lastNodeDFSCollapsed = lastNodeDFS;
 
-  for (auto node : emptyNodesToRemove) {
-    if (node == root) continue;
-    auto& parent = node->parent;
-    auto& children = node->children;
-    parent->children.erase(std::remove(parent->children.begin(), parent->children.end(), node), parent->children.end());
-    parent->collapsedChildren.erase(std::remove(parent->collapsedChildren.begin(), parent->collapsedChildren.end(), node), parent->collapsedChildren.end());
-    for (auto child : children) {
-      child->parent = parent;
-      child->collapsedParent = parent;
-      parent->children.push_back(child);
-      parent->collapsedChildren.push_back(child);
+  if (collapseIdenticalNodes) {
+    for (auto node : emptyNodesToRemove) {
+      if (node == root) continue;
+      auto& parent = node->parent;
+      auto& children = node->children;
+      parent->children.erase(std::remove(parent->children.begin(), parent->children.end(), node), parent->children.end());
+      parent->collapsedChildren.erase(std::remove(parent->collapsedChildren.begin(), parent->collapsedChildren.end(), node), parent->collapsedChildren.end());
+      for (auto child : children) {
+        child->parent = parent;
+        child->collapsedParent = parent;
+        parent->children.push_back(child);
+        parent->collapsedChildren.push_back(child);
+      }
+
+      parent->identicalNodeIdentifiers.push_back(node->identifier);
+      for (auto id : node->identicalNodeIdentifiers) {
+        parent->identicalNodeIdentifiers.push_back(id);
+      }
+
+      allLiteNodes.erase(node->identifier);
+      delete node;
     }
 
-    parent->identicalNodeIdentifiers.push_back(node->identifier);
-    for (auto id : node->identicalNodeIdentifiers) {
-      parent->identicalNodeIdentifiers.push_back(id);
-    }
-
-    allLiteNodes.erase(node->identifier);
-    delete node;
+    uint32_t dfsIndex = 0;
+    lastNodeDFSCollapsed = root;
+    lastNodeDFS = root;
+    auto curPrevNode = root;
+    setDfsIndex(root, curPrevNode, dfsIndex);
   }
-
-  uint32_t dfsIndex = 0;
-  lastNodeDFSCollapsed = root;
-  lastNodeDFS = root;
-  auto curPrevNode = root;
-  setDfsIndex(root, curPrevNode, dfsIndex);
-
 }
 
 void mgsr::MgsrLiteTree::collapseNode(mgsr::MgsrLiteNode* node) {
@@ -879,7 +895,6 @@ void mgsr::MgsrLiteTree::collapseIdenticalScoringNodes(const absl::flat_hash_set
 
 void mgsr::MgsrLiteTree::buildNewickRecursive(const MgsrLiteNode* node, std::ostringstream& oss, bool useCollapsed) const {
   const auto& childrenList = useCollapsed ? node->collapsedChildren : node->children;
-  
   if (!childrenList.empty()) {
     oss << '(';
     for (size_t i = 0; i < childrenList.size(); ++i) {
@@ -890,8 +905,8 @@ void mgsr::MgsrLiteTree::buildNewickRecursive(const MgsrLiteNode* node, std::ost
     }
     oss << ')';
   }
-  
-  oss << node->identifier;
+
+  oss << node->identifier << ':' << node->seedDistance;
 }
 
 std::string mgsr::MgsrLiteTree::toNewick(bool useCollapsed) const {
@@ -1583,7 +1598,7 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
 
 
   auto originalReadsSize = reads.size();
-  if (skipSingleton) {
+  if (maskReads > 0) {
     numSingletonReads = 0;
     absl::flat_hash_map<uint64_t, uint64_t> kminmerCounts;
     for (uint32_t i = 0; i < reads.size(); ++i) {
@@ -1595,7 +1610,7 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
 
     for (uint32_t i = 0; i < reads.size(); ++i) {
       for (const auto& seedmer : reads[i].seedmersList) {
-        if (kminmerCounts.at(seedmer.hash) <= 5) {
+        if (kminmerCounts.at(seedmer.hash) <= maskReads) {
           reads[i].readType = mgsr::ReadType::CONTAINS_SINGLETON;
           ++numSingletonReads;
           break;
@@ -1645,8 +1660,8 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
   }
 
   std::cerr << "Collapsed " << readSequences.size() << " raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
-  if (skipSingleton) {
-    std::cerr << "SkipSingleton turned on: " << numSingletonReads << " reads with singletons will be skipped during placement and EM... "
+  if (maskReads > 0) {
+    std::cerr << "Mask-reads " << maskReads << " turned on: " << numSingletonReads << " reads containing low coverage kminmers will be skipped during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
   }
   for (size_t i = 0; i < numThreads; ++i) {
@@ -5255,7 +5270,7 @@ void mgsr::mgsrPlacer::scoreNodesHelper(
   std::vector<uint32_t>& readScores,
   size_t& curNodeSumRawScore,
   size_t& curNodeSumEPPRawScore,
-  double& curNodeSumWEPPScore
+  KahanSum& curNodeSumWEPPScore
 ) {
   if (progressTracker) {
     progressTracker->incrementProgress(threadId);
@@ -5295,14 +5310,14 @@ void mgsr::mgsrPlacer::scoreNodesHelper(
       curNodeSumRawScore += curReadNumDuplicates * (newScore - oldScore);
       if (newScore == curMaxScore) {
         curNodeSumEPPRawScore += curReadNumDuplicates * curMaxScore;
-        curNodeSumWEPPScore += readWEPPWeights[readIndex];
+        curNodeSumWEPPScore.add(readWEPPWeights[readIndex]);
         lastParsimoniousNode = node;
       }
     } else if (oldScore > newScore) {
       curNodeSumRawScore -= curReadNumDuplicates * (oldScore - newScore);
       if (oldScore == curMaxScore) {
         curNodeSumEPPRawScore -= curReadNumDuplicates * curMaxScore;
-        curNodeSumWEPPScore -= readWEPPWeights[readIndex];
+        curNodeSumWEPPScore.subtract(readWEPPWeights[readIndex]);
         if (lastParsimoniousNode != nullptr) {
           if (lastParsimoniousNode != node) {
             curRead.eppNodeRanges.emplace_back(lastParsimoniousNode, node, false);
@@ -5369,308 +5384,13 @@ void mgsr::mgsrPlacer::scoreNodes() {
     // readWEPPWeights[i] = numDuplicates / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
     readWEPPWeights[i] = static_cast<double>(numDuplicates[i]) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
   }
-  double curNodeSumWEPPScore = 0.0;
+  KahanSum curNodeSumWEPPScore;
   size_t curNodeSumRawScore = 0;
   size_t curNodeSumEPPRawScore = 0;
   mgsr::MgsrLiteNode* processingNode = nullptr;
   scoreNodesHelper(liteTree->root, processingNode, numDuplicates, readWEPPWeights, readScores, curNodeSumRawScore, curNodeSumEPPRawScore, curNodeSumWEPPScore);
 }
 
-
-void mgsr::ThreadsManager::scoreNodesHelper(
-  MgsrLiteNode* node,
-  MgsrLiteNode*& topWEPPNode,
-  MgsrLiteNode*& processingNode,
-  std::vector<uint32_t>& readScores,
-  std::vector<double>& readWEPPWeights,
-  size_t& curNodeSumRawScore,
-  double& curNodeSumMPScore,
-  size_t& curNodeSumMPReads,
-  double& curNodeSumWEPPScore,
-  double& curNodeSumEPPWeightedScore
-) {
-  if (node->collapsedDfsIndex % 1000 == 0) {
-    std::cout << "\rScored " << node->collapsedDfsIndex << " / " << liteTree->getNumActiveNodes() << std::flush;
-  }
-
-  processingNode = node;
-
-  auto curNodeSumMPReadsBacktrack   = curNodeSumMPReads;
-  auto curNodeSumMPScoreBacktrack   = curNodeSumMPScore;
-  auto curNodeSumRawScoreBacktrack  = curNodeSumRawScore;
-  auto curNodeSumWEPPScoreBacktrack = curNodeSumWEPPScore;
-  auto curNodeSumEPPWeightedScoreBacktrack = curNodeSumEPPWeightedScore;
-
-  const auto& curNodeScoreDeltas = node->readScoreDeltas;
-
-  size_t numModifiedReads = 0;
-  for (size_t threadId = 0; threadId < numThreads; ++threadId) {
-    numModifiedReads += curNodeScoreDeltas[threadId].size();
-  }
-
-  std::vector<std::pair<uint32_t, uint32_t>> readScoresBacktrack;
-  readScoresBacktrack.resize(numModifiedReads);
-
-  size_t backtrackIndex = 0;
-  for (size_t threadId = 0; threadId < numThreads; ++threadId) {
-    const auto threadReadStart = threadRanges[threadId].first;
-    for (const auto& scoreDelta : curNodeScoreDeltas[threadId]) {
-      const auto  readIndex = threadReadStart + scoreDelta.readIndex;
-
-      auto& curRead     = reads[readIndex];
-      const auto  curMaxScore = curRead.maxScore;
-      if (curMaxScore == 0) continue;
-
-      const auto oldScore   = readScores[readIndex];
-      const auto newScore   = scoreDelta.scoreDelta;
-      readScores[readIndex] = newScore;
-
-      readScoresBacktrack[backtrackIndex] = {readIndex, oldScore};
-      ++backtrackIndex;
-
-      const auto numDuplicates = readSeedmersDuplicatesIndex[readIndex].size();
-      auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
-      if (newScore > oldScore) {
-        curNodeSumRawScore += (newScore - oldScore) * numDuplicates;
-        if (newScore == curMaxScore) {
-          curNodeSumWEPPScore += readWEPPWeights[readIndex];
-          curNodeSumMPScore += static_cast<double>(numDuplicates) / static_cast<double>(curRead.seedmersList.size() - curMaxScore + 1);
-          curNodeSumMPReads += numDuplicates;
-          curNodeSumEPPWeightedScore += static_cast<double>(numDuplicates) / static_cast<double>(curRead.epp * curRead.epp);
-          lastParsimoniousNode = node;
-        }
-      } else if (oldScore > newScore) {
-        curNodeSumRawScore -= (oldScore - newScore) * numDuplicates;
-        if (oldScore == curMaxScore) {
-          curNodeSumWEPPScore -= readWEPPWeights[readIndex];
-          curNodeSumMPScore -= static_cast<double>(numDuplicates) / static_cast<double>(curRead.seedmersList.size() - curMaxScore + 1);
-          curNodeSumMPReads -= numDuplicates;
-          curNodeSumEPPWeightedScore -= static_cast<double>(numDuplicates) / static_cast<double>(curRead.epp * curRead.epp);
-          if (lastParsimoniousNode != nullptr) {
-            if (lastParsimoniousNode != node) {
-              curRead.eppNodeRanges.emplace_back(lastParsimoniousNode, node, false);
-            }
-            lastParsimoniousNode = nullptr;
-          }
-        }
-      }
-    }
-  }
-
-  node->sumRawScore = curNodeSumRawScore;
-  node->sumWEPPScore = curNodeSumWEPPScore;
-  node->sumMPReads = curNodeSumMPReads;
-  node->sumMPScore = curNodeSumMPScore;
-  node->sumEPPWeightedScore = curNodeSumEPPWeightedScore;
-
-  node->sumWEPPScoreCorrected = curNodeSumWEPPScore;
-  node->sumMPScoreCorrected = curNodeSumMPScore;
-  node->sumMPReadsCorrected = curNodeSumMPReads;
-  node->sumEPPWeightedScoreCorrected = curNodeSumEPPWeightedScore;
-
-  if (node == liteTree->lastNodeDFSCollapsed) {
-    for (auto& read : reads) {
-      if (read.lastParsimoniousNode != nullptr) {
-        read.eppNodeRanges.emplace_back(read.lastParsimoniousNode, node, true);
-        read.lastParsimoniousNode = nullptr;
-      }
-    }
-  }
-
-  if (node->sumWEPPScore > topWEPPNode->sumWEPPScore) {
-    topWEPPNode = node;
-  }
-
-  for (auto child : node->collapsedChildren) {
-    scoreNodesHelper(child, topWEPPNode, processingNode, readScores, readWEPPWeights, curNodeSumRawScore, curNodeSumMPScore, curNodeSumMPReads, curNodeSumWEPPScore, curNodeSumEPPWeightedScore);
-  }
-  
-  curNodeSumRawScore = curNodeSumRawScoreBacktrack;
-  curNodeSumWEPPScore = curNodeSumWEPPScoreBacktrack;
-  curNodeSumMPScore = curNodeSumMPScoreBacktrack;
-  curNodeSumMPReads = curNodeSumMPReadsBacktrack;
-  curNodeSumEPPWeightedScore = curNodeSumEPPWeightedScoreBacktrack;
-
-  for (const auto& [readIdx, score] : readScoresBacktrack) {
-    readScores[readIdx] = score;
-    auto& curRead = reads[readIdx];
-    auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
-    if (score == curRead.maxScore) {
-      // assume that the next node is also max
-      if (lastParsimoniousNode == nullptr) {
-        lastParsimoniousNode = processingNode->nextNodeDfsCollapsed;
-      }
-    } else {
-      // assume that the next node is not max
-      if (lastParsimoniousNode != nullptr) {
-        if (lastParsimoniousNode == processingNode->nextNodeDfsCollapsed) {
-          lastParsimoniousNode = nullptr;
-        } else {
-          curRead.eppNodeRanges.emplace_back(lastParsimoniousNode, processingNode->nextNodeDfsCollapsed, false);
-          lastParsimoniousNode = nullptr;
-        }
-      }
-    }
-  }
-  
-}
-
-void mgsr::ThreadsManager::correctNodeScoresAfterSelection(
-  mgsr::MgsrLiteNode* node,
-  mgsr::MgsrLiteNode*& topWEPPNode,
-  const std::unordered_set<mgsr::MgsrLiteNode*>& selectedNodes,
-  const std::unordered_set<uint32_t>& activeReads,
-  std::vector<uint32_t>& readScores,
-  const std::vector<double>& readWEPPWeights,
-  double& curNodeSumWEPPScoreCorrected
-) {
-  if (node->collapsedDfsIndex % 10000 == 0) {
-    std::cout << "\rScored " << node->collapsedDfsIndex << " / " << liteTree->getNumActiveNodes() << std::flush;
-  }
-
-  auto curNodeSumWEPPScoreCorrectedBacktrack = curNodeSumWEPPScoreCorrected;
-
-  const auto& curNodeScoreDeltas = node->readScoreDeltas;
-
-  size_t numModifiedReads = 0;
-  for (size_t threadId = 0; threadId < numThreads; ++threadId) {
-    numModifiedReads += curNodeScoreDeltas[threadId].size();
-  }
-
-  std::vector<std::pair<uint32_t, uint32_t>> readScoresBacktrack;
-  readScoresBacktrack.reserve(numModifiedReads);
-
-  for (size_t threadId = 0; threadId < numThreads; ++threadId) {
-    const auto threadReadStart = threadRanges[threadId].first;
-    for (const auto& scoreDelta : curNodeScoreDeltas[threadId]) {
-      const auto  readIndex = threadReadStart + scoreDelta.readIndex;
-      if (activeReads.find(readIndex) == activeReads.end()) continue;
-
-      const auto& curRead     = reads[readIndex];
-      const auto  curMaxScore = curRead.maxScore;
-      if (curRead.readType != mgsr::ReadType::PASS || curRead.epp == 0) continue;
-
-      const auto oldScore   = readScores[readIndex];
-      const auto newScore   = scoreDelta.scoreDelta;
-      readScores[readIndex] = newScore;
-
-      readScoresBacktrack.emplace_back(readIndex, oldScore);
-
-      const auto numDuplicates = readSeedmersDuplicatesIndex[readIndex].size();
-      if (newScore > oldScore) {
-        if (newScore == curMaxScore) {
-          curNodeSumWEPPScoreCorrected += static_cast<double>(numDuplicates) * readWEPPWeights[readIndex];
-        }
-      } else if (oldScore > newScore) {
-        if (oldScore == curMaxScore) {
-          curNodeSumWEPPScoreCorrected -= static_cast<double>(numDuplicates) * readWEPPWeights[readIndex];
-        }
-      }
-    }
-  }
-  readScoresBacktrack.shrink_to_fit();
-
-  node->sumWEPPScoreCorrected = curNodeSumWEPPScoreCorrected;
-
-  if (node->sumWEPPScoreCorrected > topWEPPNode->sumWEPPScoreCorrected) {
-    topWEPPNode = node;
-  }
-
-  for (auto child : node->collapsedChildren) {
-    correctNodeScoresAfterSelection(child, topWEPPNode, selectedNodes, activeReads, readScores, readWEPPWeights, curNodeSumWEPPScoreCorrected);
-  }
-  
-  curNodeSumWEPPScoreCorrected = curNodeSumWEPPScoreCorrectedBacktrack;
-
-  for (const auto& [readIdx, score] : readScoresBacktrack) {
-    readScores[readIdx] = score;
-  }
-}
-
-void mgsr::ThreadsManager::scoreNodes() {
-  auto startTime = std::chrono::high_resolution_clock::now();
-  std::vector<uint32_t> readScores(reads.size(), 0);
-  std::vector<double> readWEPPWeights(reads.size(), 0.0);
-
-  // precompute read WEPP weights
-  for (size_t i = 0; i < reads.size(); ++i) {
-    const auto& curRead = reads[i];
-    if (curRead.maxScore == 0) continue;
-    // readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
-    readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
-  }
-
-  size_t curNodeSumRawScore  = 0; // Sum of k-min-mer matches of all reads... read weight = kminmer score
-  double curNodeSumMPScore   = 0; // Sum of k-min-mer matches of maximal placement reads.. read weight = 1/(kminmer parsimony + 1)
-  size_t curNodeSumMPReads   = 0; // Number of maximal placement reads... read weight = 1
-  double curNodeSumWEPPScore = 0; // Sum of read weights of maximal placement reads.. read weight = 1/((kminmer parsimony + 1) * (epp^2))
-  double curNodeSumEPPWeightedScore = 0; // Sum of epp-weighted scores of all reads... read weight = 1/(epp^2)
-  
-  mgsr::MgsrLiteNode* topWEPPNode = liteTree->root;
-  mgsr::MgsrLiteNode* processingNode = nullptr;
-  scoreNodesHelper(liteTree->root, topWEPPNode, processingNode, readScores, readWEPPWeights, curNodeSumRawScore, curNodeSumMPScore, curNodeSumMPReads, curNodeSumWEPPScore, curNodeSumEPPWeightedScore);
-  auto endTime = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-  std::cerr << "Scored nodes in " << static_cast<double>(duration.count()) / 1000.0 << "s\n" << std::endl;
-
-  std::unordered_set<uint32_t> activeReads;
-  activeReads.reserve(reads.size());
-  for (size_t i = 0; i < reads.size(); ++i) {
-    if (reads[i].maxScore == 0) continue;
-    activeReads.insert(i);
-  }
-
-  std::unordered_set<mgsr::MgsrLiteNode*> selectedNodes;
-  while (true) {
-    topWEPPNode->sumWEPPScoreCorrectedFinal = topWEPPNode->sumWEPPScoreCorrected;
-    selectedNodes.insert(topWEPPNode);
-    if (selectedNodes.size() == 300) {
-      break;
-    }
-    std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << std::endl;
-    std::vector<uint32_t> curTopNodeScore = getScoresAtNode(topWEPPNode->identifier);
-    for (size_t i = 0; i < reads.size(); ++i) {
-      if (reads[i].maxScore == 0 || activeReads.find(i) == activeReads.end()) continue;
-      if (curTopNodeScore[i] == reads[i].maxScore) {
-        activeReads.erase(i);
-        for (const auto& eppRange : reads[i].eppNodeRanges) {
-          auto curNode = eppRange.startNode;
-          const auto endNode = eppRange.endNode;
-          const bool endNodeInclusive = eppRange.endNodeInclusive;
-          while (true) {
-            if (!endNodeInclusive && curNode == endNode) {
-              break;
-            }
-
-            if (selectedNodes.find(curNode) == selectedNodes.end()) {
-              curNode->sumWEPPScoreCorrected -= readWEPPWeights[i];
-            }
-
-            if (endNodeInclusive && curNode == endNode) {
-              break;
-            }
-
-            curNode = curNode->nextNodeDfsCollapsed;
-          }
-        }
-      }
-    }
-
-    topWEPPNode = nullptr;
-    for (const auto& [_, node] : liteTree->allLiteNodes) {
-      if (selectedNodes.find(node) != selectedNodes.end()) {
-        continue;
-      }
-      if (topWEPPNode == nullptr || node->sumWEPPScoreCorrected > topWEPPNode->sumWEPPScoreCorrected) {
-        topWEPPNode = node;
-      }
-    }
-
-    if (activeReads.empty()) {
-      break;
-    }
-  }
-}
 
 void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   auto start_time_scoreNodes = std::chrono::high_resolution_clock::now();
@@ -5696,6 +5416,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   auto duration_scoreNodes = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_scoreNodes - start_time_scoreNodes);
   std::cerr << "\n\nScored nodes in " << static_cast<double>(duration_scoreNodes.count()) / 1000.0 << "s\n" << std::endl;
 
+
   auto start_time_selectNodes = std::chrono::high_resolution_clock::now();
 
   std::vector<double> readWEPPWeights(reads.size(), 0.0);
@@ -5705,8 +5426,104 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     if (curRead.maxScore == 0) continue;
     // readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
     readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+
   }
 
+  std::ofstream readScoresOut("read_scores_info.tsv");
+  readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tReadWeights" << std::endl;
+  for (size_t i = 0; i < reads.size(); ++i) {
+    const auto& curRead = reads[i];
+    if (curRead.maxScore == 0) continue;
+    readScoresOut << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << std::endl;
+  }
+  readScoresOut.close();
+
+
+  {
+    std::ofstream debugNodeEPPReadsInfo("debug_node_epp_reads_info.tsv");
+    std::vector<uint32_t> debugNodeScore = getScoresAtNode("node_16631");
+    uint32_t smallestEPP = std::numeric_limits<uint32_t>::max();
+    for (size_t i = 0; i < reads.size(); ++i) {
+      const auto& curRead = reads[i];
+      if (curRead.maxScore == 0) continue;
+      if (debugNodeScore[i] == curRead.maxScore) {
+        debugNodeEPPReadsInfo << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << std::endl;
+        if (curRead.epp < smallestEPP) {
+          smallestEPP = curRead.epp;
+        }
+      }
+    }
+    debugNodeEPPReadsInfo.close();
+
+    std::vector<uint32_t> minEPPReads;
+    for (size_t i = 0; i < reads.size(); ++i) {
+      const auto& curRead = reads[i];
+      if (curRead.maxScore == 0) continue;
+      if (debugNodeScore[i] == curRead.maxScore && curRead.epp == smallestEPP) {
+        minEPPReads.push_back(i);
+      }
+    }
+
+    std::unordered_map<mgsr::MgsrLiteNode*, std::unordered_set<uint32_t>> nodeToMinEPPReads;
+    for (const auto& readIdx : minEPPReads) {
+      const auto& curRead = reads[readIdx];
+      for (const auto& eppRange : curRead.eppNodeRanges) {
+        auto curNode = eppRange.startNode;
+        const auto endNode = eppRange.endNode;
+        const bool endNodeInclusive = eppRange.endNodeInclusive;
+        while (true) {
+          if (!endNodeInclusive && curNode == endNode) {
+            break;
+          }
+
+          if (selectedNodes.find(curNode) == selectedNodes.end()) {
+            nodeToMinEPPReads[curNode].insert(readIdx);
+          }
+
+          if (endNodeInclusive && curNode == endNode) {
+            break;
+          }
+
+          curNode = curNode->nextNodeDfsCollapsed;
+        }
+      }
+    }
+
+    std::ofstream minEPPNodes("debug_node_min_epp_nodes.tsv");
+    minEPPNodes << "NodeID";
+    for (const auto& readIdx : minEPPReads) {
+      minEPPNodes << "\tRead_" << readIdx;
+    }
+    minEPPNodes << std::endl;
+    for (const auto& [node, readSet] : nodeToMinEPPReads) {
+      minEPPNodes << node->identifier;
+      for (const auto& readIdx : minEPPReads) {
+        if (readSet.find(readIdx) != readSet.end()) {
+          minEPPNodes << "\t1";
+        } else {
+          minEPPNodes << "\t0";
+        }
+      }
+      minEPPNodes << std::endl;
+    }
+    minEPPNodes.close();
+  }
+
+  for (size_t readIndex = 0; readIndex < reads.size(); ++readIndex) {
+    const auto& read = reads[readIndex];
+    for (size_t i = 1; i < read.eppNodeRanges.size(); ++i) {
+      auto curBeg = read.eppNodeRanges[i].startNode->collapsedDfsIndex;
+      auto prevEnd = read.eppNodeRanges[i-1].endNode->collapsedDfsIndex;
+      auto prevEndInclusive = read.eppNodeRanges[i-1].endNodeInclusive;
+      if ((prevEndInclusive && curBeg <= prevEnd) || (!prevEndInclusive && curBeg < prevEnd)) {
+        std::cerr << "Error: read has overlapping EPP node ranges!" << std::endl;
+        std::cerr << "Read " << readIndex << std::endl;
+        std::cerr << "Prev index: " << i - 1 << " range: " << read.eppNodeRanges[i-1].startNode->identifier << " (" << read.eppNodeRanges[i-1].startNode->collapsedDfsIndex << ") to " << read.eppNodeRanges[i-1].endNode->identifier << " (" << read.eppNodeRanges[i-1].endNode->collapsedDfsIndex << "), inclusive: " << read.eppNodeRanges[i-1].endNodeInclusive << std::endl;
+        std::cerr << "Cur index: " << i << " range: " << read.eppNodeRanges[i].startNode->identifier << " (" << read.eppNodeRanges[i].startNode->collapsedDfsIndex << ") to " << read.eppNodeRanges[i].endNode->identifier << " (" << read.eppNodeRanges[i].endNode->collapsedDfsIndex << "), inclusive: " << read.eppNodeRanges[i].endNodeInclusive << std::endl;
+        exit(1);
+      }
+    }
+  }
 
   std::unordered_set<uint32_t> activeReads;
   activeReads.reserve(reads.size());
@@ -5716,16 +5533,19 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   }
 
   mgsr::MgsrLiteNode* topWEPPNode = nullptr;
-  double topWEPPScore = 0;
+  mgsr::KahanSum topWEPPScore;
   for (auto& [_, node] : liteTree->allLiteNodes) {
-    const double curNodeSumWEPPScore = std::accumulate(node->sumWEPPScoresByThread.begin(), node->sumWEPPScoresByThread.end(), 0.0);
+    mgsr::KahanSum curNodeSumWEPPScore;
+    for (size_t t = 0; t < numThreads; ++t) {
+      curNodeSumWEPPScore.add(node->sumWEPPScoresByThread[t]);
+    }
     const size_t curNodeSumRawScore = std::accumulate(node->sumRawScoresByThread.begin(), node->sumRawScoresByThread.end(), 0);
     const size_t curNodeSumEPPRawScore = std::accumulate(node->sumEPPRawScoresByThread.begin(), node->sumEPPRawScoresByThread.end(), 0);
     node->sumWEPPScore = curNodeSumWEPPScore;
     node->sumWEPPScoreCorrected = curNodeSumWEPPScore;
     node->sumRawScore = curNodeSumRawScore;
     node->sumEPPRawScore = curNodeSumEPPRawScore;
-    if (curNodeSumWEPPScore > topWEPPScore) {
+    if (curNodeSumWEPPScore.sum > topWEPPScore.sum) {
       topWEPPNode = node;
       topWEPPScore = curNodeSumWEPPScore;
     }
@@ -5734,7 +5554,11 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   selectedNodes.clear();
   while (true) {
     selectedNodes.insert(topWEPPNode);
-    std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << std::endl;
+    size_t rawReadRemaining = 0;
+    for (const auto& readIdx : activeReads) {
+      rawReadRemaining += readSeedmersDuplicatesIndex[readIdx].size();
+    }
+    std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << ", raw reading remaining: " << rawReadRemaining << std::endl;
     if (selectedNodes.size() == 300) break;
     std::vector<uint32_t> curTopNodeScore = getScoresAtNode(topWEPPNode->identifier);
 
@@ -5768,7 +5592,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     }
 
 
-    std::vector<std::unordered_map<mgsr::MgsrLiteNode*, double>> nodeScoreChangesByThread(numThreads);
+    std::vector<std::unordered_map<mgsr::MgsrLiteNode*, mgsr::KahanSum>> nodeScoreChangesByThread(numThreads);
     tbb::parallel_for(tbb::blocked_range<size_t>(0, threadRangesForReadsToSubtract.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
       for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
         auto [start, end] = threadRangesForReadsToSubtract[i];
@@ -5785,7 +5609,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
               }
 
               if (selectedNodes.find(curNode) == selectedNodes.end()) {
-                nodeScoreChangesByThread[i][curNode] -= readWEPPWeights[readIndex];
+                nodeScoreChangesByThread[i][curNode].subtract(readWEPPWeights[readIndex]);
               }
 
               if (endNodeInclusive && curNode == endNode) {
@@ -5801,7 +5625,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
 
     for (const auto& nodeScoreChanges : nodeScoreChangesByThread) {
       for (const auto& [node, scoreChange] : nodeScoreChanges) {
-        node->sumWEPPScoreCorrected += scoreChange;
+        node->sumWEPPScoreCorrected.add(scoreChange);
       }
     }
 
@@ -5810,7 +5634,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
       if (selectedNodes.find(node) != selectedNodes.end()) {
         continue;
       }
-      if (topWEPPNode == nullptr || node->sumWEPPScoreCorrected > topWEPPNode->sumWEPPScoreCorrected) {
+      if (topWEPPNode == nullptr || node->sumWEPPScoreCorrected.sum > topWEPPNode->sumWEPPScoreCorrected.sum) {
         topWEPPNode = node;
       }
     }
@@ -6793,4 +6617,129 @@ mgsr::squareEM::squareEM(
 
   std::cout << "Probs matrix size: " << probs.rows() << "x" << probs.cols() << std::endl;
   std::cout << "Props vector size: " << props.size() << std::endl;
+}
+
+
+struct NodeDistance {
+  mgsr::MgsrLiteNode* node;
+  double distance;
+  
+  bool operator>(const NodeDistance& other) const {
+    return distance > other.distance;
+  }
+};
+
+std::vector<mgsr::MgsrLiteNode*> mgsr::getNearestNodes(
+  mgsr::MgsrLiteNode* node,
+  uint32_t numNodes,
+  bool leafNodesOnly
+) {
+  if (!node || numNodes <= 0) return {};
+  
+  std::vector<mgsr::MgsrLiteNode*> result;
+  result.reserve(numNodes);
+  
+  std::priority_queue<NodeDistance, std::vector<NodeDistance>, std::greater<NodeDistance>> pq;
+  std::unordered_map<mgsr::MgsrLiteNode*, double> distances;
+  std::unordered_set<mgsr::MgsrLiteNode*> visited;
+  
+  pq.push({node, 0.0});
+  distances[node] = 0.0;
+  
+  while (!pq.empty() && result.size() < numNodes) {
+    NodeDistance current = pq.top();
+    pq.pop();
+    
+    if (visited.count(current.node)) continue;
+    visited.insert(current.node);
+    
+    bool isLeaf = current.node->children.empty();
+    if (!leafNodesOnly || isLeaf) {
+      result.push_back(current.node);
+      if (result.size() == numNodes) break;
+    }
+    
+    if (current.node->parent) {
+      double edgeLength = current.node->seedDistance;
+      double newDist = current.distance + edgeLength;
+      
+      if (distances.find(current.node->parent) == distances.end() || 
+          newDist < distances[current.node->parent]) {
+        distances[current.node->parent] = newDist;
+        pq.push({current.node->parent, newDist});
+      }
+    }
+    
+    for (mgsr::MgsrLiteNode* child : current.node->children) {
+      double edgeLength = child->seedDistance;
+      double newDist = current.distance + edgeLength;
+      
+      if (distances.find(child) == distances.end() || 
+          newDist < distances[child]) {
+        distances[child] = newDist;
+        pq.push({child, newDist});
+      }
+    }
+  }
+  
+  return result;
+}
+
+std::vector<mgsr::MgsrLiteNode*> mgsr::getNearestNodes(
+  mgsr::MgsrLiteNode* node,
+  const std::unordered_set<std::string_view>& selectedNodes,
+  uint32_t numNodes,
+  bool leafNodesOnly
+){
+  if (!node || numNodes <= 0) return {};
+  
+  std::vector<mgsr::MgsrLiteNode*> result;
+  result.reserve(numNodes);
+  
+  std::priority_queue<NodeDistance, std::vector<NodeDistance>, std::greater<NodeDistance>> pq;
+  std::unordered_map<mgsr::MgsrLiteNode*, double> distances;
+  std::unordered_set<mgsr::MgsrLiteNode*> visited;
+  
+  pq.push({node, 0.0});
+  distances[node] = 0.0;
+  
+  while (!pq.empty() && result.size() < numNodes) {
+    NodeDistance current = pq.top();
+    pq.pop();
+    
+    if (visited.count(current.node)) continue;
+    visited.insert(current.node);
+    
+    bool isLeaf = current.node->children.empty();
+    if (!leafNodesOnly || isLeaf) {
+      if (selectedNodes.find(current.node->identifier) == selectedNodes.end()) {
+        result.push_back(current.node);
+        if (result.size() == numNodes) break;
+      }
+    }
+    
+    if (current.node->parent) {
+      double edgeLength = current.node->seedDistance;
+      double newDist = current.distance + edgeLength;
+      
+      if (distances.find(current.node->parent) == distances.end() || 
+          newDist < distances[current.node->parent]) {
+        distances[current.node->parent] = newDist;
+        pq.push({current.node->parent, newDist});
+      }
+    }
+    
+    for (mgsr::MgsrLiteNode* child : current.node->children) {
+      double edgeLength = child->seedDistance;
+      double newDist = current.distance + edgeLength;
+      
+      if (distances.find(child) == distances.end() || 
+          newDist < distances[child]) {
+        distances[child] = newDist;
+        pq.push({child, newDist});
+      }
+    }
+  }
+  
+  return result;
 }
