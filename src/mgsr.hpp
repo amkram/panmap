@@ -274,6 +274,10 @@ public:
   std::vector<size_t> sumRawScoresByThread; 
   std::vector<size_t> sumEPPRawScoresByThread;
 
+  bool selected = false;
+  bool selectedNeighbor = false;
+  
+  bool inSample = false; // for debugging and evaluating
   size_t seedDistance = 0;
 
   size_t numCoveredKminmers = 0;
@@ -327,6 +331,9 @@ public:
   std::unordered_map<std::string, MgsrLiteNode*> allLiteNodes;
   std::unordered_set<MgsrLiteNode*> detachedNodes;
   std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
+
+  std::string debugNodeID = "";
+  std::unordered_map<std::string, double> trueAbundances;
   
   // parameters
   int k;
@@ -354,6 +361,8 @@ public:
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
 
+  std::unordered_map<size_t, int32_t> getSeedsAtNode(MgsrLiteNode* node, bool useCollapsed=true) const;
+
   void buildNewickRecursive(const MgsrLiteNode* node, std::ostringstream& oss, bool useCollapsed) const;
   std::string toNewick(bool useCollapsed = false) const;
 
@@ -374,7 +383,7 @@ public:
     return isDetached(it->second);
   }
 
-  
+  void loadTrueAbundances(const std::string& trueAbundancePath);
   
   void collapseNode(MgsrLiteNode* node);
 
@@ -382,6 +391,13 @@ public:
     const MgsrLiteTree& tree,
     const std::vector<MgsrLiteNode*>& targets
   );
+
+  std::vector<std::tuple<double, MgsrLiteNode*, MgsrLiteNode*>> getClosestNodesDistance(
+    const std::unordered_set<MgsrLiteNode*>& sourceNodes,
+    size_t selectNum,
+    size_t maxPerNode,
+    bool leavesOnly
+    );
 
 private:
   bool cleaned = false;
@@ -574,6 +590,7 @@ class ThreadsManager {
     bool openSyncmer;
     uint32_t maskReads;
     bool lowMemory;
+    bool progressBar;
 
     //  thread:   dfsIndex:  scoreDelta
     std::vector<uint64_t> readMinichainsAdded;
@@ -594,11 +611,21 @@ class ThreadsManager {
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
     std::unordered_map<std::string, double> kminmerCoverage;
 
+    // Experimental
+    std::unordered_map<size_t, uint32_t> seedReadsFrequency;
+    std::unordered_map<size_t, uint32_t> seedNodesFrequency;
+    std::unordered_map<MgsrLiteNode*, double> nodeSeedScores;
+    std::unordered_map<MgsrLiteNode*, double> nodeSeedScoresCorrected;
+    void countSeedNodesFrequencyHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, size_t& curDFSIndex);
+    void countSeedNodesFrequency();
+    void computeNodeSeedScoresHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, std::unordered_set<mgsr::MgsrLiteNode*>& selectedNodes, const std::unordered_map<size_t, double>& seedWeights, double& curNodeSeedScore, size_t& curDFSIndex);
+    void computeNodeSeedScores();
+
 
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(MgsrLiteTree* liteTree,  size_t numThreads, uint32_t maskReads, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), maskReads(maskReads), lowMemory(lowMemory) {
+    ThreadsManager(MgsrLiteTree* liteTree,  size_t numThreads, uint32_t maskReads, bool progressBar, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), maskReads(maskReads), progressBar(progressBar), lowMemory(lowMemory) {
       threadRanges.resize(numThreads);
       readMinichainsInitialized.resize(numThreads);
       readMinichainsAdded.resize(numThreads);
@@ -663,6 +690,7 @@ class mgsrPlacer {
     // parameters from user input... preset for now
     uint32_t maskReads;
     bool lowMemory;
+    bool progressBar;
     double excludeDuplicatesThreshold = 0.5;
     double errorRate = 0.005;
     int64_t maximumGap = 50;
@@ -675,7 +703,7 @@ class mgsrPlacer {
 
     // dynamic reference kminmer structures for kminmer counting
     std::vector<std::optional<size_t>> kminmerOnRef;
-    std::unordered_map<size_t, std::pair<uint32_t, int32_t>> kminmerOnRefCount;
+    std::unordered_map<size_t, std::pair<int32_t, int32_t>> kminmerOnRefCount;
 
     // preallocated structures to prevent memory allocation and deletion in tight loops
     std::vector<std::pair<Minichain, bool>> minichainsToUpdate;
@@ -739,7 +767,8 @@ class mgsrPlacer {
         l(threadsManager.l),
         openSyncmer(threadsManager.openSyncmer),
         maskReads(threadsManager.maskReads),
-        threadId(threadId)
+        threadId(threadId),
+        progressBar(threadsManager.progressBar)
     {}
     
     mgsrPlacer(MgsrLiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory, size_t threadId)

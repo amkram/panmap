@@ -746,7 +746,8 @@ int main(int argc, char *argv[]) {
         ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
         ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
-        ("skip-singleton", "Skip singleton reads")
+        ("no-progress", "Disable progress bars")
+        ("seed-scores", "Use seed scores instead of read scores to score nodes")
         ("mask-reads", po::value<uint32_t>()->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
         ("mask-seeds", po::value<uint32_t>()->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
 
@@ -780,6 +781,7 @@ int main(int argc, char *argv[]) {
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
         ("overlap-coefficients", "Output overlap coefficients then exit")
+        ("true-abundance", po::value<std::string>(), "Path to true abundance TSV for comparison")
     ;
 
     // Hidden options for positional arguments
@@ -1136,14 +1138,20 @@ int main(int argc, char *argv[]) {
       bool lowMemory = vm.count("low-memory") > 0;
       
       mgsr::MgsrLiteTree liteTree;
+      if (vm.count("true-abundance")) {
+        std::string trueAbundancePath = vm["true-abundance"].as<std::string>();
+        liteTree.loadTrueAbundances(trueAbundancePath);
+      }
       liteTree.initialize(indexReader, numThreads, lowMemory, true);
-      
+      liteTree.debugNodeID = vm["debug-node-id"].as<std::string>();
       std::vector<std::string> readSequences;
       mgsr::extractReadSequences(reads1, reads2, readSequences);
 
       uint32_t maskReads = vm.count("mask-reads") ? vm["mask-reads"].as<uint32_t>() : 0;
       uint32_t maskSeedThreshold = vm["mask-seeds"].as<uint32_t>();
-      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, maskReads, lowMemory);
+      bool progressBar = true;
+      if (vm.count("no-progress")) progressBar = false;
+      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, maskReads, progressBar, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
       threadsManager.initializeQueryData(readSequences, maskSeedThreshold);
@@ -1174,6 +1182,36 @@ int main(int argc, char *argv[]) {
 
       liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
       // liteTree.collapseEmptyNodes(true);
+
+      if (vm.count("seed-scores")) {
+        threadsManager.countSeedNodesFrequency();
+        threadsManager.computeNodeSeedScores();
+        std::ofstream nodeSeedScoresOut(prefix + ".nodeSeedScores.tsv");
+        nodeSeedScoresOut << "NodeId\tDistance\tnodeSeedScores\tnodeSeedScoresCorrected\tselected\tselectedNeighbor\tinSample\tcollapsedNodes" << std::endl;
+        for (const auto& [node, nodeSeedScore] : threadsManager.nodeSeedScores) {
+          nodeSeedScoresOut << node->identifier
+                            << "\t" << node->seedDistance
+                            << "\t" << nodeSeedScore
+                            << "\t" << threadsManager.nodeSeedScoresCorrected.find(node)->second
+                            << "\t" << node->selected
+                            << "\t" << node->selectedNeighbor
+                            << "\t" << node->inSample << "\t";
+          if (node->identicalNodeIdentifiers.empty()) {
+            nodeSeedScoresOut << "." << std::endl;
+          } else {
+            for (size_t i = 0; i < node->identicalNodeIdentifiers.size(); ++i) {
+              nodeSeedScoresOut << node->identicalNodeIdentifiers[i];
+              if (i != node->identicalNodeIdentifiers.size() - 1) {
+                nodeSeedScoresOut << ",";
+              }
+            }
+            nodeSeedScoresOut << std::endl;
+          }
+
+        }
+        nodeSeedScoresOut.close();
+        exit(1);
+      }
             
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
       for (size_t i = 0; i < numThreads; ++i) {
@@ -1196,7 +1234,7 @@ int main(int argc, char *argv[]) {
           curThreadPlacer.initializeQueryData(curThreadReads);
 
           curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
-
+          
           curThreadPlacer.setProgressTracker(&progressTracker, i);
           // curThreadPlacer.placeReads();
 
@@ -1232,41 +1270,19 @@ int main(int argc, char *argv[]) {
       std::ofstream of(prefix + ".collapsed.newick");
       of << collapsedNewick;
       of.close();
-      const auto& selectedNodes = threadsManager.selectedNodes;
       std::ofstream scoresOut(prefix + ".nodeScores.tsv");
-      scoresOut << "NodeId\toverlapCoeffcient\tsumReadScores\tWEPPScore\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tsumEPPRawScore\tsumMPReads\tsumEPPScore\tsumReadScoresLM\tWEPPScoreLM\tcollapsedNodes" << std::endl;
+      scoresOut << "NodeId\tdistance\tWEPPScore\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tSelectedNeighbor\tinSample\tcollapsedNodes" << std::endl;
       for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
         if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {
           continue;
         }
-        bool localMaxRawScore = true;
-        bool localMaxWEPPScore = true;
-        if (node->collapsedParent != nullptr && node->collapsedParent->sumRawScore > node->sumRawScore) {
-          localMaxRawScore = false;
-        }
-        if (node->collapsedParent != nullptr && node->collapsedParent->sumWEPPScore > node->sumWEPPScore) {
-          localMaxWEPPScore = false;
-        }
-        for (auto child : node->collapsedChildren) {
-          if (child->sumRawScore > node->sumRawScore) {
-            localMaxRawScore = false;
-          }
-          if (child->sumWEPPScore > node->sumWEPPScore) {
-            localMaxWEPPScore = false;
-          }
-        }
-
         scoresOut << nodeId
-                  << "\t" << threadsManager.kminmerOverlapCoefficients[nodeId]
-                  << "\t" << node->sumRawScore
+                  << "\t" << node->seedDistance
                   << "\t" << node->sumWEPPScore.sum
                   << "\t" << node->sumWEPPScoreCorrected.sum
-                  << "\t" << (selectedNodes.find(node) == selectedNodes.end() ? false : true)
-                  << "\t" << node->sumEPPRawScore
-                  << "\t" << node->sumMPReads
-                  << "\t" << node->sumEPPWeightedScore
-                  << "\t" << localMaxRawScore
-                  << "\t" << localMaxWEPPScore << "\t";
+                  << "\t" << node->selected
+                  << "\t" << node->selectedNeighbor
+                  << "\t" << node->inSample << "\t";
         if (node->identicalNodeIdentifiers.empty()) {
           scoresOut << "." << std::endl;
         } else {
