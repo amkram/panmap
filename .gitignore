@@ -46,3 +46,7 @@ _deps
 # pixi environments
 .pixi
 *.egg-info
+
+src/3rdparty/minimap2/minimap2
+*.pico
+src/3rdparty/samtools/htslib-1.20/test/*

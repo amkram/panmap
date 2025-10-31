@@ -362,6 +362,10 @@ void undoMutations(Tree *T, const Node *node,
                    std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> &gapRunBacktracks);
 
 // Common seed processing functions
+// NOTE: These functions are commented out to avoid incomplete type errors
+// when CoordinateTraverser is only forward-declared. Uncomment and include
+// coordinates.hpp if these functions are needed.
+/*
 inline void processSeedChange(
     CommonTraversalState &state, int64_t pos, bool oldVal, bool newVal,
     std::optional<size_t> oldSeed, std::optional<size_t> newSeed,
@@ -411,6 +415,7 @@ inline void undoSeedChange(
     state.BlocksToSeeds[blockId].erase(pos);
   }
 }
+*/
 
 // Add declaration for buildMutationMatricesHelper_test
 void buildMutationMatricesHelper_test(
