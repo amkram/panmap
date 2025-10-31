@@ -1210,7 +1210,7 @@ int main(int argc, char *argv[]) {
 
         }
         nodeSeedScoresOut.close();
-        exit(1);
+        exit(0);
       }
             
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
