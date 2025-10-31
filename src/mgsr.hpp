@@ -118,6 +118,25 @@ struct RefSeedmerChangeCountStatsHash {
   }
 };
 
+struct KahanSum {
+  double sum = 0.0;
+  double c = 0.0;
+  
+  void add(double value) {
+    double y = value - c;
+    double t = sum + y;
+    c = (t - sum) - y;
+    sum = t;
+  }
+  
+  void subtract(double value) {
+    add(-value);
+  }
+  
+  operator double() const { return sum; }
+};
+
+
 struct IteratorComparator {
   bool operator()(const std::map<uint64_t, uint64_t>::iterator& lhs,
                   const std::map<uint64_t, uint64_t>::iterator& rhs) const {
@@ -210,6 +229,194 @@ enum readType : uint8_t {
   IDENTICAL_SCORE_ACROSS_NODES
 };
 
+struct readScoreDelta {
+  uint32_t readIndex;
+  int16_t scoreDelta;
+};
+
+struct readScoreDeltaLowMemory {
+  uint64_t trailingDelta = 0;
+  uint32_t readIndex;
+  uint16_t numTrailing = 0;
+  int16_t  scoreDelta;
+
+  void encodeTrailingDelta(int16_t scoreDeltaDiff, uint32_t indexToEncode) {
+    uint64_t encodedScoreDelta = (scoreDeltaDiff + 8) & 0xF;
+    trailingDelta |= encodedScoreDelta << (indexToEncode - readIndex - 1) * 4;
+    numTrailing = indexToEncode - readIndex;
+  }
+
+  int16_t decodeTrailingDelta(uint32_t offset) const {
+    uint64_t encodedScoreDelta = (trailingDelta >> (offset * 4)) & 0xF;
+    return encodedScoreDelta - 8;
+  }
+};
+
+class MgsrLiteNode {
+public:
+  std::string identifier;
+
+  MgsrLiteNode* parent = nullptr;
+  std::vector<MgsrLiteNode*> children;
+  uint32_t dfsIndex;
+  MgsrLiteNode* nextNodeDfs = nullptr;
+
+  MgsrLiteNode* collapsedParent = nullptr;
+  std::vector<MgsrLiteNode*> collapsedChildren;
+  uint32_t collapsedDfsIndex;
+  MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
+
+  std::vector<KahanSum> sumWEPPScoresByThread;
+  std::vector<size_t> sumRawScoresByThread; 
+  std::vector<size_t> sumEPPRawScoresByThread;
+
+  bool selected = false;
+  bool selectedNeighbor = false;
+  
+  bool inSample = false; // for debugging and evaluating
+  size_t seedDistance = 0;
+
+  size_t numCoveredKminmers = 0;
+  size_t sumRawScore  = 0;
+  size_t sumEPPRawScore = 0;
+  double sumMPScore   = 0;
+  size_t sumMPReads   = 0;
+  KahanSum sumWEPPScore;
+  double sumEPPWeightedScore = 0;
+
+  double sumMPScoreCorrected   = 0;
+  size_t sumMPReadsCorrected   = 0;
+  KahanSum sumWEPPScoreCorrected;
+  KahanSum sumWEPPScoreCorrectedFinal;
+  double sumEPPWeightedScoreCorrected = 0;
+
+  std::vector<std::string> identicalNodeIdentifiers;
+
+  size_t totalKminmerNum = 0;
+  std::vector<std::vector<readScoreDelta>> readScoreDeltas;
+  std::vector<std::vector<readScoreDeltaLowMemory>> readScoreDeltasLowMemory;
+  std::vector<std::pair<uint32_t, bool>> seedDeltas;
+  std::vector<std::tuple<uint32_t, uint32_t, bool>> gapRunDeltas; 
+  std::vector<uint32_t> invertedBlocks;
+
+  void initializeMutationData(
+    std::vector<std::pair<uint32_t, bool>>& seedDeltas,
+    std::vector<std::tuple<uint32_t, uint32_t, bool>>& gapRunDeltas,
+    std::vector<uint32_t>& invertedBlocks,
+    const std::vector<seeding::uniqueKminmer_t>& seedInfos,
+    size_t numThreads,
+    bool lowMemory);
+  
+  void initializeParent(MgsrLiteNode* p);
+  void initializeChild(MgsrLiteNode* c);
+  void initializeNextNodeDfs(MgsrLiteNode* n);
+
+  void assignNewCollapsedParent(MgsrLiteNode* newParent);
+  void addCollapsedChild(MgsrLiteNode* child);
+  void removeCollapsedChild(MgsrLiteNode* child);
+  void addIdenticalNodeIdentifier(MgsrLiteNode* identicalNode);
+
+
+};
+
+class MgsrLiteTree {
+public:
+  MgsrLiteNode* root;
+  MgsrLiteNode* lastNodeDFS;
+  MgsrLiteNode* lastNodeDFSCollapsed;
+  std::unordered_map<std::string, MgsrLiteNode*> allLiteNodes;
+  std::unordered_set<MgsrLiteNode*> detachedNodes;
+  std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
+
+  std::string debugNodeID = "";
+  std::unordered_map<std::string, double> trueAbundances;
+  
+  // parameters
+  int k;
+  int s;
+  int t;
+  int l;
+  bool openSyncmer;
+
+  bool lowMemory;
+  size_t numThreads;
+
+  // mutation structures...
+  std::vector<seeding::uniqueKminmer_t> seedInfos;
+
+  ~MgsrLiteTree() {
+    for (auto& pair : allLiteNodes) {
+      delete pair.second;
+    }
+  }
+  
+  void cleanup();
+  void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
+  void collapseEmptyNodes(bool ignoreGapRunDeltas);
+  void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
+  void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
+  void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
+
+  std::unordered_map<size_t, int32_t> getSeedsAtNode(MgsrLiteNode* node, bool useCollapsed=true) const;
+
+  void buildNewickRecursive(const MgsrLiteNode* node, std::ostringstream& oss, bool useCollapsed) const;
+  std::string toNewick(bool useCollapsed = false) const;
+
+  uint32_t getBlockStartScalar(const uint32_t blockId) const;
+  uint32_t getBlockEndScalar(const uint32_t blockId) const;
+
+  size_t getNumNodes()         const {return allLiteNodes.size();}
+  size_t getNumActiveNodes()   const {return allLiteNodes.size() - detachedNodes.size();}
+  size_t getNumDetachedNodes() const {return detachedNodes.size();}
+
+  bool isDetached(MgsrLiteNode* node) const {return detachedNodes.find(node) != detachedNodes.end();}
+  bool isDetached(const std::string& nodeId) const {
+    auto it = allLiteNodes.find(nodeId);
+    if (it == allLiteNodes.end()) {
+      std::cerr << "Error: Node ID " << nodeId << " not found in the tree." << std::endl;
+      std::exit(1);
+    }
+    return isDetached(it->second);
+  }
+
+  void loadTrueAbundances(const std::string& trueAbundancePath);
+  
+  void collapseNode(MgsrLiteNode* node);
+
+  std::pair<std::unordered_map<MgsrLiteNode*, MgsrLiteNode*>, std::unordered_map<MgsrLiteNode*, int>> findClosestTargets(
+    const MgsrLiteTree& tree,
+    const std::vector<MgsrLiteNode*>& targets
+  );
+
+  std::vector<std::tuple<double, MgsrLiteNode*, MgsrLiteNode*>> getClosestNodesDistance(
+    const std::unordered_set<MgsrLiteNode*>& sourceNodes,
+    size_t selectNum,
+    size_t maxPerNode,
+    bool leavesOnly
+    );
+
+private:
+  bool cleaned = false;
+};
+
+
+std::vector<MgsrLiteNode*> getNearestNodes(
+  MgsrLiteNode* node,
+  uint32_t numNodes,
+  bool leafNodesOnly);
+
+std::vector<MgsrLiteNode*> getNearestNodes(
+  MgsrLiteNode* node,
+  const std::unordered_set<std::string_view>& selectedNodes,
+  uint32_t numNodes,
+  bool leafNodesOnly);
+
+struct EPPNodeRange {
+  MgsrLiteNode* startNode;
+  MgsrLiteNode* endNode;
+  bool endNodeInclusive;
+};
+
 class Read {
   public:
     std::vector<readSeedmer> seedmersList;
@@ -217,6 +424,43 @@ class Read {
     std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
     std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
+    ReadType readType = ReadType::PASS;
+    int32_t maxScore = 0;
+    int32_t epp = 0;
+    int32_t numForwardMatching = 0;
+    int32_t numReverseMatching = 0;
+    MgsrLiteNode* lastParsimoniousNode = nullptr;
+    std::vector<EPPNodeRange> eppNodeRanges;
+};
+
+struct RDGNode {
+  size_t hash;
+  std::unordered_set<RDGNode*> neighbors; // vector of pointers to neighbors
+  std::vector<uint32_t> readIndicesMid; // vector of read indices whose mid seedmer start at this seedmer. will be seedmerList.size() / 2 + 1
+  std::vector<uint32_t> readIndicesCovered;
+  RDGNode(size_t h) : hash(h), neighbors{}, readIndicesMid{}, readIndicesCovered{} {}
+};
+
+class ReadDebruijnGraph {
+  public:
+    std::unordered_map<size_t, std::unique_ptr<RDGNode>> hashToNode;
+    std::vector<std::vector<RDGNode*>> connectedComponents;
+
+    ReadDebruijnGraph() : hashToNode() {}
+    ~ReadDebruijnGraph() {
+      hashToNode.clear();
+      connectedComponents.clear();
+    }
+    void buildGraph(std::vector<Read>& reads);
+
+    RDGNode* makeNewNode(size_t hash);
+    std::pair<RDGNode*, bool> tryMakeNewNode(size_t hash);
+    void linkNodes(RDGNode* node1, RDGNode* node2);
+    void identifyConnectedComponents();
+    void searchComponentDFS(RDGNode* node, std::unordered_set<RDGNode*>& visited, std::vector<RDGNode*>& currentComponent);
+    void exportToGFA(const std::string& path);
+    void sortReads(std::vector<Read>& reads, std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex);
+    void sortReadsHelper(RDGNode* node, size_t& curReadIndex, std::vector<mgsr::Read>& reads, std::vector<mgsr::Read>& sortedReads, std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<std::vector<size_t>>& sortedReadSeedmersDuplicatesIndex);
 };
 
 void seedmersFromFastq(
@@ -276,6 +520,7 @@ class mgsrIndexBuilder {
   private:
     void buildIndexHelper(
       panmanUtils::Node *node,
+      std::unordered_set<std::string_view>& emptyNodes,
       panmapUtils::BlockSequences &blockSequences,
       std::vector<char> &blockExistsDelayed,
       std::vector<char> &blockStrandDelayed,
@@ -336,8 +581,9 @@ class ThreadsManager {
     int t;
     int l;
     bool openSyncmer;
-    bool skipSingleton;
+    uint32_t maskReads;
     bool lowMemory;
+    bool progressBar;
 
     // mutation structures... shared by all threads during placement
     std::vector<seeding::uniqueKminmer_t> seedInfos;
@@ -362,16 +608,27 @@ class ThreadsManager {
     std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
     std::unordered_map<std::string, std::string> identicalNodeToGroup;
 
+    std::unordered_set<MgsrLiteNode*> selectedNodes;
+
 
     // for squareEM... will be moved from mgsrPlacer to here.
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
+
+    // Experimental
+    std::unordered_map<size_t, uint32_t> seedReadsFrequency;
+    std::unordered_map<size_t, uint32_t> seedNodesFrequency;
+    std::unordered_map<MgsrLiteNode*, double> nodeSeedScores;
+    std::unordered_map<MgsrLiteNode*, double> nodeSeedScoresCorrected;
+    void countSeedNodesFrequencyHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, size_t& curDFSIndex);
+    void countSeedNodesFrequency();
+    void computeNodeSeedScoresHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, std::unordered_set<mgsr::MgsrLiteNode*>& selectedNodes, const std::unordered_map<size_t, double>& seedWeights, double& curNodeSeedScore, size_t& curDFSIndex);
+    void computeNodeSeedScores();
 
 
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(panmapUtils::LiteTree* liteTree, size_t numThreads, bool skipSingleton = false, bool lowMemory = false) 
-      : liteTree(liteTree), numThreads(numThreads), skipSingleton(skipSingleton), lowMemory(lowMemory) {
+    ThreadsManager(MgsrLiteTree* liteTree,  size_t numThreads, uint32_t maskReads, bool progressBar, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), maskReads(maskReads), progressBar(progressBar), lowMemory(lowMemory) {
       threadRanges.resize(numThreads);
       perNodeScoreDeltasIndexByThreadId.resize(numThreads);
       readMinichainsInitialized.resize(numThreads);
@@ -381,10 +638,44 @@ class ThreadsManager {
     }
 
     void initializeMGSRIndex(MGSRIndex::Reader indexReader);
-    void initializeQueryData(std::span<const std::string> readSequences, bool fast_mode = false);
-    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const;
-    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const;
+    void initializeQueryData(std::span<const std::string> readSequences, uint32_t maskSeedThreshold, bool fast_mode = false);
+    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
+    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();
+
+    void correctNodeScoresAfterSelection(
+      mgsr::MgsrLiteNode* node,
+      mgsr::MgsrLiteNode*& topWEPPNode,
+      const std::unordered_set<mgsr::MgsrLiteNode*>& selectedNodes,
+      const std::unordered_set<uint32_t>& activeReads,
+      std::vector<uint32_t>& readScores,
+      const std::vector<double>& readWEPPWeights,
+      double& curNodeSumWEPPScoreCorrected
+    );
+    void scoreNodesHelper(
+      MgsrLiteNode* node,
+      MgsrLiteNode*& topWEPPNode,
+      MgsrLiteNode*& processingNode,
+      std::vector<uint32_t>& readScores,
+      std::vector<double>& readWEPPWeights,
+      size_t& curNodeSumRawScore,
+      double& curNodeSumMPScore,
+      size_t& curNodeSumMPReads,
+      double& curNodeSumWEPPScore,
+      double& curNodeSumEPPWeightedScore);
+    void scoreNodes();
+
+    void scoreNodesMultithreaded();
+
+    void computeKminmerCoverage();
+    void computeKminmerCoverageHelper(
+      MgsrLiteNode* node,
+      std::vector<uint32_t>& readScores,
+      const absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>>& seedmerToReads,
+      absl::flat_hash_map<size_t, std::unordered_set<uint32_t>>& coveredKminmers,
+      absl::flat_hash_map<size_t, uint32_t>& refKminmers,
+      size_t& dfsIndex
+    );
 
 };
 
@@ -404,8 +695,8 @@ class mgsrPlacer {
     std::vector<std::vector<uint32_t>>& invertedBlocks;
 
     // tree pointer
-    panmapUtils::LiteTree *liteTree;
-    std::unordered_map<std::string, int64_t> nodeToDfsIndex; // Now calculated from index... no longer updated during placement
+    MgsrLiteTree *liteTree;
+    ThreadsManager *threadsManager;
 
     int k;
     int s;
@@ -414,6 +705,9 @@ class mgsrPlacer {
     bool openSyncmer;
 
     // parameters from user input... preset for now
+    uint32_t maskReads;
+    bool lowMemory;
+    bool progressBar;
     double excludeDuplicatesThreshold = 0.5;
     double errorRate = 0.005;
     int64_t maximumGap = 50;
@@ -424,6 +718,10 @@ class mgsrPlacer {
     std::map<uint64_t, uint64_t> positionMap;
     std::unordered_map<size_t, std::vector<std::map<uint64_t, uint64_t>::iterator>> hashToPositionMap;
     std::unordered_map<size_t, RefSeedmerExistStatus> delayedRefSeedmerStatus;
+
+    // dynamic reference kminmer structures for kminmer counting
+    std::vector<std::optional<size_t>> kminmerOnRef;
+    std::unordered_map<size_t, std::pair<int32_t, int32_t>> kminmerOnRefCount;
 
     // preallocated structures to prevent memory allocation and deletion in tight loops
     std::vector<std::pair<Minichain, bool>> minichainsToUpdate;
@@ -480,24 +778,17 @@ class mgsrPlacer {
     
     mgsrPlacer(panmapUtils::LiteTree* liteTree, ThreadsManager& threadsManager, bool lowMemory = false)
       : liteTree(liteTree),
+        threadsManager(&threadsManager),
         lowMemory(lowMemory),
-        seedInfos(threadsManager.seedInfos),
-        seedInfosPtr(&seedInfos),
-        seedInsubIndices(threadsManager.seedInsubIndices),
-        seedInsubIndicesPtr(&seedInsubIndices),
-        seedDeletions(threadsManager.seedDeletions),
-        seedDeletionsPtr(&seedDeletions),
-        coordDeltas(threadsManager.coordDeltas), 
-        coordDeltasPtr(&coordDeltas),
-        invertedBlocks(threadsManager.invertedBlocks),
-        invertedBlocksPtr(&invertedBlocks)
-    {
-      k = threadsManager.k;
-      s = threadsManager.s;
-      t = threadsManager.t;
-      l = threadsManager.l;
-      openSyncmer = threadsManager.openSyncmer;
-    }
+        k(threadsManager.k),
+        s(threadsManager.s),
+        t(threadsManager.t),
+        l(threadsManager.l),
+        openSyncmer(threadsManager.openSyncmer),
+        maskReads(threadsManager.maskReads),
+        threadId(threadId),
+        progressBar(threadsManager.progressBar)
+    {}
     
     mgsrPlacer(panmapUtils::LiteTree* liteTree, MGSRIndex::Reader indexReader)
       : liteTree(liteTree),
@@ -576,11 +867,34 @@ class mgsrPlacer {
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
     void setShowTime(bool show_time) { this->show_time = show_time; }
 
-    void placeReadsHelper(panmapUtils::LiteNode* node);
+    void scoreNodesHelper(
+      MgsrLiteNode* node,
+      MgsrLiteNode*& processingNode,
+      const std::vector<uint32_t>& numDuplicates,
+      const std::vector<double>& readWEPPWeights,
+      std::vector<uint32_t>& readScores,
+      size_t& curNodeSumRawScore,
+      size_t& curNodeSumEPPRawScore,
+      KahanSum& curNodeSumWEPPScore);
+    void scoreNodes();
+
+    void traverseTreeHelper(MgsrLiteNode* node);
+    void traverseTree();
+
+    void placeReadsHelper(MgsrLiteNode* node);
     void placeReads();
 
-    void traverseTreeHelper(panmapUtils::LiteNode* node);
-    void traverseTree();
+    void scoreReadsHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode);
+    void scoreReads();
+
+
+    void calculateEppHelper(MgsrLiteNode* node);
+    void calculateEpp();
+
+    void computeOverlapCoefficientsHelper(MgsrLiteNode* node, const absl::flat_hash_set<size_t>& allSeedmerHashesSet, std::vector<std::pair<std::string, double>>& overlapCoefficients);
+
+    std::vector<std::pair<std::string, double>> computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
+
 
     // for tracking progress
     void setProgressTracker(ProgressTracker* tracker, size_t tid);

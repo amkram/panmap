@@ -1,5 +1,6 @@
 
 #include "panmap_utils.hpp"
+#include <queue>
 
 namespace panmapUtils {
 
@@ -285,8 +286,8 @@ void simulateSNPsOnSequence(
   for (const auto& [ref, alt, pos] : snpRecords) {
     sequence[pos] = alt;
   }
-
 }
+
 
 void LiteTree::cleanup() {
   for (auto& pair : allLiteNodes) {

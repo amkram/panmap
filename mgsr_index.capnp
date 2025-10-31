@@ -29,6 +29,7 @@ struct NodeChanges {
 struct LiteNode {
   id @0: Text;
   parentIndex @1: UInt32;
+  identicalToParent @2: Bool;
 }
 
 struct BlockRange {

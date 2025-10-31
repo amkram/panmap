@@ -1200,7 +1200,11 @@ int main(int argc, char *argv[]) {
         ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
         ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
-        ("skip-singleton", "Skip singleton reads")
+        ("no-progress", "Disable progress bars")
+        ("seed-scores", "Use seed scores instead of read scores to score nodes")
+        ("mask-reads", po::value<uint32_t>()->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
+        ("mask-seeds", po::value<uint32_t>()->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
+
         ("low-memory", "Use low memory mode")
     ;
 
@@ -1217,10 +1221,18 @@ int main(int argc, char *argv[]) {
         ("eval", po::value<std::string>(), "Evaluate placement accuracy (path to TSV)")
         ("dump-sequence", po::value<std::string>(), "Dump sequence for a specific node ID")
         ("dump-random-node", "Dump sequence for a random node")
+        ("dump-node-cluster", po::value<std::vector<std::string>>()->multitoken(), "Dump N nearest relatives for specified node IDs (includes internal nodes)")
+        ("dump-node-cluster-leaves", po::value<std::vector<std::string>>()->multitoken(), "Dump N nearest leaf-node relatives for specified node IDs (does not include internal nodes)")
+        ("dump-random-node-cluster", po::value<uint32_t>(), "Dump sequences for a random node and N of its closest relatives (includes internal nodes)")
+        ("dump-random-node-cluster-leaves", po::value<uint32_t>(), "Dump sequences for a random node and N of its closest leaf-node relatives (does not include internal nodes)")
+        ("dump-random-node-clusters", po::value<std::vector<uint32_t>>()->multitoken(), "Dump sequences for multiple random node clusters, each with N closest relatives (includes internal nodes)")
+        ("dump-random-node-clusters-leaves", po::value<std::vector<uint32_t>>()->multitoken(), "Dump sequences for multiple random node clusters, each with N closest leaf-node relatives (does not include internal nodes)")
         ("debug-node-id", po::value<std::string>()->default_value(""), "Log detailed placement debug info for this specific node ID")
         ("verify-scores", "Recompute all similarity scores from scratch at each node for verification (slow)")
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
+        ("overlap-coefficients", "Output overlap coefficients then exit")
+        ("true-abundance", po::value<std::string>(), "Path to true abundance TSV for comparison")
         ("use-lite-placement", "Use LiteTree-based placement (avoids loading full panman until after placement)")
         ("use-full-placement", "Use traditional full Tree-based placement (default for backward compatibility)")
     ;
@@ -1406,6 +1418,20 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    std::mt19937 rng;
+    if (vm.count("random-seed")) {
+      std::string seed_str = vm["random-seed"].as<std::string>();
+      std::hash<std::string> hasher;
+      rng = std::mt19937(hasher(seed_str));
+    } else {
+      std::random_device rd;
+      rng = std::mt19937(rd());
+    }
+    
+    if (vm.count("dump-node-cluster") || vm.count("dump-node-cluster-leaves")
+     || vm.count("dump-random-node-cluster") || vm.count("dump-random-node-cluster-leaves")
+     || vm.count("dump-random-node-clusters") || vm.count("dump-random-node-clusters-leaves")
+    ) {
     // Get timing flag early for use in all code paths
     bool show_time = vm.count("time") > 0;
 
@@ -1417,6 +1443,237 @@ int main(int argc, char *argv[]) {
       MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
       LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
       size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      bool lowMemory = vm.count("low-memory") > 0;
+      
+      mgsr::MgsrLiteTree T;
+      T.initialize(indexReader, numThreads, lowMemory, false);
+
+      if (vm.count("dump-node-cluster") || vm.count("dump-node-cluster-leaves")) {
+        if (!vm.count("mgsr-index")) {
+          err("--mgsr-index must be provided to use --dump-node-cluster");
+          return 1;
+        }
+        auto inputParameters = vm.count("dump-node-cluster") 
+                            ? vm["dump-node-cluster"].as<std::vector<std::string>>()
+                            : vm["dump-node-cluster-leaves"].as<std::vector<std::string>>();
+        if (inputParameters.size() != 2) {
+          err("Expected 2 parameters for --dump-node-cluster: <nodeID> <numNodes>");
+          return 1;
+        }
+
+        uint32_t numNodes;
+        try {
+          numNodes = std::stoi(inputParameters[1]);
+          // Proceed with using numNodes
+        } catch (const std::invalid_argument& e) {
+          err("The second parameter is not convertible to an integer");
+          return 1;
+        }
+
+        std::string nodeId = inputParameters[0];
+        if (T.allLiteNodes.find(nodeId) == T.allLiteNodes.end()) {
+          err("Node ID {} not found in the tree", nodeId);
+          return 1;
+        }
+
+        std::vector<mgsr::MgsrLiteNode*> nearestNodes = vm.count("dump-node-cluster")
+                                                    ? mgsr::getNearestNodes(T.allLiteNodes.find(nodeId)->second, numNodes, false)
+                                                    : mgsr::getNearestNodes(T.allLiteNodes.find(nodeId)->second, numNodes, true);
+        std::ofstream outFile(prefix + ".clusterIDs.tsv");
+        outFile << "Strain\tClusterID" << std::endl;
+        for (const auto& node : nearestNodes) {
+          outFile << node->identifier << "\t0" << std::endl;
+        }
+        outFile.close();
+        msg("Cluster node IDs written to {}", prefix + ".clusterIDs.tsv");
+        exit(0);
+      } else if (vm.count("dump-random-node-cluster") || vm.count("dump-random-node-cluster-leaves")) {
+        if (!vm.count("mgsr-index")) {
+          err("--mgsr-index must be provided to use --dump-node-cluster");
+          return 1;
+        }
+        uint32_t numNodes = vm.count("dump-random-node-cluster")
+                            ? vm["dump-random-node-cluster"].as<uint32_t>()
+                            : vm["dump-random-node-cluster-leaves"].as<uint32_t>();
+        std::vector<std::string_view> allNodeIDs;
+        allNodeIDs.reserve(T.allLiteNodes.size());
+        for (const auto& [nodeID, node] : T.allLiteNodes) {
+          if (node->children.empty()) {
+            allNodeIDs.push_back(nodeID);
+          }
+        }
+        allNodeIDs.shrink_to_fit();
+
+        std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
+
+        std::vector<mgsr::MgsrLiteNode*> nearestNodes = vm.count("dump-random-node-cluster")
+                                                    ? mgsr::getNearestNodes(T.allLiteNodes.find(std::string(allNodeIDs[0]))->second, numNodes, false)
+                                                    : mgsr::getNearestNodes(T.allLiteNodes.find(std::string(allNodeIDs[0]))->second, numNodes, true);
+
+        std::ofstream outFile(prefix + ".randomClusterIDs.tsv");
+        outFile << "Strain\tClusterID" << std::endl;
+        for (const auto& node : nearestNodes) {
+          outFile << node->identifier << "\t0" << std::endl;
+        }
+        outFile.close();
+        msg("Random node IDs written to {}", prefix + ".randomClusterIDs.tsv");
+        exit(0);
+      } else if (vm.count("dump-random-node-clusters") || vm.count("dump-random-node-clusters-leaves")) {
+        if (!vm.count("mgsr-index")) {
+          err("--mgsr-index must be provided to use --dump-node-cluster");
+          return 1;
+        }
+        std::vector<uint32_t> nodeClusterNodes = vm.count("dump-random-node-clusters")
+                                              ? vm["dump-random-node-clusters"].as<std::vector<uint32_t>>()
+                                              : vm["dump-random-node-clusters-leaves"].as<std::vector<uint32_t>>();
+
+        std::sort(nodeClusterNodes.begin(), nodeClusterNodes.end(), std::greater<uint32_t>());
+
+        std::vector<std::string_view> allNodeIDs;
+        allNodeIDs.reserve(T.allLiteNodes.size());
+        for (const auto& [nodeID, node] : T.allLiteNodes) {
+          if (node->children.empty()) {
+            allNodeIDs.push_back(nodeID);
+          }
+        }
+        allNodeIDs.shrink_to_fit();
+
+        std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
+
+        std::vector<std::vector<std::string_view>> nodeClusters(nodeClusterNodes.size());
+        std::unordered_set<std::string_view> selectedNodes;
+        std::unordered_set<std::string_view> paddedNodes;
+        size_t allNodeIDsIndex = 0;
+        for (size_t i = 0; i < nodeClusterNodes.size(); i++) {
+          uint32_t curClusterSize = nodeClusterNodes[i];
+          uint32_t nextClusterSize = (i + 1 < nodeClusterNodes.size()) ? nodeClusterNodes[i + 1] : 1;
+
+          std::string_view curNode;
+          while (true) {
+            curNode = allNodeIDs[allNodeIDsIndex];
+            ++allNodeIDsIndex;
+            if (allNodeIDsIndex >= allNodeIDs.size()) {
+              err("Not enough nodes to fulfill the requested cluster sizes");
+              exit(1);
+            }
+            if (paddedNodes.find(curNode) == paddedNodes.end()) {
+              break;
+            }
+          }
+
+          std::vector<mgsr::MgsrLiteNode*> nearestNodes = vm.count("dump-random-node-clusters")
+              ? mgsr::getNearestNodes(T.allLiteNodes.find(std::string(curNode))->second, selectedNodes, curClusterSize + nextClusterSize - 1, false)
+              : mgsr::getNearestNodes(T.allLiteNodes.find(std::string(curNode))->second, selectedNodes, curClusterSize + nextClusterSize - 1, true);
+          for (size_t j = 0; j < nearestNodes.size(); j++) {
+            if (j < curClusterSize) {
+              selectedNodes.insert(nearestNodes[j]->identifier);
+              nodeClusters[i].push_back(nearestNodes[j]->identifier);
+            }
+            paddedNodes.insert(nearestNodes[j]->identifier);
+          }
+        }
+
+        std::ofstream outFile(prefix + ".randomClusterIDs.tsv");
+        outFile << "Strain\tClusterID" << std::endl;
+        for (size_t i = 0; i < nodeClusters.size(); i++) {
+          for (const auto& node : nodeClusters[i]) {
+            outFile << node << "\t" << (i + 1) << std::endl;
+          }
+        }
+        outFile.close();
+        msg("Random node IDs written to {}", prefix + ".randomClusterIDs.tsv");
+        exit(0);
+      }
+    }
+
+
+
+    if (vm.count("mgsr-index") && !reads1.empty()) {
+      std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
+      int fd = mgsr::open_file(mgsr_index_path);
+      ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
+      ::capnp::PackedFdMessageReader reader(fd, readerOptions);
+      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
+      LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
+      size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+      bool lowMemory = vm.count("low-memory") > 0;
+      
+      mgsr::MgsrLiteTree liteTree;
+      if (vm.count("true-abundance")) {
+        std::string trueAbundancePath = vm["true-abundance"].as<std::string>();
+        liteTree.loadTrueAbundances(trueAbundancePath);
+      }
+      liteTree.initialize(indexReader, numThreads, lowMemory, true);
+      liteTree.debugNodeID = vm["debug-node-id"].as<std::string>();
+      std::vector<std::string> readSequences;
+      mgsr::extractReadSequences(reads1, reads2, readSequences);
+
+      uint32_t maskReads = vm.count("mask-reads") ? vm["mask-reads"].as<uint32_t>() : 0;
+      uint32_t maskSeedThreshold = vm["mask-seeds"].as<uint32_t>();
+      bool progressBar = true;
+      if (vm.count("no-progress")) progressBar = false;
+      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, maskReads, progressBar, lowMemory);
+      threadsManager.initializeMGSRIndex(indexReader);
+      close(fd);
+      threadsManager.initializeQueryData(readSequences, maskSeedThreshold);
+
+      if (vm.count("overlap-coefficients")) {
+        auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+        mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory, 0);
+        auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+        std::ofstream overlapCoefficientsFile(prefix + ".overlapCoefficients.txt");
+        std::sort(overlapCoefficients.begin(), overlapCoefficients.end(), [](const auto& a, const auto& b) {
+          return a.second > b.second;
+        });
+        uint32_t rank = 0;
+        double currentOverlapCoefficient = overlapCoefficients[0].second;
+        for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
+          if (overlapCoefficient != currentOverlapCoefficient) {
+            currentOverlapCoefficient = overlapCoefficient;
+            ++rank;
+          }
+          overlapCoefficientsFile << nodeId << "\t" << std::fixed << std::setprecision(6) << overlapCoefficient << "\t" << rank <<  std::endl;
+        }
+        overlapCoefficientsFile.close();
+        auto end_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
+        auto duration_computeOverlapCoefficients = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_computeOverlapCoefficients - start_time_computeOverlapCoefficients);
+        std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
+        exit(0);
+      }
+
+      liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+      // liteTree.collapseEmptyNodes(true);
+
+      if (vm.count("seed-scores")) {
+        threadsManager.countSeedNodesFrequency();
+        threadsManager.computeNodeSeedScores();
+        std::ofstream nodeSeedScoresOut(prefix + ".nodeSeedScores.tsv");
+        nodeSeedScoresOut << "NodeId\tDistance\tnodeSeedScores\tnodeSeedScoresCorrected\tselected\tselectedNeighbor\tinSample\tcollapsedNodes" << std::endl;
+        for (const auto& [node, nodeSeedScore] : threadsManager.nodeSeedScores) {
+          nodeSeedScoresOut << node->identifier
+                            << "\t" << node->seedDistance
+                            << "\t" << nodeSeedScore
+                            << "\t" << threadsManager.nodeSeedScoresCorrected.find(node)->second
+                            << "\t" << node->selected
+                            << "\t" << node->selectedNeighbor
+                            << "\t" << node->inSample << "\t";
+          if (node->identicalNodeIdentifiers.empty()) {
+            nodeSeedScoresOut << "." << std::endl;
+          } else {
+            for (size_t i = 0; i < node->identicalNodeIdentifiers.size(); ++i) {
+              nodeSeedScoresOut << node->identicalNodeIdentifiers[i];
+              if (i != node->identicalNodeIdentifiers.size() - 1) {
+                nodeSeedScoresOut << ",";
+              }
+            }
+            nodeSeedScoresOut << std::endl;
+          }
+
+        }
+        nodeSeedScoresOut.close();
+        exit(0);
+      }
+            
       
       panmapUtils::LiteTree liteTree;
       liteTree.initialize(liteTreeReader);
@@ -1484,17 +1741,57 @@ int main(int argc, char *argv[]) {
           if (i == 0) {
             threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
             threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
-            threadsManager.kminmerOverlapCoefficients = std::move(curThreadPlacer.kminmerOverlapCoefficients);
           }
           // Note: numGroupsUpdate and numReadsUpdate removed from mgsrPlacer
         }
       });
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-      std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+      std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-      auto nodeToDfsIndex = std::move(liteTree.nodeToDfsIndex);
-      mgsr::squareEM squareEM(threadsManager, nodeToDfsIndex, prefix, 1000);
+      // threadsManager.scoreNodes();
+      threadsManager.scoreNodesMultithreaded();
+      
+      mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
+      auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+      std::unordered_map<std::string, double>().swap(threadsManager.kminmerOverlapCoefficients);
+      for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
+        threadsManager.kminmerOverlapCoefficients[nodeId] = overlapCoefficient;
+      }
+
+      std::string collapsedNewick = liteTree.toNewick(true);
+      std::ofstream of(prefix + ".collapsed.newick");
+      of << collapsedNewick;
+      of.close();
+      std::ofstream scoresOut(prefix + ".nodeScores.tsv");
+      scoresOut << "NodeId\tdistance\tWEPPScore\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tSelectedNeighbor\tinSample\tcollapsedNodes" << std::endl;
+      for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
+        if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {
+          continue;
+        }
+        scoresOut << nodeId
+                  << "\t" << node->seedDistance
+                  << "\t" << node->sumWEPPScore.sum
+                  << "\t" << node->sumWEPPScoreCorrected.sum
+                  << "\t" << node->selected
+                  << "\t" << node->selectedNeighbor
+                  << "\t" << node->inSample << "\t";
+        if (node->identicalNodeIdentifiers.empty()) {
+          scoresOut << "." << std::endl;
+        } else {
+          for (size_t i = 0; i < node->identicalNodeIdentifiers.size(); ++i) {
+            scoresOut << node->identicalNodeIdentifiers[i];
+            if (i != node->identicalNodeIdentifiers.size() - 1) {
+              scoresOut << ",";
+            }
+          }
+          scoresOut << std::endl;
+        }
+      }
+      scoresOut.close();
+      exit(0);
+
+      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
@@ -1547,6 +1844,9 @@ int main(int argc, char *argv[]) {
     int s = vm["s"].as<int>(); // Default handled by boost
     std::string index_path = vm["index"].as<std::string>(); // Default handled by boost
 
+
+    // Load pangenome
+    msg("Loading reference pangenome from: {}", guide);
     std::random_device rd;
     std::mt19937 rng(rd());
 
