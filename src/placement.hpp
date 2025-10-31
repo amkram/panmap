@@ -33,6 +33,9 @@ namespace placement {
 // This represents the accumulated genome state at a node in phylogenetic tree
 // The root starts empty (ancestral state), and each node adds phylogenetic mutations
 struct GenomeState {
+  // Position → seed index mapping (for handling deletions and substitutions)
+  absl::flat_hash_map<uint32_t, uint32_t> positionToSeedIndex;
+  
   // Core seed count data (this is the main memory consumer)
   absl::flat_hash_map<size_t, int64_t> seedCounts;
   absl::flat_hash_set<size_t> uniqueSeeds;
@@ -48,6 +51,7 @@ struct GenomeState {
   // Efficient copy constructor that preserves cached metrics when possible
   GenomeState() = default;
   GenomeState(const GenomeState& parent) : 
+      positionToSeedIndex(parent.positionToSeedIndex),
       seedCounts(parent.seedCounts), 
       uniqueSeeds(parent.uniqueSeeds),
       metricsValid(false) {} // Always recalculate metrics for child nodes
@@ -60,7 +64,8 @@ struct GenomeState {
   
   // Estimate memory usage for monitoring
   size_t estimateMemoryUsage() const {
-      return seedCounts.size() * (sizeof(size_t) + sizeof(int64_t)) + 
+      return positionToSeedIndex.size() * (sizeof(uint32_t) + sizeof(uint32_t)) +
+             seedCounts.size() * (sizeof(size_t) + sizeof(int64_t)) + 
              uniqueSeeds.size() * sizeof(size_t) + 
              sizeof(GenomeState);
   }
@@ -83,6 +88,7 @@ struct TraversalParams {
   bool useRawSeeds = false; // Whether to use raw syncmers instead of k-min-mers
   double scoreScale = 1.0; // Scaling factor for scores
   std::string debug_node_id;
+  bool verify_scores = false; // Whether to recompute scores from scratch for verification
 };
 
 // Track global state during placement
@@ -91,6 +97,7 @@ struct PlacementGlobalState {
     absl::flat_hash_map<size_t, int64_t> seedFreqInReads;      // Hash -> read frequency count
     absl::flat_hash_map<size_t, std::string> hashToKmer;       // Optional: hash -> k-mer sequence (if available)
     float totalReadSeedCount = 0.0f;
+    int64_t totalReadSeedFrequency = 0;  // Sum of all read seed frequencies (constant denominator for Jaccard)
     double jaccardDenominator = 0.0;
     size_t readUniqueSeedCount = 0;
     double readMagnitude = 0.0;  // Precomputed read magnitude for cosine similarity
@@ -107,6 +114,9 @@ struct PlacementGlobalState {
     
     // Root node pointer for traversal
     panmapUtils::LiteNode* root = nullptr;
+    
+    // Optional: Full tree for verification mode (nullptr if not using verification)
+    panmanUtils::Tree* fullTree = nullptr;
 };
 
 // MGSR-style global genome state (single instance, modified in-place with backtracking)
@@ -115,10 +125,16 @@ struct MgsrGenomeState {
     std::map<uint64_t, uint64_t> positionMap;  // position -> seedIndex
     absl::flat_hash_map<size_t, std::vector<std::map<uint64_t, uint64_t>::iterator>> hashToPositionMap;  // hash -> list of position iterators
     
-    // Cached similarity metrics for current node
+    // Cached similarity metrics for current node (updated incrementally)
     int64_t currentJaccardNumerator = 0;
+    int64_t currentJaccardDenominator = 0;  // Cached Jaccard denominator (union of read and genome)
     int64_t currentWeightedJaccardNumerator = 0;
+    int64_t currentWeightedJaccardDenominator = 0;  // Cached weighted Jaccard denominator
     double currentCosineNumerator = 0.0;
+    double currentGenomeMagnitude = 0.0;  // Cached genome magnitude for cosine (sqrt of magnitudeSquared)
+    double currentGenomeMagnitudeSquared = 0.0;  // Cached squared magnitude (avoids rounding errors)
+    size_t currentPresenceIntersectionCount = 0;  // Cached presence/absence intersection count
+    size_t currentPresenceUnionCount = 0;  // Cached presence/absence union count
     absl::flat_hash_map<size_t, int64_t> currentSeedCounts;  // For frequency-based metrics
     absl::flat_hash_set<size_t> currentUniqueSeeds;          // For presence-based metrics
     
@@ -126,8 +142,14 @@ struct MgsrGenomeState {
         positionMap.clear();
         hashToPositionMap.clear();
         currentJaccardNumerator = 0;
+        currentJaccardDenominator = 0;
         currentWeightedJaccardNumerator = 0;
+        currentWeightedJaccardDenominator = 0;
         currentCosineNumerator = 0.0;
+        currentGenomeMagnitude = 0.0;
+        currentGenomeMagnitudeSquared = 0.0;
+        currentPresenceIntersectionCount = 0;
+        currentPresenceUnionCount = 0;
         currentSeedCounts.clear();
         currentUniqueSeeds.clear();
     }
@@ -201,7 +223,8 @@ struct PlacementResult {
   int64_t currentJaccardDenominator = 0;
   double currentCosineNumerator = 0.0;
   double currentCosineDenominator = 0.0;
-  absl::flat_hash_map<size_t, int64_t> currentGenomeSeedCounts;
+  double currentGenomeMagnitudeSquared = 0.0;     // Sum of (genomeCount^2) for ALL seeds
+  absl::flat_hash_map<size_t, int64_t> currentAllGenomeSeedCounts;  // ALL genome seeds (authoritative)
   
   // Added for placement - map of node seeds without dependency on StateManager
   // This allows us to track seeds directly in the placement result
@@ -221,7 +244,8 @@ struct PlacementResult {
     currentJaccardDenominator = 0;
     currentCosineNumerator = 0.0;
     currentCosineDenominator = 0.0;
-    currentGenomeSeedCounts.clear();
+    currentGenomeMagnitudeSquared = 0.0;
+    currentAllGenomeSeedCounts.clear();
     // Note: nodeSeedMap is preserved across nodes as it stores the genome being built
   }
   
@@ -271,7 +295,9 @@ void placeLite(PlacementResult &result,
                std::vector<std::string>& readQuals,
                std::string &outputPath,
                const std::string &indexPath,
-               const std::string &debug_node_id_param);
+               const std::string &debug_node_id_param,
+               bool verify_scores = false,
+               panmanUtils::Tree *fullTree = nullptr);  // Optional: only needed for verification
 
 
 // NEW: Declaration for placement summary dump function

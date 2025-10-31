@@ -2023,9 +2023,9 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
   }
 
   
-  std::sort(refOnSyncmersChangeRecord.begin(), refOnSyncmersChangeRecord.end(), [](const auto& a, const auto& b) {
-    return std::get<0>(a) < std::get<0>(b);
-  });
+    std::sort(refOnSyncmersChangeRecord.begin(), refOnSyncmersChangeRecord.end(), 
+      [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+  
 
 
   int64_t syncmerChangeIndex = 0;
@@ -2251,9 +2251,29 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 
   // Handle raw seeds if enabled
   if (useRawSeeds) {
+    // DEBUG: Track specific positions and hashes for node_1 and node_2
+    bool debugNode = (node->identifier == "node_1" || node->identifier == "node_2");
+    std::vector<uint64_t> debugPositions = {892291, 892292, 962969, 963475};
+    std::vector<size_t> debugHashes = {7376186388207194583ULL, 6864244690904188740ULL};
+    
     for (const auto& [syncmerPos, changeType, syncmer] : refOnSyncmersChangeRecord) {
 
       const auto& currentSyncmer = syncmer;
+      
+      // DEBUG logging
+      if (debugNode) {
+        bool isDebugPos = std::find(debugPositions.begin(), debugPositions.end(), syncmerPos) != debugPositions.end();
+        bool isDebugHash = std::find(debugHashes.begin(), debugHashes.end(), syncmer.hash) != debugHashes.end();
+        
+        if (isDebugPos || isDebugHash) {
+          const char* changeTypeStr = (changeType == panmapUtils::seedChangeType::ADD) ? "ADD" : 
+                                      (changeType == panmapUtils::seedChangeType::DEL) ? "DEL" : "SUB";
+          std::cout << "[MGSR-INDEX] Node " << node->identifier << " dfs=" << dfsIndex 
+                    << ": " << changeTypeStr << " pos=" << syncmerPos 
+                    << " hash=" << syncmer.hash 
+                    << " endPos=" << syncmer.endPos << std::endl;
+        }
+      }
 
       if (changeType == panmapUtils::seedChangeType::ADD || changeType == panmapUtils::seedChangeType::SUB) {
 
@@ -2262,10 +2282,32 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
         }
 
         uniqueSyncmers.emplace_back(currentSyncmer);
+        uniqueSyncmerPositions.emplace_back(syncmerPos);  // CRITICAL: Store the actual position
         addedSeedIndices.push_back(uniqueSyncmers.size() - 1);
+        
+        // DEBUG: Log the seedIndex assigned
+        if (debugNode) {
+          bool isDebugPos = std::find(debugPositions.begin(), debugPositions.end(), syncmerPos) != debugPositions.end();
+          bool isDebugHash = std::find(debugHashes.begin(), debugHashes.end(), syncmer.hash) != debugHashes.end();
+          if (isDebugPos || isDebugHash) {
+            std::cout << "[MGSR-INDEX]   -> Assigned seedIndex=" << (uniqueSyncmers.size() - 1) 
+                      << " at ACTUAL pos=" << syncmerPos
+                      << " (calculated from endPos would be " << (syncmer.endPos - indexBuilder.getK() + 1) << ")"
+                      << std::endl;
+          }
+        }
       } else if (changeType == panmapUtils::seedChangeType::DEL) {
         syncmerFrequency[currentSyncmer]--;
         deletedSeedIndices.push_back(syncmerPos);
+        
+        // DEBUG: Log deletion
+        if (debugNode) {
+          bool isDebugPos = std::find(debugPositions.begin(), debugPositions.end(), syncmerPos) != debugPositions.end();
+          bool isDebugHash = std::find(debugHashes.begin(), debugHashes.end(), syncmer.hash) != debugHashes.end();
+          if (isDebugPos || isDebugHash) {
+            std::cout << "[MGSR-INDEX]   -> Added to deletedSeedIndices (pos=" << syncmerPos << ")" << std::endl;
+          }
+        }
       }
     }
   } else { 
@@ -2406,17 +2448,40 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   size_t totalSeedDeltas = addedSeedIndices.size() + deletedSeedIndices.size();
   capnp::List<SeedDelta>::Builder seedDeltasBuilder = curNodeChanges.initSeedDeltas(totalSeedDeltas);
   
+  // DEBUG
+  bool debugNode = (node->identifier == "node_1" || node->identifier == "node_2");
+  if (debugNode) {
+    std::cout << "[MGSR-INDEX] Node " << node->identifier << " dfs=" << dfsIndex 
+              << ": Building " << totalSeedDeltas << " seedDeltas ("
+              << addedSeedIndices.size() << " additions, "
+              << deletedSeedIndices.size() << " deletions)" << std::endl;
+  }
+  
   size_t deltaIdx = 0;
   // Add insertions
   for (size_t i = 0; i < addedSeedIndices.size(); i++) {
     seedDeltasBuilder[deltaIdx].setSeedIndex(addedSeedIndices[i]);
     seedDeltasBuilder[deltaIdx].setIsDeleted(false);
+    
+    // DEBUG
+    if (debugNode && i < 5) {
+      std::cout << "[MGSR-INDEX]   Delta[" << deltaIdx << "]: seedIndex=" << addedSeedIndices[i] 
+                << " isDeleted=false (ADDITION)" << std::endl;
+    }
+    
     deltaIdx++;
   }
   // Add deletions
   for (size_t i = 0; i < deletedSeedIndices.size(); i++) {
     seedDeltasBuilder[deltaIdx].setSeedIndex(deletedSeedIndices[i]);
     seedDeltasBuilder[deltaIdx].setIsDeleted(true);
+    
+    // DEBUG
+    if (debugNode && i < 5) {
+      std::cout << "[MGSR-INDEX]   Delta[" << deltaIdx << "]: seedIndex=" << deletedSeedIndices[i] 
+                << " isDeleted=true (DELETION at pos=" << deletedSeedIndices[i] << ")" << std::endl;
+    }
+    
     deltaIdx++;
   }
 
@@ -2551,7 +2616,7 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
     capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueSyncmers.size());
     for (size_t i = 0; i < uniqueSyncmers.size(); i++) {
       seedInfoBuilder[i].setHash(uniqueSyncmers[i].hash);
-      seedInfoBuilder[i].setStartPos(uniqueSyncmers[i].endPos - indexBuilder.getK() + 1);
+      seedInfoBuilder[i].setStartPos(uniqueSyncmerPositions[i]);  // CRITICAL FIX: Use actual position, not calculated
       seedInfoBuilder[i].setEndPos(uniqueSyncmers[i].endPos);
       seedInfoBuilder[i].setIsReverse(uniqueSyncmers[i].isReverse);
     }

@@ -694,6 +694,7 @@ target_link_libraries(panmap PRIVATE
     absl::flat_hash_map
     m
     pthread
+    lzma
 )
 
 # Set compiler options based on build type
@@ -701,13 +702,13 @@ if(OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
 elseif(OPTION_PROFILE)
     # Add -pg flag for gprof profiling
-    target_compile_options(panmap PUBLIC -g -O2  -fno-omit-frame-pointer)
-    target_link_options(panmap PUBLIC  -fno-omit-frame-pointer)
+    target_compile_options(panmap PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
+    target_link_options(panmap PUBLIC -pg -fno-omit-frame-pointer)
     
     # Also enable profiling for panman_lib
     if(TARGET panman_lib)
-        target_compile_options(panman_lib PUBLIC -g -O2 -fno-omit-frame-pointer)
-        target_link_options(panman_lib PUBLIC -fno-omit-frame-pointer)
+        target_compile_options(panman_lib PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
+        target_link_options(panman_lib PUBLIC -pg -fno-omit-frame-pointer)
     endif()
 else()
     target_compile_options(panmap PUBLIC -g -O3)

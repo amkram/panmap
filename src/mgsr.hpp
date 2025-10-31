@@ -253,6 +253,7 @@ class mgsrIndexBuilder {
     // Raw seeds support
     bool useRawSeeds;
     std::vector<seeding::rsyncmer_t> uniqueSyncmers;
+    std::vector<uint64_t> uniqueSyncmerPositions;  // CRITICAL: Track actual position of each syncmer (not calculated from endPos)
     std::unordered_map<seeding::rsyncmer_t, uint64_t> syncmerFrequency;
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerFrequency;
 
