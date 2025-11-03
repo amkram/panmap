@@ -5999,7 +5999,7 @@ void mgsr::ThreadsManager::computeNodeSeedScoresHelper(
   if (selectedNodes.empty()) {
     nodeSeedScores[node] = curNodeSeedScore;
     nodeSeedScoresCorrected[node] = curNodeSeedScore;
-  } else if (selectedNodes.find(nodde) == selectedNodes.end()) {
+  } else if (selectedNodes.find(node) == selectedNodes.end()) {
     nodeSeedScoresCorrected[node] = curNodeSeedScore;
   }
 
