@@ -614,9 +614,11 @@ class ThreadsManager {
     // Experimental
     std::unordered_map<size_t, uint32_t> seedReadsFrequency;
     std::unordered_map<size_t, uint32_t> seedNodesFrequency;
+    std::unordered_map<size_t, std::pair<MgsrLiteNode*, std::vector<EPPNodeRange>>> seedMatchedNodeRanges;
+
     std::unordered_map<MgsrLiteNode*, double> nodeSeedScores;
     std::unordered_map<MgsrLiteNode*, double> nodeSeedScoresCorrected;
-    void countSeedNodesFrequencyHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, size_t& curDFSIndex);
+    void countSeedNodesFrequencyHelper(MgsrLiteNode* node, mgsr::MgsrLiteNode*& processingNode, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, size_t& curDFSIndex);
     void countSeedNodesFrequency();
     void computeNodeSeedScoresHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, std::unordered_set<mgsr::MgsrLiteNode*>& selectedNodes, const std::unordered_map<size_t, double>& seedWeights, double& curNodeSeedScore, size_t& curDFSIndex);
     void computeNodeSeedScores();
