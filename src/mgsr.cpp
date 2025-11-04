@@ -5591,14 +5591,14 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
 
   }
 
-  std::ofstream readScoresOut("read_scores_info.tsv");
-  readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tReadWeights" << std::endl;
-  for (size_t i = 0; i < reads.size(); ++i) {
-    const auto& curRead = reads[i];
-    if (curRead.maxScore == 0) continue;
-    readScoresOut << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << std::endl;
-  }
-  readScoresOut.close();
+  // std::ofstream readScoresOut("read_scores_info.tsv");
+  // readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tReadWeights" << std::endl;
+  // for (size_t i = 0; i < reads.size(); ++i) {
+  //   const auto& curRead = reads[i];
+  //   if (curRead.maxScore == 0) continue;
+  //   readScoresOut << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << std::endl;
+  // }
+  // readScoresOut.close();
 
 
   if (liteTree->debugNodeID != "") {
@@ -5672,21 +5672,6 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     minEPPNodes.close();
   }
 
-  for (size_t readIndex = 0; readIndex < reads.size(); ++readIndex) {
-    const auto& read = reads[readIndex];
-    for (size_t i = 1; i < read.eppNodeRanges.size(); ++i) {
-      auto curBeg = read.eppNodeRanges[i].startNode->collapsedDfsIndex;
-      auto prevEnd = read.eppNodeRanges[i-1].endNode->collapsedDfsIndex;
-      auto prevEndInclusive = read.eppNodeRanges[i-1].endNodeInclusive;
-      if ((prevEndInclusive && curBeg <= prevEnd) || (!prevEndInclusive && curBeg < prevEnd)) {
-        std::cerr << "Error: read has overlapping EPP node ranges!" << std::endl;
-        std::cerr << "Read " << readIndex << std::endl;
-        std::cerr << "Prev index: " << i - 1 << " range: " << read.eppNodeRanges[i-1].startNode->identifier << " (" << read.eppNodeRanges[i-1].startNode->collapsedDfsIndex << ") to " << read.eppNodeRanges[i-1].endNode->identifier << " (" << read.eppNodeRanges[i-1].endNode->collapsedDfsIndex << "), inclusive: " << read.eppNodeRanges[i-1].endNodeInclusive << std::endl;
-        std::cerr << "Cur index: " << i << " range: " << read.eppNodeRanges[i].startNode->identifier << " (" << read.eppNodeRanges[i].startNode->collapsedDfsIndex << ") to " << read.eppNodeRanges[i].endNode->identifier << " (" << read.eppNodeRanges[i].endNode->collapsedDfsIndex << "), inclusive: " << read.eppNodeRanges[i].endNodeInclusive << std::endl;
-        exit(1);
-      }
-    }
-  }
 
   std::unordered_set<uint32_t> activeReads;
   activeReads.reserve(reads.size());
