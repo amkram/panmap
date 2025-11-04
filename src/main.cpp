@@ -71,7 +71,7 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
 // Global constants
-static constexpr int DEFAULT_K = 32;
+static constexpr int DEFAULT_K = 31;
 static constexpr int DEFAULT_S = 8;
 
 // Thread safety
@@ -342,6 +342,9 @@ std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path) {
       uint32_t k = root.getK();
       uint32_t s = root.getS();
       auto liteTree = root.getLiteTree();
+      if (liteTree.getLiteNodes().size() == 0) {
+        throw std::runtime_error("Invalid MGSRIndex data: no trees in index");
+      }
       size_t nodeCount = liteTree.getLiteNodes().size();
       size_t seedCount = root.getSeedInfo().size();
         
@@ -1432,19 +1435,17 @@ int main(int argc, char *argv[]) {
      || vm.count("dump-random-node-cluster") || vm.count("dump-random-node-cluster-leaves")
      || vm.count("dump-random-node-clusters") || vm.count("dump-random-node-clusters-leaves")
     ) {
-    // Get timing flag early for use in all code paths
-    bool show_time = vm.count("time") > 0;
-
-    if (vm.count("mgsr-index")) {
+      // Dump operations require MGSR index
+      if (vm.count("mgsr-index")) {
       std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
       int fd = mgsr::open_file(mgsr_index_path);
       ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
       ::capnp::PackedFdMessageReader reader(fd, readerOptions);
       MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
-      LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
       size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
       bool lowMemory = vm.count("low-memory") > 0;
       
+      // Initialize single tree for dump operations
       mgsr::MgsrLiteTree T;
       T.initialize(indexReader, numThreads, lowMemory, false);
 
@@ -1471,8 +1472,10 @@ int main(int argc, char *argv[]) {
         }
 
         std::string nodeId = inputParameters[0];
+        
+        // Check if node exists in tree
         if (T.allLiteNodes.find(nodeId) == T.allLiteNodes.end()) {
-          err("Node ID {} not found in the tree", nodeId);
+          err("Node ID {} not found in tree", nodeId);
           return 1;
         }
 
@@ -1495,8 +1498,9 @@ int main(int argc, char *argv[]) {
         uint32_t numNodes = vm.count("dump-random-node-cluster")
                             ? vm["dump-random-node-cluster"].as<uint32_t>()
                             : vm["dump-random-node-cluster-leaves"].as<uint32_t>();
+        
+        // Collect all leaf node IDs
         std::vector<std::string_view> allNodeIDs;
-        allNodeIDs.reserve(T.allLiteNodes.size());
         for (const auto& [nodeID, node] : T.allLiteNodes) {
           if (node->children.empty()) {
             allNodeIDs.push_back(nodeID);
@@ -1505,10 +1509,12 @@ int main(int argc, char *argv[]) {
         allNodeIDs.shrink_to_fit();
 
         std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
+        
+        std::string selectedNodeId = std::string(allNodeIDs[0]);
 
         std::vector<mgsr::MgsrLiteNode*> nearestNodes = vm.count("dump-random-node-cluster")
-                                                    ? mgsr::getNearestNodes(T.allLiteNodes.find(std::string(allNodeIDs[0]))->second, numNodes, false)
-                                                    : mgsr::getNearestNodes(T.allLiteNodes.find(std::string(allNodeIDs[0]))->second, numNodes, true);
+                                                    ? mgsr::getNearestNodes(T.allLiteNodes.find(selectedNodeId)->second, numNodes, false)
+                                                    : mgsr::getNearestNodes(T.allLiteNodes.find(selectedNodeId)->second, numNodes, true);
 
         std::ofstream outFile(prefix + ".randomClusterIDs.tsv");
         outFile << "Strain\tClusterID" << std::endl;
@@ -1529,8 +1535,8 @@ int main(int argc, char *argv[]) {
 
         std::sort(nodeClusterNodes.begin(), nodeClusterNodes.end(), std::greater<uint32_t>());
 
+        // Collect all leaf node IDs
         std::vector<std::string_view> allNodeIDs;
-        allNodeIDs.reserve(T.allLiteNodes.size());
         for (const auto& [nodeID, node] : T.allLiteNodes) {
           if (node->children.empty()) {
             allNodeIDs.push_back(nodeID);
@@ -1560,10 +1566,12 @@ int main(int argc, char *argv[]) {
               break;
             }
           }
+          
+          std::string curNodeStr = std::string(curNode);
 
           std::vector<mgsr::MgsrLiteNode*> nearestNodes = vm.count("dump-random-node-clusters")
-              ? mgsr::getNearestNodes(T.allLiteNodes.find(std::string(curNode))->second, selectedNodes, curClusterSize + nextClusterSize - 1, false)
-              : mgsr::getNearestNodes(T.allLiteNodes.find(std::string(curNode))->second, selectedNodes, curClusterSize + nextClusterSize - 1, true);
+              ? mgsr::getNearestNodes(T.allLiteNodes.find(curNodeStr)->second, selectedNodes, curClusterSize + nextClusterSize - 1, false)
+              : mgsr::getNearestNodes(T.allLiteNodes.find(curNodeStr)->second, selectedNodes, curClusterSize + nextClusterSize - 1, true);
           for (size_t j = 0; j < nearestNodes.size(); j++) {
             if (j < curClusterSize) {
               selectedNodes.insert(nearestNodes[j]->identifier);
@@ -1585,8 +1593,11 @@ int main(int argc, char *argv[]) {
         exit(0);
       }
     }
+  }  // End of dump-node-cluster conditional block
 
-
+    // Normal workflow: MGSR placement with or without reads
+    // Get timing flag early for use in all code paths
+    bool show_time = vm.count("time") > 0;
 
     if (vm.count("mgsr-index") && !reads1.empty()) {
       std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
@@ -1594,7 +1605,9 @@ int main(int argc, char *argv[]) {
       ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
       ::capnp::PackedFdMessageReader reader(fd, readerOptions);
       MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
-      LiteTree::Reader liteTreeReader = indexReader.getLiteTree();
+      
+      // For now, use first tree for MGSR old-style workflows
+      
       size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
       bool lowMemory = vm.count("low-memory") > 0;
       
@@ -1674,19 +1687,6 @@ int main(int argc, char *argv[]) {
         exit(0);
       }
             
-      
-      panmapUtils::LiteTree liteTree;
-      liteTree.initialize(liteTreeReader);
-
-      std::vector<std::string> readSequences;
-      mgsr::extractReadSequences(reads1, reads2, readSequences);
-
-      bool skipSingleton = vm.count("skip-singleton") > 0;
-      bool lowMemory = vm.count("low-memory") > 0;
-      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, skipSingleton, lowMemory);
-      threadsManager.initializeMGSRIndex(indexReader);
-      close(fd);
-      threadsManager.initializeQueryData(readSequences);
       std::cout << "Total unique kminmers: " << threadsManager.allSeedmerHashesSet.size() << std::endl;
       
       std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
@@ -1723,17 +1723,15 @@ int main(int argc, char *argv[]) {
           auto [start, end] = threadsManager.threadRanges[i];
         
           std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory);
+          mgsr::mgsrPlacer curThreadPlacer(&liteTree, threadsManager, lowMemory, i);
           curThreadPlacer.initializeQueryData(curThreadReads);
           curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
-          curThreadPlacer.setShowTime(show_time);
 
           curThreadPlacer.setProgressTracker(&progressTracker, i);
 
           curThreadPlacer.placeReads();
 
           // Move score deltas from placer to thread manager
-          threadsManager.perNodeScoreDeltasIndexByThreadId[i] = std::move(curThreadPlacer.perNodeScoreDeltasIndex);
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
           threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
           threadsManager.readMinichainsRemoved[i] = curThreadPlacer.readMinichainsRemoved;
@@ -1847,8 +1845,6 @@ int main(int argc, char *argv[]) {
 
     // Load pangenome
     msg("Loading reference pangenome from: {}", guide);
-    std::random_device rd;
-    std::mt19937 rng(rd());
 
     // OPTIMIZATION: Defer loading the full panman Tree until actually needed.
     // LiteTree-based placement doesn't require the full Tree, so we only load it for:
@@ -1903,10 +1899,12 @@ int main(int argc, char *argv[]) {
     if (vm.count("index-mgsr")) {
       panmanUtils::Tree &T = ensureTreeLoaded();
       std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
+      int k = vm["k"].as<int>();
+      int s = vm["s"].as<int>();
       int mgsr_t = 0;
-      int mgsr_l = 3;
+      int mgsr_l = vm["l"].as<int>();
       bool open = false;
-      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l, open);
       mgsrIndexBuilder.buildIndex();
       mgsrIndexBuilder.writeIndex(mgsr_index_path);
       msg("MGSR index written to: {}", mgsr_index_path);
@@ -2038,15 +2036,14 @@ int main(int argc, char *argv[]) {
     }
 
     int mgsr_t = 0;
-    int mgsr_l = 0;
+    int mgsr_l = vm["l"].as<int>();  // Get l parameter from command line (default 1)
     bool open = false;
-    bool use_raw_seeds = true; // true for panmap, false for panmama
     
     // Only load tree if we need to build the index
     if (build) {
       panmanUtils::Tree &T = ensureTreeLoaded();
       auto time_index_build_start = std::chrono::high_resolution_clock::now();
-      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l, open, use_raw_seeds);
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, k, s, mgsr_t, mgsr_l, open);
       mgsrIndexBuilder.buildIndex();
       auto time_index_build_end = std::chrono::high_resolution_clock::now();
       auto duration_index_build = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2057,11 +2054,7 @@ int main(int argc, char *argv[]) {
       }
       
       // Log unique seed/k-mer count
-      if (use_raw_seeds) {
-        msg("Built raw seeds index with {} unique seeds", mgsrIndexBuilder.uniqueSyncmers.size());
-      } else {
-        msg("Built k-minmers index with {} unique k-minmers", mgsrIndexBuilder.uniqueKminmers.size());
-      }
+      msg("Built k-minmers index with {} unique k-minmers", mgsrIndexBuilder.uniqueKminmers.size());
       
       // Use the effective output path for MGSR index
       auto time_index_write_start = std::chrono::high_resolution_clock::now();
@@ -2179,7 +2172,7 @@ int main(int argc, char *argv[]) {
     } else {
         msg("=== Using LiteTree-based placement (fallback) ===");
         
-        // Initialize LiteTree from MGSR index since original place function was removed
+        // Initialize LiteTree from MGSR index
         panmapUtils::LiteTree liteTree;
         auto liteTreeReader = mgsrIndexRoot.getLiteTree();
         liteTree.initialize(liteTreeReader);
@@ -2409,7 +2402,7 @@ int main(int argc, char *argv[]) {
 
           std::string placementFileName = prefix + "/placements.tsv";
           
-          // Initialize LiteTree from MGSR index since original place function was removed
+          // Initialize LiteTree from MGSR index
           auto time_placement_start = std::chrono::high_resolution_clock::now();
           panmapUtils::LiteTree liteTree;
           auto liteTreeReader = mgsrIndexRoot.getLiteTree();
@@ -2418,7 +2411,8 @@ int main(int argc, char *argv[]) {
           // Perform placement using LiteTree-based approach
           placement::placeLite(result, &liteTree, mgsrIndexRoot, reads1, reads2,
                              readSeeds, readSequences, readNames, readQuals,
-                             placementFileName, effective_index_path, debug_specific_node_id, verify_scores_flag);
+                             placementFileName, effective_index_path, debug_specific_node_id, 
+                             verify_scores_flag, nullptr);
 
           auto time_placement_end = std::chrono::high_resolution_clock::now();
           auto duration_placement = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2590,7 +2584,6 @@ int main(int argc, char *argv[]) {
     }
     msg("=== panmap run completed ===");
     msg("Total runtime: {}ms", total_duration.count());
-
     
     return 0;
 }
