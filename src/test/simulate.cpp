@@ -180,13 +180,29 @@ int main(int argc, char *argv[]) {
           }
         }
         if (TG != nullptr) {
-          T = &(TG->trees[0]);
+          // Search all trees for the reference node
+          T = nullptr;
+          if (refNode != "RANDOM") {
+            for (auto& tree : TG->trees) {
+              if (tree.allNodes.find(refNode) != tree.allNodes.end()) {
+                T = &tree;
+                std::cerr << "Found --ref node " << refNode << " in one of the trees" << std::endl;
+                break;
+              }
+            }
+            if (T == nullptr) {
+              throw std::invalid_argument("Couldn't find --ref node on tree (searched all " + std::to_string(TG->trees.size()) + " trees)");
+            }
+          } else {
+            // RANDOM node - just use first tree
+            T = &(TG->trees[0]);
+          }
         }
 
 
 
-        // check node
-        if (refNode != "RANDOM" && T->allNodes.find(refNode) == T->allNodes.end()) {
+        // check node (only needed if not already checked above for multi-tree case)
+        if (TG == nullptr && refNode != "RANDOM" && T->allNodes.find(refNode) == T->allNodes.end()) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
         // GO time

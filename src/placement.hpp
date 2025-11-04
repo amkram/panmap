@@ -84,6 +84,7 @@ struct TraversalParams {
   int k = 32;              // k-mer size
   int s = 8;              // syncmer parameter s
   int t = 0;               // t-syncmer parameter
+  int l = 0;               // k-minimizer window size (0 = use raw syncmers)
   bool open = false;        // Whether to use open syncmers
   bool useRawSeeds = false; // Whether to use raw syncmers instead of k-min-mers
   double scoreScale = 1.0; // Scaling factor for scores

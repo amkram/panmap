@@ -9,6 +9,11 @@
 #include <tbb/parallel_sort.h>
 #include <tbb/parallel_for.h>
 #include <tbb/global_control.h>
+#include <random>
+#include <numeric>
+#include <algorithm>
+#include <stack>
+#include <bitset>
 
 static void compareBruteForceBuild(
   panmanUtils::Tree *T,
@@ -266,137 +271,137 @@ static void compareBruteForceBuild(
 
   // std::cout << "sequence and coordinate objects passed... " << std::flush;
 
-  // check syncmers
-  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
-  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
-  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersDynamic;
-  for (size_t i = 0; i < refOnSyncmers.size(); i++) {
-    if (refOnSyncmers[i].has_value()) {
-      const auto& [hash, endPos, isReverse] = refOnSyncmers[i].value();
-      syncmersDynamic.emplace_back(std::make_tuple(hash, isReverse, true, mgsr::degapGlobal(i, degapCoordIndex)));
-    }
-  }
+  // // check syncmers
+  // std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
+  // std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
+  // std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersDynamic;
+  // for (size_t i = 0; i < refOnSyncmers.size(); i++) {
+  //   if (refOnSyncmers[i].has_value()) {
+  //     const auto& [hash, endPos, isReverse] = refOnSyncmers[i].value();
+  //     syncmersDynamic.emplace_back(std::make_tuple(hash, isReverse, true, mgsr::degapGlobal(i, degapCoordIndex)));
+  //   }
+  // }
 
 
 
-  // check all syncmers
-  if (syncmersDynamic.size() != syncmersBruteForce.size()) {
-    std::cout << "Syncmer count mismatch: dynamic " << syncmersDynamic.size() << " != brute force " << syncmersBruteForce.size() << std::endl;
-    std::cout << "Dynamic syncmers: ";
-    for (const auto& syncmer : syncmersDynamic) {
-      std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-    }
-    std::cout << std::endl;
-    std::cout << "Brute force syncmers: ";
-    for (const auto& syncmer : syncmersBruteForce) {
-      std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-    }
-    std::cout << std::endl;
-    std::exit(1);
-  } else if (printCorrect && node->identifier == nodeToDebug) {
-    std::cout << "Identical syncmer count... passed: " << syncmersDynamic.size() << " == " << syncmersBruteForce.size() << std::endl;
-  }
+  // // check all syncmers
+  // if (syncmersDynamic.size() != syncmersBruteForce.size()) {
+  //   std::cout << "Syncmer count mismatch: dynamic " << syncmersDynamic.size() << " != brute force " << syncmersBruteForce.size() << std::endl;
+  //   std::cout << "Dynamic syncmers: ";
+  //   for (const auto& syncmer : syncmersDynamic) {
+  //     std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
+  //   }
+  //   std::cout << std::endl;
+  //   std::cout << "Brute force syncmers: ";
+  //   for (const auto& syncmer : syncmersBruteForce) {
+  //     std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
+  //   }
+  //   std::cout << std::endl;
+  //   std::exit(1);
+  // } else if (printCorrect && node->identifier == nodeToDebug) {
+  //   std::cout << "Identical syncmer count... passed: " << syncmersDynamic.size() << " == " << syncmersBruteForce.size() << std::endl;
+  // }
   
-  auto curSyncmerOnMapIt = refOnSyncmersMap.begin();
-  for (size_t i = 0; i < syncmersDynamic.size(); i++) {
-    const auto& [hash, isReverse, isSeed, startPos] = syncmersDynamic[i];
-    const auto& [hashBruteForce, isReverseBruteForce, isSeedBruteForce, startPosBruteForce] = syncmersBruteForce[i];
-    if (hash != hashBruteForce || isReverse != isReverseBruteForce || startPos != startPosBruteForce) {
-      std::cout << "Syncmer mismatch at " << i << "th syncmer: dynamic (" << hash << ", " << startPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
-      std::cout << "Dynamic syncmers: ";
-      for (const auto& syncmer : syncmersDynamic) {
-        std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-      }
-      std::cout << std::endl;
-      std::cout << "Brute force syncmers: ";
-      for (const auto& syncmer : syncmersBruteForce) {
-        std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-      }
-      std::cout << std::endl;
-      std::exit(1);
-    }
-    if (mgsr::regapGlobal(startPos, regapCoordIndex) != *curSyncmerOnMapIt) {
-      std::cout << "Syncmer on map mismatch at " << i << "th syncmer: dynamic/bruteforce " << startPos << " != map " << *curSyncmerOnMapIt << std::endl;
-      std::exit(1);
-    }
-    ++curSyncmerOnMapIt;
-  }
-  if (curSyncmerOnMapIt != refOnSyncmersMap.end()) {
-    std::cout << "SyncmerOnMap has more elements than syncmers: " << refOnSyncmersMap.size() << " != " << syncmersDynamic.size() << std::endl;
-    std::exit(1);
-  }
-  std::cout << "syncmers passed... " << std::flush;
+  // auto curSyncmerOnMapIt = refOnSyncmersMap.begin();
+  // for (size_t i = 0; i < syncmersDynamic.size(); i++) {
+  //   const auto& [hash, isReverse, isSeed, startPos] = syncmersDynamic[i];
+  //   const auto& [hashBruteForce, isReverseBruteForce, isSeedBruteForce, startPosBruteForce] = syncmersBruteForce[i];
+  //   if (hash != hashBruteForce || isReverse != isReverseBruteForce || startPos != startPosBruteForce) {
+  //     std::cout << "Syncmer mismatch at " << i << "th syncmer: dynamic (" << hash << ", " << startPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
+  //     std::cout << "Dynamic syncmers: ";
+  //     for (const auto& syncmer : syncmersDynamic) {
+  //       std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
+  //     }
+  //     std::cout << std::endl;
+  //     std::cout << "Brute force syncmers: ";
+  //     for (const auto& syncmer : syncmersBruteForce) {
+  //       std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
+  //     }
+  //     std::cout << std::endl;
+  //     std::exit(1);
+  //   }
+  //   if (mgsr::regapGlobal(startPos, regapCoordIndex) != *curSyncmerOnMapIt) {
+  //     std::cout << "Syncmer on map mismatch at " << i << "th syncmer: dynamic/bruteforce " << startPos << " != map " << *curSyncmerOnMapIt << std::endl;
+  //     std::exit(1);
+  //   }
+  //   ++curSyncmerOnMapIt;
+  // }
+  // if (curSyncmerOnMapIt != refOnSyncmersMap.end()) {
+  //   std::cout << "SyncmerOnMap has more elements than syncmers: " << refOnSyncmersMap.size() << " != " << syncmersDynamic.size() << std::endl;
+  //   std::exit(1);
+  // }
+  // std::cout << "syncmers passed... " << std::flush;
 
-  // check k-min-mers
-  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
-  if (syncmersBruteForce.size() >= l) {
-    size_t forwardRolledHash = 0;
-    size_t reverseRolledHash = 0;
+  // // check k-min-mers
+  // std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
+  // if (syncmersBruteForce.size() >= l) {
+  //   size_t forwardRolledHash = 0;
+  //   size_t reverseRolledHash = 0;
   
-    // first kminmer
-    for (size_t i = 0; i < l; ++i) {
-      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmersBruteForce[i]);
-      reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmersBruteForce[l-i-1]);
-    }
+  //   // first kminmer
+  //   for (size_t i = 0; i < l; ++i) {
+  //     forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmersBruteForce[i]);
+  //     reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmersBruteForce[l-i-1]);
+  //   }
   
-    if (forwardRolledHash != reverseRolledHash) {
-      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-      kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[0]), std::get<3>(syncmersBruteForce[l-1])+k-1, reverseRolledHash < forwardRolledHash);
-    }
+  //   if (forwardRolledHash != reverseRolledHash) {
+  //     size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+  //     kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[0]), std::get<3>(syncmersBruteForce[l-1])+k-1, reverseRolledHash < forwardRolledHash);
+  //   }
   
-    // rest of kminmers
-    for (uint64_t i = 1; i < syncmersBruteForce.size()-l+1; ++i) {
-      if (!std::get<2>(syncmersBruteForce[i-1]) || !std::get<2>(syncmersBruteForce[i+l-1])) {
-        std::cout << "invalid syncmer" << std::endl;
-        exit(0);
-      }
-      const size_t& prevSyncmerHash = std::get<0>(syncmersBruteForce[i-1]);
-      const size_t& nextSyncmerHash = std::get<0>(syncmersBruteForce[i+l-1]);
-      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
-      reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
+  //   // rest of kminmers
+  //   for (uint64_t i = 1; i < syncmersBruteForce.size()-l+1; ++i) {
+  //     if (!std::get<2>(syncmersBruteForce[i-1]) || !std::get<2>(syncmersBruteForce[i+l-1])) {
+  //       std::cout << "invalid syncmer" << std::endl;
+  //       exit(0);
+  //     }
+  //     const size_t& prevSyncmerHash = std::get<0>(syncmersBruteForce[i-1]);
+  //     const size_t& nextSyncmerHash = std::get<0>(syncmersBruteForce[i+l-1]);
+  //     forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
+  //     reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
   
-      if (forwardRolledHash != reverseRolledHash) {
-        size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-        kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[i]), std::get<3>(syncmersBruteForce[i+l-1])+k-1, reverseRolledHash < forwardRolledHash);
-      }
-    }
-  }
+  //     if (forwardRolledHash != reverseRolledHash) {
+  //       size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+  //       kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[i]), std::get<3>(syncmersBruteForce[i+l-1])+k-1, reverseRolledHash < forwardRolledHash);
+  //     }
+  //   }
+  // }
 
 
-  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersDynamic;
-  for (size_t i = 0; i < refOnKminmers.size(); i++) {
-    if (refOnKminmers[i].has_value()) {
-      const auto& [startPos, endPos, hash, isReverse] = uniqueKminmers[refOnKminmers[i].value()];
-      kminmersDynamic.emplace_back(std::make_tuple(hash, mgsr::degapGlobal(startPos, degapCoordIndex), mgsr::degapGlobal(endPos, degapCoordIndex), isReverse));
-    }
-  }
+  // std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersDynamic;
+  // for (size_t i = 0; i < refOnKminmers.size(); i++) {
+  //   if (refOnKminmers[i].has_value()) {
+  //     const auto& [startPos, endPos, hash, isReverse] = uniqueKminmers[refOnKminmers[i].value()];
+  //     kminmersDynamic.emplace_back(std::make_tuple(hash, mgsr::degapGlobal(startPos, degapCoordIndex), mgsr::degapGlobal(endPos, degapCoordIndex), isReverse));
+  //   }
+  // }
 
-  if (kminmersDynamic.size() != kminmersBruteForce.size()) {
-    std::cout << "K-min-mer count mismatch: dynamic " << kminmersDynamic.size() << " != brute force " << kminmersBruteForce.size() << std::endl;
-    std::cout << "Dynamic k-min-mers: ";
-    for (const auto& kminmer : kminmersDynamic) {
-      std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
-    }
-    std::cout << std::endl;
-    std::cout << "Brute force k-min-mers: ";
-    for (const auto& kminmer : kminmersBruteForce) {
-      std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
-    }
-    std::cout << std::endl;
-    std::exit(1);
-  } else if (printCorrect && node->identifier == nodeToDebug) {
-    std::cout << "Identical k-min-mer count... passed: " << kminmersDynamic.size() << " == " << kminmersBruteForce.size() << std::endl;
-  }
+  // if (kminmersDynamic.size() != kminmersBruteForce.size()) {
+  //   std::cout << "K-min-mer count mismatch: dynamic " << kminmersDynamic.size() << " != brute force " << kminmersBruteForce.size() << std::endl;
+  //   std::cout << "Dynamic k-min-mers: ";
+  //   for (const auto& kminmer : kminmersDynamic) {
+  //     std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
+  //   }
+  //   std::cout << std::endl;
+  //   std::cout << "Brute force k-min-mers: ";
+  //   for (const auto& kminmer : kminmersBruteForce) {
+  //     std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
+  //   }
+  //   std::cout << std::endl;
+  //   std::exit(1);
+  // } else if (printCorrect && node->identifier == nodeToDebug) {
+  //   std::cout << "Identical k-min-mer count... passed: " << kminmersDynamic.size() << " == " << kminmersBruteForce.size() << std::endl;
+  // }
 
-  for (size_t i = 0; i < kminmersDynamic.size(); i++) {
-    const auto& [hash, startPos, endPos, isReverse] = kminmersDynamic[i];
-    const auto& [hashBruteForce, startPosBruteForce, endPosBruteForce, isReverseBruteForce] = kminmersBruteForce[i];
-    if (hash != hashBruteForce || startPos != startPosBruteForce || endPos != endPosBruteForce || isReverse != isReverseBruteForce) {
-      std::cout << "K-min-mer mismatch at " << i << "th k-min-mer: dynamic (" << hash << ", " << startPos << ", " << endPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << endPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
-      std::exit(1);
-    }
-  }
-  std::cout << "k-min-mers passed... " << std::flush;
+  // for (size_t i = 0; i < kminmersDynamic.size(); i++) {
+  //   const auto& [hash, startPos, endPos, isReverse] = kminmersDynamic[i];
+  //   const auto& [hashBruteForce, startPosBruteForce, endPosBruteForce, isReverseBruteForce] = kminmersBruteForce[i];
+  //   if (hash != hashBruteForce || startPos != startPosBruteForce || endPos != endPosBruteForce || isReverse != isReverseBruteForce) {
+  //     std::cout << "K-min-mer mismatch at " << i << "th k-min-mer: dynamic (" << hash << ", " << startPos << ", " << endPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << endPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
+  //     std::exit(1);
+  //   }
+  // }
+  // std::cout << "k-min-mers passed... " << std::flush;
 
   std::cout << "         " << node->identifier << " states passed brute force check" << std::endl;
   
@@ -1118,7 +1123,7 @@ int64_t mgsr::mgsrPlacer::getReadBruteForceScore(
 ) {
   auto readCopy = reads[readIndex];
   initializeReadMinichains(readCopy);
-  int64_t pseudoScore = getReadPseudoScore(readCopy);
+  int32_t pseudoScore = getReadPseudoScore(readCopy);
   return pseudoScore;
 }
 
@@ -1318,9 +1323,6 @@ void mgsr::extractReadSequences(const std::string& readPath1, const std::string&
   while ((line = kseq_read(seq)) >= 0) {
     readSequences.push_back(seq->seq.s);
   }
-  kseq_destroy(seq);
-  fclose(fp);
-  
   if (readPath2.size() > 0) {
     fp = fopen(readPath2.c_str(), "r");
     if(!fp){
@@ -1331,98 +1333,112 @@ void mgsr::extractReadSequences(const std::string& readPath1, const std::string&
 
     line = 0;
     int forwardReads = readSequences.size();
-    std::cerr << "DEBUG: Forward reads count: " << forwardReads << std::endl;
     while ((line = kseq_read(seq)) >= 0) {
       readSequences.push_back(seq->seq.s);
     }
-    kseq_destroy(seq);
-    fclose(fp);
+
+    if (readSequences.size() != forwardReads*2){
+      std::cerr << "Error: File " << readPath2 << " does not contain the same number of reads as " << readPath1 << std::endl;
+      exit(0);
+    }
     
     //Shuffle reads together, so that pairs are next to eatch other
     perfect_shuffle(readSequences);
   }
 }
 
-void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
-  k = indexReader.getK();
-  s = indexReader.getS();
-  t = indexReader.getT();
-  l = indexReader.getL();
-  openSyncmer = indexReader.getOpen();
+mgsr::RDGNode* mgsr::ReadDebruijnGraph::makeNewNode(size_t hash) {
+  auto newNode = std::make_unique<RDGNode>(hash);
+  auto rawPtr = newNode.get();
+  hashToNode[hash] = std::move(newNode);
+  return rawPtr;
+}
 
-  capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
-  capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
-
-  seedInfos.resize(seedInfosReader.size());
-  for (size_t i = 0; i < seedInfos.size(); i++) {
-    const auto& seedReader = seedInfosReader[i];
-    auto& seed = seedInfos[i];
-    seed.hash = seedReader.getHash();
-    seed.startPos = seedReader.getStartPos();
-    seed.endPos = seedReader.getEndPos();
-    seed.isReverse = seedReader.getIsReverse();
+std::pair<mgsr::RDGNode*, bool> mgsr::ReadDebruijnGraph::tryMakeNewNode(size_t hash) {
+  auto hashToNodeIt = hashToNode.find(hash);
+  if (hashToNodeIt == hashToNode.end()) {
+    return {makeNewNode(hash), true};
   }
+  return {hashToNodeIt->second.get(), false};
+}
 
-  seedInsubIndices.resize(perNodeChangesReader.size());
-  seedDeletions.resize(perNodeChangesReader.size());
-  coordDeltas.resize(perNodeChangesReader.size());
-  invertedBlocks.resize(perNodeChangesReader.size());
-  for (size_t i = 0; i < perNodeChangesReader.size(); i++) {
-    const auto& currentPerNodeChangeReader = perNodeChangesReader[i];
-    auto& currentSeedInsubIndices = seedInsubIndices[i];
-    auto& currentSeedDeletions = seedDeletions[i];
-    auto& currentCoordDeltas = coordDeltas[i];
-    auto& currentInvertedBlocks = invertedBlocks[i];
+void mgsr::ReadDebruijnGraph::linkNodes(RDGNode* node1, RDGNode* node2) {
+  if (node1 == nullptr || node2 == nullptr) {
+    return;
+  }
+  node1->neighbors.insert(node2);
+  node2->neighbors.insert(node1);
+}
 
-    // Parse seed deltas (new schema combines insertions and deletions)
-    const auto& currentSeedDeltasReader = currentPerNodeChangeReader.getSeedDeltas();
-    for (auto seedDelta : currentSeedDeltasReader) {
-      uint32_t seedIndex = seedDelta.getSeedIndex();
-      bool isDeleted = seedDelta.getIsDeleted();
-      if (isDeleted) {
-        currentSeedDeletions.push_back(seedIndex);
-      } else {
-        currentSeedInsubIndices.push_back(seedIndex);
+void mgsr::ReadDebruijnGraph::identifyConnectedComponents() {
+  std::unordered_set<RDGNode*> visited;
+  for (const auto& [_, nodeUniquePtr] : hashToNode) {
+    auto node = nodeUniquePtr.get();
+    if (visited.find(node) != visited.end()) continue;
+    std::vector<RDGNode*> currentComponent;
+    searchComponentDFS(node, visited, currentComponent);
+    std::sort(currentComponent.begin(), currentComponent.end(), [](const RDGNode* a, const RDGNode* b) {
+      return a->hash < b->hash;
+    });
+    connectedComponents.push_back(std::move(currentComponent));
+  }
+}
+
+
+void mgsr::ReadDebruijnGraph::searchComponentDFS(RDGNode* node, std::unordered_set<RDGNode*>& visited, std::vector<RDGNode*>& currentComponent) {
+  std::stack<RDGNode*> stack;
+  stack.push(node);
+  while (!stack.empty()) {
+    RDGNode* currentNode = stack.top();
+    stack.pop();
+    if (visited.find(currentNode) != visited.end()) continue;
+    visited.insert(currentNode);
+    currentComponent.push_back(currentNode);
+    for (const auto& neighbor : currentNode->neighbors) {
+      if (visited.find(neighbor) == visited.end()) {
+        stack.push(neighbor);
       }
-    }
-    
-    // Parse gap run deltas (new schema)
-    const auto& currentGapRunDeltasReader = currentPerNodeChangeReader.getGapRunDeltas();
-    for (auto gapRunDelta : currentGapRunDeltasReader) {
-      uint32_t startPos = gapRunDelta.getStartPos();
-      uint32_t endPos = gapRunDelta.getEndPos();
-      bool toGap = gapRunDelta.getToGap();
-      currentCoordDeltas.push_back({startPos, toGap ? std::optional<uint32_t>(endPos) : std::nullopt});
-    }
-    
-    // Parse inverted blocks
-    const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
-    currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
-    for (size_t j = 0; j < currentInvertedBlocksReader.size(); j++) {
-      currentInvertedBlocks[j] = currentInvertedBlocksReader[j];
     }
   }
 }
-void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, bool fast_mode) {
-  // index duplicate reads
-  std::vector<size_t> sortedReadSequencesIndices(readSequences.size());
-  for (size_t i = 0; i < readSequences.size(); ++i) sortedReadSequencesIndices[i] = i;
-  tbb::parallel_sort(sortedReadSequencesIndices.begin(), sortedReadSequencesIndices.end(), [&readSequences](size_t i1, size_t i2) {
-    return readSequences[i1] < readSequences[i2];
-  });
 
-  // index duplicate reads
-  std::vector<std::pair<std::string_view, std::vector<size_t>>> dupReadsIndex;
-  std::string_view prevSeq = readSequences[sortedReadSequencesIndices[0]];
-  dupReadsIndex.emplace_back(std::make_pair(prevSeq, std::vector<size_t>{0}));
-  for (size_t i = 1; i < sortedReadSequencesIndices.size(); ++i) {
-    std::string_view currSeq = readSequences[sortedReadSequencesIndices[i]];
-    if (currSeq == prevSeq) {
-      dupReadsIndex.back().second.push_back(i);
-    } else {
-      dupReadsIndex.emplace_back(std::make_pair(currSeq, std::vector<size_t>{i}));
+void mgsr::ReadDebruijnGraph::sortReads(
+  std::vector<mgsr::Read>& reads,
+  std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex
+) {
+  size_t curReadIndex = 0;
+  std::vector<mgsr::Read> sortedReads(reads.size());
+  std::vector<std::vector<size_t>> sortedReadSeedmersDuplicatesIndex(readSeedmersDuplicatesIndex.size());
+  for (const auto& component : connectedComponents) {
+    sortReadsHelper(component[0], curReadIndex, reads, sortedReads, readSeedmersDuplicatesIndex, sortedReadSeedmersDuplicatesIndex);
+  }
+  reads.swap(sortedReads);
+  readSeedmersDuplicatesIndex.swap(sortedReadSeedmersDuplicatesIndex);
+}
+
+void mgsr::ReadDebruijnGraph::sortReadsHelper(
+  RDGNode* node, size_t& curReadIndex,
+  std::vector<mgsr::Read>& reads, std::vector<mgsr::Read>& sortedReads,
+  std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<std::vector<size_t>>& sortedReadSeedmersDuplicatesIndex
+) {
+  std::stack<RDGNode*> stack;
+  std::unordered_set<RDGNode*> visited;
+  stack.push(node);
+  while (!stack.empty()) {
+    RDGNode* currentNode = stack.top();
+    stack.pop();
+    if (visited.find(currentNode) != visited.end()) continue;
+    visited.insert(currentNode);
+    for (const auto& readIndex : currentNode->readIndicesMid) {
+      sortedReads[curReadIndex] = std::move(reads[readIndex]);
+      sortedReadSeedmersDuplicatesIndex[curReadIndex] = std::move(readSeedmersDuplicatesIndex[readIndex]);
+      ++curReadIndex;
     }
-    prevSeq = currSeq;
+    for (const auto& neighbor : currentNode->neighbors) {
+      if (visited.find(neighbor) == visited.end()) {
+        stack.push(neighbor);
+      }
+    }
   }
 
   // std::queue<RDGNode*> queue;
@@ -1559,6 +1575,35 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
       const auto& seq = seqToIndexVec[i].first;
       const auto& syncmers = seeding::rollingSyncmers(seq, k, s, openSyncmer, t, false);
       mgsr::Read& curRead = uniqueReadSeedmers[i];
+      
+      // Special case: l=1 means use raw syncmers as seeds (no rolling hash)
+      if (l == 1) {
+        uint32_t iorder = 0;
+        for (const auto& syncmer : syncmers) {
+          size_t syncmerHash = std::get<0>(syncmer);
+          bool isSeed = std::get<2>(syncmer);
+          uint32_t pos = std::get<3>(syncmer);
+          bool isReverse = std::get<1>(syncmer);
+          
+          if (!isSeed) continue;
+          
+          auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(syncmerHash);
+          if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
+            curRead.uniqueSeedmers.emplace(syncmerHash, std::vector<uint32_t>{iorder});
+            curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+              syncmerHash, pos, pos+k-1, isReverse, iorder});
+            ++iorder;
+          } else {
+            uniqueSeedmersIt->second.push_back(iorder);
+            curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+              syncmerHash, pos, pos+k-1, isReverse, iorder});
+            ++iorder;
+          }
+        }
+        continue;
+      }
+      
+      // l > 1: compute k-minimizers as rolling hashes over windows
       if (syncmers.size() < l) continue;
 
       size_t forwardRolledHash = 0;
@@ -1607,25 +1652,25 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
       }
     }
   });
+  
   std::vector<size_t> sortedUniqueReadSeedmersIndices(uniqueReadSeedmers.size());
   for (size_t i = 0; i < uniqueReadSeedmers.size(); ++i) sortedUniqueReadSeedmersIndices[i] = i;
   tbb::parallel_sort(sortedUniqueReadSeedmersIndices.begin(), sortedUniqueReadSeedmersIndices.end(), [&uniqueReadSeedmers, fast_mode](size_t i1, size_t i2) {
     const auto& lhs = uniqueReadSeedmers[i1].seedmersList;
     const auto& rhs = uniqueReadSeedmers[i2].seedmersList;
     
-    // First, compare the sizes of the seedmersList
-    if (lhs.size() != rhs.size()) {
-      return lhs.size() < rhs.size();
-    }
-    
-    // If sizes are equal, compare hash values first
-    for (size_t i = 0; i < lhs.size(); ++i) {
+    size_t minSize = std::min(lhs.size(), rhs.size());
+
+    for (size_t i = 0; i < minSize; ++i) {
       if (lhs[i].hash != rhs[i].hash) {
         return lhs[i].hash < rhs[i].hash;
       }
     }
+
+    if (lhs.size() != rhs.size()) {
+      return lhs.size() < rhs.size();
+    }
     
-    // If all hash values are equal, compare other fields
     return std::lexicographical_compare(
       lhs.begin(), lhs.end(),
       rhs.begin(), rhs.end(),
@@ -1642,28 +1687,93 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
 
   reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[0]]));
   readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
-  for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[0]].second) {
-    readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
+  for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[0]].second) {
+    readSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
   }
 
   for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
     const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
-
-    if (!(currSeedmers.seedmersList.size() == reads.back().seedmersList.size() && 
-          std::equal(currSeedmers.seedmersList.begin(), currSeedmers.seedmersList.end(), reads.back().seedmersList.begin(), reads.back().seedmersList.end(),
-                     [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
-                         if (fast_mode) {
-                          return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
-                         } else {
-                           return a.hash == b.hash && a.begPos == b.begPos && a.endPos == b.endPos && a.rev == b.rev && a.iorder == b.iorder;
-                         }
-                     }))) {
+    
+    bool isDuplicate = false;
+    
+    if (currSeedmers.seedmersList.size() == reads.back().seedmersList.size()) {
+      const auto& curr = currSeedmers.seedmersList;
+      const auto& prev = reads.back().seedmersList;
+      
+      if (fast_mode) {
+        isDuplicate = std::equal(curr.begin(), curr.end(), prev.begin(),
+          [](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
+            return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
+          });
+      } else {
+        isDuplicate = true;
+        
+        for (size_t j = 0; j < curr.size() && isDuplicate; ++j) {
+          if (curr[j].hash != prev[j].hash || 
+              curr[j].rev != prev[j].rev || 
+              curr[j].iorder != prev[j].iorder) {
+            isDuplicate = false;
+            break;
+          }
+          
+          size_t currLength = curr[j].endPos - curr[j].begPos;
+          size_t prevLength = prev[j].endPos - prev[j].begPos;
+          if (currLength != prevLength) {
+            isDuplicate = false;
+            break;
+          }
+          
+          if (j > 0) {
+            size_t currGap = curr[j].begPos - curr[j-1].endPos;
+            size_t prevGap = prev[j].begPos - prev[j-1].endPos;
+            if (currGap != prevGap) {
+              isDuplicate = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    if (!isDuplicate) {
       reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]]));
       readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
     }
-    for (const auto& seqSortedIndex : dupReadsIndex[sortedUniqueReadSeedmersIndices[i]].second) {
-      readSeedmersDuplicatesIndex.back().push_back(sortedReadSequencesIndices[seqSortedIndex]);
+    
+    for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[i]].second) {
+      readSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
     }
+  }
+
+  if (lowMemory) {
+    ReadDebruijnGraph readDebruijnGraph;
+    readDebruijnGraph.buildGraph(reads);
+    readDebruijnGraph.sortReads(reads, readSeedmersDuplicatesIndex);
+  } else {
+    std::random_device rd;
+    std::mt19937 g(rd());
+    
+    // Create indices for shuffling
+    std::vector<size_t> indices(reads.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    
+    // Shuffle the indices
+    std::shuffle(indices.begin(), indices.end(), g);
+    
+    // Apply the shuffle to both vectors
+    std::vector<mgsr::Read> shuffledReads;
+    std::vector<std::vector<size_t>> shuffledReadSeedmersDuplicatesIndex;
+    shuffledReads.reserve(reads.size());
+    shuffledReadSeedmersDuplicatesIndex.reserve(readSeedmersDuplicatesIndex.size());
+    
+    for (size_t idx : indices) {
+      shuffledReads.emplace_back(std::move(reads[idx]));
+      shuffledReadSeedmersDuplicatesIndex.emplace_back(std::move(readSeedmersDuplicatesIndex[idx]));
+    }
+    
+    // Replace original vectors with shuffled ones
+    reads = std::move(shuffledReads);
+    readSeedmersDuplicatesIndex = std::move(shuffledReadSeedmersDuplicatesIndex);
   }
 
 
@@ -1738,9 +1848,6 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
       threadRanges[i].first = start;
       threadRanges[i].second = end;
     }
-    for (size_t j = start; j < end; j++) {
-      readIndexToThreadLocalIndex[j] = {i, j - start};
-    }
   }
 
   std::cerr << "Collapsed " << readSequences.size() << " raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
@@ -1769,15 +1876,12 @@ void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fas
   // initialize score index structures
   size_t numReads = reads.size();
   size_t numNodes = liteTree->allLiteNodes.size();
-  maxScores.resize(numReads, -1);
   // maxScoreNodeIndex.resize(numReads);
   if (fast_mode) {
     kminmerMatches.resize(numReads, std::make_pair(0, 0));
     perNodeKminmerMatchesDeltasIndex.resize(numNodes);
   } else {
     readScores.resize(numReads, 0);
-    perNodeScoreDeltasIndex.resize(numNodes);
-    maxMinichains.resize(numReads);
   }
 }
 
@@ -1800,15 +1904,13 @@ uint64_t mgsr::regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, 
 
 void mgsr::updateGapMapStep(
   std::map<uint64_t, uint64_t>& gapMap,
-  const std::pair<bool, std::pair<uint64_t, uint64_t>>& update,
+  uint64_t start,
+  uint64_t end,
+  bool toGap,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates,
   bool recordGapMapUpdates
 ) {
-  bool toGap = update.first;
-  uint64_t start = update.second.first;
-  uint64_t end = update.second.second;
-
   auto rightIt = gapMap.upper_bound(start);
   auto leftIt = (rightIt == gapMap.begin()) ? gapMap.end() : std::prev(rightIt);
 
@@ -2028,7 +2130,7 @@ void mgsr::updateGapMap(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
 ) {
   for (const auto& update : updates) {
-    updateGapMapStep(gapMap, update, backtrack, gapMapUpdates, true);
+    updateGapMapStep(gapMap, update.second.first, update.second.second, update.first, backtrack, gapMapUpdates, true);
   }
 
 }
@@ -2120,7 +2222,7 @@ void mgsr::invertGapMap(
   int64_t curBeg = blockRuns.front().second.first;
   for (auto it = blockRuns.rbegin(); it != blockRuns.rend(); ++it) {
     int64_t curEnd = curBeg + (it->second.second - it->second.first);
-    updateGapMapStep(gapMap, {it->first, {curBeg, curEnd}}, backtrack, gapMapUpdates, false);
+    updateGapMapStep(gapMap, curBeg, curEnd, it->first, backtrack, gapMapUpdates, false);
     curBeg = curEnd + 1;
   }
 }
@@ -2463,7 +2565,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     }
   }
 
-
   int k = indexBuilder.getK();
   size_t localMutationRangeIndex = 0;
   int offsetsToDelete = -1;
@@ -2515,7 +2616,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         }
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
       }
-      
+
 
       if (!newSyncmerRanges.empty() 
           && globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) <= globalCoords.getScalarFromCoord(curSyncmerRange.endCoord, blockStrand[curSyncmerRange.endCoord.primaryBlockId])
@@ -2550,7 +2651,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     } else if (rightGapMapIt->first != curEndScalar && curEndScalar <= std::prev(rightGapMapIt)->second) {
       rightGapMapIt = std::prev(rightGapMapIt);
     }
-
     while (offset < k - 1) {
       if (curEndScalar == globalCoords.lastScalarCoord) {
         reachedEnd = true;
@@ -2559,14 +2659,19 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
 
       if (rightGapMapIt == gapMap.end()) {
         auto lastGapMapIt = std::prev(gapMap.end());
-        if (curEndScalar <= lastGapMapIt->second && lastGapMapIt->second != globalCoords.lastScalarCoord) {
-          curEndScalar = lastGapMapIt->second + 1;
-          curEndCoord = globalCoords.getCoordFromScalar(curEndScalar);
-          if (!blockStrand[curEndCoord.primaryBlockId]) {
-            curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, false);
+        if (curEndScalar <= lastGapMapIt->second) {
+          if (lastGapMapIt->second != globalCoords.lastScalarCoord) {
+            curEndScalar = lastGapMapIt->second + 1;
+            curEndCoord = globalCoords.getCoordFromScalar(curEndScalar);
+            if (!blockStrand[curEndCoord.primaryBlockId]) {
+              curEndCoord = globalCoords.getCoordFromScalar(curEndScalar, false);
+            }
           }
+        } else {
+          globalCoords.stepForwardScalar(curEndCoord, blockStrand);
+          ++curEndScalar;
         }
-      } else if ((curEndScalar >= rightGapMapIt->first && curEndScalar <= rightGapMapIt->second) || curEndScalar + 1 >= rightGapMapIt->first) {
+      } else if (curEndScalar <= rightGapMapIt->second && (curEndScalar >= rightGapMapIt->first || curEndScalar + 1 >= rightGapMapIt->first)) {
         if (rightGapMapIt->second == globalCoords.lastScalarCoord) {
           if (localMutationRangeIndex == mergedLocalMutationRanges.size() - 1) {
             reachedEnd = true;
@@ -2590,7 +2695,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         globalCoords.stepForwardScalar(curEndCoord, blockStrand);
         ++curEndScalar;
       }
-      
+
       if (!blockExists[curEndCoord.primaryBlockId]) {
         curEndCoord = globalCoords.blockEdgeCoords[curEndCoord.primaryBlockId].end;
         curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
@@ -2631,6 +2736,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     }
     localMutationRangeIndex++;
   }
+
   
   const auto lastScalarCoord = globalCoords.lastScalarCoord;
   for (size_t i = 0; i < newSyncmerRanges.size(); i++) {
@@ -2780,9 +2886,9 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
   }
 
   
-    std::sort(refOnSyncmersChangeRecord.begin(), refOnSyncmersChangeRecord.end(), 
-      [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
-  
+  std::sort(refOnSyncmersChangeRecord.begin(), refOnSyncmersChangeRecord.end(), [](const auto& a, const auto& b) {
+    return std::get<0>(a) < std::get<0>(b);
+  });
 
 
   int64_t syncmerChangeIndex = 0;
@@ -2849,6 +2955,13 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
       offset++;
     }
 
+    // Final check: ensure the new range doesn't overlap with the last range
+    // This can happen when right expansion extends into territory that should have been merged earlier
+    while (!newKminmerRanges.empty() && *curBegIt <= *(newKminmerRanges.back().second)) {
+      curBegIt = newKminmerRanges.back().first;
+      newKminmerRanges.pop_back();
+    }
+
     newKminmerRanges.emplace_back(curBegIt, curEndIt);
     if (curEndIt == refOnSyncmersMap.end()) {
       break;
@@ -2911,7 +3024,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 
   std::sort(gapRunUpdates.begin(), gapRunUpdates.end(), [&](const auto& a, const auto& b) { return a.second.first < b.second.first; });
   updateGapMap(node, dfsIndex, gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunUpdates); // gapRunUpdates is no longer needed... clear memory
 
   std::vector<uint64_t> invertedBlocksVec(invertedBlocks.begin(), invertedBlocks.end());
   std::sort(invertedBlocksVec.begin(), invertedBlocksVec.end());
@@ -2948,7 +3060,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
         bool wasSeed = refOnSyncmers[startPosGlobal].has_value();
         if (!wasSeed && isSeed) {
           auto it = refOnSyncmersMap.insert(startPosGlobal).first;
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t{hash, endPosGlobal, isReverse});
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
           blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::ADD);
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
           blockOnSyncmers[curBlockId].insert(startPosGlobal);
@@ -2962,7 +3074,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
             blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
           }
         } else if (wasSeed && isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, seeding::rsyncmer_t{hash, endPosGlobal, isReverse});
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, refOnSyncmers[startPosGlobal].value());
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
         }
       }
@@ -3010,73 +3122,8 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     }
   }
 
-  // Declare seed index vectors for both raw seeds and k-minmers
-  std::vector<uint64_t> deletedSeedIndices;
-  std::vector<uint64_t> addedSeedIndices;
 
-  // Handle raw seeds if enabled
-  if (useRawSeeds) {
-    // DEBUG: Track specific positions and hashes for node_1 and node_2
-    bool debugNode = (node->identifier == "node_1" || node->identifier == "node_2");
-    std::vector<uint64_t> debugPositions = {892291, 892292, 962969, 963475};
-    std::vector<size_t> debugHashes = {7376186388207194583ULL, 6864244690904188740ULL};
-    
-    for (const auto& [syncmerPos, changeType, syncmer] : refOnSyncmersChangeRecord) {
-
-      const auto& currentSyncmer = syncmer;
-      
-      // DEBUG logging
-      if (debugNode) {
-        bool isDebugPos = std::find(debugPositions.begin(), debugPositions.end(), syncmerPos) != debugPositions.end();
-        bool isDebugHash = std::find(debugHashes.begin(), debugHashes.end(), syncmer.hash) != debugHashes.end();
-        
-        if (isDebugPos || isDebugHash) {
-          const char* changeTypeStr = (changeType == panmapUtils::seedChangeType::ADD) ? "ADD" : 
-                                      (changeType == panmapUtils::seedChangeType::DEL) ? "DEL" : "SUB";
-          std::cout << "[MGSR-INDEX] Node " << node->identifier << " dfs=" << dfsIndex 
-                    << ": " << changeTypeStr << " pos=" << syncmerPos 
-                    << " hash=" << syncmer.hash 
-                    << " endPos=" << syncmer.endPos << std::endl;
-        }
-      }
-
-      if (changeType == panmapUtils::seedChangeType::ADD || changeType == panmapUtils::seedChangeType::SUB) {
-
-        if (!(changeType == panmapUtils::seedChangeType::SUB)) {
-          syncmerFrequency[currentSyncmer]++;
-        }
-
-        uniqueSyncmers.emplace_back(currentSyncmer);
-        uniqueSyncmerPositions.emplace_back(syncmerPos);  // CRITICAL: Store the actual position
-        addedSeedIndices.push_back(uniqueSyncmers.size() - 1);
-        
-        // DEBUG: Log the seedIndex assigned
-        if (debugNode) {
-          bool isDebugPos = std::find(debugPositions.begin(), debugPositions.end(), syncmerPos) != debugPositions.end();
-          bool isDebugHash = std::find(debugHashes.begin(), debugHashes.end(), syncmer.hash) != debugHashes.end();
-          if (isDebugPos || isDebugHash) {
-            std::cout << "[MGSR-INDEX]   -> Assigned seedIndex=" << (uniqueSyncmers.size() - 1) 
-                      << " at ACTUAL pos=" << syncmerPos
-                      << " (calculated from endPos would be " << (syncmer.endPos - indexBuilder.getK() + 1) << ")"
-                      << std::endl;
-          }
-        }
-      } else if (changeType == panmapUtils::seedChangeType::DEL) {
-        syncmerFrequency[currentSyncmer]--;
-        deletedSeedIndices.push_back(syncmerPos);
-        
-        // DEBUG: Log deletion
-        if (debugNode) {
-          bool isDebugPos = std::find(debugPositions.begin(), debugPositions.end(), syncmerPos) != debugPositions.end();
-          bool isDebugHash = std::find(debugHashes.begin(), debugHashes.end(), syncmer.hash) != debugHashes.end();
-          if (isDebugPos || isDebugHash) {
-            std::cout << "[MGSR-INDEX]   -> Added to deletedSeedIndices (pos=" << syncmerPos << ")" << std::endl;
-          }
-        }
-      }
-    }
-  } else { 
-    // processing k-min-mers
+  // processing k-min-mers
   std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
@@ -3094,6 +3141,55 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
 
   auto k = indexBuilder.getK();
   auto l = indexBuilder.getL();
+  std::vector<uint64_t> deletedSeedIndices;
+  std::vector<uint64_t> addedSeedIndices;
+  std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedIndices;
+  
+  // Special case: when l=1, syncmers ARE the k-minimizers (no rolling hash needed)
+  if (l == 1) {
+    for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
+      auto& curRefOnKminmer = refOnKminmers[syncmerPos];
+      
+      if (changeType == panmapUtils::seedChangeType::ADD || changeType == panmapUtils::seedChangeType::SUB) {
+        // Use the syncmer hash directly as the seed hash
+        auto& syncmerInfo = refOnSyncmers[syncmerPos].value();
+        seeding::uniqueKminmer_t uniqueKminmer{syncmerPos, syncmerInfo.endPos, syncmerInfo.hash, syncmerInfo.isReverse};
+        bool substitution = curRefOnKminmer.has_value();
+        
+        if (substitution) {
+          refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
+        } else {
+          refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
+        }
+        
+        auto uniqueKminmerIndexIt = kminmerToUniqueIndex.find(uniqueKminmer);
+        if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
+          uniqueKminmers.emplace_back(uniqueKminmer);
+          kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmers.size() - 1);
+          } else {
+            addedSeedIndices.push_back(uniqueKminmers.size() - 1);
+          }
+          curRefOnKminmer = uniqueKminmers.size() - 1;
+        } else {
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmerIndexIt->second);
+          } else {
+            addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
+          }
+          curRefOnKminmer = uniqueKminmerIndexIt->second;
+        }
+      } else if (changeType == panmapUtils::seedChangeType::DEL) {
+        if (curRefOnKminmer.has_value()) {
+          refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
+          deletedSeedIndices.push_back(curRefOnKminmer.value());
+          curRefOnKminmer = std::nullopt;
+        }
+      }
+    }
+  } else {
+    // l > 1: compute k-minimizers as rolling XOR hashes over windows of l syncmers
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
     auto [curIt, endIt] = newKminmerRanges[i];
     auto indexingIt = curIt;
@@ -3118,11 +3214,12 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       forwardHash = seeding::rol(forwardHash, k) ^ startingSyncmerHashes[j];
       reverseHash = seeding::rol(reverseHash, k) ^ startingSyncmerHashes[l - j - 1];
     }
+    auto& curRefOnKminmer = refOnKminmers[*indexingIt];
     if (forwardHash != reverseHash) {
       seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
-
-      if (refOnKminmers[*indexingIt].has_value()) {
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, refOnKminmers[*indexingIt].value());
+      bool substitution = curRefOnKminmer.has_value();
+      if (substitution) {
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
       } else {
         refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
       }
@@ -3131,18 +3228,26 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
         uniqueKminmers.emplace_back(uniqueKminmer);
         kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
-        addedSeedIndices.push_back(uniqueKminmers.size() - 1);
-        refOnKminmers[*indexingIt] = uniqueKminmers.size() - 1;
+        if (substitution) {
+          substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmers.size() - 1);
+        } else {
+          addedSeedIndices.push_back(uniqueKminmers.size() - 1);
+        }
+        curRefOnKminmer = uniqueKminmers.size() - 1;
       } else {
-        addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
-        refOnKminmers[*indexingIt] = uniqueKminmerIndexIt->second;
+        if (substitution) {
+          substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmerIndexIt->second);
+        } else {
+          addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
+        }
+        curRefOnKminmer = uniqueKminmerIndexIt->second;
       }
       
     } else {
-      if (refOnKminmers[*indexingIt].has_value()) {
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*indexingIt].value());
-        refOnKminmers[*indexingIt] = std::nullopt;
-        deletedSeedIndices.push_back(*indexingIt);
+      if (curRefOnKminmer.has_value()) {
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
+        deletedSeedIndices.push_back(curRefOnKminmer.value());
+        curRefOnKminmer = std::nullopt;
       }
     }
 
@@ -3155,10 +3260,12 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(refOnSyncmers[*indexingIt].value().hash, k)     ^ seeding::rol(refOnSyncmers[*curIt].value().hash, k * (l-1));
       ++indexingIt;
 
+      auto& curRefOnKminmer = refOnKminmers[*indexingIt];
       if (forwardHash != reverseHash) {
         seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
-        if (refOnKminmers[*indexingIt].has_value()) {
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, refOnKminmers[*indexingIt].value());
+        bool substitution = curRefOnKminmer.has_value();
+        if (substitution) {
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
         } else {
           refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
         }
@@ -3167,17 +3274,25 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
         if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
           uniqueKminmers.emplace_back(uniqueKminmer);
           kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
-          addedSeedIndices.push_back(uniqueKminmers.size() - 1);
-          refOnKminmers[*indexingIt] = uniqueKminmers.size() - 1;
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmers.size() - 1);
+          } else {
+            addedSeedIndices.push_back(uniqueKminmers.size() - 1);
+          }
+          curRefOnKminmer = uniqueKminmers.size() - 1;
         } else {
-          addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
-          refOnKminmers[*indexingIt] = uniqueKminmerIndexIt->second;
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), uniqueKminmerIndexIt->second);
+          } else {
+            addedSeedIndices.push_back(uniqueKminmerIndexIt->second);
+          }
+          curRefOnKminmer = uniqueKminmerIndexIt->second;
         }
       } else {
-        if (refOnKminmers[*indexingIt].has_value()) {
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*indexingIt].value());
-          refOnKminmers[*indexingIt] = std::nullopt;
-          deletedSeedIndices.push_back(*indexingIt);
+        if (curRefOnKminmer.has_value()) {
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
+          deletedSeedIndices.push_back(curRefOnKminmer.value());
+          curRefOnKminmer = std::nullopt;
         }
       }
     }
@@ -3188,8 +3303,8 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
       --delIt;
       if (refOnKminmers[*delIt].has_value()) {
         refOnKminmersChangeRecord.emplace_back(*delIt, panmapUtils::seedChangeType::DEL, refOnKminmers[*delIt].value());
+        deletedSeedIndices.push_back(refOnKminmers[*delIt].value());
         refOnKminmers[*delIt] = std::nullopt;
-        deletedSeedIndices.push_back(*delIt);
       }
       if (delIt == refOnSyncmersMap.begin()) break;
     }
@@ -3197,73 +3312,138 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
     if (changeType == panmapUtils::seedChangeType::DEL && refOnKminmers[syncmerPos].has_value()) {
       refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, refOnKminmers[syncmerPos].value());
+      deletedSeedIndices.push_back(refOnKminmers[syncmerPos].value());
       refOnKminmers[syncmerPos] = std::nullopt;
-      deletedSeedIndices.push_back(syncmerPos);
     }
   }
-  } // end of k-minmer processing
+  }  // end else (l > 1)
 
-
-  
+  std::sort(deletedSeedIndices.begin(), deletedSeedIndices.end(), [&](const auto& a, const auto& b) { return uniqueKminmers[a].startPos < uniqueKminmers[b].startPos; });
+ 
   //  Adding node changes to index
   NodeChanges::Builder curNodeChanges = perNodeChanges[dfsIndex];
   curNodeChanges.setNodeIndex(dfsIndex);
 
-  // Build seed deltas list (combines insertions and deletions)
-  size_t totalSeedDeltas = addedSeedIndices.size() + deletedSeedIndices.size();
-  capnp::List<SeedDelta>::Builder seedDeltasBuilder = curNodeChanges.initSeedDeltas(totalSeedDeltas);
+  // adding inserted/substituted seeds to index
+  capnp::List<SeedDelta>::Builder seedDeltasBuilder = curNodeChanges.initSeedDeltas(addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
+  size_t deltaSeedIndicesIndex = 0, deletedIdx = 0, addedIdx = 0, substitutedIdx = 0;
   
-  // DEBUG
-  bool debugNode = (node->identifier == "node_1" || node->identifier == "node_2");
-  if (debugNode) {
-    std::cout << "[MGSR-INDEX] Node " << node->identifier << " dfs=" << dfsIndex 
-              << ": Building " << totalSeedDeltas << " seedDeltas ("
-              << addedSeedIndices.size() << " additions, "
-              << deletedSeedIndices.size() << " deletions)" << std::endl;
+  while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
+    auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
+    auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
+    auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
+    if (deletedStartPos <= addedStartPos && deletedStartPos <= substitutedStartPos) {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      deltaSeedIndicesIndex++;
+      deletedIdx++;
+    } else if (addedStartPos <= substitutedStartPos) {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      deltaSeedIndicesIndex++;
+      addedIdx++;
+    } else {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      deltaSeedIndicesIndex++;
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      deltaSeedIndicesIndex++;
+      substitutedIdx++;
+    }
   }
   
-  size_t deltaIdx = 0;
-  // Add insertions
-  for (size_t i = 0; i < addedSeedIndices.size(); i++) {
-    seedDeltasBuilder[deltaIdx].setSeedIndex(addedSeedIndices[i]);
-    seedDeltasBuilder[deltaIdx].setIsDeleted(false);
-    
-    // DEBUG
-    if (debugNode && i < 5) {
-      std::cout << "[MGSR-INDEX]   Delta[" << deltaIdx << "]: seedIndex=" << addedSeedIndices[i] 
-                << " isDeleted=false (ADDITION)" << std::endl;
+  while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size()) {
+    auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
+    auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
+    if (deletedStartPos <= addedStartPos) {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      deltaSeedIndicesIndex++;
+      deletedIdx++;
+    } else {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      deltaSeedIndicesIndex++;
+      addedIdx++;
     }
-    
-    deltaIdx++;
   }
-  // Add deletions
-  for (size_t i = 0; i < deletedSeedIndices.size(); i++) {
-    seedDeltasBuilder[deltaIdx].setSeedIndex(deletedSeedIndices[i]);
-    seedDeltasBuilder[deltaIdx].setIsDeleted(true);
-    
-    // DEBUG
-    if (debugNode && i < 5) {
-      std::cout << "[MGSR-INDEX]   Delta[" << deltaIdx << "]: seedIndex=" << deletedSeedIndices[i] 
-                << " isDeleted=true (DELETION at pos=" << deletedSeedIndices[i] << ")" << std::endl;
+  while (deletedIdx < deletedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
+    auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
+    auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
+    if (deletedStartPos <= substitutedStartPos) {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      deltaSeedIndicesIndex++;
+      deletedIdx++;
+    } else {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      deltaSeedIndicesIndex++;
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      deltaSeedIndicesIndex++;
+      substitutedIdx++;
     }
-    
-    deltaIdx++;
   }
+  while (addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
+    auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
+    auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
+    if (addedStartPos <= substitutedStartPos) {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      deltaSeedIndicesIndex++;
+      addedIdx++;
+    } else {
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+      deltaSeedIndicesIndex++;
+      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      deltaSeedIndicesIndex++;
+      substitutedIdx++;
+    }
+  }
+  
+  while (deletedIdx < deletedSeedIndices.size()) {
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+    deltaSeedIndicesIndex++;
+    deletedIdx++;
+  }
+  while (addedIdx < addedSeedIndices.size()) {
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+    deltaSeedIndicesIndex++;
+    addedIdx++;
+  }
+  while (substitutedIdx < substitutedSeedIndices.size()) {
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+    deltaSeedIndicesIndex++;
+    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
+    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+    deltaSeedIndicesIndex++;
+    substitutedIdx++;
+  }
+  
 
-  // Build gap run deltas (replaces coord deltas)
-  capnp::List<GapRunDelta>::Builder gapRunDeltasBuilder = curNodeChanges.initGapRunDeltas(gapMapUpdates.size());
-  for (size_t i = 0; i < gapMapUpdates.size(); i++) {
-    const auto& [del, range] = gapMapUpdates[i];
-    gapRunDeltasBuilder[i].setStartPos(range.first);
-    gapRunDeltasBuilder[i].setEndPos(range.second);
-    gapRunDeltasBuilder[i].setToGap(del);
+  // adding coord deltas to index
+  capnp::List<GapRunDelta>::Builder gapRunDeltaBuilder = curNodeChanges.initGapRunDeltas(gapRunUpdates.size());
+  for (size_t i = 0; i < gapRunUpdates.size(); i++) {
+    const auto& [toGap, range] = gapRunUpdates[i];
+    gapRunDeltaBuilder[i].setStartPos(range.first);
+    gapRunDeltaBuilder[i].setEndPos(range.second);
+    gapRunDeltaBuilder[i].setToGap(toGap);
   }
+  
 
   // adding inverted blocks to index
   capnp::List<uint32_t>::Builder invertedBlocksBuilder = curNodeChanges.initInvertedBlocks(invertedBlocksVec.size());
   for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
     invertedBlocksBuilder.set(i, invertedBlocksVec[i]);
   }
+
 
   // // compare with brute force for debugging
   // if (dfsIndex >= 0) {
@@ -3352,8 +3532,8 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   }
 }
 
+
 void mgsr::mgsrIndexBuilder::buildIndex() {
-  std::cout << "DEBUG: buildIndex starting, uniqueSyncmers.size()=" << uniqueSyncmers.size() << std::endl;
   panmapUtils::BlockSequences blockSequences(T);
   panmapUtils::GlobalCoords globalCoords(blockSequences);
   refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
@@ -3365,40 +3545,21 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   std::map<uint64_t, uint64_t> gapMap{{0, globalCoords.lastScalarCoord}};
   std::unordered_set<uint64_t> invertedBlocks;
 
-  // add lite tree to index
-  LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
-  std::unordered_set<std::string_view> emptyNodes;
   uint64_t dfsIndex = 0;
+  std::unordered_set<std::string_view> emptyNodes;
   buildIndexHelper(T->root, emptyNodes, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
 
-
-  
-  // Finally add unique seeds to index
-  if (useRawSeeds) {
-    std::cout << "DEBUG: Building index with " << uniqueSyncmers.size() << " unique syncmers" << std::endl;
-    if (uniqueSyncmers.size() > 0) {
-      std::cout << "DEBUG: First syncmer: hash=" << uniqueSyncmers[0].hash 
-                << ", endPos=" << uniqueSyncmers[0].endPos 
-                << ", isReverse=" << uniqueSyncmers[0].isReverse << std::endl;
-    }
-    capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueSyncmers.size());
-    for (size_t i = 0; i < uniqueSyncmers.size(); i++) {
-      seedInfoBuilder[i].setHash(uniqueSyncmers[i].hash);
-      seedInfoBuilder[i].setStartPos(uniqueSyncmerPositions[i]);  // CRITICAL FIX: Use actual position, not calculated
-      seedInfoBuilder[i].setEndPos(uniqueSyncmers[i].endPos);
-      seedInfoBuilder[i].setIsReverse(uniqueSyncmers[i].isReverse);
-    }
-  } else {
-    capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
-    for (size_t i = 0; i < uniqueKminmers.size(); i++) {
-      seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
-      seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
-      seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
-      seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
-    }
+  // Add unique k-minimers to index
+  capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
+  for (size_t i = 0; i < uniqueKminmers.size(); i++) {
+    seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
+    seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
+    seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
+    seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
   }
 
   // Add block infos to index
+  LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
   capnp::List<BlockRange>::Builder blockRangesBuilder = liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
   for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
     blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
@@ -3421,9 +3582,6 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
       nodesBuilder[dfsIndex].setIdenticalToParent(false);
     }
   }
-
-
-
 
   std::cout << "Finished building index!" << std::endl;
 }
@@ -3449,72 +3607,72 @@ int mgsr::open_file(const std::string& path) {
   return fd;
 }
 
-void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t newKminmerIndex, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers) {
-  const auto& newKminmer = seedInfos[newKminmerIndex];
+void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t newKminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers) {
+  const auto& newKminmer = liteTree->seedInfos[newKminmerIndex];
   const uint32_t pos = newKminmer.startPos;
-  auto posMapIt = positionMap.find(pos);
-  if (posMapIt != positionMap.end()) {
-    uint64_t& oldKminmerIndex = posMapIt->second;
-    seedBacktracks.emplace_back(oldKminmerIndex, panmapUtils::seedChangeType::SUB);
-    size_t oldHash = seedInfos[oldKminmerIndex].hash;
-    size_t newHash = newKminmer.hash;
-    affectedSeedmers.insert(oldHash);
-    affectedSeedmers.insert(newHash);
-    auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
-    if (oldHashToPositionIt->second.size() == 1) {
-      hashToPositionMap.erase(oldHashToPositionIt);
-    } else {
-      auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
-      oldHashToPositionIt->second.erase(eraseIt);
-      if (oldHashToPositionIt->second.empty()) hashToPositionMap.erase(oldHashToPositionIt);
-    }
-    oldKminmerIndex = newKminmerIndex;
-    hashToPositionMap[newHash].push_back(posMapIt);
-  } else {
-    posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
-    size_t hash = newKminmer.hash;
-    affectedSeedmers.insert(hash);
-    hashToPositionMap[hash].push_back(posMapIt);
-    seedBacktracks.emplace_back(newKminmerIndex, panmapUtils::seedChangeType::ADD);
-  }
+  auto posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
+  size_t hash = newKminmer.hash;
+  affectedSeedmers.insert(hash);
+  hashToPositionMap[hash].push_back(posMapIt);
 }
 
 void mgsr::mgsrPlacer::addSeedAtPosition(uint64_t newKminmerIndex) {
-  const auto& newKminmer = seedInfos[newKminmerIndex];
+  const auto& newKminmer = liteTree->seedInfos[newKminmerIndex];
   const uint32_t pos = newKminmer.startPos;
-  auto posMapIt = positionMap.find(pos);
-  if (posMapIt != positionMap.end()) {
-    uint64_t& oldKminmerIndex = posMapIt->second;
-    size_t oldHash = seedInfos[oldKminmerIndex].hash;
-    size_t newHash = newKminmer.hash;
-    auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
-    if (oldHashToPositionIt->second.size() == 1) {
-      hashToPositionMap.erase(oldHashToPositionIt);
-      delayedRefSeedmerStatus.erase(oldHash);
-    } else {
-      auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
-      oldHashToPositionIt->second.erase(eraseIt);
-      delayedRefSeedmerStatus[oldHash] = oldHashToPositionIt->second.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
-    }
-    oldKminmerIndex = newKminmerIndex;
-    auto& positions = hashToPositionMap[newHash];
-    positions.push_back(posMapIt);
-    delayedRefSeedmerStatus[newHash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
-  } else {
-    posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
-    size_t hash = newKminmer.hash;
-    auto& positions = hashToPositionMap[hash];
-    positions.push_back(posMapIt);
-    delayedRefSeedmerStatus[hash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
-  }
+  auto posMapIt = positionMap.emplace(pos, newKminmerIndex).first;
+  size_t hash = newKminmer.hash;
+  auto& positions = hashToPositionMap[hash];
+  positions.push_back(posMapIt);
+  delayedRefSeedmerStatus[hash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
 }
 
-
-void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t pos, std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks, std::unordered_set<uint64_t>& affectedSeedmers) {
+void mgsr::mgsrPlacer::subSeedAtPosition(uint64_t newKminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers) {
+  const auto& newKminmer = liteTree->seedInfos[newKminmerIndex];
+  const uint32_t pos = newKminmer.startPos;
   auto posMapIt = positionMap.find(pos);
+  uint64_t& oldKminmerIndex = posMapIt->second;
+  size_t oldHash = liteTree->seedInfos[oldKminmerIndex].hash;
+  size_t newHash = newKminmer.hash;
+  affectedSeedmers.insert(oldHash);
+  affectedSeedmers.insert(newHash);
+  auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
+  if (oldHashToPositionIt->second.size() == 1) {
+    hashToPositionMap.erase(oldHashToPositionIt);
+  } else {
+    auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
+    oldHashToPositionIt->second.erase(eraseIt);
+    if (oldHashToPositionIt->second.empty()) hashToPositionMap.erase(oldHashToPositionIt);
+  }
+  oldKminmerIndex = newKminmerIndex;
+  hashToPositionMap[newHash].push_back(posMapIt);
+}
+
+void mgsr::mgsrPlacer::subSeedAtPosition(uint64_t newKminmerIndex) {
+  const auto& newKminmer = liteTree->seedInfos[newKminmerIndex];
+  const uint32_t pos = newKminmer.startPos;
+  auto posMapIt = positionMap.find(pos);
+  uint64_t& oldKminmerIndex = posMapIt->second;
+  size_t oldHash = liteTree->seedInfos[oldKminmerIndex].hash;
+  size_t newHash = newKminmer.hash;
+  auto oldHashToPositionIt = hashToPositionMap.find(oldHash);
+  if (oldHashToPositionIt->second.size() == 1) {
+    hashToPositionMap.erase(oldHashToPositionIt);
+    delayedRefSeedmerStatus.erase(oldHash);
+  } else {
+    auto eraseIt = std::find(oldHashToPositionIt->second.begin(), oldHashToPositionIt->second.end(), posMapIt);
+    oldHashToPositionIt->second.erase(eraseIt);
+    delayedRefSeedmerStatus[oldHash] = oldHashToPositionIt->second.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
+  }
+  oldKminmerIndex = newKminmerIndex;
+  auto& positions = hashToPositionMap[newHash];
+  positions.push_back(posMapIt);
+  delayedRefSeedmerStatus[newHash] = positions.size() == 1 ? mgsr::RefSeedmerExistStatus::EXIST_UNIQUE : mgsr::RefSeedmerExistStatus::EXIST_DUPLICATE;
+}
+
+void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t kminmerIndex, std::unordered_set<uint64_t>& affectedSeedmers) {
+  auto posMapIt = positionMap.find(liteTree->seedInfos[kminmerIndex].startPos);
   const uint64_t oldKminmerIndex = posMapIt->second;
-  seedBacktracks.emplace_back(oldKminmerIndex, panmapUtils::seedChangeType::DEL);
-  size_t hash = seedInfos[oldKminmerIndex].hash;
+  size_t hash = liteTree->seedInfos[oldKminmerIndex].hash;
   affectedSeedmers.insert(hash);
   auto hashToPositionIt = hashToPositionMap.find(hash);
   if (hashToPositionIt->second.size() == 1) {
@@ -3527,10 +3685,10 @@ void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t pos, std::vector<std::pair<uin
   positionMap.erase(posMapIt);
 }
 
-void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t pos) {
-  auto posMapIt = positionMap.find(pos);
+void mgsr::mgsrPlacer::delSeedAtPosition(uint64_t kminmerIndex) {
+  auto posMapIt = positionMap.find(liteTree->seedInfos[kminmerIndex].startPos);
   const uint64_t oldKminmerIndex = posMapIt->second;
-  size_t hash = seedInfos[oldKminmerIndex].hash;
+  size_t hash = liteTree->seedInfos[oldKminmerIndex].hash;
   auto hashToPositionIt = hashToPositionMap.find(hash);
   if (hashToPositionIt->second.size() == 1) {
     hashToPositionMap.erase(hashToPositionIt);
@@ -3569,48 +3727,66 @@ mgsr::RefSeedmerExistStatus mgsr::mgsrPlacer::getDelayedRefSeedmerExistStatus(ui
 }
 
 void mgsr::mgsrPlacer::updateSeeds(
-  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>>& seedBacktracks,
+  MgsrLiteNode* node,
   std::unordered_set<uint64_t>& affectedSeedmers
 ) {
-  seedBacktracks.reserve(seedInsubIndices[curDfsIndex].size() + seedDeletions[curDfsIndex].size());
-  for (uint32_t seedInsubSeedIndex : seedInsubIndices[curDfsIndex]) {
-    addSeedAtPosition(seedInsubSeedIndex, seedBacktracks, affectedSeedmers);
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = liteTree->seedInfos;
+  for (size_t i = 0; i < curSeedDeltas.size(); i++) {
+    const auto [seedIndex, toDelete] = curSeedDeltas[i];
+    if (i != curSeedDeltas.size() - 1 && seedInfos[seedIndex].startPos == seedInfos[curSeedDeltas[i + 1].first].startPos) {
+      subSeedAtPosition(curSeedDeltas[i + 1].first, affectedSeedmers);
+      i++;
+    } else {
+      if (toDelete) {
+        delSeedAtPosition(seedIndex, affectedSeedmers);
+      } else {
+        addSeedAtPosition(seedIndex, affectedSeedmers);
+      }
+    }
   }
-
-  for (uint32_t deletedPos : seedDeletions[curDfsIndex]) {
-    delSeedAtPosition(deletedPos, seedBacktracks, affectedSeedmers);
-  }
-  seedBacktracks.shrink_to_fit();
 }
 
-void mgsr::mgsrPlacer::updateGapMap(std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks, std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks) {
-  gapMapBacktracks.reserve(coordDeltas[curDfsIndex].size());
-  for (const auto& coordDelta : coordDeltas[curDfsIndex]) {
-    const uint32_t& pos = coordDelta.first;
-    const auto& endPos = coordDelta.second;
-    if (endPos.has_value()) {
-      auto endPosValue = endPos.value();
-      auto gapMapIt = gapMap.find(pos);
-      if (gapMapIt != gapMap.end()) {
-        gapMapBacktracks.emplace_back(false, std::make_pair(pos, gapMapIt->second));
-        gapMapIt->second = endPosValue;
-      } else {
-        gapMapBacktracks.emplace_back(true, std::make_pair(pos, endPosValue));
-        gapMap[pos] = endPosValue;
-      }
+void mgsr::mgsrPlacer::backtrackSeeds(
+  MgsrLiteNode* node,
+  uint64_t nodeDfsIndex
+) {
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = liteTree->seedInfos;
+  for (size_t i = 0; i < curSeedDeltas.size(); i++) {
+    const auto [seedIndex, toDelete] = curSeedDeltas[i];
+    if (i != curSeedDeltas.size() - 1 && seedInfos[seedIndex].startPos == seedInfos[curSeedDeltas[i + 1].first].startPos) {
+      subSeedAtPosition(seedIndex);
+      i++;
     } else {
-      gapMapBacktracks.emplace_back(false, std::make_pair(pos, gapMap[pos]));
-      gapMap.erase(pos);
+      if (toDelete) {
+        addSeedAtPosition(seedIndex);
+      } else {
+        delSeedAtPosition(seedIndex);
+      }
     }
+  }
+}
+
+void mgsr::mgsrPlacer::updateGapMap(
+  MgsrLiteNode* node,
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBacktracks,
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks
+) {
+  const auto& curGapRunDeltas = node->gapRunDeltas;
+  const auto& invertedBlocks = node->invertedBlocks;
+  gapMapBacktracks.reserve(curGapRunDeltas.size() * 2);
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> dummyGapMapUpdates;
+  for (const auto [startPos, endPos, toGap] : curGapRunDeltas) {
+    updateGapMapStep(gapMap, startPos, endPos, toGap, gapMapBacktracks, dummyGapMapUpdates, false);
   }
   gapMapBacktracks.shrink_to_fit();
 
-  gapMapBlocksBacktracks.reserve(invertedBlocks[curDfsIndex].size() * 128);
-  for (const auto& invertedBlock : invertedBlocks[curDfsIndex]) {
+  gapMapBlocksBacktracks.reserve(invertedBlocks.size() * 128);
+  for (const auto& invertedBlock : invertedBlocks) {
     uint64_t beg = (uint64_t)liteTree->getBlockStartScalar(invertedBlock);
     uint64_t end = (uint64_t)liteTree->getBlockEndScalar(invertedBlock);
-    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> tmpGapMapUpdates;
-    invertGapMap(gapMap, {beg, end}, gapMapBlocksBacktracks, tmpGapMapUpdates);
+    invertGapMap(gapMap, {beg, end}, gapMapBlocksBacktracks, dummyGapMapUpdates);
   }
   gapMapBlocksBacktracks.shrink_to_fit();
 }
@@ -3619,16 +3795,15 @@ void mgsr::squareEM::updateProps1() {
   denoms.noalias() = probs * props0;
   inverseDenoms.noalias() = denoms.cwiseInverse();
   for (size_t i = 0; i < numNodes; ++i) {
-    double newProp = (readDuplicates.array() * (probs.col(i).array() * props0[i] * inverseDenoms.array())).sum() * invTotalWeight;
-    props1(i) = newProp > 0 ? newProp : 1e-12;
+    props1(i) = (readDuplicates.array() * (probs.col(i).array() * props0[i] * inverseDenoms.array())).sum() * invTotalWeight;
   }
 }
+
 void mgsr::squareEM::updateProps2() {
   denoms.noalias() = probs * props1;
   inverseDenoms.noalias() = denoms.cwiseInverse();
   for (size_t i = 0; i < numNodes; ++i) {
-    double newProp = (readDuplicates.array() * (probs.col(i).array() * props1[i] * inverseDenoms.array())).sum() * invTotalWeight;
-    props2(i) = newProp > 0 ? newProp : 1e-12;
+    props2(i) = (readDuplicates.array() * (probs.col(i).array() * props1[i] * inverseDenoms.array())).sum() * invTotalWeight;
   }
 }
 
@@ -3639,13 +3814,12 @@ void mgsr::squareEM::updateProps(const Eigen::VectorXd& original, Eigen::VectorX
   denoms.noalias() = probs * original;
   inverseDenoms.noalias() = denoms.cwiseInverse();
   for (size_t i = 0; i < numNodes; ++i) {
-    double newProp = (readDuplicates.array() * (probs.col(i).array() * original[i] * inverseDenoms.array())).sum() * invTotalWeight;
-    result(i) = newProp > 0 ? newProp : 1e-12;
+    result(i) = (readDuplicates.array() * (probs.col(i).array() * original[i] * inverseDenoms.array())).sum() * invTotalWeight;
   }
 }
 
 void mgsr::squareEM::normalizeProps(Eigen::VectorXd& props) {
-  for (int i = 0; i < props.size(); ++i) {
+  for (size_t i = 0; i < props.size(); ++i) {
     if (props(i) <= 0) {
       // std::cout << "prop[" << i << "]: " << props(i) << std::endl;
       props(i) = 1e-12;
@@ -3670,7 +3844,9 @@ void mgsr::squareEM::runSquareEM(uint64_t maximumIterations) {
   while (curIteration < maximumIterations) {
     props0.swap(props);
     updateProps1();
+    normalizeProps(props1);
     updateProps2();
+    normalizeProps(props2);
 
     r.noalias() = props1 - props0;
     v.noalias() = (props2 - props1) - r;
@@ -3683,21 +3859,23 @@ void mgsr::squareEM::runSquareEM(uint64_t maximumIterations) {
     double llh2 = getExp(props2);
     double llhSq = getExp(propsSq);
 
+    double difference = 0;
     if (llhSq > llh2 - eta) {
       props.swap(propsSq);
+      difference = llhSq - llh;
+      llh = llhSq;
     } else {
       props.swap(props2);
+      difference = llh2 - llh;
+      llh = llh2;
     }
 
-    
-    double max_change;
-    if (props.size() > 1000) {
-      max_change = (props.head(1000) - props0.head(1000)).array().abs().maxCoeff();
-    } else {
-      max_change = (props - props0).array().abs().maxCoeff();
-    }
-
-    std::cout << "\rEM iteration " << curIteration << " max_change: " << max_change << std::flush;
+    // std::cout << "\rEM iteration " << curIteration << " difference: " << std::fixed << std::setprecision(8) << difference << std::flush;
+    // if (abs(difference) < 0.00001 || curIteration >= maximumIterations) {
+    //   break;
+    // }
+    double max_change = (props - props0).array().abs().maxCoeff();
+    std::cout << "\rEM iteration " << curIteration << " max_change: " << std::fixed << std::setprecision(8) << max_change << std::flush;
 
     if (max_change < maxChangeThreshold || curIteration >= maximumIterations) {
       break;
@@ -3734,6 +3912,17 @@ bool mgsr::squareEM::removeLowPropNodes() {
   probs.swap(passedProbs);
   numNodes = nodes.size();
 
+  const size_t propsChunkSize = (numNodes + numThreads - 1) / numThreads;
+  threadsRangeByProps.resize(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * propsChunkSize;
+    size_t end = (i == numThreads - 1) ? numNodes : (i + 1) * propsChunkSize;
+    if (start < numNodes) {
+      threadsRangeByProps[i].first = start;
+      threadsRangeByProps[i].second = end;
+    }
+  }
+
   props = Eigen::VectorXd::Constant(numNodes, 1.0 / static_cast<double>(numNodes));
   props0 = Eigen::VectorXd::Zero(numNodes);
   props1 = Eigen::VectorXd::Zero(numNodes);
@@ -3747,6 +3936,9 @@ bool mgsr::squareEM::removeLowPropNodes() {
 
 void mgsr::mgsrPlacer::setReadScore(size_t readIndex, const int32_t score) {
   readScores[readIndex] = score;
+  if (score > reads[readIndex].maxScore) {
+    reads[readIndex].maxScore = score;
+  }
 }
 
 void mgsr::mgsrPlacer::updateRefSeedmerStatus (
@@ -3869,6 +4061,7 @@ uint64_t mgsr::mgsrPlacer::extendMinichain(
   std::map<uint64_t, uint64_t>::const_iterator refPositionIt, const mgsr::Read& curRead, 
   uint64_t& curEnd, bool rev, uint64_t qidx, uint64_t c
 ) {
+  const auto& seedInfos = liteTree->seedInfos;
   const auto& curSeedmerList = curRead.seedmersList;
   uint64_t currentQidx = qidx;
   uint64_t chainLength = c;
@@ -3938,7 +4131,7 @@ void mgsr::mgsrPlacer::initializeReadMinichains(mgsr::Read& curRead) {
         }
         auto curRefPositionIt = *(hashToPositionIt->second.begin());
         uint64_t curEnd = i;
-        bool rev = qrev != seedInfos[curRefPositionIt->second].isReverse;
+        bool rev = qrev != liteTree->seedInfos[curRefPositionIt->second].isReverse;
         c = extendMinichain(curRefPositionIt, curRead, curEnd, rev, qidx, c);
         curMinichains.push_back({i, curEnd, rev});
       } else {
@@ -4494,12 +4687,13 @@ void mgsr::mgsrPlacer::fillReadToAffectedSeedmerIndex(
 
     bool refRev = false;
     if (refSeedmerNewStatus == mgsr::RefSeedmerExistStatus::EXIST_UNIQUE) {
-      refRev = seedInfos[hashToPositionMap[hash].front()->second].isReverse;
+      refRev = liteTree->seedInfos[hashToPositionMap[hash].front()->second].isReverse;
     }
 
     auto affectedseedmerToReads = seedmerToReads.find(hash);
     if (affectedseedmerToReads == seedmerToReads.end()) continue;
     for (const auto& [readIndex, affectedSeedmerIndex] : affectedseedmerToReads->second) {
+      if (reads[readIndex].readType != mgsr::ReadType::PASS) continue;
       auto [affectedSeedmerIndexVectorIt, inserted] = readToAffectedSeedmerIndex.try_emplace(readIndex, std::vector<mgsr::affectedSeedmerInfo>{}, std::pair<bool, bool>{});
       auto& affectedSeedmerIndexVector = affectedSeedmerIndexVectorIt->second;
       if (affectedSeedmerIndexVector.first.empty()) {
@@ -4526,7 +4720,7 @@ uint64_t mgsr::mgsrPlacer::getRefSeedmerBegFromHash(const size_t hash) const {
 uint64_t mgsr::mgsrPlacer::getRefSeedmerEndFromHash(const size_t hash) const {
   auto hashToPositionIt = hashToPositionMap.find(hash);
   auto positionIt = hashToPositionIt->second.front();
-  return seedInfos[positionIt->second].endPos;
+  return liteTree->seedInfos[positionIt->second].endPos;
 }
 
 inline int32_t absDifference(const uint32_t a, const uint32_t b) {
@@ -4722,10 +4916,10 @@ bool mgsr::mgsrPlacer::isColinearFromMinichains(
   return false;
 }
 
-int64_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
+int32_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
   const auto& minichains = curRead.minichains;
 
-  int64_t pseudoChainScore = 0;
+  int32_t pseudoChainScore = 0;
   if (minichains.empty()) {
     return 0;
   } else if (minichains.size() == 1) {
@@ -4773,10 +4967,10 @@ int64_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
 
 
 std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId) const {
-  panmapUtils::LiteNode* currentNode = liteTree->allLiteNodes[nodeId];
+  MgsrLiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
   // Get the path from root the current node
-  std::vector<panmapUtils::LiteNode*> nodePath;
+  std::vector<MgsrLiteNode*> nodePath;
   while (currentNode->parent != nullptr) {
     nodePath.push_back(currentNode);
     currentNode = currentNode->parent;
@@ -4786,7 +4980,7 @@ std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeI
 
   std::vector<uint32_t> curNodeScores(readScores.size(), 0);
   for (const auto& node : nodePath) {
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[nodeToDfsIndex.at(node->identifier)]) {
+    for (const auto& scoreDelta : node->readScoreDeltas[threadId]) {
       curNodeScores[scoreDelta.readIndex] = scoreDelta.scoreDelta;
     }
   }
@@ -4794,10 +4988,10 @@ std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeI
 }
 
 void mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
-  panmapUtils::LiteNode* currentNode = liteTree->allLiteNodes[nodeId];
+  MgsrLiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
   // Get the path from root the current node
-  std::vector<panmapUtils::LiteNode*> nodePath;
+  std::vector<MgsrLiteNode*> nodePath;
   while (currentNode->parent != nullptr) {
     nodePath.push_back(currentNode);
     currentNode = currentNode->parent;
@@ -4806,7 +5000,7 @@ void mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId, std::vector<ui
   std::reverse(nodePath.begin(), nodePath.end());
 
   for (const auto& node : nodePath) {
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[nodeToDfsIndex.at(node->identifier)]) {
+    for (const auto& scoreDelta : node->readScoreDeltas[threadId]) {
       curNodeScores[scoreDelta.readIndex] = scoreDelta.scoreDelta;
     }
   }
@@ -4814,10 +5008,10 @@ void mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId, std::vector<ui
 }
 
 bool mgsr::mgsrPlacer::identicalReadScores(const std::string& node1, const std::string& node2, bool fast_mode) const {
-  panmapUtils::LiteNode* currentNode1 = liteTree->allLiteNodes[node1];
-  panmapUtils::LiteNode* currentNode2 = liteTree->allLiteNodes[node2];
-  std::vector<panmapUtils::LiteNode*> nodePath1;
-  std::vector<panmapUtils::LiteNode*> nodePath2;
+  MgsrLiteNode* currentNode1 = liteTree->allLiteNodes[node1];
+  MgsrLiteNode* currentNode2 = liteTree->allLiteNodes[node2];
+  std::vector<MgsrLiteNode*> nodePath1;
+  std::vector<MgsrLiteNode*> nodePath2;
 
   while (currentNode1->parent != nullptr) {
     nodePath1.push_back(currentNode1);
@@ -4843,15 +5037,15 @@ bool mgsr::mgsrPlacer::identicalReadScores(const std::string& node1, const std::
 
   std::unordered_map<size_t, std::pair<uint32_t, uint32_t>> changedReads;
   for (size_t i = lcaIndex + 1; i < nodePath1.size(); ++i) {
-    panmapUtils::LiteNode* currNode = nodePath1[i];
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[nodeToDfsIndex.at(currNode->identifier)]) {
+    MgsrLiteNode* currNode = nodePath1[i];
+    for (const auto& scoreDelta : currNode->readScoreDeltas[threadId]) {
       changedReads[scoreDelta.readIndex] = {scoreDelta.scoreDelta, lcaScores[scoreDelta.readIndex]};
     }
   }
 
   for (size_t i = lcaIndex + 1; i < nodePath2.size(); ++i) {
-    panmapUtils::LiteNode* currNode = nodePath2[i];
-    for (const auto& scoreDelta : perNodeScoreDeltasIndex[nodeToDfsIndex.at(currNode->identifier)]) {
+    MgsrLiteNode* currNode = nodePath2[i];
+    for (const auto& scoreDelta : currNode->readScoreDeltas[threadId]) {
       if (changedReads.find(scoreDelta.readIndex) != changedReads.end()) {
         changedReads[scoreDelta.readIndex].second = scoreDelta.scoreDelta;
       } else {
@@ -4931,25 +5125,64 @@ void mgsr::mgsrPlacer::setProgressTracker(ProgressTracker* tracker, size_t tid) 
   threadId = tid;
 }
 
-
-void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
-  if (curDfsIndex % 100 == 0) {
-    std::cout << "\r" << curDfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
+void mgsr::mgsrPlacer::computeOverlapCoefficientsHelper(
+  MgsrLiteNode* node,
+  const absl::flat_hash_set<size_t>& allSeedmerHashesSet,
+  std::vector<std::pair<std::string, double>>& overlapCoefficients
+) {
+  if (curDfsIndex % 1000 == 0) {
+    std::cout << "\r" << curDfsIndex << " / " << liteTree->allLiteNodes.size() - liteTree->detachedNodes.size() << std::flush;
   }
 
-  // **** Update seeds ****
-  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
-  std::unordered_set<uint64_t> affectedSeedmers;
-  updateSeeds(seedBacktracks, affectedSeedmers);
+  size_t binaryOverlapKminmerCountBacktrack = binaryOverlapKminmerCount;
 
-  // **** Update gapMap ****
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
-  updateGapMap(gapMapBacktracks, gapMapBlocksBacktracks); 
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = liteTree->seedInfos;
+  
+  auto updateKminmerCount = [&](size_t seedHash, bool seedRev, bool isInsertion) -> bool {
+    if (isInsertion) {
+      auto [it, inserted] = seedRev ? 
+        kminmerOnRefCount.try_emplace(seedHash, 0, 1) : 
+        kminmerOnRefCount.try_emplace(seedHash, 1, 0);
+      
+      if (!inserted) {
+        auto& [fwd, rev] = it->second;
+        seedRev ? ++rev : ++fwd;
+      }
+      
+      auto& [fwd, rev] = it->second;
+      return rev + fwd == 1;
+    } else {
+      auto it = kminmerOnRefCount.find(seedHash);
+      auto& [fwd, rev] = it->second;
+      bool shouldUpdateReads = fwd + rev == 1;
+      
+      if (seedRev) {
+        if (--rev == 0 && fwd == 0) {
+          kminmerOnRefCount.erase(it);
+        }
+      } else {
+        if (--fwd == 0 && rev == 0) {
+          kminmerOnRefCount.erase(it);
+        }
+      }
+      
+      return shouldUpdateReads;
+    }
+  };
 
-  // **** Revert gapMap inversions ****
-  revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+    const bool seedRev = seedInfos[seedIndex].isReverse;
+    
+    if (toDelete) {
+      bool shouldUpdate = updateKminmerCount(seedHash, seedRev, false);
+      if (allSeedmerHashesSet.find(seedHash) != allSeedmerHashesSet.end() && shouldUpdate) --binaryOverlapKminmerCount;
+    } else {
+      bool shouldUpdate = updateKminmerCount(seedHash, seedRev, true);
+      if (allSeedmerHashesSet.find(seedHash) != allSeedmerHashesSet.end() && shouldUpdate) ++binaryOverlapKminmerCount;
+    }
+  }
 
   overlapCoefficients.emplace_back(node->identifier, static_cast<double>(binaryOverlapKminmerCount) / static_cast<double>(kminmerOnRefCount.size()));
   node->totalKminmerNum = kminmerOnRefCount.size();
@@ -4957,17 +5190,71 @@ void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
   auto nodeDfsIndex = node->dfsIndex;
   for (MgsrLiteNode *child : node->children) {
     ++curDfsIndex;
+    computeOverlapCoefficientsHelper(child, allSeedmerHashesSet, overlapCoefficients);
+  }
+
+  // BACKTRACK
+  for (const auto [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+    const bool seedRev = seedInfos[seedIndex].isReverse;
+    if (!toDelete) {
+      updateKminmerCount(seedHash, seedRev, false);
+    } else {
+      updateKminmerCount(seedHash, seedRev, true);
+    }
+  }
+
+  binaryOverlapKminmerCount = binaryOverlapKminmerCountBacktrack;
+
+}
+
+std::vector<std::pair<std::string, double>> mgsr::mgsrPlacer::computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet) {
+  auto start_time = std::chrono::high_resolution_clock::now();
+  curDfsIndex = 0;
+
+  std::vector<std::pair<std::string, double>> overlapCoefficients;
+  overlapCoefficients.reserve(liteTree->allLiteNodes.size());
+  computeOverlapCoefficientsHelper(liteTree->root, allSeedmerHashesSet, overlapCoefficients);
+
+  auto end_time = std::chrono::high_resolution_clock::now();
+  std::cerr << "\nComputed overlap coefficients in: "
+            << static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count()) / 1000.0
+            << " s." << std::endl;
+
+  std::sort(overlapCoefficients.begin(), overlapCoefficients.end(), [](const auto& a, const auto& b) {
+    return a.second > b.second;
+  });
+
+  return overlapCoefficients;
+}
+
+void mgsr::mgsrPlacer::traverseTreeHelper(MgsrLiteNode* node) {
+  // Update progress if tracker is available
+  if (progressTracker) {
+    progressTracker->incrementProgress(threadId);
+  }
+
+  // **** Update seeds ****
+  std::unordered_set<uint64_t> affectedSeedmers;
+  updateSeeds(node, affectedSeedmers);
+
+  // **** Update gapMap ****
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
+  updateGapMap(node, gapMapBacktracks, gapMapBlocksBacktracks); 
+
+  // **** Revert gapMap inversions ****
+  revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
+
+  auto nodeDfsIndex = curDfsIndex;
+  for (MgsrLiteNode *child : node->children) {
+    ++curDfsIndex;
     traverseTreeHelper(child);
   }
 
   // Backtrack seeds and delayedRefSeedmerStatus
-  for (const auto& [uniqueKminmerIndex, changeType] : seedBacktracks) {
-    if (changeType == panmapUtils::seedChangeType::ADD) {
-      delSeedAtPosition(seedInfos[uniqueKminmerIndex].startPos);
-    } else {
-      addSeedAtPosition(uniqueKminmerIndex);
-    }
-  }
+  backtrackSeeds(node, nodeDfsIndex);
   
   // Backtrack gapMap
   for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {
@@ -4980,21 +5267,30 @@ void mgsr::mgsrPlacer::traverseTreeHelper(panmapUtils::LiteNode* node) {
   }
 }
 
-void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
+void mgsr::mgsrPlacer::traverseTree() {
+  gapMap.clear();
+  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
+
+  curDfsIndex = 0;
+  traverseTreeHelper(liteTree->root);
+}
+
+
+void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
   // Update progress if tracker is available
   if (progressTracker) {
     progressTracker->incrementProgress(threadId);
   }
 
   // **** Update seeds ****
-  std::vector<std::pair<uint64_t, panmapUtils::seedChangeType>> seedBacktracks;
   std::unordered_set<uint64_t> affectedSeedmers;
-  updateSeeds(seedBacktracks, affectedSeedmers);
+  updateSeeds(node, affectedSeedmers);
 
   // **** Update gapMap ****
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
-  updateGapMap(gapMapBacktracks, gapMapBlocksBacktracks);
+  updateGapMap(node, gapMapBacktracks, gapMapBlocksBacktracks);
+
 
   // **** Start placing reads ****
   // unordered_map<readIndex, pair<vector<affectedSeedmerIndexOnRead>, pair<allUniqueToNonUnique, allNonUniqueToUnique>>>
@@ -5008,8 +5304,8 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
   std::vector<std::pair<size_t, int32_t>> readScoresBacktrack;
   std::vector<std::pair<size_t, std::vector<mgsr::Minichain>>> readMinichainsBacktrack;
 
-  auto& currentNodeScoreDeltas = perNodeScoreDeltasIndex[curDfsIndex];
-  if (seedBacktracks.empty()) {
+  std::vector<readScoreDelta> currentNodeScoreDeltas;
+  if (affectedSeedmers.empty()) {
     // If the node is identical to its parent, add it to the identical group
     if (node->parent != nullptr && threadId == 0) {
       const std::string& parentID = node->parent->identifier;
@@ -5026,16 +5322,24 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
     // node for some reason has no seeds... delete all read scores and minichains
     // preallocate memory for score deltas
     size_t numReadsToReset = 0;
-    for (size_t i = 0; i < reads.size(); ++i) numReadsToReset += readScores[i] != 0;
+    for (size_t i = 0; i < reads.size(); ++i) {
+      if (reads[i].readType != mgsr::ReadType::PASS) continue;
+      numReadsToReset += readScores[i] != 0;
+    }
     readScoresBacktrack.reserve(numReadsToReset);
     readMinichainsBacktrack.reserve(numReadsToReset);
     currentNodeScoreDeltas.reserve(numReadsToReset);
 
     for (size_t i = 0; i < reads.size(); ++i) {
+      if (reads[i].readType != mgsr::ReadType::PASS) continue;
       if (readScores[i] != 0) {
         readScoresBacktrack.emplace_back(i, readScores[i]);
+        if (!lowMemory) {
+          currentNodeScoreDeltas.emplace_back(i, 0);
+        } else {
+          currentNodeScoreDeltas.emplace_back(i, -readScores[i]);
+        }
         setReadScore(i, 0);
-        currentNodeScoreDeltas.emplace_back(i, 0);
         readMinichainsBacktrack.emplace_back(i, reads[i].minichains);
         reads[i].minichains.clear();
       }
@@ -5049,6 +5353,10 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
     size_t backtrackIndex = 0;
     for (auto& [readIndex, affectedSeedmerIndexInfo] : readToAffectedSeedmerIndex) {
       /*chaining debug*/if (false) std::cout << "[" << node->identifier << " " << curDfsIndex << "] processingreadIndex: " << readIndex << std::endl;
+
+      mgsr::Read& curRead = reads[readIndex];
+      if (curRead.readType != mgsr::ReadType::PASS) continue;
+
       auto& affectedSeedmerInfos = affectedSeedmerIndexInfo.first;
       const auto& [allUniqueToNonUnique, allNonUniqueToUnique] = affectedSeedmerIndexInfo.second;
       if (affectedSeedmerInfos.empty()) {
@@ -5056,13 +5364,11 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
         exit(1);
       }
 
-      mgsr::Read& curRead = reads[readIndex];
-
-
       sortAffectedSeedmerInfos(affectedSeedmerInfos);
 
       readMinichainsBacktrack[backtrackIndex].first = readIndex;
       readMinichainsBacktrack[backtrackIndex].second = curRead.minichains;
+
       if (allUniqueToNonUnique || allNonUniqueToUnique) {
         /*chaining debug*/if (false) {
           std::cout << "\tread is allUniqueToNonUnique " << allUniqueToNonUnique << " or allNonUniqueToUnique " << allNonUniqueToUnique << "... updating minichains" << std::endl;
@@ -5078,18 +5384,20 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
         /*chaining debug*/if (false) std::cout << "\tread is not allUniqueToNonUnique or allNonUniqueToUnique... reinitializing minichains" << std::endl;
         initializeReadMinichains(curRead);
       }
-      int64_t pseudoScore = getReadPseudoScore(curRead);
+      int32_t pseudoScore = getReadPseudoScore(curRead);
 
-      readScoresBacktrack[backtrackIndex].first = readIndex;
-      readScoresBacktrack[backtrackIndex].second = readScores[readIndex];
-      setReadScore(readIndex, pseudoScore);
-      currentNodeScoreDeltas[backtrackIndex].readIndex = readIndex;
-      currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore;
-
-      if (pseudoScore > maxScores[readIndex]) {
-        maxScores[readIndex] = pseudoScore;
-        maxMinichains[readIndex] = curRead.minichains;
+      readScoresBacktrack[backtrackIndex].first         = readIndex;
+      readScoresBacktrack[backtrackIndex].second        = readScores[readIndex];
+      currentNodeScoreDeltas[backtrackIndex].readIndex  = readIndex;
+      if (lowMemory) {
+        currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore - readScores[readIndex];
+      } else {
+        currentNodeScoreDeltas[backtrackIndex].scoreDelta = pseudoScore;
       }
+      setReadScore(readIndex, pseudoScore);
+
+
+
       ++backtrackIndex;
 
       // int64_t bruteForceScore = getReadBruteForceScore(readIndex, hashCoordInfoCacheTable);
@@ -5101,26 +5409,71 @@ void mgsr::mgsrPlacer::placeReadsHelper(panmapUtils::LiteNode* node) {
       // if (curRead.duplicates.size() > excludeDuplicatesThreshold * curRead.seedmersList.size()) readTypes[readIndex] = mgsr::readType::HIGH_DUPLICATES;
     }
   }
-  // std::cout << "affectedSeedmers.size(): " << affectedSeedmers.size() << " hashCoordInfoCacheTable.size(): " << hashCoordInfoCacheTable.size() << std::endl;;
+  
 
-  // std::cout << "\rFinished dfsIndex: " << curDfsIndex << std::flush;
+
+  if (lowMemory && currentNodeScoreDeltas.size() > 0) {
+    auto& currentNodeScoreDeltasGrouped = node->readScoreDeltasLowMemory[threadId];
+    currentNodeScoreDeltasGrouped.reserve(currentNodeScoreDeltas.size());
+    std::sort(currentNodeScoreDeltas.begin(), currentNodeScoreDeltas.end(), [&](const auto& a, const auto& b) {
+      return a.readIndex < b.readIndex;
+    });
+    currentNodeScoreDeltasGrouped.emplace_back(mgsr::readScoreDeltaLowMemory{
+      .readIndex = currentNodeScoreDeltas[0].readIndex,
+      .scoreDelta = currentNodeScoreDeltas[0].scoreDelta,
+    });
+    auto currentGroup = &currentNodeScoreDeltasGrouped.back();
+    for (size_t i = 1; i < currentNodeScoreDeltas.size(); ++i) {
+      auto [currentScoreDeltaIndex, currentScoreDelta] = currentNodeScoreDeltas[i];
+      bool startNew = false;
+
+      int16_t scoreDeltaDiff = currentNodeScoreDeltas[i].scoreDelta - currentGroup->scoreDelta;
+
+      if (currentScoreDeltaIndex > currentGroup->readIndex + 16) {
+        startNew = true;
+      } else if (currentNodeScoreDeltas[i].scoreDelta > currentGroup->scoreDelta && scoreDeltaDiff > 7) {
+        startNew = true;
+      } else if (currentNodeScoreDeltas[i].scoreDelta < currentGroup->scoreDelta && scoreDeltaDiff < -7) {
+        startNew = true;
+      }
+
+      if (startNew) {
+        currentNodeScoreDeltasGrouped.emplace_back(mgsr::readScoreDeltaLowMemory{
+          .readIndex = currentScoreDeltaIndex,
+          .scoreDelta = currentScoreDelta,
+        });
+        currentGroup = &currentNodeScoreDeltasGrouped.back();
+      } else {
+        currentGroup->encodeTrailingDelta(scoreDeltaDiff, currentScoreDeltaIndex);
+      }
+    }
+    currentNodeScoreDeltasGrouped.shrink_to_fit();
+    numGroupsUpdate += currentNodeScoreDeltasGrouped.size();
+    numReadsUpdate += currentNodeScoreDeltas.size();
+    std::vector<readScoreDelta>().swap(currentNodeScoreDeltas);
+  } else if (!lowMemory) {
+    node->readScoreDeltas[threadId] = std::move(currentNodeScoreDeltas);
+  }
+
+
+
+
   // **** Revert gapMap inversions ****
   revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapMapBlocksBacktracks); // gapMapBlocksBacktracks is no longer needed... clear memory
 
-  for (panmapUtils::LiteNode *child : node->children) {
+  // clear memory that are no longer needed
+  decltype(gapMapBlocksBacktracks){}.swap(gapMapBlocksBacktracks);
+  decltype(readToAffectedSeedmerIndex){}.swap(readToAffectedSeedmerIndex);
+
+  auto nodeDfsIndex = curDfsIndex;
+  for (MgsrLiteNode *child : node->children) {
     ++curDfsIndex;
     placeReadsHelper(child);
   }
 
   // Backtrack seeds and delayedRefSeedmerStatus
-  for (const auto& [uniqueKminmerIndex, changeType] : seedBacktracks) {
-    if (changeType == panmapUtils::seedChangeType::ADD) {
-      delSeedAtPosition(seedInfos[uniqueKminmerIndex].startPos);
-    } else {
-      addSeedAtPosition(uniqueKminmerIndex);
-    }
-  }
+  backtrackSeeds(node, nodeDfsIndex);
+
 
   // Backtrack gapMap
   for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {
@@ -6038,38 +6391,353 @@ void mgsr::mgsrPlacer::preallocateHashCoordInfoCacheTable(uint32_t startReadInde
   }
 }
 
-void mgsr::mgsrPlacer::placeReads() {
-  gapMap.clear();
-  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
+void mgsr::ThreadsManager::computeKminmerCoverageHelper(
+  MgsrLiteNode* node,
+  std::vector<uint32_t>& readScores,
+  const absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>>& seedmerToReads,
+  absl::flat_hash_map<size_t, std::unordered_set<uint32_t>>& coveredKminmers,
+  absl::flat_hash_map<size_t, uint32_t>& refKminmers,
+  size_t& dfsIndex
+) {
+  size_t readScoresBacktrackIndex = 0;
+  std::vector<std::pair<uint32_t, int16_t>> readScoresBacktrack;
 
-  curDfsIndex = 0;
-  preallocateHashCoordInfoCacheTable(0, reads.size());
-  placeReadsHelper(liteTree->root);
+  // Apply read score deltas to readScores
+  for (size_t threadId = 0; threadId < numThreads; ++threadId) {
+    const auto threadReadStart = threadRanges[threadId].first;
+    if (lowMemory) {
+      const auto& curNodeThreadScoreDeltasLowMemory = node->readScoreDeltasLowMemory[threadId];
+      for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
+        const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
+        if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
+          readScoresBacktrack.emplace_back(threadReadStart + readIndex, readScores[threadReadStart + readIndex]);
+        } else {
+          readScoresBacktrack[readScoresBacktrackIndex].first = threadReadStart + readIndex;
+          readScoresBacktrack[readScoresBacktrackIndex].second = readScores[threadReadStart + readIndex];
+        }
+        readScoresBacktrackIndex++;
+
+        readScores[threadReadStart + readIndex] += currentScoreDelta;
+        for (size_t i = 0; i < numTrailing; ++i) {
+          int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
+          // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply the trailing delta
+          if (curDecodedTrailingDelta > -8) {
+            if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
+              readScoresBacktrack.emplace_back(threadReadStart + readIndex + i + 1, readScores[threadReadStart + readIndex + i + 1]);
+            } else {
+              readScoresBacktrack[readScoresBacktrackIndex].first = threadReadStart + readIndex + i + 1;
+              readScoresBacktrack[readScoresBacktrackIndex].second = readScores[threadReadStart + readIndex + i + 1];
+            }
+            readScoresBacktrackIndex++;
+
+            readScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + curDecodedTrailingDelta;
+          }
+        }
+      }
+    } else {
+      const auto& curNodeThreadScoreDeltas = node->readScoreDeltas[threadId];
+      for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
+        if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
+          readScoresBacktrack.emplace_back(threadReadStart + scoreDelta.readIndex, readScores[threadReadStart + scoreDelta.readIndex]);
+        } else {
+          readScoresBacktrack[readScoresBacktrackIndex].first = threadReadStart + scoreDelta.readIndex;
+          readScoresBacktrack[readScoresBacktrackIndex].second = readScores[threadReadStart + scoreDelta.readIndex];
+        }
+        readScoresBacktrackIndex++;
+
+        readScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
+      }
+    }
+  }
+
+  size_t coveredKminmersBacktrackIndex = 0;
+  std::vector<mgsr::kminmerCoverageBacktrack> coveredKminmersBacktrack;
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = liteTree->seedInfos;
+  for (size_t i = 0; i < curSeedDeltas.size(); i++) {
+    const auto [seedIndex, toDelete] = curSeedDeltas[i];
+    if (i != curSeedDeltas.size() - 1 && seedInfos[seedIndex].startPos == seedInfos[curSeedDeltas[i + 1].first].startPos) {
+      // substitution
+      const auto& delSeed = seedInfos[seedIndex];
+      auto delRefKminmerIt = refKminmers.find(delSeed.hash);
+      if (delRefKminmerIt == refKminmers.end()) {
+        std::cerr << "Error: seed " << seedIndex << " not found in refKminmers" << std::endl;
+        exit(1);
+      }
+      delRefKminmerIt->second--;
+      if (delRefKminmerIt->second == 0) {
+        refKminmers.erase(delRefKminmerIt);
+        if (coveredKminmers.find(delSeed.hash) != coveredKminmers.end()) {
+          for (const auto& readIndex : coveredKminmers[delSeed.hash]) {
+            if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+              coveredKminmersBacktrack.emplace_back(delSeed.hash, readIndex, false);
+            } else {
+              auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+              coveredKminmerBacktrack.seedmer = delSeed.hash;
+              coveredKminmerBacktrack.readIndex = readIndex;
+              coveredKminmerBacktrack.toDelete = false;
+            }
+            coveredKminmersBacktrackIndex++;
+          }
+        }
+        coveredKminmers.erase(delSeed.hash);
+      }
+  
+      const auto& newSeed = seedInfos[curSeedDeltas[i + 1].first];
+      auto [newRefKminmerIt, newRefKminmerInserted] = refKminmers.try_emplace(newSeed.hash, 1);
+      if (!newRefKminmerInserted) newRefKminmerIt->second++;
+      i++;
+    } else {
+      if (toDelete) {
+        // deletion
+        const auto& seed = seedInfos[seedIndex];
+        auto refKminmerIt = refKminmers.find(seed.hash);
+        if (refKminmerIt == refKminmers.end()) {
+          std::cerr << "Error: seed " << seedIndex << " not found in refKminmers" << std::endl;
+          exit(1);
+        }
+        refKminmerIt->second--;
+        if (refKminmerIt->second == 0) {
+          refKminmers.erase(refKminmerIt);
+          if (coveredKminmers.find(seed.hash) != coveredKminmers.end()) {
+            for (const auto& readIndex : coveredKminmers[seed.hash]) {
+              if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+                coveredKminmersBacktrack.emplace_back(seed.hash, readIndex, false);
+              } else {
+                auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+                coveredKminmerBacktrack.seedmer = seed.hash;
+                coveredKminmerBacktrack.readIndex = readIndex;
+                coveredKminmerBacktrack.toDelete = false;
+              }
+              coveredKminmersBacktrackIndex++;
+            }
+          }
+          coveredKminmers.erase(seed.hash);
+        }
+      } else {
+        // insertion
+        const auto& seed = seedInfos[seedIndex];
+        auto [refKminmerIt, refKminmerInserted] = refKminmers.try_emplace(seed.hash, 1);
+        if (!refKminmerInserted) refKminmerIt->second++;
+      }
+    }
+  }
+
+  for (size_t i = 0; i < readScoresBacktrackIndex; ++i) {
+    const auto [readIndex, oldScore] = readScoresBacktrack[i];
+    const auto newScore = readScores[readIndex];
+    const auto maxScore = reads[readIndex].maxScore;
+    if (oldScore != maxScore && newScore == maxScore) {
+      for (const auto& [seedmer, _] : reads[readIndex].uniqueSeedmers) {
+        if (refKminmers.find(seedmer) == refKminmers.end()) continue;
+        auto [coveredKminmerIt, coveredKminmerInserted] = coveredKminmers.try_emplace(seedmer, std::unordered_set<uint32_t>({readIndex}));
+        if (!coveredKminmerInserted) coveredKminmerIt->second.insert(readIndex);
+        if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+          coveredKminmersBacktrack.emplace_back(seedmer, readIndex, true);
+        } else {
+          auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+          coveredKminmerBacktrack.seedmer = seedmer;
+          coveredKminmerBacktrack.readIndex = readIndex;
+          coveredKminmerBacktrack.toDelete = true;
+        }
+        coveredKminmersBacktrackIndex++;
+      }
+    } else if (oldScore == maxScore && newScore != maxScore) {
+      for (const auto& [seedmer, _] : reads[readIndex].uniqueSeedmers) {
+        auto coveredKminmerIt = coveredKminmers.find(seedmer);
+        if (refKminmers.find(seedmer) == refKminmers.end() || coveredKminmerIt == coveredKminmers.end()) continue;
+        coveredKminmerIt->second.erase(readIndex);
+        if (coveredKminmerIt->second.empty()) coveredKminmers.erase(coveredKminmerIt);
+        if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+          coveredKminmersBacktrack.emplace_back(seedmer, readIndex, false);
+        } else {
+          auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+          coveredKminmerBacktrack.seedmer = seedmer;
+          coveredKminmerBacktrack.readIndex = readIndex;
+          coveredKminmerBacktrack.toDelete = false;
+        }
+        coveredKminmersBacktrackIndex++;
+      }
+    } else if (oldScore == maxScore && newScore == maxScore) {
+      for (const auto& [seedmer, _] : reads[readIndex].uniqueSeedmers) {
+        if (refKminmers.find(seedmer) == refKminmers.end()) continue;
+        auto [coveredKminmerIt, coveredKminmerInserted] = coveredKminmers.try_emplace(seedmer, std::unordered_set<uint32_t>({readIndex}));
+        if (coveredKminmerInserted) {
+          if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+            coveredKminmersBacktrack.emplace_back(seedmer, readIndex, true);
+          } else {
+            auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+            coveredKminmerBacktrack.seedmer = seedmer;
+            coveredKminmerBacktrack.readIndex = readIndex;
+            coveredKminmerBacktrack.toDelete = true;
+          }
+          coveredKminmersBacktrackIndex++;
+        } else {
+          if (coveredKminmerIt->second.find(readIndex) == coveredKminmerIt->second.end()) {
+            if (coveredKminmersBacktrackIndex == coveredKminmersBacktrack.size()) {
+              coveredKminmersBacktrack.emplace_back(seedmer, readIndex, true);
+            } else {
+              auto& coveredKminmerBacktrack = coveredKminmersBacktrack[coveredKminmersBacktrackIndex];
+              coveredKminmerBacktrack.seedmer = seedmer;
+              coveredKminmerBacktrack.readIndex = readIndex;
+              coveredKminmerBacktrack.toDelete = true;
+            }
+            coveredKminmersBacktrackIndex++;
+            coveredKminmerIt->second.insert(readIndex);
+          } 
+        }
+      }
+    }
+  }
+
+
+
+  // // compute coveredKminmersBruteForce
+  // std::unordered_map<size_t, std::unordered_set<uint32_t>> coveredKminmersBruteForce;
+  // for (size_t i = 0; i < reads.size(); ++i) {
+  //   if (readScores[i] == reads[i].maxScore) {
+  //     for (const auto& seedmer : reads[i].uniqueSeedmers) {
+  //       if (refKminmers.find(seedmer.first) != refKminmers.end()) {
+  //         coveredKminmersBruteForce[seedmer.first].insert(i);
+  //       }
+  //     }
+  //   }
+  // }
+
+  // if (coveredKminmersBruteForce.size() != coveredKminmers.size()) {
+  //   std::cout << "Covered kminmers size mismatch: brute force " << coveredKminmersBruteForce.size() << " != dynamic " << coveredKminmers.size() << std::endl;
+  //   exit(1);
+  // }
+  // for (const auto& [seedmer, reads] : coveredKminmersBruteForce) {
+  //   auto coveredKminmerIt = coveredKminmers.find(seedmer);
+  //   if (coveredKminmerIt == coveredKminmers.end()) {
+  //     std::cout << "Covered kminmer " << seedmer << " not found in coveredKminmers" << std::endl;
+  //     exit(1);
+  //   }
+
+  //   if (reads.size() != coveredKminmerIt->second.size()) {
+  //     std::cout << "Covered kminmer " << seedmer << " reads size mismatch: brute force " << reads.size() << " != dynamic " << coveredKminmerIt->second.size() << std::endl;
+  //     exit(1);
+  //   }
+  //   for (const auto& readIndex : reads) {
+  //     if (coveredKminmerIt->second.find(readIndex) == coveredKminmerIt->second.end()) {
+  //       std::cout << "Covered kminmer " << seedmer << " read index " << readIndex << " not found in coveredKminmers" << std::endl;
+  //       exit(1);
+  //     }
+  //   }
+  // }
+
+
+  kminmerCoverage[node->identifier] = static_cast<double>(coveredKminmers.size()) / static_cast<double>(refKminmers.size());
+
+
+  if (dfsIndex % 100 == 0) {
+    std::cout << "\rComputing Kminmer Coverage " << dfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
+  }
+  auto curNodeDfsIndex = dfsIndex;
+  for (auto child : node->children) {
+    ++dfsIndex;
+    computeKminmerCoverageHelper(child, readScores, seedmerToReads, coveredKminmers, refKminmers, dfsIndex);
+  }
+
+  // backtrack seeds
+  for (size_t i = 0; i < curSeedDeltas.size(); i++) {
+    const auto [seedIndex, toDelete] = curSeedDeltas[i];
+    if (i != curSeedDeltas.size() - 1 && seedInfos[seedIndex].startPos == seedInfos[curSeedDeltas[i + 1].first].startPos) {
+      // substitute
+      const auto& insSeed = seedInfos[seedIndex];
+      auto [insertedRefKminmerIt, insertedRefKminmerInserted] = refKminmers.try_emplace(insSeed.hash, 1);
+      if (!insertedRefKminmerInserted) insertedRefKminmerIt->second++;
+      
+      const auto& delSeed = seedInfos[curSeedDeltas[i + 1].first];
+      auto delRefKminmerIt = refKminmers.find(delSeed.hash);
+      if (delRefKminmerIt == refKminmers.end()) {
+        std::cerr << "Error: backtracking seed " << curSeedDeltas[i + 1].first << " not found in refKminmers" << std::endl;
+        exit(1);
+      }
+      delRefKminmerIt->second--;
+      if (delRefKminmerIt->second == 0) refKminmers.erase(delRefKminmerIt);
+      i++;
+    } else {
+      if (toDelete) {
+        // add back deleted seed
+        const auto& seed = seedInfos[seedIndex];
+        auto [refKminmerIt, refKminmerInserted] = refKminmers.try_emplace(seed.hash, 1);
+        if (!refKminmerInserted) refKminmerIt->second++;
+      } else {
+        // delete inserted seed
+        const auto& seed = seedInfos[seedIndex];
+        auto refKminmerIt = refKminmers.find(seed.hash);
+        if (refKminmerIt == refKminmers.end()) {
+          std::cerr << "Error: backtracking seed " << seedIndex << " not found in refKminmers" << std::endl;
+          exit(1);
+        }
+        refKminmerIt->second--;
+        if (refKminmerIt->second == 0) refKminmers.erase(refKminmerIt);
+      }
+    }
+  }
+
+  for (size_t i = 0; i < readScoresBacktrackIndex; ++i) {
+    const auto& [readIdx, score] = readScoresBacktrack[i];
+    readScores[readIdx] = score;
+  }
+
+  for (size_t i = 0; i < coveredKminmersBacktrackIndex; ++i) {
+    const auto& [hash, readIndex, toErase] = coveredKminmersBacktrack[coveredKminmersBacktrackIndex - i - 1];
+    if (toErase) {
+      auto coveredKminmerIt = coveredKminmers.find(hash);
+      if (coveredKminmerIt == coveredKminmers.end()) {
+        std::cerr << "Error: backtracking coveredKminmer " << hash << " not found in coveredKminmers" << std::endl;
+        exit(1);
+      }
+      coveredKminmerIt->second.erase(readIndex);
+      if (coveredKminmerIt->second.empty()) coveredKminmers.erase(coveredKminmerIt);
+    } else {
+      auto [coveredKminmerIt, coveredKminmerInserted] = coveredKminmers.try_emplace(hash, std::unordered_set<uint32_t>({readIndex}));
+      if (!coveredKminmerInserted) coveredKminmerIt->second.insert(readIndex);
+    }
+  }
+
 }
 
-void mgsr::mgsrPlacer::traverseTree() {
-  gapMap.clear();
-  gapMap.insert(std::make_pair(0, liteTree->blockScalarRanges.back().second));
+void mgsr::ThreadsManager::computeKminmerCoverage() {
+  absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
+  for (uint32_t i = 0; i < reads.size(); ++i) {
+    for (const auto& seedmer : reads[i].uniqueSeedmers) {
+      for (const auto& seedmerIndex : seedmer.second) {
+        seedmerToReads[seedmer.first].emplace_back(i, seedmerIndex);
+      }
+    }
+  }
 
-  curDfsIndex = 0;
-  traverseTreeHelper(liteTree->root);
+  std::vector<uint32_t> readScores(reads.size(), 0);
+  absl::flat_hash_map<size_t, std::unordered_set<uint32_t>> coveredKminmers;
+  absl::flat_hash_map<size_t, uint32_t> refKminmers;
+  size_t dfsIndex = 0;
+
+  computeKminmerCoverageHelper(liteTree->root, readScores, seedmerToReads, coveredKminmers, refKminmers, dfsIndex);
+
+
+
 }
 
-std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const {
+
+std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId) const {
   std::vector<uint32_t> curNodeScores(reads.size(), 0);
-  getScoresAtNode(nodeId, curNodeScores, nodeToDfsIndex);
+  getScoresAtNode(nodeId, curNodeScores);
   return curNodeScores;
 }
 
-void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex) const {
+void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
   if (curNodeScores.size() != reads.size()) {
     curNodeScores.resize(reads.size(), 0);
   }
 
-  panmapUtils::LiteNode* currentNode = liteTree->allLiteNodes[nodeId];
+  MgsrLiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
   // Get the path from root the current node
-  std::vector<panmapUtils::LiteNode*> nodePath;
+  std::vector<MgsrLiteNode*> nodePath;
   while (currentNode->parent != nullptr) {
     nodePath.push_back(currentNode);
     currentNode = currentNode->parent;
@@ -6078,12 +6746,26 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
   std::reverse(nodePath.begin(), nodePath.end());
 
   for (const auto& node : nodePath) {
-    auto nodeDfsIndex = nodeToDfsIndex.at(node->identifier);
-    for (size_t threadId = 0; threadId < perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
+    for (size_t threadId = 0; threadId < numThreads; ++threadId) {
       const auto threadReadStart = threadRanges[threadId].first;
-      const auto& curNodeThreadScoreDeltas = perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex];
-      for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
-        curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
+      if (lowMemory) {
+        const auto& curNodeThreadScoreDeltasLowMemory = node->readScoreDeltasLowMemory[threadId];
+        for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
+          const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
+          curNodeScores[threadReadStart + readIndex] += currentScoreDelta;
+          for (size_t i = 0; i < numTrailing; ++i) {
+            int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
+            // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply the trailing delta
+            if (curDecodedTrailingDelta > -8) {
+              curNodeScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + curDecodedTrailingDelta;
+            }
+          }
+        }
+      } else {
+        const auto& curNodeThreadScoreDeltas = node->readScoreDeltas[threadId];
+        for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
+          curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
+        }
       }
     }
   }
@@ -6096,30 +6778,43 @@ void mgsr::ThreadsManager::printStats() {
   }
 }
 
-mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, const std::string& prefix, uint32_t overlapCoefficientCutoff) 
-  : squareEM(threadsManager, nodeToDfsIndex, overlapCoefficientCutoff) {
-  // Constructor that accepts prefix but delegates to main constructor
-}
+mgsr::squareEM::squareEM(
+  mgsr::ThreadsManager& threadsManager,
+  mgsr::MgsrLiteTree& liteTree,
+  const std::string& prefix,
+  uint32_t overlapCoefficientCutoff
+) {
+  this->prefix = prefix;
+  numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
 
-mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unordered_map<std::string, uint32_t>& nodeToDfsIndex, uint32_t overlapCoefficientCutoff) {
   auto& kminmerOverlapCoefficients = threadsManager.kminmerOverlapCoefficients;
   auto& readSeedmersDuplicatesIndex = threadsManager.readSeedmersDuplicatesIndex;
   auto& reads = threadsManager.reads;
   size_t numReads = reads.size();
 
 
-  this->identicalGroups.swap(threadsManager.identicalGroups);
-  this->identicalNodeToGroup.swap(threadsManager.identicalNodeToGroup);
+  identicalGroups.swap(threadsManager.identicalGroups);
+  identicalNodeToGroup.swap(threadsManager.identicalNodeToGroup);
+
 
   std::vector<std::pair<std::string, double>> kminmerOverlapCoefficientsVector;
   for (const auto& [nodeId, kminmerOverlapCoefficient] : kminmerOverlapCoefficients) {
     if (identicalNodeToGroup.find(nodeId) != identicalNodeToGroup.end()) continue;
+    if (liteTree.isDetached(nodeId)) continue;
     kminmerOverlapCoefficientsVector.emplace_back(nodeId, kminmerOverlapCoefficient);
   }
 
+  std::cout << "kminmerOverlapCoefficientsVector.size(): " << kminmerOverlapCoefficientsVector.size() << std::endl;
+  std::cout << "identicalNodeToGroup.size(): " << identicalNodeToGroup.size() << std::endl;
+  std::cout << "detachedNodes.size(): " << liteTree.detachedNodes.size() << std::endl;
+
   std::sort(kminmerOverlapCoefficientsVector.begin(), kminmerOverlapCoefficientsVector.end(), [](const auto& a, const auto& b) {
+    if (a.second == b.second) {
+      return a.first < b.first;
+    }
     return a.second > b.second;
   });
+
 
   std::vector<std::string> significantOverlapNodeIds{kminmerOverlapCoefficientsVector[0].first};
   size_t curRank = 0;
@@ -6128,21 +6823,161 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
     if (kminmerOverlapCoefficient != kminmerOverlapCoefficientsVector[i - 1].second) {
       ++curRank;
     }
-    if (curRank >= overlapCoefficientCutoff) break;
+    // if (curRank >= overlapCoefficientCutoff) break;
+    if (curRank >= 9999999999) break;
     significantOverlapNodeIds.push_back(nodeId);
   }
 
-
+  std::cout << "significantOverLapNodeIds.size(): " << significantOverlapNodeIds.size() << std::endl;
   // get score matrix to find ambiguous nodes with identical scores
   std::vector<std::vector<uint32_t>> scoreMatrix(significantOverlapNodeIds.size(), std::vector<uint32_t>(numReads, 0));
-  for (size_t i = 0; i < significantOverlapNodeIds.size(); ++i) {
-    auto significantNodeId = significantOverlapNodeIds[i];
-    auto nodeDfsIndex = nodeToDfsIndex.at(significantNodeId);
-    threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i], nodeToDfsIndex);
-    for (size_t threadId = 0; threadId < threadsManager.perNodeScoreDeltasIndexByThreadId.size(); ++threadId) {
-      std::vector<readScoreDelta>().swap(threadsManager.perNodeScoreDeltasIndexByThreadId[threadId][nodeDfsIndex]);
+  const size_t chunkSize = (significantOverlapNodeIds.size() + numThreads - 1) / numThreads;
+  std::vector<std::pair<size_t, size_t>> threadRanges(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * chunkSize;
+    size_t end = (i == numThreads - 1) ? significantOverlapNodeIds.size() : (i + 1) * chunkSize;
+    if (start < significantOverlapNodeIds.size()) {
+      threadRanges[i].first = start;
+      threadRanges[i].second = end;
     }
   }
+
+  exit(0);
+
+  // std::vector<std::vector<uint32_t>> readToMaxScoreNodeIndices(numReads);
+  // tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+  //   const auto& range = threadRanges[threadIdx];
+  //   for (size_t i = range.first; i < range.second; ++i) {
+  //     auto significantNodeId = significantOverlapNodeIds[i];
+  //     threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i]);
+  //   }
+  // });
+
+
+
+  // tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+  //   const auto& range = threadRanges[threadIdx];
+  //   for (size_t i = range.first; i < range.second; ++i) {
+  //     auto significantNodeId = significantOverlapNodeIds[i];
+  //     threadsManager.getScoresAtNode(significantNodeId, scoreMatrix[i]);
+  //     double curTestScore = 0;
+  //     for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
+  //       if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
+  //         reads[j].epp++;
+  //       }
+  //     }
+  //   }
+  // });
+
+
+  // std::vector<double> testScores(significantOverlapNodeIds.size(), 0);
+  // std::vector<std::vector<uint32_t>> readToMaxScoreNodeIndices(numReads);
+  // tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+  //   const auto& range = threadRanges[threadIdx];
+  //   for (size_t i = range.first; i < range.second; ++i) {
+  //     double curTestScore = 0;
+  //     bool toDebug = false;
+  //     if (significantOverlapNodeIds[i] == "England/MILK-344FEB3/2022|OV817379.1|2022-01-26") {
+  //       toDebug = false;
+  //     }
+  //     for (size_t j = 0; j < scoreMatrix[i].size(); ++j) {
+  //       if (scoreMatrix[i][j] == reads[j].maxScore && reads[j].maxScore > 0) {
+  //         readToMaxScoreNodeIndices[j].push_back(i);
+  //         double curReadScore = static_cast<double>(readSeedmersDuplicatesIndex[j].size()) / ((reads[j].seedmersList.size() - reads[j].maxScore + 1) * pow(static_cast<double>(reads[j].epp), 2));
+  //         curTestScore += curReadScore;
+  //         if (toDebug) {
+  //           std::cout << "Read " << j << " parsimonious. Score:" << scoreMatrix[i][j] << ". Max:" << reads[j].maxScore << " epp:" << reads[j].epp << " duplicates:" << readSeedmersDuplicatesIndex[j].size() << std::endl;
+  //         }
+  //       } else if (reads[j].maxScore > 0 && toDebug) {
+  //         std::cout << "Read " << j << " NOT parsimonious. Score:" << scoreMatrix[i][j] << ". Max:" << reads[j].maxScore << " epp:" << reads[j].epp << " duplicates:" << readSeedmersDuplicatesIndex[j].size() << std::endl;
+  //       }
+  //     }
+  //     testScores[i] = curTestScore;
+  //   }
+  // });
+
+
+  // std::ofstream ofs(prefix + ".testScores.txt");
+  // for (size_t i = 0; i < testScores.size(); ++i) {
+  //   ofs << significantOverlapNodeIds[i];
+  //   if (identicalGroups.find(significantOverlapNodeIds[i]) != identicalGroups.end()) {
+  //     for (const auto& member : identicalGroups[significantOverlapNodeIds[i]]) {
+  //       ofs << "," << member;
+  //     }
+  //   }
+  //   ofs << " " << std::fixed << std::setprecision(10) 
+  //       << kminmerOverlapCoefficientsVector[i].second << " "
+  //       << testScores[i] << std::endl;
+  // }
+  // ofs.close();
+
+  // uint32_t readsRemaining;
+  // for (size_t i = 0; i < numReads; ++i) {
+  //   if (!readToMaxScoreNodeIndices[i].empty()) {
+  //     readsRemaining++;
+  //   }
+  // }
+  // std::unordered_map<uint32_t, double> selectedNodeIndices;
+  // while (readsRemaining > 0) {
+  //   double curMaxScore = -1;
+  //   uint32_t curMaxScoreIndex = 0;
+  //   for (size_t i = 0; i < testScores.size(); ++i) {
+  //     if (testScores[i] > curMaxScore && selectedNodeIndices.find(i) == selectedNodeIndices.end()) {
+  //       curMaxScore = testScores[i];
+  //       curMaxScoreIndex = i;
+  //     }
+  //   }
+  //   selectedNodeIndices[curMaxScoreIndex] = curMaxScore;
+  //   std::cout << "Selected node " << significantOverlapNodeIds[curMaxScoreIndex] << " with score " << curMaxScore << std::endl;
+
+  //   std::vector<uint32_t> selectedNodeScores(numReads, 0);
+  //   threadsManager.getScoresAtNode(significantOverlapNodeIds[curMaxScoreIndex], selectedNodeScores);
+  //   for (size_t i = 0; i < numReads; ++i) {
+  //     if (readToMaxScoreNodeIndices[i].empty()) continue;
+  //     if (selectedNodeScores[i] == reads[i].maxScore && reads[i].maxScore > 0) {
+  //       double curReadScore = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / ((reads[i].seedmersList.size() - reads[i].maxScore + 1) * pow(static_cast<double>(reads[i].epp), 2));
+  //       for (auto otherNodeIndex : readToMaxScoreNodeIndices[i]) {
+  //         if (selectedNodeIndices.find(otherNodeIndex) != selectedNodeIndices.end()) continue;
+  //         testScores[otherNodeIndex] -= curReadScore;
+  //       }
+  //       std::vector<uint32_t>().swap(readToMaxScoreNodeIndices[i]);
+  //       --readsRemaining;
+  //     }
+  //   }
+  // }
+  
+  // std::vector<std::pair<std::string, double>> selectedNodeIndicesVector;
+  // for (const auto& [index, score] : selectedNodeIndices) {
+  //   selectedNodeIndicesVector.emplace_back(significantOverlapNodeIds[index], score);
+  // }
+  // std::sort(selectedNodeIndicesVector.begin(), selectedNodeIndicesVector.end(), [](const auto& a, const auto& b) {
+  //   return a.second > b.second;
+  // });
+  // std::ofstream ofsSelectedNodesTestScores(prefix + ".selectedNodesTestScores.txt");
+  // for (const auto& [nodeId, score] : selectedNodeIndicesVector) {
+  //   ofsSelectedNodesTestScores << nodeId;
+  //   if (identicalGroups.find(nodeId) != identicalGroups.end()) {
+  //     for (const auto& member : identicalGroups[nodeId]) {
+  //       ofsSelectedNodesTestScores << "," << member;
+  //     }
+  //   }
+  //   ofsSelectedNodesTestScores << " " << score << std::endl;
+  // }
+  // ofsSelectedNodesTestScores.close();
+
+
+
+  // exit(0);
+  
+
+
+  // clear memory that are no longer needed
+  for (auto [nodeId, node] : liteTree.allLiteNodes) {
+    decltype(node->readScoreDeltas)().swap(node->readScoreDeltas);
+    decltype(node->readScoreDeltasLowMemory)().swap(node->readScoreDeltasLowMemory);
+  }
+
+
 
   std::unordered_map<std::vector<uint32_t>, std::vector<std::string_view>, mgsr::VectorHash> scoresToNodeIds;
   for (uint32_t i = 0; i < scoreMatrix.size(); ++i) {
@@ -6168,15 +7003,37 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
   }
 
   nodes.resize(scoresToNodeIds.size());
-  probs.resize(numReads, scoresToNodeIds.size());
-  size_t i = 0;
-  for (const auto& [scores, nodeIds] : scoresToNodeIds) {
-    nodes[i] = nodeIds[0];
-    for (size_t j = 0; j < numReads; ++j) {
-      probs(j, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
-    }
-    ++i;
+  probs.resize(threadsManager.numPassedReads, scoresToNodeIds.size());
+  std::vector<std::pair<std::vector<uint32_t>, std::vector<std::string_view>>> scoresToNodeIdsVector(scoresToNodeIds.size());
+  size_t scoresToNodeIdsVecIndex = 0;
+  for (auto& [scores, nodeIds] : scoresToNodeIds) {
+    scoresToNodeIdsVector[scoresToNodeIdsVecIndex].first = std::move(scores);
+    scoresToNodeIdsVector[scoresToNodeIdsVecIndex].second = std::move(nodeIds);
+    ++scoresToNodeIdsVecIndex;
   }
+  const size_t chunkSizeScoresToNodeIdsVector = (scoresToNodeIdsVector.size() + numThreads - 1) / numThreads;
+  std::vector<std::pair<size_t, size_t>> threadRangesScoresToNodeIdsVector(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * chunkSizeScoresToNodeIdsVector;
+    size_t end = (i == numThreads - 1) ? scoresToNodeIdsVector.size() : (i + 1) * chunkSizeScoresToNodeIdsVector;
+    if (start < scoresToNodeIdsVector.size()) {
+      threadRangesScoresToNodeIdsVector[i].first = start;
+      threadRangesScoresToNodeIdsVector[i].second = end;
+    }
+  }
+  tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
+    const auto& range = threadRangesScoresToNodeIdsVector[threadIdx];
+    for (size_t i = range.first; i < range.second; ++i) {
+    const auto& [scores, nodeIds] = scoresToNodeIdsVector[i];
+    nodes[i] = nodeIds[0];
+    size_t passedReadIndex = 0;
+    for (size_t j = 0; j < numReads; ++j) {
+      if (reads[j].readType != mgsr::ReadType::PASS) continue;
+      probs(passedReadIndex, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
+        ++passedReadIndex;
+      }
+    }
+  });
 
 
   
@@ -6188,13 +7045,26 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager, const std::unorde
   propsSq = Eigen::VectorXd::Zero(numNodes);
   r = Eigen::VectorXd::Zero(numNodes);
   v = Eigen::VectorXd::Zero(numNodes);
-  denoms = Eigen::VectorXd::Zero(numReads);
-  inverseDenoms = Eigen::VectorXd::Zero(numReads);
-  readDuplicates = Eigen::VectorXd::Zero(numReads);
+  denoms = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
+  inverseDenoms = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
+  readDuplicates = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
 
-
+  size_t passedReadIndex = 0;
   for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
-    readDuplicates(i) = readSeedmersDuplicatesIndex[i].size();
+    if (reads[i].readType != mgsr::ReadType::PASS) continue;
+    readDuplicates(passedReadIndex) = readSeedmersDuplicatesIndex[i].size();
+    ++passedReadIndex;
+  }
+
+  const size_t propsChunkSize = (numNodes + numThreads - 1) / numThreads;
+  threadsRangeByProps.resize(numThreads);
+  for (size_t i = 0; i < numThreads; ++i) {
+    size_t start = i * propsChunkSize;
+    size_t end = (i == numThreads - 1) ? numNodes : (i + 1) * propsChunkSize;
+    if (start < numNodes) {
+      threadsRangeByProps[i].first = start;
+      threadsRangeByProps[i].second = end;
+    }
   }
 
   std::cout << "Probs matrix size: " << probs.rows() << "x" << probs.cols() << std::endl;

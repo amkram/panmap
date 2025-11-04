@@ -666,7 +666,7 @@ void calculateMgsrStyleScores(const std::string& nodeId,
     double presenceJaccardScore = 0.0;
     
     // Verification path: recompute from scratch for validation
-    const bool VERIFY_INCREMENTAL_SCORES = params.verify_scores;
+    const bool VERIFY_INCREMENTAL_SCORES = false;  // Toggle: set to true to enable verification
     if (VERIFY_INCREMENTAL_SCORES) {
         // CRITICAL: Use getStringFromReference() to get the TRUE genome sequence from tree structure
         // NOT from the incrementally-maintained positionMap which may be corrupted!
@@ -680,18 +680,49 @@ void calculateMgsrStyleScores(const std::string& nodeId,
         logging::debug("VERIFICATION: Got genome sequence of length {} for node {}", 
                       genomeSequence.length(), nodeId);
         
-        // Extract syncmer seeds from the TRUE genome sequence using rollingSyncmers
-        // CRITICAL: Use returnAll=false to match how MGSR indexing extracts seeds
+        // Extract syncmers first
         auto syncmers = seeding::rollingSyncmers(genomeSequence, params.k, params.s, params.open, params.t, false);
         
-        // Build complete seed frequency map from extracted seeds
-        // With returnAll=false, all returned items are syncmers (isSyncmer is always true)
+        // Build seed frequency map - depends on whether index uses k-minimizers or raw syncmers
         absl::flat_hash_map<size_t, int64_t> verifyGenomeSeedCounts;
-        for (const auto& [hash, isReverse, isSyncmer, endPos] : syncmers) {
-            verifyGenomeSeedCounts[hash]++;
+        
+        if (params.l > 1 && syncmers.size() >= params.l) {
+            // Index uses k-minimizers: compute rolling hashes over windows of l syncmers
+            // This matches mgsr.cpp lines 489-513
+            size_t forwardRolledHash = 0;
+            size_t reverseRolledHash = 0;
+            
+            // First k-minimizer
+            for (size_t i = 0; i < params.l; ++i) {
+                forwardRolledHash = seeding::rol(forwardRolledHash, params.k) ^ std::get<0>(syncmers[i]);
+                reverseRolledHash = seeding::rol(reverseRolledHash, params.k) ^ std::get<0>(syncmers[params.l - i - 1]);
+            }
+            
+            if (forwardRolledHash != reverseRolledHash) {
+                size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+                verifyGenomeSeedCounts[minHash]++;
+            }
+            
+            // Remaining k-minimizers
+            for (uint64_t i = 1; i < syncmers.size() - params.l + 1; ++i) {
+                const size_t& prevSyncmerHash = std::get<0>(syncmers[i-1]);
+                const size_t& nextSyncmerHash = std::get<0>(syncmers[i + params.l - 1]);
+                forwardRolledHash = seeding::rol(forwardRolledHash, params.k) ^ seeding::rol(prevSyncmerHash, params.k * params.l) ^ nextSyncmerHash;
+                reverseRolledHash = seeding::ror(reverseRolledHash, params.k) ^ seeding::ror(prevSyncmerHash, params.k) ^ seeding::rol(nextSyncmerHash, params.k * (params.l - 1));
+                
+                if (forwardRolledHash != reverseRolledHash) {
+                    size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+                    verifyGenomeSeedCounts[minHash]++;
+                }
+            }
+        } else {
+            // Index uses raw syncmers
+            for (const auto& [hash, isReverse, isSyncmer, endPos] : syncmers) {
+                verifyGenomeSeedCounts[hash]++;
+            }
         }
         
-        // Check for duplicate seeds (genomeCount > 1)
+        // Check for duplicate seeds (genomeCount > 1) - only log if found
         int duplicateSeedCount = 0;
         int64_t totalDuplicateFrequency = 0;
         for (const auto& [hash, count] : verifyGenomeSeedCounts) {
@@ -708,8 +739,12 @@ void calculateMgsrStyleScores(const std::string& nodeId,
         
         logging::debug("VERIFICATION: Extracted {} syncmers ({} unique) from true genome sequence", 
                       syncmers.size(), verifyGenomeSeedCounts.size());
-        logging::critical("VERIFICATION: Found {} unique seeds with duplicates (total freq={})", 
-                         duplicateSeedCount, totalDuplicateFrequency);
+        
+        // Only log if there are duplicates
+        if (duplicateSeedCount > 0) {
+            logging::critical("VERIFICATION: Found {} unique seeds with duplicates (total freq={})", 
+                             duplicateSeedCount, totalDuplicateFrequency);
+        }
         
         // DEBUG: If this is node_2, compare verified seeds vs incremental seeds for the problem hashes
         if (nodeId == "node_2") {
@@ -910,7 +945,7 @@ void calculateMgsrStyleScores(const std::string& nodeId,
     // Debug: Log first few nodes with detailed numeric diagnostics (AFTER computing scores)
     // Increase precision and add a sanity check for zero/NaN values so we can detect ordering/type bugs.
     static int debugCount = 0;
-    if (debugCount < 10) {
+    if (false && debugCount < 10) {  // Debug mode disabled
         // Get current denominator for logging (whether from verify or incremental path)
         int64_t currentWeightedJaccDenom = VERIFY_INCREMENTAL_SCORES ? 
             0 : genomeState.currentWeightedJaccardDenominator; // For verify path, we already logged above
@@ -1713,23 +1748,107 @@ std::tuple<double, double, size_t> calculateAndUpdateScoresLite(
     return {jaccardScore, cosineScore, intersectionCount};
 }
 
-void placeLiteHelper(panmapUtils::LiteNode* node, 
+
+
+// Helper to reset placement progress counter (for multiple placement calls)
+void resetPlacementProgress();
+
+// Placement helper adapted from mgsr::ThreadsManager::placeLiteHelper
+// Modified to use MgsrGenomeState for multi-metric tracking
+void placeLiteHelper(panmapUtils::LiteNode* node,
                     placement::MgsrGenomeState& genomeState,
                     uint32_t& dfsIndex,
                     const placement::PlacementGlobalState& state,
                     placement::PlacementResult& result,
                     const placement::TraversalParams& params) {
+  
+  if (!node) return;
+  
+  // Progress tracking
+  static size_t nodesProcessed = 0;
+  static auto lastProgressTime = std::chrono::high_resolution_clock::now();
+  static size_t totalNodes = 0;
+  static bool needsReset = false;
+  
+  // Allow reset from outside
+  if (needsReset) {
+    nodesProcessed = 0;
+    totalNodes = 0;
+    needsReset = false;
+  }
+  
+  if (nodesProcessed == 0) {
+    // Initialize on first call
+    totalNodes = state.perNodeChanges.size();
+    lastProgressTime = std::chrono::high_resolution_clock::now();
+  }
+  
+  nodesProcessed++;
+  
+  // Log progress every 1M nodes or every 30 seconds
+  auto now = std::chrono::high_resolution_clock::now();
+  auto timeSinceLastLog = std::chrono::duration_cast<std::chrono::seconds>(now - lastProgressTime).count();
+  
+  if (nodesProcessed % 1000000 == 0 || timeSinceLastLog >= 30) {
+    double percentComplete = (100.0 * nodesProcessed) / totalNodes;
+    logging::info("Placement progress: {}/{} nodes ({:.1f}%)", 
+                  nodesProcessed, totalNodes, percentComplete);
+    lastProgressTime = now;
+  }
+  
+  // Mark for reset when we finish (detected when returning to root)
+  if (node->parent == nullptr && nodesProcessed > 1) {
+    needsReset = true;
+  }
+  
+  const std::string& nodeId = node->identifier;
+  
+  // Save current genome state for backtracking (replaces: curNodeSeedScoreBacktrack = curNodeSeedScore)
+  placement::MgsrGenomeState genomeStateBacktrack = genomeState;
 
-    if(dfsIndex % 1000 == 0) {
-        std::cout << "\rplace dfsIndex: " << dfsIndex << std::flush;
+  // Get seed deltas for this node (replaces: node->seedDeltas access)
+  if (dfsIndex < state.perNodeChanges.size()) {
+    auto nodeChanges = state.perNodeChanges[dfsIndex];
+    auto seedDeltas = nodeChanges.getSeedDeltas();
+    
+    // First loop: Apply mutations and update metrics incrementally
+    for (auto delta : seedDeltas) {
+      uint32_t seedIndex = delta.getSeedIndex();
+      bool toDelete = delta.getIsDeleted();
+      
+      if (seedIndex < state.seedInfo.size()) {
+        auto seedInfo = state.seedInfo[seedIndex];
+        size_t seedHash = seedInfo.getHash();
+        
+        if (toDelete) {
+          // Replaces: kminmerOnRefCount[seedHash]-- and curNodeSeedScore -= weight
+          updateSimilarityMetricsDel(seedHash, genomeState, state, nodeId);
+        } else {
+          // Replaces: kminmerOnRefCount[seedHash]++ and curNodeSeedScore += weight
+          updateSimilarityMetricsAdd(seedHash, genomeState, state, nodeId);
+        }
+      }
     }
-    
-    if (!node) return;
-    
-    const std::string& nodeId = node->identifier;
-    
-    // TODO
-    }
+  }
+  
+  // Calculate and record scores (replaces: nodeSeedScores[node] = curNodeSeedScore)
+  calculateMgsrStyleScores(nodeId, genomeState, state, result, params);
+
+  // Recurse on children (replaces: for (MgsrLiteNode *child : node->collapsedChildren))
+  ++dfsIndex;
+  for (panmapUtils::LiteNode* child : node->children) {
+    placeLiteHelper(child, genomeState, dfsIndex, state, result, params);
+  }
+  
+  // Restore state (replaces: curNodeSeedScore = curNodeSeedScoreBacktrack)
+  genomeState = genomeStateBacktrack;
+  
+  // Second loop: Backtrack seed count map (implicit in genomeState restoration above)
+  // The reference does this explicitly for kminmerOnRefCount, but our approach restores
+  // the entire state via copy, which includes currentSeedCounts
+}
+
+
     
 void placeLite(placement::PlacementResult &result, 
                        panmapUtils::LiteTree *liteTree,
@@ -1771,6 +1890,7 @@ void placeLite(placement::PlacementResult &result,
     params.k = mgsrIndex.getK();
     params.s = mgsrIndex.getS();
     params.t = mgsrIndex.getT();
+    params.l = mgsrIndex.getL();  // k-minimizer window size
     params.open = mgsrIndex.getOpen();
     params.debug_node_id = debug_node_id_param;
     params.verify_scores = verify_scores; // Pass flag through params
@@ -1790,7 +1910,14 @@ void placeLite(placement::PlacementResult &result,
         allReadSequences = readSequences;
     }
     
-    mgsr::ThreadsManager threadsManager(liteTree, 1);  
+    // Build MgsrLiteTree for ThreadsManager
+    mgsr::MgsrLiteTree mgsrLiteTree;
+    mgsrLiteTree.initialize(mgsrIndex, 1, false, false);
+    
+    uint32_t maskReads = 0;  // No masking for old placement
+    bool progressBar = false;
+    bool lowMemory = false;
+    mgsr::ThreadsManager threadsManager(&mgsrLiteTree, 1, maskReads, progressBar, lowMemory);
     threadsManager.initializeMGSRIndex(mgsrIndex);
     
     uint32_t l = mgsrIndex.getL();
@@ -1857,7 +1984,8 @@ void placeLite(placement::PlacementResult &result,
                       state.seedFreqInReads.size(), allReadSequences.size(), dupReadsIndex.size());
     } else {
         // Use MGSR's k-minimizer processing
-        threadsManager.initializeQueryData(allReadSequences, false);
+        uint32_t maskSeedThreshold = 0;  // No masking for old placement
+        threadsManager.initializeQueryData(allReadSequences, maskSeedThreshold, false);
         
         // Debug: Check what we got from MGSR processing
         logging::info("MGSR processed {} unique read patterns from {} total reads", 
@@ -1936,7 +2064,7 @@ void placeLite(placement::PlacementResult &result,
     uint32_t currentDfsIndex = 0;
     
     logging::info("Starting MGSR-style recursive placement traversal with {} tree nodes", 
-                  state.perNodeChanges.size());
+                  liteTree->allLiteNodes.size());
     
     // Start recursive traversal from root (dfsIndex=0)
     // placeLiteHelper will apply root's changes and calculate its scores
