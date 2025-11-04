@@ -1811,22 +1811,31 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
 
   
 
+  size_t threadsToUse = 0;
   const size_t chunkSize = (reads.size() + numThreads - 1) / numThreads;
   for (size_t i = 0; i < numThreads; ++i) {
     size_t start = i * chunkSize;
     size_t end = (i == numThreads - 1) ? reads.size() : (i + 1) * chunkSize;
     if (start < reads.size()) {
       threadRanges[i].first = start;
-      threadRanges[i].second = end;
+      threadRanges[i].second = std::min(end, reads.size());
+      ++threadsToUse;
+      if (threadRanges[i].second == reads.size()) {
+        break;
+      }
     }
   }
+  
+  threadRanges.resize(threadsToUse);
+  numThreads = threadsToUse;
+  liteTree->numThreads = threadsToUse;
 
   std::cerr << "Collapsed " << readSequences.size() << " raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
   if (maskReads > 0) {
     std::cerr << "Mask-reads " << maskReads << " turned on: " << numSingletonReads << " reads containing low coverage kminmers will be skipped during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
   }
-  for (size_t i = 0; i < numThreads; ++i) {
+  for (size_t i = 0; i < threadsToUse; ++i) {
     std::cerr << "  Thread " << i << " will process " << threadRanges[i].second - threadRanges[i].first << " reads: " << threadRanges[i].first << " -> " << threadRanges[i].second << std::endl;
   }
 
