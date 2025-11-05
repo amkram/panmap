@@ -36,6 +36,7 @@
 #include <vector>
 #include <stack>
 #include <sys/stat.h>
+#include <sys/mman.h>
 // Additional headers for robust signal handling
 #include <signal.h>
 #include <atomic>
@@ -53,8 +54,7 @@ extern "C" void _mcleanup(void);
 #include "panman.capnp.h"
 
 #include "genotyping.hpp"
-#include "index.capnp.h"
-#include "mgsr_index.capnp.h"
+#include "index_lite.capnp.h"
 #include "indexing.hpp"
 #include "logging.hpp"
 #include "panman.hpp"
@@ -63,6 +63,7 @@ extern "C" void _mcleanup(void);
 #include "seeding.hpp"
 #include "mgsr.hpp"
 #include "panmap_utils.hpp"
+#include "zstd_compression.hpp"
 
 using namespace logging;
 namespace po = boost::program_options;
@@ -85,15 +86,62 @@ void writeCapnp(::capnp::MallocMessageBuilder &message, const std::string &path)
 // Create a custom wrapper to hold ownership of fd and reader
 struct IndexReaderWrapper : public ::capnp::MessageReader {
     int fd_;
-    std::unique_ptr<::capnp::PackedFdMessageReader> reader;
+    void* mapped_;
+    size_t size_;
+    std::vector<uint8_t> decompressedData_;  // For ZSTD-compressed files
+    std::unique_ptr<::capnp::FlatArrayMessageReader> reader;
     
-    IndexReaderWrapper(int fd, const ::capnp::ReaderOptions& opts)
-        : ::capnp::MessageReader(opts), fd_(fd), reader(std::make_unique<::capnp::PackedFdMessageReader>(fd, opts)) {}
+    IndexReaderWrapper(int fd, size_t size, const ::capnp::ReaderOptions& opts, const std::string& path)
+        : ::capnp::MessageReader(opts), fd_(fd), mapped_(nullptr), size_(size) {
+        
+        // Check if the file is ZSTD-compressed
+        if (panmap_zstd::isZstdCompressed(path)) {
+            logging::info("Decompressing ZSTD-compressed index (parallel)...");
+            
+            // Decompress the file into memory
+            panmap_zstd::decompressFromFile(path, decompressedData_);
+            
+            logging::info("Decompressed {} bytes -> {} bytes", size, decompressedData_.size());
+            
+            // Create FlatArrayMessageReader from decompressed data
+            kj::ArrayPtr<const ::capnp::word> words(
+                reinterpret_cast<const ::capnp::word*>(decompressedData_.data()),
+                decompressedData_.size() / sizeof(::capnp::word)
+            );
+            
+            reader = std::make_unique<::capnp::FlatArrayMessageReader>(words, opts);
+            
+        } else {
+            // Use mmap for uncompressed files (legacy support)
+            logging::debug("Reading uncompressed index with mmap");
+            
+            mapped_ = mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd_, 0);
+            if (mapped_ == MAP_FAILED) {
+                throw std::runtime_error("mmap failed: " + std::string(strerror(errno)));
+            }
+            
+            // Advise kernel for sequential access and pre-fetch
+            madvise(mapped_, size_, MADV_SEQUENTIAL | MADV_WILLNEED);
+            
+            // Create FlatArrayMessageReader for zero-copy parsing
+            kj::ArrayPtr<const ::capnp::word> words(
+                reinterpret_cast<const ::capnp::word*>(mapped_),
+                size_ / sizeof(::capnp::word)
+            );
+            
+            reader = std::make_unique<::capnp::FlatArrayMessageReader>(words, opts);
+        }
+    }
     
     ~IndexReaderWrapper() {
-        // First destroy the reader (which might use the fd)
+        // First destroy the reader (which holds references to mapped memory)
         reader.reset();
-        // Then close the fd
+        // Then unmap the memory if it was mapped
+        if (mapped_ != nullptr && mapped_ != MAP_FAILED) {
+            munmap(mapped_, size_);
+            mapped_ = nullptr;
+        }
+        // Finally close the fd
         if (fd_ >= 0) {
             close(fd_);
             fd_ = -1;
@@ -329,28 +377,29 @@ std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path) {
     try {
     // Configure reader options for large messages
     ::capnp::ReaderOptions opts;
-    opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max();
-    opts.nestingLimit = 1024;
+    // Increase limits for large indices (128 GB traversal limit)
+    opts.traversalLimitInWords = 16ULL * 1024 * 1024 * 1024;  // 128 GB
+    opts.nestingLimit = 128;  // Double default for deep trees
     
-      // FIXED: Create wrapper that properly manages reader and fd lifetimes
-      auto wrapper = std::make_unique<IndexReaderWrapper>(fd, opts);
+      // Create wrapper with mmap support for zero-copy access (and ZSTD decompression support)
+      auto wrapper = std::make_unique<IndexReaderWrapper>(fd, fileSize, opts, resolvedPath);
       
-      // Validate the root structure as MGSRIndex (new format)
-      auto root = wrapper->getRoot<MGSRIndex>();
+      // Validate the root structure as LiteIndex (new format)
+      auto root = wrapper->getRoot<LiteIndex>();
       
       // Validate essential fields
       uint32_t k = root.getK();
       uint32_t s = root.getS();
       auto liteTree = root.getLiteTree();
       if (liteTree.getLiteNodes().size() == 0) {
-        throw std::runtime_error("Invalid MGSRIndex data: no trees in index");
+        throw std::runtime_error("Invalid LiteIndex data: no trees in index");
       }
       size_t nodeCount = liteTree.getLiteNodes().size();
       size_t seedCount = root.getSeedInfo().size();
         
       if (k == 0 || s == 0 || nodeCount == 0) {
         // Don't close fd here - will be closed by wrapper destructor
-        throw std::runtime_error("Invalid MGSRIndex data: k=" + std::to_string(k) + 
+        throw std::runtime_error("Invalid LiteIndex data: k=" + std::to_string(k) + 
                               ", s=" + std::to_string(s) + 
               ", nodes=" + std::to_string(nodeCount));
         }
@@ -1441,7 +1490,7 @@ int main(int argc, char *argv[]) {
       int fd = mgsr::open_file(mgsr_index_path);
       ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
       ::capnp::PackedFdMessageReader reader(fd, readerOptions);
-      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
+      LiteIndex::Reader indexReader = reader.getRoot<LiteIndex>();
       size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
       bool lowMemory = vm.count("low-memory") > 0;
       
@@ -1604,7 +1653,7 @@ int main(int argc, char *argv[]) {
       int fd = mgsr::open_file(mgsr_index_path);
       ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
       ::capnp::PackedFdMessageReader reader(fd, readerOptions);
-      MGSRIndex::Reader indexReader = reader.getRoot<MGSRIndex>();
+      LiteIndex::Reader indexReader = reader.getRoot<LiteIndex>();
       
       // For now, use first tree for MGSR old-style workflows
       
@@ -2112,7 +2161,7 @@ int main(int argc, char *argv[]) {
     }
     ::capnp::ReaderOptions opts; opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max(); opts.nestingLimit = 1024;
     ::capnp::PackedFdMessageReader mgsrMsg(fd_mgsr, opts);
-    ::MGSRIndex::Reader mgsrIndexRoot = mgsrMsg.getRoot<MGSRIndex>();
+    ::LiteIndex::Reader mgsrIndexRoot = mgsrMsg.getRoot<LiteIndex>();
 
     // Log index parameters
     msg("Index parameters: k={}, s={}, t={}, l={}, open={}", 

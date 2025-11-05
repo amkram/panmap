@@ -15,7 +15,7 @@
 #include "seeding.hpp"
 #include "caller_logging.hpp"
 #include "index.capnp.h"
-#include "mgsr_index.capnp.h"
+#include "index_lite.capnp.h"
 #include <capnp/common.h>
 #include <capnp/message.h>
 #include <capnp/serialize-packed.h>
@@ -151,6 +151,10 @@ void GenomeState::computeMetrics(const placement::PlacementGlobalState& state) c
     metricsValid = true;
 }
 
+// NOTE: Legacy functions below not used by lite placement - commented out for now
+// TODO: Will need full index schema with positions to support full MGSR mode
+
+#if 0
 void applyNodeChangesToGenomeState(GenomeState& genomeState, 
                                   const auto& nodeChanges, 
                                   const placement::PlacementGlobalState& state) {
@@ -161,9 +165,8 @@ void applyNodeChangesToGenomeState(GenomeState& genomeState,
         auto posIt = genomeState.positionToSeedIndex.find(position);
         if (posIt != genomeState.positionToSeedIndex.end()) {
             uint32_t seedIdx = posIt->second;
-            if (seedIdx < state.seedInfo.size()) {
-                auto seedReader = state.seedInfo[seedIdx];
-                size_t seedHash = seedReader.getHash();
+            if (seedIdx < state.seedHashes.size()) {
+                uint64_t seedHash = state.seedHashes[seedIdx];
                 
                 // Remove from hash-based tracking
                 auto it = genomeState.seedCounts.find(seedHash);
@@ -184,19 +187,17 @@ void applyNodeChangesToGenomeState(GenomeState& genomeState,
     // These may be true additions OR substitutions (if position already had a seed)
     auto additions = nodeChanges.getSeedInsubIndices();
     for (uint32_t seedIdx : additions) {
-        if (seedIdx < state.seedInfo.size()) {
-            auto seedReader = state.seedInfo[seedIdx];
-            size_t seedHash = seedReader.getHash();
-            uint32_t position = seedReader.getStartPos();
+        if (seedIdx < state.seedHashes.size()) {
+            uint64_t seedHash = state.seedHashes[seedIdx];
+            uint32_t position = 0; // TODO: position not available in lite index
             
             // Check if this position already has a seed (shouldn't after deletions, but be safe)
             auto posIt = genomeState.positionToSeedIndex.find(position);
             if (posIt != genomeState.positionToSeedIndex.end()) {
                 // Substitution case: remove old seed first
                 uint32_t oldSeedIdx = posIt->second;
-                if (oldSeedIdx < state.seedInfo.size()) {
-                    auto oldSeedReader = state.seedInfo[oldSeedIdx];
-                    size_t oldSeedHash = oldSeedReader.getHash();
+                if (oldSeedIdx < state.seedHashes.size()) {
+                    uint64_t oldSeedHash = state.seedHashes[oldSeedIdx];
                     
                     auto oldIt = genomeState.seedCounts.find(oldSeedHash);
                     if (oldIt != genomeState.seedCounts.end()) {
@@ -219,6 +220,7 @@ void applyNodeChangesToGenomeState(GenomeState& genomeState,
     
     genomeState.metricsValid = false; // Invalidate cached metrics
 }
+#endif
 
 std::tuple<double, double, size_t> calculateScoresFromGenomeState(
     const std::string& nodeId,
@@ -295,6 +297,10 @@ std::tuple<double, double, size_t> calculateScoresFromGenomeState(
 }
 
 // MGSR-style seed addition (matches mgsr::mgsrPlacer::addSeedAtPosition)
+// NOTE: Legacy MGSR-style functions below not used by lite placement - commented out
+// TODO: Will need full index schema with positions to support full MGSR mode
+
+#if 0
 void addSeedToGenomeState(uint64_t seedIndex, 
                          placement::MgsrGenomeState& genomeState,
                          const placement::PlacementGlobalState& state,
@@ -437,6 +443,7 @@ void delSeedFromGenomeStateBacktrack(uint64_t pos,
     genomeState.positionMap.erase(posIt);
     updateSimilarityMetricsDel(hash, genomeState, state);
 }
+#endif  // End of legacy MGSR functions not used by lite placement
 
 // Update similarity metrics when adding a seed  
 void updateSimilarityMetricsAdd(size_t hash,
@@ -1083,7 +1090,7 @@ std::unique_ptr<::capnp::MessageReader> loadMgsrIndexFromFile(const std::string&
         auto reader = std::make_unique<::capnp::PackedFdMessageReader>(fd, opts);
         
         // Validate the MGSR index immediately to ensure it's usable
-        auto mgsrIndex = reader->getRoot<MGSRIndex>();
+        auto mgsrIndex = reader->getRoot<LiteIndex>();
         uint32_t k = mgsrIndex.getK();
         uint32_t s = mgsrIndex.getS();
         size_t seedCount = mgsrIndex.getSeedInfo().size();
@@ -1559,17 +1566,15 @@ std::tuple<double, double, size_t> calculateAndUpdateScoresLite(
     
     // Process current node's changes if available
     if (nodeChangeIndex < state.perNodeChanges.size()) {
-        auto nodeChanges = state.perNodeChanges[nodeChangeIndex];
+        const auto& nodeSeedChanges = state.perNodeChanges[nodeChangeIndex];
         
-        // Process seed deltas (combined insertions and deletions)
-        auto seedDeltas = nodeChanges.getSeedDeltas();
-        for (auto delta : seedDeltas) {
-            uint32_t seedIdx = delta.getSeedIndex();
-            bool isDeleted = delta.getIsDeleted();
+        // Process all deserialized seed changes
+        for (const auto& seedChange : nodeSeedChanges.seedChanges) {
+            uint32_t seedIdx = seedChange.seedIndex;
+            bool isDeleted = seedChange.isDeleted;
             
-            if (seedIdx < state.seedInfo.size()) {
-                auto seedInfo = state.seedInfo[seedIdx];
-                size_t seedHash = seedInfo.getHash();
+            if (seedIdx < state.seedHashes.size()) {
+                uint64_t seedHash = state.seedHashes[seedIdx];
                 
                 if (isDeleted) {
                     // Process deletion
@@ -1806,25 +1811,18 @@ void placeLiteHelper(panmapUtils::LiteNode* node,
   // Save current genome state for backtracking (replaces: curNodeSeedScoreBacktrack = curNodeSeedScore)
   placement::MgsrGenomeState genomeStateBacktrack = genomeState;
 
-  // Get seed deltas for this node (replaces: node->seedDeltas access)
+  // Get deserialized seed changes for this node
   if (dfsIndex < state.perNodeChanges.size()) {
-    auto nodeChanges = state.perNodeChanges[dfsIndex];
-    auto seedDeltas = nodeChanges.getSeedDeltas();
+    const auto& nodeSeedChanges = state.perNodeChanges[dfsIndex];
     
-    // First loop: Apply mutations and update metrics incrementally
-    for (auto delta : seedDeltas) {
-      uint32_t seedIndex = delta.getSeedIndex();
-      bool toDelete = delta.getIsDeleted();
-      
-      if (seedIndex < state.seedInfo.size()) {
-        auto seedInfo = state.seedInfo[seedIndex];
-        size_t seedHash = seedInfo.getHash();
+    // Apply all seed changes for this node
+    for (const auto& seedChange : nodeSeedChanges.seedChanges) {
+      if (seedChange.seedIndex < state.seedHashes.size()) {
+        uint64_t seedHash = state.seedHashes[seedChange.seedIndex];
         
-        if (toDelete) {
-          // Replaces: kminmerOnRefCount[seedHash]-- and curNodeSeedScore -= weight
+        if (seedChange.isDeleted) {
           updateSimilarityMetricsDel(seedHash, genomeState, state, nodeId);
         } else {
-          // Replaces: kminmerOnRefCount[seedHash]++ and curNodeSeedScore += weight
           updateSimilarityMetricsAdd(seedHash, genomeState, state, nodeId);
         }
       }
@@ -1852,7 +1850,7 @@ void placeLiteHelper(panmapUtils::LiteNode* node,
     
 void placeLite(placement::PlacementResult &result, 
                        panmapUtils::LiteTree *liteTree,
-                       ::MGSRIndex::Reader &mgsrIndex, 
+                       ::LiteIndex::Reader &mgsrIndex, 
                        const std::string &reads1,
                        const std::string &reads2,
                        std::vector<std::vector<seeding::seed_t>>& readSeeds,
@@ -1880,10 +1878,70 @@ void placeLite(placement::PlacementResult &result,
     
     // Initialize placement global state
     PlacementGlobalState state;
-    state.seedInfo = mgsrIndex.getSeedInfo();
-    state.perNodeChanges = mgsrIndex.getPerNodeChanges();
     state.kmerSize = mgsrIndex.getK();
     state.fullTree = fullTree;  // Store full tree pointer for verification mode
+    
+    // Deserialize seed hashes upfront (just hashes, no positions needed for lite placement)
+    auto seedInfoReader = mgsrIndex.getSeedInfo();
+    state.seedHashes.reserve(seedInfoReader.size());
+    for (size_t i = 0; i < seedInfoReader.size(); i++) {
+        state.seedHashes.push_back(seedInfoReader[i].getHash());
+    }
+    logging::info("Deserialized {} seed hashes", state.seedHashes.size());
+    
+    // Deserialize all seed changes upfront (avoid repeated Cap'n Proto deserialization in hot loop)
+    auto perNodeChangesReader = mgsrIndex.getPerNodeChanges();
+    state.perNodeChanges.reserve(perNodeChangesReader.size());
+    
+    logging::info("Deserializing {} node seed changes...", perNodeChangesReader.size());
+    for (size_t i = 0; i < perNodeChangesReader.size(); i++) {
+        auto nodeChangesReader = perNodeChangesReader[i];
+        NodeSeedChanges nodeSeedChanges;
+        nodeSeedChanges.nodeIndex = nodeChangesReader.getNodeIndex();
+        
+        // Decode delta-encoded seed changes
+        const auto& encodedReader = nodeChangesReader.getSeedChangesDeltaEncoded();
+        const auto& deltaIndicesReader = encodedReader.getDeltaIndices();
+        const auto& largeDeltasReader = encodedReader.getLargeDeltas();
+        const auto& deletionFlagsReader = encodedReader.getDeletionFlags();
+        
+        size_t numDeltas = deltaIndicesReader.size() + 1;  // +1 for first absolute index
+        nodeSeedChanges.seedChanges.reserve(numDeltas);
+        
+        // Decode first seed index
+        uint32_t currentIndex = encodedReader.getFirstSeedIndex();
+        bool isDeleted = (deletionFlagsReader.size() > 0) && ((deletionFlagsReader[0] & 1) != 0);
+        nodeSeedChanges.seedChanges.push_back({currentIndex, isDeleted});
+        
+        // Decode remaining indices using deltas
+        size_t largeDeltaIdx = 0;
+        for (size_t j = 0; j < deltaIndicesReader.size(); j++) {
+            uint16_t delta = deltaIndicesReader[j];
+            
+            if (delta == 0xFFFF) {
+                delta = largeDeltasReader[largeDeltaIdx++];
+            }
+            
+            currentIndex += delta;
+            
+            // Extract deletion flag from packed bits
+            size_t bitPos = j + 1;
+            size_t byteIdx = bitPos / 8;
+            size_t bitIdx = bitPos % 8;
+            isDeleted = (byteIdx < deletionFlagsReader.size()) && 
+                        ((deletionFlagsReader[byteIdx] & (1 << bitIdx)) != 0);
+            
+            nodeSeedChanges.seedChanges.push_back({currentIndex, isDeleted});
+        }
+        
+        state.perNodeChanges.push_back(std::move(nodeSeedChanges));
+    }
+    logging::info("Deserialized {} seed changes across {} nodes", 
+                  std::accumulate(state.perNodeChanges.begin(), state.perNodeChanges.end(), 0UL,
+                                  [](size_t sum, const auto& nc) { return sum + nc.seedChanges.size(); }),
+                  state.perNodeChanges.size());
+    
+    state.liteNodes = mgsrIndex.getLiteTree().getLiteNodes();
     
     // Set traversal parameters
     TraversalParams params;

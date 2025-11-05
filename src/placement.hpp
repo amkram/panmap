@@ -92,6 +92,18 @@ struct TraversalParams {
   bool verify_scores = false; // Whether to recompute scores from scratch for verification
 };
 
+// Deserialized seed change for a single seed
+struct SeedChange {
+    uint32_t seedIndex;
+    bool isDeleted;
+};
+
+// Deserialized seed changes for a single node
+struct NodeSeedChanges {
+    uint32_t nodeIndex;
+    std::vector<SeedChange> seedChanges;
+};
+
 // Track global state during placement
 struct PlacementGlobalState {
     // Seed frequencies in reads
@@ -108,9 +120,9 @@ struct PlacementGlobalState {
     // Active seed set during traversal (map of seedIndex -> count)
     std::unordered_map<uint64_t, uint32_t> activeSeedIndices;
     
-    // MGSR index data
-    ::capnp::List<SeedInfo>::Reader seedInfo;
-    ::capnp::List<NodeChanges>::Reader perNodeChanges;
+    // MGSR index data (deserialized once upfront)
+    std::vector<uint64_t> seedHashes;  // Just hashes, not full SeedInfo (no positions needed for lite)
+    std::vector<NodeSeedChanges> perNodeChanges;  // Deserialized seed changes
     ::capnp::List<LiteNode>::Reader liteNodes;  // For node ID lookups
     
     // Root node pointer for traversal
@@ -287,7 +299,7 @@ void loadSeedsFromIndex(state::StateManager& stateManager, const ::Index::Reader
 // NEW: LiteTree-based placement (avoids loading full panman until after placement)
 void placeLite(PlacementResult &result, 
                panmapUtils::LiteTree *liteTree,
-               ::MGSRIndex::Reader &mgsrIndex, 
+               ::LiteIndex::Reader &mgsrIndex, 
                const std::string &reads1,
                const std::string &reads2,
                std::vector<std::vector<seeding::seed_t>>& readSeeds,

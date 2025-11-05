@@ -3,7 +3,7 @@
 #include "panmanUtils.hpp"
 #include "capnp/message.h"
 #include "capnp/serialize-packed.h"
-#include "mgsr_index.capnp.h"
+#include "index_lite.capnp.h"
 #include "panmap_utils.hpp"
 #include "seeding.hpp"
 #include "progress_tracker.hpp"
@@ -355,7 +355,7 @@ public:
   }
   
   void cleanup();
-  void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
+  void initialize(LiteIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
   void collapseEmptyNodes(bool ignoreGapRunDeltas);
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
@@ -480,7 +480,7 @@ class mgsrIndexBuilder {
   public:
     // capnp object
     ::capnp::MallocMessageBuilder outMessage;
-    MGSRIndex::Builder indexBuilder;
+    LiteIndex::Builder indexBuilder;
     capnp::List<NodeChanges>::Builder perNodeChanges;
     
 
@@ -499,7 +499,7 @@ class mgsrIndexBuilder {
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
     mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer) 
-      : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T)
+      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
@@ -633,7 +633,7 @@ class ThreadsManager {
       readMinichainsUpdated.resize(numThreads);
     }
 
-    void initializeMGSRIndex(MGSRIndex::Reader indexReader);
+    void initializeMGSRIndex(LiteIndex::Reader indexReader);
     void initializeQueryData(std::span<const std::string> readSequences, uint32_t maskSeedThreshold, bool fast_mode = false);
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
@@ -771,14 +771,14 @@ class mgsrPlacer {
         progressBar(threadsManager.progressBar)
     {}
     
-    mgsrPlacer(MgsrLiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory, size_t threadId)
+    mgsrPlacer(MgsrLiteTree* liteTree, LiteIndex::Reader indexReader, bool lowMemory, size_t threadId)
       : liteTree(liteTree),
         lowMemory(lowMemory),
         threadId(threadId)
     {
       initializeMGSRIndex(indexReader);
     }
-    void initializeMGSRIndex(MGSRIndex::Reader indexReader);
+    void initializeMGSRIndex(LiteIndex::Reader indexReader);
     void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }

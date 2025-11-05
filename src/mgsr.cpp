@@ -4,6 +4,7 @@
 #include "panmap_utils.hpp"
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
+#include "zstd_compression.hpp"
 #include <fcntl.h>
 #include <unistd.h>
 #include <tbb/parallel_sort.h>
@@ -657,7 +658,7 @@ void mgsr::MgsrLiteTree::loadTrueAbundances(const std::string& trueAbundanceFile
   infile.close();
 }
 
-void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes) {
+void mgsr::MgsrLiteTree::initialize(LiteIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes) {
   std::cerr << "Starting to initialize MgsrLiteTree from index..." << std::endl;
   this->numThreads = numThreads;
   this->lowMemory = lowMemory;
@@ -683,9 +684,13 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
         const auto& seedReader = seedInfosReader[i];
         auto& seed = seedInfos[i];
         seed.hash = seedReader.getHash();
-        seed.startPos = seedReader.getStartPos();
-        seed.endPos = seedReader.getEndPos();
-        seed.isReverse = seedReader.getIsReverse();
+        // TODO: Lite index doesn't have positions - full MGSR needs separate schema
+        // seed.startPos = seedReader.getStartPos();
+        // seed.endPos = seedReader.getEndPos();
+        // seed.isReverse = seedReader.getIsReverse();
+        seed.startPos = 0;
+        seed.endPos = 0;
+        seed.isReverse = false;
       }
     }, tbb::simple_partitioner());
   std::cerr << "Successfully read in seedInfos, size: " << seedInfos.size() << std::endl;
@@ -701,29 +706,71 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
         auto& currentSeedDeltas = seedDeltas[i];
         auto& currentGapRunDeltas = gapRunDeltas[i];
         auto& currentInvertedBlocks = invertedBlocks[i];
-        const auto& currentSeedDeltasReader = currentPerNodeChangeReader.getSeedDeltas();
-        const auto& currentGapRunDeltasReader = currentPerNodeChangeReader.getGapRunDeltas();
-        const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
         
-        currentSeedDeltas.resize(currentSeedDeltasReader.size());
-        currentGapRunDeltas.reserve(currentGapRunDeltasReader.size());
-        currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
+        // Read delta-encoded seed changes
+        const auto& encodedReader = currentPerNodeChangeReader.getSeedChangesDeltaEncoded();
+        const auto& deltaIndicesReader = encodedReader.getDeltaIndices();
+        const auto& largeDeltasReader = encodedReader.getLargeDeltas();
+        const auto& deletionFlagsReader = encodedReader.getDeletionFlags();
         
-        for (size_t j = 0; j < currentSeedDeltasReader.size(); j++) {
-          currentSeedDeltas[j].first = currentSeedDeltasReader[j].getSeedIndex();
-          currentSeedDeltas[j].second = currentSeedDeltasReader[j].getIsDeleted();
+        size_t numDeltas = deltaIndicesReader.size() + 1;  // +1 for first absolute index
+        currentSeedDeltas.resize(numDeltas);
+        
+        // Decode first seed index
+        uint32_t currentIndex = encodedReader.getFirstSeedIndex();
+        bool isDeleted = (deletionFlagsReader.size() > 0) && ((deletionFlagsReader[0] & 1) != 0);
+        currentSeedDeltas[0] = {currentIndex, isDeleted};
+        
+        // Decode remaining indices using deltas
+        size_t largeDeltaIdx = 0;
+        for (size_t j = 0; j < deltaIndicesReader.size(); j++) {
+          uint16_t delta = deltaIndicesReader[j];
+          
+          if (delta == 0xFFFF) {
+            // Large delta - read from largeDelta array
+            delta = largeDeltasReader[largeDeltaIdx++];
+          }
+          
+          currentIndex += delta;
+          
+          // Extract deletion flag from packed bits
+          size_t bitPos = j + 1;
+          size_t byteIdx = bitPos / 8;
+          size_t bitIdx = bitPos % 8;
+          isDeleted = (byteIdx < deletionFlagsReader.size()) && ((deletionFlagsReader[byteIdx] & (1 << bitIdx)) != 0);
+          
+          currentSeedDeltas[j + 1] = {currentIndex, isDeleted};
         }
         
-        for (size_t j = 0; j < currentGapRunDeltasReader.size(); j++) {
-          const auto& currentGapRunDeltaReader = currentGapRunDeltasReader[j];
-          currentGapRunDeltas.push_back({currentGapRunDeltaReader.getStartPos(), 
-                                          currentGapRunDeltaReader.getEndPos(), 
-                                          currentGapRunDeltaReader.getToGap()});
-        }
+        // LITE MODE: Gap deltas and inverted blocks commented out - not needed for placement
+        // const auto& currentGapRunDeltasShortReader = currentPerNodeChangeReader.getGapRunDeltasShort();
+        // const auto& currentGapRunDeltasLongReader = currentPerNodeChangeReader.getGapRunDeltasLong();
+        // const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
         
-        for (size_t j = 0; j < currentInvertedBlocksReader.size(); j++) {
-          currentInvertedBlocks[j] = currentInvertedBlocksReader[j];
-        }
+        // currentGapRunDeltas.reserve(currentGapRunDeltasShortReader.size() + currentGapRunDeltasLongReader.size());
+        // currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
+        
+        // // Read short gap deltas (length <= 255)
+        // for (size_t j = 0; j < currentGapRunDeltasShortReader.size(); j++) {
+        //   const auto& gapDelta = currentGapRunDeltasShortReader[j];
+        //   uint32_t position = gapDelta.getPosition();
+        //   uint32_t length = gapDelta.getLength();  // UInt8 -> UInt32
+        //   uint32_t endPos = position + length;
+        //   currentGapRunDeltas.push_back({position, endPos, gapDelta.getToGap()});
+        // }
+        // 
+        // // Read long gap deltas (length > 255)
+        // for (size_t j = 0; j < currentGapRunDeltasLongReader.size(); j++) {
+        //   const auto& gapDelta = currentGapRunDeltasLongReader[j];
+        //   uint32_t position = gapDelta.getPosition();
+        //   uint32_t length = gapDelta.getLength();  // UInt32
+        //   uint32_t endPos = position + length;
+        //   currentGapRunDeltas.push_back({position, endPos, gapDelta.getToGap()});
+        // }
+        // 
+        // for (size_t j = 0; j < currentInvertedBlocksReader.size(); j++) {
+        //   currentInvertedBlocks[j] = currentInvertedBlocksReader[j];
+        // }
       }
     });
   std::cerr << "Successfully read in perNodeChanges, size: " << perNodeChangesReader.size() << std::endl;
@@ -1538,7 +1585,7 @@ void mgsr::ReadDebruijnGraph::buildGraph(std::vector<Read>& reads) {
   
 }
 
-void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
+void mgsr::ThreadsManager::initializeMGSRIndex(LiteIndex::Reader indexReader) {
   k = indexReader.getK();
   s = indexReader.getS();
   t = indexReader.getT();
@@ -1546,7 +1593,7 @@ void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   openSyncmer = indexReader.getOpen();
 }
 
-void mgsr::mgsrPlacer::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
+void mgsr::mgsrPlacer::initializeMGSRIndex(LiteIndex::Reader indexReader) {
   k = indexReader.getK();
   s = indexReader.getS();
   t = indexReader.getT();
@@ -3324,31 +3371,25 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   NodeChanges::Builder curNodeChanges = perNodeChanges[dfsIndex];
   curNodeChanges.setNodeIndex(dfsIndex);
 
-  // adding inserted/substituted seeds to index
-  capnp::List<SeedDelta>::Builder seedDeltasBuilder = curNodeChanges.initSeedDeltas(addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
-  size_t deltaSeedIndicesIndex = 0, deletedIdx = 0, addedIdx = 0, substitutedIdx = 0;
+  // Collect all seed deltas sorted by position
+  std::vector<std::pair<uint32_t, bool>> allSeedDeltas;  // (seedIndex, isDeleted)
+  allSeedDeltas.reserve(addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
+  
+  size_t deletedIdx = 0, addedIdx = 0, substitutedIdx = 0;
   
   while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
     auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
     auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
     auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
     if (deletedStartPos <= addedStartPos && deletedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(deletedSeedIndices[deletedIdx], true);
       deletedIdx++;
     } else if (addedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(addedSeedIndices[addedIdx], false);
       addedIdx++;
     } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].first, true);
+      allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].second, false);
       substitutedIdx++;
     }
   }
@@ -3357,14 +3398,10 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
     auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
     if (deletedStartPos <= addedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(deletedSeedIndices[deletedIdx], true);
       deletedIdx++;
     } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(addedSeedIndices[addedIdx], false);
       addedIdx++;
     }
   }
@@ -3372,17 +3409,11 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
     auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
     if (deletedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(deletedSeedIndices[deletedIdx], true);
       deletedIdx++;
     } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].first, true);
+      allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].second, false);
       substitutedIdx++;
     }
   }
@@ -3390,59 +3421,125 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
     auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
     if (addedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(addedSeedIndices[addedIdx], false);
       addedIdx++;
     } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
+      allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].first, true);
+      allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].second, false);
       substitutedIdx++;
     }
   }
   
   while (deletedIdx < deletedSeedIndices.size()) {
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-    deltaSeedIndicesIndex++;
+    allSeedDeltas.emplace_back(deletedSeedIndices[deletedIdx], true);
     deletedIdx++;
   }
   while (addedIdx < addedSeedIndices.size()) {
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-    deltaSeedIndicesIndex++;
+    allSeedDeltas.emplace_back(addedSeedIndices[addedIdx], false);
     addedIdx++;
   }
   while (substitutedIdx < substitutedSeedIndices.size()) {
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-    deltaSeedIndicesIndex++;
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-    deltaSeedIndicesIndex++;
+    allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].first, true);
+    allSeedDeltas.emplace_back(substitutedSeedIndices[substitutedIdx].second, false);
     substitutedIdx++;
   }
-  
 
-  // adding coord deltas to index
-  capnp::List<GapRunDelta>::Builder gapRunDeltaBuilder = curNodeChanges.initGapRunDeltas(gapRunUpdates.size());
-  for (size_t i = 0; i < gapRunUpdates.size(); i++) {
-    const auto& [toGap, range] = gapRunUpdates[i];
-    gapRunDeltaBuilder[i].setStartPos(range.first);
-    gapRunDeltaBuilder[i].setEndPos(range.second);
-    gapRunDeltaBuilder[i].setToGap(toGap);
+  // Delta encode the seed indices for space efficiency
+  if (!allSeedDeltas.empty()) {
+    SeedChangesDeltaEncoded::Builder encodedBuilder = curNodeChanges.initSeedChangesDeltaEncoded();
+    
+    // First seed index (absolute)
+    encodedBuilder.setFirstSeedIndex(allSeedDeltas[0].first);
+    
+    // Compute deltas and identify which need UInt32
+    std::vector<uint16_t> deltaIndices;
+    std::vector<uint32_t> largeDeltaValues;
+    deltaIndices.reserve(allSeedDeltas.size() - 1);
+    
+    uint32_t prevIndex = allSeedDeltas[0].first;
+    for (size_t i = 1; i < allSeedDeltas.size(); i++) {
+      uint32_t currentIndex = allSeedDeltas[i].first;
+      uint32_t delta = currentIndex - prevIndex;
+      
+      if (delta < 65536) {
+        deltaIndices.push_back(static_cast<uint16_t>(delta));
+      } else {
+        // Mark position for large delta and store full delta
+        deltaIndices.push_back(0xFFFF);  // Sentinel value
+        largeDeltaValues.push_back(delta);
+      }
+      prevIndex = currentIndex;
+    }
+    
+    // Write delta arrays
+    auto deltaBuilder = encodedBuilder.initDeltaIndices(deltaIndices.size());
+    for (size_t i = 0; i < deltaIndices.size(); i++) {
+      deltaBuilder.set(i, deltaIndices[i]);
+    }
+    
+    auto largeDeltaBuilder = encodedBuilder.initLargeDeltas(largeDeltaValues.size());
+    for (size_t i = 0; i < largeDeltaValues.size(); i++) {
+      largeDeltaBuilder.set(i, largeDeltaValues[i]);
+    }
+    
+    // Pack deletion flags into bits (8 per byte)
+    size_t numBytes = (allSeedDeltas.size() + 7) / 8;
+    auto deletionData = encodedBuilder.initDeletionFlags(numBytes);
+    std::memset(deletionData.begin(), 0, numBytes);  // Initialize to zeros
+    for (size_t i = 0; i < allSeedDeltas.size(); i++) {
+      if (allSeedDeltas[i].second) {  // isDeleted
+        size_t byteIdx = i / 8;
+        size_t bitIdx = i % 8;
+        deletionData[byteIdx] |= (1 << bitIdx);
+      }
+    }
   }
   
 
-  // adding inverted blocks to index
-  capnp::List<uint32_t>::Builder invertedBlocksBuilder = curNodeChanges.initInvertedBlocks(invertedBlocksVec.size());
-  for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
-    invertedBlocksBuilder.set(i, invertedBlocksVec[i]);
-  }
+  // LITE MODE: Skip gap deltas and inverted blocks - not needed for placement
+  // This dramatically reduces index size (gap deltas were 53% of file size)
+  // Uncomment below if you need full MGSR index with gap information
+  
+  // // adding coord deltas to index with tiered storage
+  // // Separate gaps by length: short (≤255) vs long (>255)
+  // // This reduces storage by 50% for 99.3% of gaps
+  // std::vector<size_t> shortGapIndices, longGapIndices;
+  // for (size_t i = 0; i < gapRunUpdates.size(); i++) {
+  //   const auto& [toGap, range] = gapRunUpdates[i];
+  //   uint64_t length = range.second - range.first;
+  //   if (length <= 255) {
+  //     shortGapIndices.push_back(i);
+  //   } else {
+  //     longGapIndices.push_back(i);
+  //   }
+  // }
+  // 
+  // capnp::List<GapRunDeltaShort>::Builder gapRunDeltaShortBuilder = 
+  //     curNodeChanges.initGapRunDeltasShort(shortGapIndices.size());
+  // for (size_t i = 0; i < shortGapIndices.size(); i++) {
+  //   const auto& [toGap, range] = gapRunUpdates[shortGapIndices[i]];
+  //   uint64_t length = range.second - range.first;
+  //   gapRunDeltaShortBuilder[i].setPosition(range.first);
+  //   gapRunDeltaShortBuilder[i].setLength(static_cast<uint8_t>(length));
+  //   gapRunDeltaShortBuilder[i].setToGap(toGap);
+  // }
+  // 
+  // capnp::List<GapRunDeltaLong>::Builder gapRunDeltaLongBuilder = 
+  //     curNodeChanges.initGapRunDeltasLong(longGapIndices.size());
+  // for (size_t i = 0; i < longGapIndices.size(); i++) {
+  //   const auto& [toGap, range] = gapRunUpdates[longGapIndices[i]];
+  //   uint64_t length = range.second - range.first;
+  //   gapRunDeltaLongBuilder[i].setPosition(range.first);
+  //   gapRunDeltaLongBuilder[i].setLength(static_cast<uint32_t>(length));
+  //   gapRunDeltaLongBuilder[i].setToGap(toGap);
+  // }
+  // 
+
+  // // adding inverted blocks to index
+  // capnp::List<uint32_t>::Builder invertedBlocksBuilder = curNodeChanges.initInvertedBlocks(invertedBlocksVec.size());
+  // for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
+  //   invertedBlocksBuilder.set(i, invertedBlocksVec[i]);
+  // }
 
 
   // // compare with brute force for debugging
@@ -3553,9 +3650,10 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
   for (size_t i = 0; i < uniqueKminmers.size(); i++) {
     seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
-    seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
-    seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
-    seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
+    // TODO: Lite index doesn't have positions - full MGSR needs separate schema
+    // seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
+    // seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
+    // seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
   }
 
   // Add block infos to index
@@ -3587,15 +3685,39 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
 }
 
 void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path) {
-  int fd = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
-  if (fd == -1) {
-    std::cerr << "Error: failed to open file " << path << std::endl;
+  std::cout << "Writing index to " << path << std::endl;
+  
+  try {
+    // Serialize Cap'n Proto message to memory first
+    auto segments = outMessage.getSegmentsForOutput();
+    
+    // Calculate total size needed
+    size_t totalSize = 0;
+    for (const auto& segment : segments) {
+      totalSize += segment.size() * sizeof(::capnp::word);
+    }
+    
+    // Flatten all segments into a single buffer
+    std::vector<uint8_t> flatData(totalSize);
+    uint8_t* writePtr = flatData.data();
+    for (const auto& segment : segments) {
+      size_t segmentBytes = segment.size() * sizeof(::capnp::word);
+      std::memcpy(writePtr, segment.begin(), segmentBytes);
+      writePtr += segmentBytes;
+    }
+    
+    std::cout << "Serialized index data: " << flatData.size() << " bytes" << std::endl;
+    
+    // Compress and write to file using ZSTD parallel compression
+    // Use default compression level (3) and auto-detect thread count
+    panmap_zstd::compressToFile(flatData.data(), flatData.size(), path);
+    
+    std::cout << "Index written to " << path << " (ZSTD compressed)" << std::endl;
+    
+  } catch (const std::exception& e) {
+    std::cerr << "Error writing index: " << e.what() << std::endl;
     std::exit(1);
   }
-  std::cout << "Writing index to " << path << std::endl;
-  capnp::writePackedMessageToFd(fd, outMessage);
-  close(fd);
-  std::cout << "Index written to " << path << std::endl;
 }
 
 int mgsr::open_file(const std::string& path) {

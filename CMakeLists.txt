@@ -154,16 +154,37 @@ add_custom_command(
     VERBATIM
 )
 
+# Add index_lite.capnp generation
+set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/index_lite.capnp")
+set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+set(LITE_CAPNP_GEN_CPP "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.c++")
+set(LITE_CAPNP_GEN_H "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.h")
+# Custom command to generate CapnProto files
+add_custom_command(
+    OUTPUT ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
+    COMMAND ${CAPNP_EXECUTABLE}
+        compile
+        -o${CAPNPC_CXX_EXECUTABLE}
+        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+        ${LITE_CAPNP_SRC_FILE}
+    DEPENDS ${LITE_CAPNP_SRC_FILE} capnp_tools
+    COMMENT "Generating C++ files from index_lite.capnp"
+    VERBATIM
+)
+
 # Set variables to point to the generated files
 set(CAPNP_SRCS ${CAPNP_GEN_CPP})
 set(CAPNP_HDRS ${CAPNP_GEN_H})
 set(MGSR_CAPNP_SRCS ${MGSR_CAPNP_GEN_CPP})
 set(MGSR_CAPNP_HDRS ${MGSR_CAPNP_GEN_H})
+set(LITE_CAPNP_SRCS ${LITE_CAPNP_GEN_CPP})
+set(LITE_CAPNP_HDRS ${LITE_CAPNP_GEN_H})
 
 # Create a target that depends on the generated files
 add_custom_target(index_capnp_generator ALL
     DEPENDS ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
     DEPENDS ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
+    DEPENDS ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
 )
 
 # Create a simplified version of the capnp_generate_cpp macro
@@ -590,11 +611,28 @@ set(PANMAP_SOURCES_MAIN
     src/performance.cpp
     src/state.cpp
     src/state_helpers.cpp
+    src/zstd_compression.cpp
 )
 
 # Find required packages before using them
 find_package(Boost COMPONENTS program_options iostreams filesystem date_time system REQUIRED)
 find_package(ZLIB REQUIRED)
+
+# Use FetchContent to get latest zstd with all modern features
+FetchContent_Declare(
+    zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG v1.5.7
+    SOURCE_SUBDIR build/cmake
+)
+
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(zstd)
 
 add_executable(panmap ${PANMAP_SOURCES_MAIN})
 add_dependencies(panmap build-deps index_capnp_generator tbb_build)
@@ -632,7 +670,7 @@ if(OPTION_BUILD_SIMULATE)
 endif()
 
 # Add generated sources to panmap target
-  target_sources(panmap PRIVATE ${CAPNP_SRCS} ${MGSR_CAPNP_SRCS})
+  target_sources(panmap PRIVATE ${CAPNP_SRCS} ${MGSR_CAPNP_SRCS} ${LITE_CAPNP_SRCS})
 
 # Add include directories
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -684,6 +722,7 @@ target_link_libraries(panmap PRIVATE
     Boost::filesystem
     Boost::system
     ZLIB::ZLIB
+    libzstd_static
     ${TBB_LIBRARY}
     spdlog::spdlog  # Add spdlog
     # Link panman_lib directly to access the implementation of panmanUtils functions

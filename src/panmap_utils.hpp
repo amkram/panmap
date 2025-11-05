@@ -3,7 +3,7 @@
 #include "panmanUtils.hpp"
 #include "capnp/message.h"
 #include "capnp/serialize-packed.h"
-#include "mgsr_index.capnp.h"
+#include "index_lite.capnp.h"
 #include "logging.hpp"
 #include <string>
 #include <iostream>
