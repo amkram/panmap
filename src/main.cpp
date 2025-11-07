@@ -748,8 +748,12 @@ int main(int argc, char *argv[]) {
         ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
         ("no-progress", "Disable progress bars")
         ("seed-scores", "Use seed scores instead of read scores to score nodes")
+        ("read-seed-scores", "Use read seed scores instead of read scores to score nodes")
         ("mask-reads", po::value<uint32_t>()->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
         ("mask-seeds", po::value<uint32_t>()->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
+        ("amplicon-depth", po::value<std::string>(), "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")
+        ("mask-reads-relative-frequency", po::value<double>()->default_value(0.0), "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")
+        ("mask-seeds-relative-frequency", po::value<double>()->default_value(0.0), "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
 
         ("low-memory", "Use low memory mode")
     ;
@@ -1144,17 +1148,19 @@ int main(int argc, char *argv[]) {
       }
       liteTree.initialize(indexReader, numThreads, lowMemory, true);
       liteTree.debugNodeID = vm["debug-node-id"].as<std::string>();
-      std::vector<std::string> readSequences;
-      mgsr::extractReadSequences(reads1, reads2, readSequences);
 
       uint32_t maskReads = vm.count("mask-reads") ? vm["mask-reads"].as<uint32_t>() : 0;
-      uint32_t maskSeedThreshold = vm["mask-seeds"].as<uint32_t>();
+      uint32_t maskSeeds = vm.count("mask-reads") ? vm["mask-seeds"].as<uint32_t>() : 0;
+      std::string ampliconDepthPath = vm.count("amplicon-depth") ? vm["amplicon-depth"].as<std::string>() : "";
+      double maskReadsRelativeFrequency = vm["mask-reads-relative-frequency"].as<double>();
+      double maskSeedsRelativeFrequency = vm["mask-seeds-relative-frequency"].as<double>();
+      
       bool progressBar = true;
       if (vm.count("no-progress")) progressBar = false;
       mgsr::ThreadsManager threadsManager(&liteTree, numThreads, maskReads, progressBar, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
-      threadsManager.initializeQueryData(readSequences, maskSeedThreshold);
+      threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency);
 
       if (vm.count("overlap-coefficients")) {
         auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
@@ -1183,6 +1189,10 @@ int main(int argc, char *argv[]) {
       liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
       // liteTree.collapseEmptyNodes(true);
 
+      if (vm.count("read-seed-scores")) {
+        threadsManager.countSeedNodesFrequency();
+        decltype(threadsManager.seedMatchedNodeRanges)().swap(threadsManager.seedMatchedNodeRanges);
+      }
       if (vm.count("seed-scores")) {
         threadsManager.countSeedNodesFrequency();
         threadsManager.computeNodeSeedScores();
@@ -1257,7 +1267,7 @@ int main(int argc, char *argv[]) {
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
       // threadsManager.scoreNodes();
-      threadsManager.scoreNodesMultithreaded();
+      threadsManager.scoreNodesMultithreaded(vm.count("read-seed-scores") > 0);
       
       mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
       auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
@@ -1270,7 +1280,13 @@ int main(int argc, char *argv[]) {
       std::ofstream of(prefix + ".collapsed.newick");
       of << collapsedNewick;
       of.close();
-      std::ofstream scoresOut(prefix + ".nodeScores.tsv");
+
+      std::ofstream scoresOut;
+      if (vm.count("read-seed-scores")) {
+        scoresOut.open(prefix + ".nodeReadSeedScores.tsv");
+      } else {
+        scoresOut.open(prefix + ".nodeScores.tsv");
+      }
       scoresOut << "NodeId\tdistance\tWEPPScore\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tSelectedNeighbor\tinSample\tcollapsedNodes" << std::endl;
       for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
         if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {

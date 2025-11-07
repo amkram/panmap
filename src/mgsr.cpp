@@ -1310,7 +1310,54 @@ static void inline perfect_shuffle(std::vector<T>& v) {
   v = std::move(canvas);
 }
 
-void mgsr::extractReadSequences(const std::string& readPath1, const std::string& readPath2, std::vector<std::string>& readSequences) {
+void mgsr::extractReadSequences(
+  const std::string& readPath1,
+  const std::string& readPath2,
+  const std::string& ampliconDepthPath,
+  std::vector<std::vector<std::string>>& readSequences
+) {
+  std::unordered_map<std::string, std::string_view> readIdToPrimerId;
+  std::unordered_map<std::string, size_t> primerIdToGroupId;
+
+  if (!ampliconDepthPath.empty()) {
+    std::ifstream file(ampliconDepthPath);
+    if (!file) {
+      std::cerr << "Error: File " << ampliconDepthPath << " not found" << std::endl;
+      exit(0);
+    }
+    
+    std::string line;
+    std::string readId;
+    std::string primerId;
+    while (std::getline(file, line)) {
+      std::istringstream tokenStream(line);
+      std::string token;
+      size_t fieldIndex = 0;
+      while (std::getline(tokenStream, token, '\t')) {
+        if (fieldIndex == 0) {
+          readId = token;
+        } else if (fieldIndex == 1) {
+          primerId = token;
+        } else {
+          std::cerr << "Error: Unexpected number of fields in amplicon depth file " << ampliconDepthPath << std::endl;
+        }
+        ++fieldIndex;
+      }
+      
+      auto primerIdToGroupIdIt = primerIdToGroupId.find(primerId);
+      if (primerIdToGroupIdIt == primerIdToGroupId.end()) {
+        size_t newGroupId = primerIdToGroupId.size();
+        auto [it, inserted] = primerIdToGroupId.emplace(primerId, newGroupId);
+        readIdToPrimerId[readId] = std::string_view(it->first);
+      } else {
+        readIdToPrimerId[readId] = std::string_view(primerIdToGroupIdIt->first);
+      }
+    }
+    readSequences.resize(primerIdToGroupId.size() + 1);
+  } else {
+    readSequences.resize(1);
+  }
+
   FILE *fp;
   kseq_t *seq;
   fp = fopen(readPath1.c_str(), "r");
@@ -1321,7 +1368,14 @@ void mgsr::extractReadSequences(const std::string& readPath1, const std::string&
   seq = kseq_init(fileno(fp));
   int line;
   while ((line = kseq_read(seq)) >= 0) {
-    readSequences.push_back(seq->seq.s);
+    std::string readIdentifier = seq->name.s;
+    auto readIdToPrimerIdIt = readIdToPrimerId.find(readIdentifier);
+    if (readIdToPrimerIdIt == readIdToPrimerId.end()) {
+      readSequences.back().push_back(seq->seq.s);
+    } else {
+      size_t groupId = primerIdToGroupId[std::string(readIdToPrimerIdIt->second)];
+      readSequences[groupId].push_back(seq->seq.s);
+    }
   }
   if (readPath2.size() > 0) {
     fp = fopen(readPath2.c_str(), "r");
@@ -1331,19 +1385,36 @@ void mgsr::extractReadSequences(const std::string& readPath1, const std::string&
     }
     seq = kseq_init(fileno(fp));
 
-    line = 0;
-    int forwardReads = readSequences.size();
-    while ((line = kseq_read(seq)) >= 0) {
-      readSequences.push_back(seq->seq.s);
+    size_t forwardReads = 0;
+    for (const auto& groupReads : readSequences) {
+      forwardReads += groupReads.size();
     }
 
-    if (readSequences.size() != forwardReads*2){
+    line = 0;
+    while ((line = kseq_read(seq)) >= 0) {
+      std::string readIdentifier = seq->name.s;
+      auto readIdToPrimerIdIt = readIdToPrimerId.find(readIdentifier);
+      if (readIdToPrimerIdIt == readIdToPrimerId.end()) {
+        readSequences.back().push_back(seq->seq.s);
+      } else {
+        size_t groupId = primerIdToGroupId[std::string(readIdToPrimerIdIt->second)];
+        readSequences[groupId].push_back(seq->seq.s);
+      }
+    }
+
+    size_t totalReads = 0;
+    for (const auto& groupReads : readSequences) {
+      totalReads += groupReads.size();
+    }
+    
+    if (totalReads != forwardReads*2){
       std::cerr << "Error: File " << readPath2 << " does not contain the same number of reads as " << readPath1 << std::endl;
+      std::cerr << "Read sizes: " << forwardReads << " (from " << readPath1 << ") and " << totalReads - forwardReads  << " (from " << readPath2 << ")" << std::endl;
       exit(0);
     }
     
-    //Shuffle reads together, so that pairs are next to eatch other
-    perfect_shuffle(readSequences);
+    // //Shuffle reads together, so that pairs are next to eatch other
+    // perfect_shuffle(readSequences);
   }
 }
 
@@ -1554,167 +1625,309 @@ void mgsr::mgsrPlacer::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   openSyncmer = indexReader.getOpen();
 }
 
-void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> readSequences, uint32_t maskSeedThreshold, bool fast_mode) {
-  std::unordered_map<std::string_view, std::vector<size_t>> seqToIndex;
-  for (size_t i = 0; i < readSequences.size(); ++i) {
-    seqToIndex[readSequences[i]].push_back(i);
+void mgsr::ThreadsManager::initializeQueryData(
+  const std::string& readPath1,
+  const std::string& readPath2,
+  uint32_t maskSeeds,
+  const std::string& ampliconDepthPath,
+  double maskReadsRelativeFrequency,
+  double maskSeedsRelativeFrequency,
+  bool fast_mode
+) {
+  std::vector<std::vector<std::string>> readSequencesByGroup;
+  extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup);
+  size_t rawReadsSize = 0;
+  for (const auto& groupReads : readSequencesByGroup) {
+    rawReadsSize += groupReads.size();
   }
-  std::vector<std::pair<std::string_view, std::vector<size_t>>> seqToIndexVec(seqToIndex.size());
-  size_t seqToIndexVecIndex = 0;
-  for (auto& [seq, index] : seqToIndex) {
-    seqToIndexVec[seqToIndexVecIndex].first = seq;
-    seqToIndexVec[seqToIndexVecIndex].second = std::move(index);
-    ++seqToIndexVecIndex;
-  }
+  size_t originalReadsSize = 0;
+  size_t numMaskReads = 0;
+  size_t numMaskSeeds = 0;
 
-  // seedmers for each unique read sequence
+
+  std::vector<std::vector<mgsr::Read>> readsByGroup(readSequencesByGroup.size());
+  std::vector<std::vector<std::vector<size_t>>> readSeedmersDuplicatesIndexByGroup(readSequencesByGroup.size());
   size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-  std::vector<mgsr::Read> uniqueReadSeedmers(seqToIndexVec.size());
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, seqToIndexVec.size(), seqToIndexVec.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range){
-    for (size_t i = range.begin(); i < range.end(); ++i) {
-      const auto& seq = seqToIndexVec[i].first;
-      const auto& syncmers = seeding::rollingSyncmers(seq, k, s, openSyncmer, t, false);
-      mgsr::Read& curRead = uniqueReadSeedmers[i];
-      if (syncmers.size() < l) continue;
+  size_t curSeqIndex = 0;
+  for (size_t groupId = 0; groupId < readSequencesByGroup.size(); ++groupId) {
+    auto& curReads = readsByGroup[groupId];
+    auto& curReadSeedmersDuplicatesIndex = readSeedmersDuplicatesIndexByGroup[groupId];
+    const auto& readSequences = readSequencesByGroup[groupId];
+    if (readSequences.empty()) continue;
+    std::unordered_map<std::string_view, std::vector<size_t>> seqToIndex;
+    for (size_t i = 0; i < readSequences.size(); ++i) {
+      seqToIndex[readSequences[i]].push_back(curSeqIndex);
+      ++curSeqIndex;
+    }
+    std::vector<std::pair<std::string_view, std::vector<size_t>>> seqToIndexVec(seqToIndex.size());
+    size_t seqToIndexVecIndex = 0;
+    for (auto& [seq, index] : seqToIndex) {
+      seqToIndexVec[seqToIndexVecIndex].first = seq;
+      seqToIndexVec[seqToIndexVecIndex].second = std::move(index);
+      ++seqToIndexVecIndex;
+    }
 
-      size_t forwardRolledHash = 0;
-      size_t reverseRolledHash = 0;
-      // first kminmer
-      for (size_t i = 0; i < l; ++i) {
-        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmers[i]);
-        reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-i-1]);
-      }
+    // seedmers for each unique read sequence
+    std::vector<mgsr::Read> uniqueReadSeedmers(seqToIndexVec.size());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, seqToIndexVec.size(), seqToIndexVec.size() / num_cpus), [&](const tbb::blocked_range<size_t>& range){
+      for (size_t i = range.begin(); i < range.end(); ++i) {
+        const auto& seq = seqToIndexVec[i].first;
+        const auto& syncmers = seeding::rollingSyncmers(seq, k, s, openSyncmer, t, false);
+        mgsr::Read& curRead = uniqueReadSeedmers[i];
+        if (syncmers.size() < l) continue;
 
-      uint32_t iorder = 0;
-      if (forwardRolledHash != reverseRolledHash) {
-        size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-        curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
-        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-          minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
-        ++iorder;
-      }
-
-      // rest of kminmer
-      for (uint64_t i = 1; i < syncmers.size()-l+1; ++i) {
-        if (!std::get<2>(syncmers[i-1]) || !std::get<2>(syncmers[i+l-1])) {
-          std::cout << "invalid syncmer" << std::endl;
-          exit(0);
+        size_t forwardRolledHash = 0;
+        size_t reverseRolledHash = 0;
+        // first kminmer
+        for (size_t i = 0; i < l; ++i) {
+          forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmers[i]);
+          reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-i-1]);
         }
-        const size_t& prevSyncmerHash = std::get<0>(syncmers[i-1]);
-        const size_t& nextSyncmerHash = std::get<0>(syncmers[i+l-1]);
-        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
-        reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
 
+        uint32_t iorder = 0;
         if (forwardRolledHash != reverseRolledHash) {
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-          auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
-          if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
-            curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
-            curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-              minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
-            ++iorder;
-          } else {
-            uniqueSeedmersIt->second.push_back(iorder);
-            curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-              uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
-            ++iorder;
-          }
+          curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
+          curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+            minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+          ++iorder;
         }
-      }
-    }
-  });
-  
-  std::vector<size_t> sortedUniqueReadSeedmersIndices(uniqueReadSeedmers.size());
-  for (size_t i = 0; i < uniqueReadSeedmers.size(); ++i) sortedUniqueReadSeedmersIndices[i] = i;
-  tbb::parallel_sort(sortedUniqueReadSeedmersIndices.begin(), sortedUniqueReadSeedmersIndices.end(), [&uniqueReadSeedmers, fast_mode](size_t i1, size_t i2) {
-    const auto& lhs = uniqueReadSeedmers[i1].seedmersList;
-    const auto& rhs = uniqueReadSeedmers[i2].seedmersList;
-    
-    size_t minSize = std::min(lhs.size(), rhs.size());
 
-    for (size_t i = 0; i < minSize; ++i) {
-      if (lhs[i].hash != rhs[i].hash) {
-        return lhs[i].hash < rhs[i].hash;
-      }
-    }
-
-    if (lhs.size() != rhs.size()) {
-      return lhs.size() < rhs.size();
-    }
-    
-    return std::lexicographical_compare(
-      lhs.begin(), lhs.end(),
-      rhs.begin(), rhs.end(),
-      [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
-        if (!fast_mode) {
-          if (a.begPos != b.begPos) return a.begPos < b.begPos;
-          if (a.endPos != b.endPos) return a.endPos < b.endPos;
-        }
-        if (a.rev != b.rev) return a.rev < b.rev;
-        return a.iorder < b.iorder;
-      }
-    );
-  });
-
-  reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[0]]));
-  readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
-  for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[0]].second) {
-    readSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
-  }
-
-  for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
-    const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
-    
-    bool isDuplicate = false;
-    
-    if (currSeedmers.seedmersList.size() == reads.back().seedmersList.size()) {
-      const auto& curr = currSeedmers.seedmersList;
-      const auto& prev = reads.back().seedmersList;
-      
-      if (fast_mode) {
-        isDuplicate = std::equal(curr.begin(), curr.end(), prev.begin(),
-          [](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
-            return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
-          });
-      } else {
-        isDuplicate = true;
-        
-        for (size_t j = 0; j < curr.size() && isDuplicate; ++j) {
-          if (curr[j].hash != prev[j].hash || 
-              curr[j].rev != prev[j].rev || 
-              curr[j].iorder != prev[j].iorder) {
-            isDuplicate = false;
-            break;
+        // rest of kminmer
+        for (uint64_t i = 1; i < syncmers.size()-l+1; ++i) {
+          if (!std::get<2>(syncmers[i-1]) || !std::get<2>(syncmers[i+l-1])) {
+            std::cout << "invalid syncmer" << std::endl;
+            exit(0);
           }
-          
-          size_t currLength = curr[j].endPos - curr[j].begPos;
-          size_t prevLength = prev[j].endPos - prev[j].begPos;
-          if (currLength != prevLength) {
-            isDuplicate = false;
-            break;
-          }
-          
-          if (j > 0) {
-            size_t currGap = curr[j].begPos - curr[j-1].endPos;
-            size_t prevGap = prev[j].begPos - prev[j-1].endPos;
-            if (currGap != prevGap) {
-              isDuplicate = false;
-              break;
+          const size_t& prevSyncmerHash = std::get<0>(syncmers[i-1]);
+          const size_t& nextSyncmerHash = std::get<0>(syncmers[i+l-1]);
+          forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
+          reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
+
+          if (forwardRolledHash != reverseRolledHash) {
+            size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+            auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
+            if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
+              curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
+              curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+                minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+              ++iorder;
+            } else {
+              uniqueSeedmersIt->second.push_back(iorder);
+              curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+                uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+              ++iorder;
             }
           }
         }
       }
-    }
+    });
     
-    if (!isDuplicate) {
-      reads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]]));
-      readSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
+    std::vector<size_t> sortedUniqueReadSeedmersIndices(uniqueReadSeedmers.size());
+    for (size_t i = 0; i < uniqueReadSeedmers.size(); ++i) sortedUniqueReadSeedmersIndices[i] = i;
+    tbb::parallel_sort(sortedUniqueReadSeedmersIndices.begin(), sortedUniqueReadSeedmersIndices.end(), [&uniqueReadSeedmers, fast_mode](size_t i1, size_t i2) {
+      const auto& lhs = uniqueReadSeedmers[i1].seedmersList;
+      const auto& rhs = uniqueReadSeedmers[i2].seedmersList;
+      
+      size_t minSize = std::min(lhs.size(), rhs.size());
+
+      for (size_t i = 0; i < minSize; ++i) {
+        if (lhs[i].hash != rhs[i].hash) {
+          return lhs[i].hash < rhs[i].hash;
+        }
+      }
+
+      if (lhs.size() != rhs.size()) {
+        return lhs.size() < rhs.size();
+      }
+      
+      return std::lexicographical_compare(
+        lhs.begin(), lhs.end(),
+        rhs.begin(), rhs.end(),
+        [fast_mode](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
+          if (!fast_mode) {
+            if (a.begPos != b.begPos) return a.begPos < b.begPos;
+            if (a.endPos != b.endPos) return a.endPos < b.endPos;
+          }
+          if (a.rev != b.rev) return a.rev < b.rev;
+          return a.iorder < b.iorder;
+        }
+      );
+    });
+
+    curReads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[0]]));
+    curReadSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
+    for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[0]].second) {
+      curReadSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
     }
-    
-    for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[i]].second) {
-      readSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
+
+    for (size_t i = 1; i < sortedUniqueReadSeedmersIndices.size(); ++i) {
+      const auto& currSeedmers = uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]];
+      
+      bool isDuplicate = false;
+      
+      if (currSeedmers.seedmersList.size() == curReads.back().seedmersList.size()) {
+        const auto& curr = currSeedmers.seedmersList;
+        const auto& prev = curReads.back().seedmersList;
+        
+        if (fast_mode) {
+          isDuplicate = std::equal(curr.begin(), curr.end(), prev.begin(),
+            [](const mgsr::readSeedmer& a, const mgsr::readSeedmer& b) {
+              return a.hash == b.hash && a.rev == b.rev && a.iorder == b.iorder;
+            });
+        } else {
+          isDuplicate = true;
+          
+          for (size_t j = 0; j < curr.size() && isDuplicate; ++j) {
+            if (curr[j].hash != prev[j].hash || 
+                curr[j].rev != prev[j].rev || 
+                curr[j].iorder != prev[j].iorder) {
+              isDuplicate = false;
+              break;
+            }
+            
+            size_t currLength = curr[j].endPos - curr[j].begPos;
+            size_t prevLength = prev[j].endPos - prev[j].begPos;
+            if (currLength != prevLength) {
+              isDuplicate = false;
+              break;
+            }
+            
+            if (j > 0) {
+              size_t currGap = curr[j].begPos - curr[j-1].endPos;
+              size_t prevGap = prev[j].begPos - prev[j-1].endPos;
+              if (currGap != prevGap) {
+                isDuplicate = false;
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      if (!isDuplicate) {
+        curReads.emplace_back(std::move(uniqueReadSeedmers[sortedUniqueReadSeedmersIndices[i]]));
+        curReadSeedmersDuplicatesIndex.emplace_back(std::vector<size_t>());
+      }
+      
+      for (const auto& seqSortedIndex : seqToIndexVec[sortedUniqueReadSeedmersIndices[i]].second) {
+        curReadSeedmersDuplicatesIndex.back().push_back(seqSortedIndex);
+      }
+    }
+
+    originalReadsSize += curReads.size();
+
+    int activeCount = (maskReadsRelativeFrequency > 0) + (maskSeedsRelativeFrequency > 0) + (maskReads > 0) + (maskSeeds > 0);
+    if (activeCount > 1) {
+      throw std::invalid_argument("Only one masking parameter can be set at a time");
+    }
+    if (maskReadsRelativeFrequency > 0 || maskSeedsRelativeFrequency > 0 || maskReads > 0 || maskSeeds > 0) {
+      std::unordered_map<size_t, size_t> kminmerCounts;
+      for (uint32_t i = 0; i < curReads.size(); ++i) {
+        for (const auto& seedmer : curReads[i].uniqueSeedmers) {
+          kminmerCounts[seedmer.first] += curReadSeedmersDuplicatesIndex[i].size();
+        }
+      }
+      
+      size_t maskReadsThreshold = (maskReadsRelativeFrequency > 0) 
+        ? static_cast<size_t>(maskReadsRelativeFrequency * curReads.size())
+        : maskReads;
+      
+      size_t maskSeedsThreshold = (maskSeedsRelativeFrequency > 0)
+        ? static_cast<size_t>(maskSeedsRelativeFrequency * curReads.size())
+        : maskSeeds;
+
+      if (groupId == readSequencesByGroup.size() - 1) {
+        maskReadsThreshold = maskReads;
+        maskSeedsThreshold = maskSeeds;
+      }
+      
+      if (maskReadsThreshold > 0) {
+        std::vector<size_t> indicesToKeep;
+        indicesToKeep.reserve(curReads.size());
+        
+        for (size_t i = 0; i < curReads.size(); ++i) {
+          bool keep = true;
+          for (const auto& seedmer : curReads[i].seedmersList) {
+            if (kminmerCounts.at(seedmer.hash) <= maskReadsThreshold) {
+              numMaskReads++;
+              keep = false;
+              break;
+            }
+          }
+          if (keep) {
+            indicesToKeep.push_back(i);
+          }
+        }
+        indicesToKeep.shrink_to_fit();
+
+        std::vector<mgsr::Read> newReads;
+        std::vector<std::vector<size_t>> newReadSeedmersDuplicatesIndex;
+        newReads.reserve(indicesToKeep.size());
+        newReadSeedmersDuplicatesIndex.reserve(indicesToKeep.size());
+
+        for (size_t idx : indicesToKeep) {
+          newReads.push_back(std::move(curReads[idx]));
+          newReadSeedmersDuplicatesIndex.push_back(std::move(curReadSeedmersDuplicatesIndex[idx]));
+        }
+
+        curReads = std::move(newReads);
+        curReadSeedmersDuplicatesIndex = std::move(newReadSeedmersDuplicatesIndex);
+      } else if (maskSeedsThreshold > 0) {
+        size_t writeIdx = 0;
+        for (size_t readIdx = 0; readIdx < curReads.size(); ++readIdx) {
+          auto& curRead = curReads[readIdx];
+          std::vector<size_t> seedmerIndicesToMask;
+          
+          for (size_t j = 0; j < curRead.seedmersList.size(); ++j) {
+            auto& seedmer = curRead.seedmersList[j];
+            if (kminmerCounts.at(seedmer.hash) <= maskSeedsThreshold) {
+              numMaskSeeds++;
+              seedmerIndicesToMask.push_back(j);
+              curRead.uniqueSeedmers.erase(seedmer.hash);
+            }
+          }
+          
+          for (auto it = seedmerIndicesToMask.rbegin(); it != seedmerIndicesToMask.rend(); ++it) {
+            curRead.seedmersList.erase(curRead.seedmersList.begin() + *it);
+          }
+          
+          if (curRead.seedmersList.size() > 0) {
+            if (writeIdx != readIdx) {
+              curReads[writeIdx] = std::move(curReads[readIdx]);
+              curReadSeedmersDuplicatesIndex[writeIdx] = std::move(curReadSeedmersDuplicatesIndex[readIdx]);
+            }
+            ++writeIdx;
+          }
+        }
+        curReads.resize(writeIdx);
+        curReadSeedmersDuplicatesIndex.resize(writeIdx);
+      }
     }
   }
+
+  // merge all groups
+  size_t totalReads = 0;
+  for (const auto& group : readsByGroup) {
+    totalReads += group.size();
+  }
+  reads.clear();
+  reads.reserve(totalReads);
+  readSeedmersDuplicatesIndex.clear();
+  readSeedmersDuplicatesIndex.reserve(totalReads);
+  for (size_t groupId = 0; groupId < readsByGroup.size(); ++groupId) {
+    reads.insert(reads.end(),
+                std::make_move_iterator(readsByGroup[groupId].begin()),
+                std::make_move_iterator(readsByGroup[groupId].end()));
+    readSeedmersDuplicatesIndex.insert(readSeedmersDuplicatesIndex.end(),
+                                        std::make_move_iterator(readSeedmersDuplicatesIndexByGroup[groupId].begin()),
+                                        std::make_move_iterator(readSeedmersDuplicatesIndexByGroup[groupId].end()));
+  }
+
+
+
+  
+
 
   if (lowMemory) {
     ReadDebruijnGraph readDebruijnGraph;
@@ -1747,58 +1960,7 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     readSeedmersDuplicatesIndex = std::move(shuffledReadSeedmersDuplicatesIndex);
   }
 
-
-
-
-
-  auto originalReadsSize = reads.size();
-  if (maskReads > 0) {
-    numSingletonReads = 0;
-    absl::flat_hash_map<uint64_t, uint64_t> kminmerCounts;
-    for (uint32_t i = 0; i < reads.size(); ++i) {
-      reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
-      for (const auto& seedmer : reads[i].uniqueSeedmers) {
-        kminmerCounts[seedmer.first] += seedmer.second.size() * readSeedmersDuplicatesIndex[i].size();
-      }
-    }
-
-    for (uint32_t i = 0; i < reads.size(); ++i) {
-      for (const auto& seedmer : reads[i].seedmersList) {
-        if (kminmerCounts.at(seedmer.hash) <= maskReads) {
-          reads[i].readType = mgsr::ReadType::CONTAINS_SINGLETON;
-          ++numSingletonReads;
-          break;
-        } 
-      }
-    }
-
-    std::vector<size_t> indicesToKeep;
-    indicesToKeep.reserve(reads.size());
-
-    for (size_t i = 0; i < reads.size(); ++i) {
-      if (reads[i].readType != mgsr::ReadType::CONTAINS_SINGLETON) {
-        indicesToKeep.push_back(i);
-      }
-    }
-
-    std::vector<mgsr::Read> newReads;
-    std::vector<std::vector<size_t>> newReadSeedmersDuplicatesIndex;
-    newReads.reserve(indicesToKeep.size());
-    newReadSeedmersDuplicatesIndex.reserve(indicesToKeep.size());
-
-    for (size_t idx : indicesToKeep) {
-      newReads.push_back(std::move(reads[idx]));
-      newReadSeedmersDuplicatesIndex.push_back(std::move(readSeedmersDuplicatesIndex[idx]));
-    }
-
-    reads = std::move(newReads);
-    readSeedmersDuplicatesIndex = std::move(newReadSeedmersDuplicatesIndex);
-  }
-
-
   for (uint32_t i = 0; i < reads.size(); ++i) {
-    reads[i].seedmerStates.resize(reads[i].seedmersList.size(), mgsr::SeedmerState{false, false, false});
-    size_t estimatedUpdates = std::numeric_limits<size_t>::max();
     for (const auto& seedmer : reads[i].seedmersList) {
       allSeedmerHashesSet.insert(seedmer.hash);
     }
@@ -1808,8 +1970,6 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
     }
   }
   numPassedReads = reads.size();
-
-  
 
   size_t threadsToUse = 0;
   const size_t chunkSize = (reads.size() + numThreads - 1) / numThreads;
@@ -1830,15 +1990,18 @@ void mgsr::ThreadsManager::initializeQueryData(std::span<const std::string> read
   numThreads = threadsToUse;
   liteTree->numThreads = threadsToUse;
 
-  std::cerr << "Collapsed " << readSequences.size() << " raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
-  if (maskReads > 0) {
-    std::cerr << "Mask-reads " << maskReads << " turned on: " << numSingletonReads << " reads containing low coverage kminmers will be skipped during placement and EM... "
+  std::cerr << "Collapsed " << rawReadsSize << " raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
+  if (maskReads > 0 || maskReadsRelativeFrequency > 0) {
+    std::cerr << "Mask-reads " << (maskReads > 0 ? maskReads : maskReadsRelativeFrequency) << " turned on: " << numMaskReads << " reads containing low coverage kminmers will be skipped during placement and EM... "
+              << "Total reads to process: " << numPassedReads << std::endl;
+  }
+  if (maskSeeds > 0 || maskSeedsRelativeFrequency > 0) {
+    std::cerr << "Mask-seeds " << (maskSeeds > 0 ? maskSeeds : maskSeedsRelativeFrequency) << " turned on: " << numMaskSeeds << " seeds are removed during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
   }
   for (size_t i = 0; i < threadsToUse; ++i) {
     std::cerr << "  Thread " << i << " will process " << threadRanges[i].second - threadRanges[i].first << " reads: " << threadRanges[i].first << " -> " << threadRanges[i].second << std::endl;
   }
-
 }
 
 
@@ -5544,16 +5707,27 @@ void mgsr::mgsrPlacer::scoreNodesHelper(
   
 }
 
-void mgsr::mgsrPlacer::scoreNodes() {
+void mgsr::mgsrPlacer::scoreNodes(const std::unordered_map<size_t, uint32_t>& seedNodesFrequency, bool useReadSeedScores) {
   std::vector<uint32_t> readScores(reads.size(), 0);
   std::vector<uint32_t> numDuplicates(reads.size(), 0);
   std::vector<double> readWEPPWeights(reads.size(), 0.0);
-    for (size_t i = 0; i < reads.size(); ++i) {
+  for (size_t i = 0; i < reads.size(); ++i) {
     const auto& curRead = reads[i];
     if (curRead.maxScore == 0) continue;
     numDuplicates[i] = threadsManager->readSeedmersDuplicatesIndex[threadsManager->threadRanges[threadId].first+i].size();
     // readWEPPWeights[i] = numDuplicates / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
-    readWEPPWeights[i] = static_cast<double>(numDuplicates[i]) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+    if (useReadSeedScores) {
+      double curReadSeedWeight = 0;
+      for (const auto [hash, _] : curRead.uniqueSeedmers) {
+        auto seedNodesFrequencyIt = seedNodesFrequency.find(hash);
+        if (seedNodesFrequencyIt != seedNodesFrequency.end()) {
+          curReadSeedWeight += 1.0 / static_cast<double>(seedNodesFrequencyIt->second);
+        }
+      }
+      readWEPPWeights[i] = static_cast<double>(numDuplicates[i]) * curReadSeedWeight;
+    } else {
+      readWEPPWeights[i] = static_cast<double>(numDuplicates[i]) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+    }
   }
   KahanSum curNodeSumWEPPScore;
   size_t curNodeSumRawScore = 0;
@@ -5563,7 +5737,7 @@ void mgsr::mgsrPlacer::scoreNodes() {
 }
 
 
-void mgsr::ThreadsManager::scoreNodesMultithreaded() {
+void mgsr::ThreadsManager::scoreNodesMultithreaded(bool useReadSeedScores) {
   auto start_time_scoreNodes = std::chrono::high_resolution_clock::now();
   std::vector<uint64_t> totalNodesPerThread(numThreads, 0);
   for (size_t i = 0; i < numThreads; ++i) {
@@ -5580,7 +5754,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
 
       curThreadPlacer.setProgressTracker(&progressTrackerScoreNodes, i);
 
-      curThreadPlacer.scoreNodes();
+      curThreadPlacer.scoreNodes(seedNodesFrequency, useReadSeedScores);
     }
   });
   auto end_time_scoreNodes = std::chrono::high_resolution_clock::now();
@@ -5596,8 +5770,18 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     const auto& curRead = reads[i];
     if (curRead.maxScore == 0) continue;
     // readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
-    readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
-
+    if (useReadSeedScores) {
+      double curReadSeedWeight = 0;
+      for (const auto [hash, _] : curRead.uniqueSeedmers) {
+        auto seedNodesFrequencyIt = seedNodesFrequency.find(hash);
+        if (seedNodesFrequencyIt != seedNodesFrequency.end()) {
+          curReadSeedWeight += 1.0 / static_cast<double>(seedNodesFrequencyIt->second);
+        }
+      }
+      readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) * curReadSeedWeight;
+    } else {
+      readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+    }
   }
 
   // std::ofstream readScoresOut("read_scores_info.tsv");
