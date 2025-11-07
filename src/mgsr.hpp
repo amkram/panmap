@@ -58,7 +58,7 @@ uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64
 
 int open_file(const std::string& path);
 
-void extractReadSequences(const std::string& readPath1, const std::string& readPath2, std::vector<std::string>& readSequences);
+void extractReadSequences(const std::string& readPath1, const std::string& readPath2, const std::string& ampliconDepthPath, std::vector<std::vector<std::string>>& readSequences);
 
 
 enum RefSeedmerExistStatus : uint8_t {
@@ -202,11 +202,11 @@ struct affectedSeedmerInfo {
 
 
 struct readSeedmer {
-  const size_t hash;
-  const uint32_t begPos;
-  const uint32_t endPos;
-  const bool rev;
-  const uint32_t iorder;
+  size_t hash;
+  uint32_t begPos;
+  uint32_t endPos;
+  bool rev;
+  uint32_t iorder;
 };
 
 struct SeedmerState {
@@ -636,7 +636,7 @@ class ThreadsManager {
     }
 
     void initializeMGSRIndex(MGSRIndex::Reader indexReader);
-    void initializeQueryData(std::span<const std::string> readSequences, uint32_t maskSeedThreshold, bool fast_mode = false);
+    void initializeQueryData(const std::string& readPath1, const std::string& readPath2, uint32_t maskSeeds, const std::string& ampliconDepthPath, double maskReadsRelativeFrequency, double maskSeedsRelativeFrequency, bool fast_mode = false);
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();
@@ -663,7 +663,7 @@ class ThreadsManager {
       double& curNodeSumEPPWeightedScore);
     void scoreNodes();
 
-    void scoreNodesMultithreaded();
+    void scoreNodesMultithreaded(bool UseReadSeedScores);
 
     void computeKminmerCoverage();
     void computeKminmerCoverageHelper(
@@ -794,7 +794,7 @@ class mgsrPlacer {
       size_t& curNodeSumRawScore,
       size_t& curNodeSumEPPRawScore,
       KahanSum& curNodeSumWEPPScore);
-    void scoreNodes();
+    void scoreNodes(const std::unordered_map<size_t, uint32_t>& seedNodesFrequency, bool UseReadSeedScores);
 
     void traverseTreeHelper(MgsrLiteNode* node);
     void traverseTree();
