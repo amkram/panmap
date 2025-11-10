@@ -1830,12 +1830,14 @@ void mgsr::ThreadsManager::initializeQueryData(
       }
       
       size_t maskReadsThreshold = (maskReadsRelativeFrequency > 0) 
-        ? static_cast<size_t>(maskReadsRelativeFrequency * curReads.size())
+        ? static_cast<size_t>(maskReadsRelativeFrequency * readSequencesByGroup[groupId].size() )
         : maskReads;
       
+      
       size_t maskSeedsThreshold = (maskSeedsRelativeFrequency > 0)
-        ? static_cast<size_t>(maskSeedsRelativeFrequency * curReads.size())
+        ? static_cast<size_t>(maskSeedsRelativeFrequency * readSequencesByGroup[groupId].size() )
         : maskSeeds;
+
 
       if (groupId == readSequencesByGroup.size() - 1) {
         maskReadsThreshold = maskReads;
@@ -5892,6 +5894,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded(bool useReadSeedScores) {
     }
   }
 
+
   selectedNodes.clear();
   while (true) {
     selectedNodes.insert(topWEPPNode);
@@ -5901,7 +5904,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded(bool useReadSeedScores) {
       rawReadRemaining += readSeedmersDuplicatesIndex[readIdx].size();
     }
     std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << ", raw reading remaining: " << rawReadRemaining << std::endl;
-    if (selectedNodes.size() == 300) break;
+    if (selectedNodes.size() >= 300) break;
 
     std::vector<uint32_t> curTopNodeScore = getScoresAtNode(topWEPPNode->identifier);
 
