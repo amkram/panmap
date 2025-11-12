@@ -230,7 +230,8 @@ enum ReadType : uint8_t {
   PASS,
   HIGH_DUPLICATES,
   IDENTICAL_SCORE_ACROSS_NODES,
-  CONTAINS_SINGLETON
+  CONTAINS_SINGLETON,
+  AMBIGUOUS
 };
 
 struct readScoreDelta {
@@ -424,6 +425,8 @@ struct EPPNodeRange {
 class Read {
   public:
     std::vector<readSeedmer> seedmersList;
+    std::string seedmerMatches;
+    bool seen;
     std::vector<SeedmerState> seedmerStates;
     std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
     std::vector<Minichain> minichains;
@@ -434,6 +437,8 @@ class Read {
     int32_t numForwardMatching = 0;
     int32_t numReverseMatching = 0;
     MgsrLiteNode* lastParsimoniousNode = nullptr;
+    std::unordered_map<std::string, std::pair<double, std::vector<EPPNodeRange>>> eppNodeRangesBySeedmerMatches;
+    std::unordered_map<std::string, std::pair<double, std::vector<EPPNodeRange>>>::iterator lastParsimoniousEppNodeRangesBySeedmerMatchesIt;
     std::vector<EPPNodeRange> eppNodeRanges;
 };
 
@@ -614,6 +619,7 @@ class ThreadsManager {
     // Experimental
     std::unordered_map<size_t, uint32_t> seedReadsFrequency;
     std::unordered_map<size_t, uint32_t> seedNodesFrequency;
+    std::unordered_map<size_t, double> seedWeightsByNodeFrequency;
     std::unordered_map<size_t, std::pair<MgsrLiteNode*, std::vector<EPPNodeRange>>> seedMatchedNodeRanges;
 
     std::unordered_map<MgsrLiteNode*, double> nodeSeedScores;
@@ -663,7 +669,8 @@ class ThreadsManager {
       double& curNodeSumEPPWeightedScore);
     void scoreNodes();
 
-    void scoreNodesMultithreaded(bool UseReadSeedScores);
+    void scoreNodesMultithreaded();
+    void scoreNodesReadSeedMultithreaded();
 
     void computeKminmerCoverage();
     void computeKminmerCoverageHelper(
@@ -794,7 +801,8 @@ class mgsrPlacer {
       size_t& curNodeSumRawScore,
       size_t& curNodeSumEPPRawScore,
       KahanSum& curNodeSumWEPPScore);
-    void scoreNodes(const std::unordered_map<size_t, uint32_t>& seedNodesFrequency, bool UseReadSeedScores);
+    void pruneAmbiguousReads(MgsrLiteNode* node);
+    void scoreNodes(const std::unordered_map<size_t, uint32_t>& seedNodesFrequency);
 
     void traverseTreeHelper(MgsrLiteNode* node);
     void traverseTree();
