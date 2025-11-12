@@ -1266,8 +1266,8 @@ int main(int argc, char *argv[]) {
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-      // threadsManager.scoreNodes();
-      threadsManager.scoreNodesMultithreaded(vm.count("read-seed-scores") > 0);
+
+      threadsManager.scoreNodesMultithreaded();
       
       mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
       auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
