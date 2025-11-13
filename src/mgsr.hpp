@@ -426,13 +426,14 @@ class Read {
   public:
     std::vector<readSeedmer> seedmersList;
     std::string seedmerMatches;
-    bool seen;
+    bool seen = false;
     std::vector<SeedmerState> seedmerStates;
     std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
     std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
     ReadType readType = ReadType::PASS;
     int32_t maxScore = 0;
+    bool maxScoreRev;
     int32_t epp = 0;
     int32_t numForwardMatching = 0;
     int32_t numReverseMatching = 0;
