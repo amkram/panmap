@@ -1988,7 +1988,7 @@ void mgsr::ThreadsManager::initializeQueryData(
   }
 
   for (uint32_t i = 0; i < reads.size(); ++i) {
-    reads[i].seedmerMatches.resize(reads[i].seedmersList.size(), false);
+    reads[i].seedmerMatches.resize(reads[i].seedmersList.size(), '0');
     for (const auto& seedmer : reads[i].seedmersList) {
       allSeedmerHashesSet.insert(seedmer.hash);
     }
@@ -2037,10 +2037,9 @@ void mgsr::ThreadsManager::initializeQueryData(
 void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode) {
   this->reads = reads;
   for (uint32_t i = 0; i < reads.size(); ++i) {
-    for (const auto& seedmer : reads[i].uniqueSeedmers) {
-      for (const auto& seedmerIndex : seedmer.second) {
-        seedmerToReads[seedmer.first].emplace_back(i, seedmerIndex);
-      }
+    for (uint32_t j = 0; j < reads[i].seedmersList.size(); ++j) {
+      const auto& seed = reads[i].seedmersList[j];
+      seedmerToReads[seed.hash].emplace_back(i, j);
     }
   }
 
@@ -5774,9 +5773,6 @@ void mgsr::mgsrPlacer::pruneAmbiguousReads(MgsrLiteNode* node) {
 
   for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
     const size_t seedHash = seedInfos[seedIndex].hash;
-    if (seedmerToReads.find(seedHash) == seedmerToReads.end()) {
-      continue;
-    }
     
     const bool seedRev = seedInfos[seedIndex].isReverse;
     
@@ -5808,12 +5804,16 @@ void mgsr::mgsrPlacer::pruneAmbiguousReads(MgsrLiteNode* node) {
             const auto& seed = curRead.seedmersList[i];
             auto kminmerOnRefCountIt  = kminmerOnRefCount.find(seed.hash);
             if (kminmerOnRefCountIt != kminmerOnRefCount.end()) {
-              if (seedmerMatches[i] != true) {
-                std::string().swap(seedmerMatches);
-                break;
+              bool useFirst = (curRead.maxScoreRev == seed.rev);
+              if ((useFirst && kminmerOnRefCountIt->second.first > 0) ||
+                  (!useFirst && kminmerOnRefCountIt->second.second > 0)) {
+                if (seedmerMatches[i] != '1') {
+                  std::string().swap(seedmerMatches);
+                  break;
+                }
               }
             } else {
-              if (seedmerMatches[i] != false) {
+              if (seedmerMatches[i] != '0') {
                 std::string().swap(seedmerMatches);
                 break;
               }
@@ -5824,9 +5824,13 @@ void mgsr::mgsrPlacer::pruneAmbiguousReads(MgsrLiteNode* node) {
             const auto& seed = curRead.seedmersList[i];
             auto kminmerOnRefCountIt  = kminmerOnRefCount.find(seed.hash);
             if (kminmerOnRefCountIt != kminmerOnRefCount.end()) {
-              seedmerMatches[i] = true;
+              bool useFirst = (curRead.maxScoreRev == seed.rev);
+              if ((useFirst && kminmerOnRefCountIt->second.first > 0) ||
+                  (!useFirst && kminmerOnRefCountIt->second.second > 0)) {
+                seedmerMatches[i] = '1';
+              }
             } else {
-              seedmerMatches[i] = false;
+              seedmerMatches[i] = '0';
             }
           }
           seen = true;
@@ -5842,9 +5846,7 @@ void mgsr::mgsrPlacer::pruneAmbiguousReads(MgsrLiteNode* node) {
 
   for (const auto [seedIndex, toDelete] : curSeedDeltas) {
     const size_t seedHash = seedInfos[seedIndex].hash;
-    if (seedmerToReads.find(seedHash) == seedmerToReads.end()) {
-      continue;
-    }
+
     const bool seedRev = seedInfos[seedIndex].isReverse;
     if (!toDelete) {
       updateKminmerCount(seedHash, seedRev, false);
@@ -5891,7 +5893,7 @@ void mgsr::mgsrPlacer::scoreNodes(const std::unordered_map<size_t, uint32_t>& se
         const auto& seed = curRead.seedmersList[j];
         auto seedNodesFrequencyIt = seedNodesFrequency.find(seed.hash);
         if (seedNodesFrequencyIt != seedNodesFrequency.end()) {
-          if (curRead.seedmerMatches[j] == true) {
+          if (curRead.seedmerMatches[j] == '1') {
             curWeight += 1.0 / static_cast<double>(seedNodesFrequencyIt->second);
           }
         }
@@ -5961,12 +5963,13 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
         prunedReads++;
         continue;
       }
+
       double curWeight = 0.0;
       for (size_t j = 0; j < curRead.seedmersList.size(); ++j) {
         const auto& seed = curRead.seedmersList[j];
         auto seedNodesFrequencyIt = seedNodesFrequency.find(seed.hash);
         if (seedNodesFrequencyIt != seedNodesFrequency.end()) {
-          if (curRead.seedmerMatches[j] == true) {
+          if (curRead.seedmerMatches[j] == '1') {
             curWeight += 1.0 / static_cast<double>(seedNodesFrequencyIt->second);
           }
         }
@@ -5975,6 +5978,13 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
       readWEPPWeights[i] = curWeight;
     }
   }
+
+  std::ofstream readWeightsOut("read_wepp_weights.tsv");
+  for (size_t i = 0; i < reads.size(); ++i) {
+    const auto& curRead = reads[i];
+    readWeightsOut << "Active read " << i << " max score: " << reads[i].maxScore << " / " << reads[i].seedmersList.size() << "... maxScoreRev: " << curRead.maxScoreRev << "... seen: " << reads[i].seen << "... seedmer matches: " << reads[i].seedmerMatches << "... read weight: " << readWEPPWeights[i] << "... > 0 ? " << (readWEPPWeights[i] > 0.0) << std::endl;
+  }
+  readWeightsOut.close();
 
   if (!seedNodesFrequency.empty()) {
     std::cerr << "Pruned " << prunedReads << " reads due to ambiguous seedmers." << std::endl;
@@ -6065,7 +6075,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   std::unordered_set<uint32_t> activeReads;
   activeReads.reserve(reads.size());
   for (size_t i = 0; i < reads.size(); ++i) {
-    if (reads[i].maxScore == 0) continue;
+    if (reads[i].maxScore == 0 || reads[i].seedmerMatches.empty()) continue;
     activeReads.insert(i);
   }
 
@@ -6100,6 +6110,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << ", raw reading remaining: " << rawReadRemaining << std::endl;
     if (selectedNodes.size() >= 300) break;
 
+
     std::vector<uint32_t> curTopNodeScore = getScoresAtNode(topWEPPNode->identifier);
 
     std::vector<uint32_t> readsToSubtract;
@@ -6110,6 +6121,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
         readsToSubtract.push_back(i);
       }
     }
+
 
     std::vector<std::pair<size_t, size_t>> threadRangesForReadsToSubtract;
     if (readsToSubtract.size() > numThreads) {
@@ -6658,6 +6670,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
         curRead.epp = 0;
         lastParsimoniousNode = node;
         maxScore = newScore;
+        curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
       } else if (newScore < maxScore) {
         // collect epp and reset lastParsimoniousNode
         if (lastParsimoniousNode != nullptr) {
@@ -6684,6 +6697,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
           curRead.epp = 0;
           lastParsimoniousNode = node;
           maxScore = newScore;
+          curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
         } else if (newScore < maxScore) {
           // collect epp and reset lastParsimoniousNode
           if (lastParsimoniousNode != nullptr) {
@@ -6735,6 +6749,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
           curRead.epp = 0;
           lastParsimoniousNode = node;
           maxScore = newScore;
+          curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
         } else if (newScore < maxScore) {
           // collect epp and reset lastParsimoniousNode
           if (lastParsimoniousNode != nullptr) {
@@ -6747,7 +6762,6 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
       }
     }
   }
-
 
   if (node == liteTree->lastNodeDFSCollapsed) {
     for (auto& read : reads) {
