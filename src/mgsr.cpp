@@ -5979,13 +5979,6 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     }
   }
 
-  std::ofstream readWeightsOut("read_wepp_weights.tsv");
-  for (size_t i = 0; i < reads.size(); ++i) {
-    const auto& curRead = reads[i];
-    readWeightsOut << "Active read " << i << " max score: " << reads[i].maxScore << " / " << reads[i].seedmersList.size() << "... maxScoreRev: " << curRead.maxScoreRev << "... seen: " << reads[i].seen << "... seedmer matches: " << reads[i].seedmerMatches << "... read weight: " << readWEPPWeights[i] << "... > 0 ? " << (readWEPPWeights[i] > 0.0) << std::endl;
-  }
-  readWeightsOut.close();
-
   if (!seedNodesFrequency.empty()) {
     std::cerr << "Pruned " << prunedReads << " reads due to ambiguous seedmers." << std::endl;
   }
