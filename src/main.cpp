@@ -745,8 +745,12 @@ int main(int argc, char *argv[]) {
     mgsr_opts.add_options()
         ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
-        ("l,l", po::value<int>()->default_value(1), "Length of k-min-mers (i.e. l seeds per kminmer)")
+        ("mgsr-l", po::value<int>()->default_value(3), "Length of k-min-mers (i.e. l seeds per kminmer)")
+        ("mgsr-k", po::value<int>()->default_value(19), "Length of k-min-mers (i.e. l seeds per kminmer)")
+        ("mgsr-s", po::value<int>()->default_value(8), "Length of k-min-mers (i.e. l seeds per kminmer)")
         ("no-progress", "Disable progress bars")
+        ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
+        ("read-scores", "Use read scores to score nodes")
         ("seed-scores", "Use seed scores instead of read scores to score nodes")
         ("read-seed-scores", "Use read seed scores instead of read scores to score nodes")
         ("mask-reads", po::value<uint32_t>()->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
@@ -784,7 +788,6 @@ int main(int argc, char *argv[]) {
         ("debug-node-id", po::value<std::string>()->default_value(""), "Log detailed placement debug info for this specific node ID")
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
-        ("overlap-coefficients", "Output overlap coefficients then exit")
         ("true-abundance", po::value<std::string>(), "Path to true abundance TSV for comparison")
     ;
 
@@ -1162,7 +1165,13 @@ int main(int argc, char *argv[]) {
       close(fd);
       threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency);
 
-      if (vm.count("overlap-coefficients")) {
+
+      size_t overlap_coefficients_threshold = vm["overlap-coefficients"].as<size_t>();
+      if (overlap_coefficients_threshold == 0 && !vm.count("read-scores")) {
+        std::cerr << "Error: Either --overlap-coefficients > 0 or --read-scores must be specified for EM." << std::endl;
+        exit(1);
+      }
+      if (overlap_coefficients_threshold > 0) {
         auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
         mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory, 0);
         auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
@@ -1177,17 +1186,23 @@ int main(int argc, char *argv[]) {
             currentOverlapCoefficient = overlapCoefficient;
             ++rank;
           }
+          liteTree.allLiteNodes.at(nodeId)->ocRank = rank;
           overlapCoefficientsFile << nodeId << "\t" << std::fixed << std::setprecision(6) << overlapCoefficient << "\t" << rank <<  std::endl;
         }
         overlapCoefficientsFile.close();
         auto end_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
         auto duration_computeOverlapCoefficients = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_computeOverlapCoefficients - start_time_computeOverlapCoefficients);
         std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
-        exit(0);
       }
 
       liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+      // std::string collapsedNewick = liteTree.toNewick(true);
+      // std::ofstream of(prefix + ".collapsed.newick");
+      // of << collapsedNewick;
+      // of.close();
+
       // liteTree.collapseEmptyNodes(true);
+
 
       if (vm.count("read-seed-scores")) {
         threadsManager.countSeedNodesFrequency();
@@ -1266,20 +1281,10 @@ int main(int argc, char *argv[]) {
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
-
-      threadsManager.scoreNodesMultithreaded();
-      
-      mgsr::mgsrPlacer placerOC(&liteTree, threadsManager, lowMemory, 0);
-      auto overlapCoefficients = placerOC.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
-      std::unordered_map<std::string, double>().swap(threadsManager.kminmerOverlapCoefficients);
-      for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
-        threadsManager.kminmerOverlapCoefficients[nodeId] = overlapCoefficient;
+      if (vm.count("read-scores")) {
+        threadsManager.scoreNodesMultithreaded();
       }
 
-      std::string collapsedNewick = liteTree.toNewick(true);
-      std::ofstream of(prefix + ".collapsed.newick");
-      of << collapsedNewick;
-      of.close();
 
       std::ofstream scoresOut;
       if (vm.count("read-seed-scores")) {
@@ -1312,9 +1317,8 @@ int main(int argc, char *argv[]) {
         }
       }
       scoresOut.close();
-      exit(0);
 
-      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, 1000);
+      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, overlap_coefficients_threshold, vm.count("read-scores") > 0);
       liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
@@ -1347,6 +1351,24 @@ int main(int argc, char *argv[]) {
         }
         abundanceOutput << "\t" << squareEM.props[index] << std::endl;
       }
+      // for (size_t i = 0; i < indices.size(); ++i) {
+      //   size_t index = indices[i];
+      //   auto node = liteTree.allLiteNodes.at(squareEM.nodes[index]);
+      //   abundanceOutput << node->identifier;
+      //   for (const auto& member : node->identicalNodeIdentifiers) {
+      //     abundanceOutput << "," << member;
+      //   }
+      //   if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
+      //     for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
+      //       auto memberNode = liteTree.allLiteNodes.at(member);
+      //       abundanceOutput << "," << memberNode->identifier;
+      //       for (const auto& identicalMember : memberNode->identicalNodeIdentifiers) {
+      //         abundanceOutput << "," << identicalMember;
+      //       }
+      //     }
+      //   }
+      //   abundanceOutput << "\t" << squareEM.props[index] << std::endl;
+      // }
       abundanceOutput.close();
       auto end_time_squareEM = std::chrono::high_resolution_clock::now();
       auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
@@ -1403,9 +1425,11 @@ int main(int argc, char *argv[]) {
     if (vm.count("index-mgsr")) {
       std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
       int mgsr_t = 0;
-      int mgsr_l = 3;
+      int mgsr_l = vm["mgsr-l"].as<int>();
+      int mgsr_k = vm["mgsr-k"].as<int>();
+      int mgsr_s = vm["mgsr-s"].as<int>();
       bool open = false;
-      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, 19, 8, mgsr_t, mgsr_l, open);
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, mgsr_k, mgsr_s, mgsr_t, mgsr_l, open);
       mgsrIndexBuilder.buildIndex();
       mgsrIndexBuilder.writeIndex(mgsr_index_path);
       msg("MGSR index written to: {}", mgsr_index_path);
