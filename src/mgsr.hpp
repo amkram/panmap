@@ -271,6 +271,8 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
+  size_t ocRank = std::numeric_limits<size_t>::max();
+
   std::vector<KahanSum> sumWEPPScoresByThread;
   std::vector<size_t> sumRawScoresByThread; 
   std::vector<size_t> sumEPPRawScoresByThread;
@@ -933,7 +935,8 @@ class squareEM {
       ThreadsManager& threadsManager,
       MgsrLiteTree& liteTree,
       const std::string& prefix,
-      uint32_t overlapCoefficientCutoff
+      size_t overlapCoefficientCutoff,
+      bool useReadWeightedScores
     );
 
 
