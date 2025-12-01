@@ -200,92 +200,85 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
 
   int recentAmbiguousBaseIndex = std::numeric_limits<int>::min();
 
-  size_t curMinSmerHash = max_size_t;
-  int curMinSmerHashIndex = -1;
-  std::deque<size_t> curSmerHashes;
+  size_t curMinSmerHashForward = max_size_t;
+  size_t curMinSmerHashReverse = max_size_t;
+  int curMinSmerHashIndexForward = -1;
+  int curMinSmerHashIndexReverse = -1;
+  std::deque<size_t> curSmerHashesForward;
+  std::deque<size_t> curSmerHashesReverse;
+
 
   // first smer
   for (int i = 0; i < s; ++i) {
-    if (chash(seq[i]) == 0) recentAmbiguousBaseIndex = i;
-
-    forwardKmerHash ^= rol(chash(seq[i]), k-i-1);
-    reverseKmerHash ^= rol(chash(comp(seq[k-i-1])), k-i-1);
-    forwardSmerHash ^= rol(chash(seq[i]), s-i-1);
-    reverseSmerHash ^= rol(chash(comp(seq[s-i-1])), s-i-1);
+    size_t fwd_hash = chash(seq[i]);
+    size_t rev_hash = chash(comp(seq[k-i-1]));
+    size_t smer_rev_hash = chash(comp(seq[s-i-1]));
+    
+    if (fwd_hash == 0) recentAmbiguousBaseIndex = i;
+    
+    forwardKmerHash ^= rol(fwd_hash, k-i-1);
+    reverseKmerHash ^= rol(rev_hash, k-i-1);
+    forwardSmerHash ^= rol(fwd_hash, s-i-1);
+    reverseSmerHash ^= rol(smer_rev_hash, s-i-1);
   }
 
-  if (forwardSmerHash < reverseSmerHash) {
-    curSmerHashes.push_back(forwardSmerHash);
-    if (forwardSmerHash < curMinSmerHash) {
-      curMinSmerHash = forwardSmerHash;
-      curMinSmerHashIndex = 0;
-    }
-  } else if (reverseSmerHash < forwardSmerHash) {
-    curSmerHashes.push_back(reverseSmerHash);
-    if (reverseSmerHash < curMinSmerHash) {
-      curMinSmerHash = reverseSmerHash;
-      curMinSmerHashIndex = 0;
-    }
-  } else {
-    curSmerHashes.push_back(max_size_t);
-  }
+
+  curSmerHashesForward.push_back(forwardSmerHash);
+  curMinSmerHashForward = forwardSmerHash;
+  curMinSmerHashIndexForward = 0;
+  curSmerHashesReverse.push_back(reverseSmerHash);
+  curMinSmerHashReverse = reverseSmerHash;
+  curMinSmerHashIndexReverse = k - s;
+
 
   // first kmer
   for (int i = s; i < k; ++i) {
-    if (chash(seq[i]) == 0) recentAmbiguousBaseIndex = i;
-
-    forwardKmerHash ^= rol(chash(seq[i]), k-i-1);
-    reverseKmerHash ^= rol(chash(comp(seq[k-i-1])), k-i-1);
-    forwardSmerHash  = rol(forwardSmerHash, 1) ^ rol(chash(seq[i-s]), s)       ^ chash(seq[i]);
-    reverseSmerHash  = ror(reverseSmerHash, 1) ^ ror(chash(comp(seq[i-s])), 1) ^ rol(chash(comp(seq[i])), s-1);
-
-    if (forwardSmerHash < reverseSmerHash) {
-      curSmerHashes.push_back(forwardSmerHash);
-      if (forwardSmerHash < curMinSmerHash) {
-        curMinSmerHash = forwardSmerHash;
-        curMinSmerHashIndex = i - s + 1;
-      } 
-    } else if (reverseSmerHash < forwardSmerHash) {
-      curSmerHashes.push_back(reverseSmerHash);
-      if (reverseSmerHash < curMinSmerHash) {
-        curMinSmerHash = reverseSmerHash;
-        curMinSmerHashIndex = i - s + 1;
-      }
-    } else {
-      curSmerHashes.push_back(max_size_t);
+    size_t fwd_hash = chash(seq[i]);
+    size_t rev_hash = chash(comp(seq[i]));
+    size_t old_fwd_hash = chash(seq[i-s]);
+    size_t old_rev_hash = chash(comp(seq[i-s]));
+    size_t rev_kmer_hash = chash(comp(seq[k-i-1]));
+    
+    if (fwd_hash == 0) recentAmbiguousBaseIndex = i;
+    
+    forwardKmerHash ^= rol(fwd_hash, k-i-1);
+    reverseKmerHash ^= rol(rev_kmer_hash, k-i-1);
+    forwardSmerHash = rol(forwardSmerHash, 1) ^ rol(old_fwd_hash, s) ^ fwd_hash;
+    reverseSmerHash = ror(reverseSmerHash, 1) ^ ror(old_rev_hash, 1) ^ rol(rev_hash, s-1);
+    
+    curSmerHashesForward.push_back(forwardSmerHash);
+    if (forwardSmerHash < curMinSmerHashForward) {
+      curMinSmerHashForward = forwardSmerHash;
+      curMinSmerHashIndexForward = i - s + 1;
+    }
+    curSmerHashesReverse.push_front(reverseSmerHash);
+    if (reverseSmerHash < curMinSmerHashReverse) {
+      curMinSmerHashReverse = reverseSmerHash;
+      curMinSmerHashIndexReverse = k - i - 1;
     }
   }
 
   if (recentAmbiguousBaseIndex >= 0) {
-    if (returnAll) syncmers.emplace_back(std::make_tuple(0, false, false, 0));
+    if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
   } else {
-    if (forwardKmerHash < reverseKmerHash) {
-      if (open) {
-        if (curMinSmerHash == curSmerHashes[t]) {
-          syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
-        } else {
-          if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
-        }
+    bool forwardIsSyncmer = false;
+    bool reverseIsSyncmer = false;
+
+    if (open) {
+      if (curSmerHashesForward[t] == curMinSmerHashForward) forwardIsSyncmer = true;
+      if (curSmerHashesReverse[t] == curMinSmerHashReverse) reverseIsSyncmer = true;
+    } else {
+      if (curSmerHashesForward[t] == curMinSmerHashForward || curSmerHashesForward[k-s-t] == curMinSmerHashForward) forwardIsSyncmer = true;
+      if (curSmerHashesReverse[t] == curMinSmerHashReverse || curSmerHashesReverse[k-s-t] == curMinSmerHashReverse) reverseIsSyncmer = true;
+    }
+
+    if (forwardIsSyncmer || reverseIsSyncmer) {
+      if (forwardKmerHash < reverseKmerHash) {
+        syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
+      } else if (reverseKmerHash < forwardKmerHash) {
+        syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
       } else {
-        if (curMinSmerHash == curSmerHashes[t] || curMinSmerHash == curSmerHashes[k-s-t]) {
-          syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
-        } else {
-          if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
-        }
-      }
-    } else if (reverseKmerHash < forwardKmerHash) {
-      if (open) {
-        if (curMinSmerHash == curSmerHashes[t]) {
-          syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
-        } else {
-          if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, true, false, 0));
-        }
-      } else {
-        if (curMinSmerHash == curSmerHashes[t] || curMinSmerHash == curSmerHashes[k-s-t]) {
-          syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
-        } else {
-          if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, true, false, 0));
-        }
+        if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
       }
     } else {
       if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
@@ -295,68 +288,76 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
   // start rolling
   for (size_t i = k; i < seq.size(); ++i) {
     if (chash(seq[i]) == 0) recentAmbiguousBaseIndex = i;
-    curSmerHashes.pop_front();
-    --curMinSmerHashIndex;
-    if (curMinSmerHashIndex < 0) {
-      curMinSmerHash = max_size_t;
-      for (size_t j = 0; j < curSmerHashes.size(); ++j) {
-        if (curSmerHashes[j] < curMinSmerHash) {
-          curMinSmerHash = curSmerHashes[j];
-          curMinSmerHashIndex = j;
+    curSmerHashesForward.pop_front();
+    curSmerHashesReverse.pop_back();
+    --curMinSmerHashIndexForward;
+    ++curMinSmerHashIndexReverse;
+    if (curMinSmerHashIndexForward < 0) {
+      curMinSmerHashForward = max_size_t;
+      for (size_t j = 0; j < curSmerHashesForward.size(); ++j) {
+        if (curSmerHashesForward[j] < curMinSmerHashForward) {
+          curMinSmerHashForward = curSmerHashesForward[j];
+          curMinSmerHashIndexForward = j;
         }
       }
     }
-    forwardKmerHash = rol(forwardKmerHash, 1) ^ rol(chash(seq[i-k]), k) ^ chash(seq[i]);
-    reverseKmerHash = ror(reverseKmerHash, 1) ^ ror(chash(comp(seq[i-k])), 1) ^ rol(chash(comp(seq[i])), k-1);
-    forwardSmerHash = rol(forwardSmerHash, 1) ^ rol(chash(seq[i-s]), s) ^ chash(seq[i]);
-    reverseSmerHash = ror(reverseSmerHash, 1) ^ ror(chash(comp(seq[i-s])), 1) ^ rol(chash(comp(seq[i])), s-1);
-
-    if (forwardSmerHash < reverseSmerHash) {
-      curSmerHashes.push_back(forwardSmerHash);
-      if (forwardSmerHash < curMinSmerHash) {
-        curMinSmerHash = forwardSmerHash;
-        curMinSmerHashIndex = k-s;
+    if (curMinSmerHashIndexReverse > k - s) {
+      curMinSmerHashReverse = max_size_t;
+      for (size_t j = 0; j < curSmerHashesReverse.size(); ++j) {
+        if (curSmerHashesReverse[j] < curMinSmerHashReverse) {
+          curMinSmerHashReverse = curSmerHashesReverse[j];
+          curMinSmerHashIndexReverse = j;
+        }
       }
-    } else if (reverseSmerHash < forwardSmerHash) {
-      curSmerHashes.push_back(reverseSmerHash);
-      if (reverseSmerHash < curMinSmerHash) {
-        curMinSmerHash = reverseSmerHash;
-        curMinSmerHashIndex = k-s;
-      }
-    } else {
-      curSmerHashes.push_back(max_size_t);
+      curMinSmerHashIndexReverse++;
     }
+
+    size_t fwd_hash = chash(seq[i]);
+    size_t rev_hash = chash(comp(seq[i]));
+    size_t old_kmer_fwd = chash(seq[i-k]);
+    size_t old_kmer_rev = chash(comp(seq[i-k]));
+    size_t old_smer_fwd = chash(seq[i-s]);
+    size_t old_smer_rev = chash(comp(seq[i-s]));
+
+    forwardKmerHash = rol(forwardKmerHash, 1) ^ rol(old_kmer_fwd, k) ^ fwd_hash;
+    reverseKmerHash = ror(reverseKmerHash, 1) ^ ror(old_kmer_rev, 1) ^ rol(rev_hash, k-1);
+    forwardSmerHash = rol(forwardSmerHash, 1) ^ rol(old_smer_fwd, s) ^ fwd_hash;
+    reverseSmerHash = ror(reverseSmerHash, 1) ^ ror(old_smer_rev, 1) ^ rol(rev_hash, s-1);
+
+    curSmerHashesForward.push_back(forwardSmerHash);
+    if (forwardSmerHash < curMinSmerHashForward) {
+      curMinSmerHashForward = forwardSmerHash;
+      curMinSmerHashIndexForward = k - s;
+    }
+    curSmerHashesReverse.push_front(reverseSmerHash);
+    if (reverseSmerHash < curMinSmerHashReverse) {
+      curMinSmerHashReverse = reverseSmerHash;
+      curMinSmerHashIndexReverse = 0; 
+    }
+
+
 
     if (recentAmbiguousBaseIndex >= 0 && i < recentAmbiguousBaseIndex + k) {
       if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
     } else {
-      if (forwardKmerHash < reverseKmerHash) {
-        if (open) {
-          if (curMinSmerHash == curSmerHashes[t]) {
-            syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, i - k + 1));
-          } else {
-            if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
-          }
+      bool forwardIsSyncmer = false;
+      bool reverseIsSyncmer = false;
+
+      if (open) {
+        if (curSmerHashesForward[t] == curMinSmerHashForward) forwardIsSyncmer = true;
+        if (curSmerHashesReverse[t] == curMinSmerHashReverse) reverseIsSyncmer = true;
+      } else {
+        if (curSmerHashesForward[t] == curMinSmerHashForward || curSmerHashesForward[k-s-t] == curMinSmerHashForward) forwardIsSyncmer = true;
+        if (curSmerHashesReverse[t] == curMinSmerHashReverse || curSmerHashesReverse[k-s-t] == curMinSmerHashReverse) reverseIsSyncmer = true;
+      }
+
+      if (forwardIsSyncmer || reverseIsSyncmer) {
+        if (forwardKmerHash < reverseKmerHash) {
+          syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, i - k + 1));
+        } else if (reverseKmerHash < forwardKmerHash) {
+          syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, i - k + 1));
         } else {
-          if (curMinSmerHash == curSmerHashes[t] || curMinSmerHash == curSmerHashes[k-s-t]) {
-            syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, i - k + 1));
-          } else {
-            if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
-          }
-        }
-      } else if (reverseKmerHash < forwardKmerHash) {
-        if (open) {
-          if (curMinSmerHash == curSmerHashes[t]) {
-            syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, i - k + 1));
-          } else {
-            if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, true, false, i - k + 1));
-          }
-        } else {
-          if (curMinSmerHash == curSmerHashes[t] || curMinSmerHash == curSmerHashes[k-s-t]) {
-            syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, i - k + 1));
-          } else {
-            if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, true, false, i - k + 1));
-          }
+          if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
         }
       } else {
         if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));

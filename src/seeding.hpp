@@ -244,11 +244,14 @@ static char comp(char c) {
   return compC;
 }
 
-[[maybe_unused]] static std::string revcomp(const std::string &s) {
-  std::string cs = "";
+static std::string revcomp(const std::string &s) {
+  std::string cs;
+  cs.resize(s.size());
+  int csIndex = 0;
   for (int i = s.size() - 1; i > -1; --i) {
     char c = s[i];
-    cs += comp(c);
+    cs[csIndex] = comp(c);
+    csIndex++;
   }
   return cs;
 }

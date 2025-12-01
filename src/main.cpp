@@ -746,8 +746,10 @@ int main(int argc, char *argv[]) {
         ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
         ("mgsr-l", po::value<int>()->default_value(3), "Length of k-min-mers (i.e. l seeds per kminmer)")
-        ("mgsr-k", po::value<int>()->default_value(19), "Length of k-min-mers (i.e. l seeds per kminmer)")
-        ("mgsr-s", po::value<int>()->default_value(8), "Length of k-min-mers (i.e. l seeds per kminmer)")
+        ("mgsr-k", po::value<int>()->default_value(19), "Length of syncmer")
+        ("mgsr-s", po::value<int>()->default_value(8), "Length of s-mers for syncmers selection")
+        ("mgsr-t", po::value<int>()->default_value(0), "Offset for syncmer selection")
+        ("mgsr-open", "Use open syncmers")
         ("no-progress", "Disable progress bars")
         ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
         ("read-scores", "Use read scores to score nodes")
@@ -1424,12 +1426,13 @@ int main(int argc, char *argv[]) {
 
     if (vm.count("index-mgsr")) {
       std::string mgsr_index_path = vm["index-mgsr"].as<std::string>();
-      int mgsr_t = 0;
       int mgsr_l = vm["mgsr-l"].as<int>();
       int mgsr_k = vm["mgsr-k"].as<int>();
       int mgsr_s = vm["mgsr-s"].as<int>();
-      bool open = false;
-      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, mgsr_k, mgsr_s, mgsr_t, mgsr_l, open);
+      int mgsr_t = vm["mgsr-t"].as<int>();
+      bool mgsr_open = vm.count("mgsr-open") > 0;
+
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, mgsr_k, mgsr_s, mgsr_t, mgsr_l, mgsr_open);
       mgsrIndexBuilder.buildIndex();
       mgsrIndexBuilder.writeIndex(mgsr_index_path);
       msg("MGSR index written to: {}", mgsr_index_path);
