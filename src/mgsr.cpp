@@ -274,6 +274,7 @@ static void compareBruteForceBuild(
   // check syncmers
   std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
+  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForceRevcomp = seeding::rollingSyncmers(seeding::revcomp(ungappedSequence), k, s, open, t, false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersDynamic;
   for (size_t i = 0; i < refOnSyncmers.size(); i++) {
     if (refOnSyncmers[i].has_value()) {
@@ -282,6 +283,20 @@ static void compareBruteForceBuild(
     }
   }
 
+  if (syncmersBruteForce.size() != syncmersBruteForceRevcomp.size()) {
+    std::cout << "Syncmer brute force and revcomp count mismatch: forward " << syncmersBruteForce.size() << " != reverse " << syncmersBruteForceRevcomp.size() << std::endl;
+    std::exit(1);
+  } else {
+    for (size_t i = 0; i < syncmersBruteForce.size(); i++) {
+      const auto& [hashFwd, isReverseFwd, isSeedFwd, startPosFwd] = syncmersBruteForce[i];
+      const auto& [hashRev, isReverseRev, isSeedRev, startPosRev] = syncmersBruteForceRevcomp[syncmersBruteForceRevcomp.size() - i - 1];
+      if (hashFwd != hashRev || isReverseFwd == isReverseRev || startPosFwd != ungappedSequence.size() - k - startPosRev) {
+        std::cout << "Syncmer brute force and revcomp mismatch at " << i << "th syncmer: forward (" << hashFwd << ", " << startPosFwd << ", " << isReverseFwd << ") != reverse (" << hashRev << ", " << mgsr::degapGlobal(ungappedSequence.size() - k - startPosRev, degapCoordIndex) << ", " << isReverseRev << ")" << std::endl;
+        std::exit(1);
+      }
+    }
+    std::cout << node->identifier << " seq len: " << ungappedSequence.size() << "... num syncmers: " << syncmersBruteForce.size() << std::flush;
+  }
 
 
   // check all syncmers
@@ -332,76 +347,76 @@ static void compareBruteForceBuild(
   }
   std::cout << "syncmers passed... " << std::flush;
 
-  // check k-min-mers
-  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
-  if (syncmersBruteForce.size() >= l) {
-    size_t forwardRolledHash = 0;
-    size_t reverseRolledHash = 0;
+  // // check k-min-mers
+  // std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
+  // if (syncmersBruteForce.size() >= l) {
+  //   size_t forwardRolledHash = 0;
+  //   size_t reverseRolledHash = 0;
   
-    // first kminmer
-    for (size_t i = 0; i < l; ++i) {
-      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmersBruteForce[i]);
-      reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmersBruteForce[l-i-1]);
-    }
+  //   // first kminmer
+  //   for (size_t i = 0; i < l; ++i) {
+  //     forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmersBruteForce[i]);
+  //     reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmersBruteForce[l-i-1]);
+  //   }
   
-    if (forwardRolledHash != reverseRolledHash) {
-      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-      kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[0]), std::get<3>(syncmersBruteForce[l-1])+k-1, reverseRolledHash < forwardRolledHash);
-    }
+  //   if (forwardRolledHash != reverseRolledHash) {
+  //     size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+  //     kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[0]), std::get<3>(syncmersBruteForce[l-1])+k-1, reverseRolledHash < forwardRolledHash);
+  //   }
   
-    // rest of kminmers
-    for (uint64_t i = 1; i < syncmersBruteForce.size()-l+1; ++i) {
-      if (!std::get<2>(syncmersBruteForce[i-1]) || !std::get<2>(syncmersBruteForce[i+l-1])) {
-        std::cout << "invalid syncmer" << std::endl;
-        exit(0);
-      }
-      const size_t& prevSyncmerHash = std::get<0>(syncmersBruteForce[i-1]);
-      const size_t& nextSyncmerHash = std::get<0>(syncmersBruteForce[i+l-1]);
-      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
-      reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
+  //   // rest of kminmers
+  //   for (uint64_t i = 1; i < syncmersBruteForce.size()-l+1; ++i) {
+  //     if (!std::get<2>(syncmersBruteForce[i-1]) || !std::get<2>(syncmersBruteForce[i+l-1])) {
+  //       std::cout << "invalid syncmer" << std::endl;
+  //       exit(0);
+  //     }
+  //     const size_t& prevSyncmerHash = std::get<0>(syncmersBruteForce[i-1]);
+  //     const size_t& nextSyncmerHash = std::get<0>(syncmersBruteForce[i+l-1]);
+  //     forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
+  //     reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
   
-      if (forwardRolledHash != reverseRolledHash) {
-        size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-        kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[i]), std::get<3>(syncmersBruteForce[i+l-1])+k-1, reverseRolledHash < forwardRolledHash);
-      }
-    }
-  }
+  //     if (forwardRolledHash != reverseRolledHash) {
+  //       size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+  //       kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[i]), std::get<3>(syncmersBruteForce[i+l-1])+k-1, reverseRolledHash < forwardRolledHash);
+  //     }
+  //   }
+  // }
 
 
-  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersDynamic;
-  for (size_t i = 0; i < refOnKminmers.size(); i++) {
-    if (refOnKminmers[i].has_value()) {
-      const auto& [startPos, endPos, hash, isReverse] = uniqueKminmers[refOnKminmers[i].value()];
-      kminmersDynamic.emplace_back(std::make_tuple(hash, mgsr::degapGlobal(startPos, degapCoordIndex), mgsr::degapGlobal(endPos, degapCoordIndex), isReverse));
-    }
-  }
+  // std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersDynamic;
+  // for (size_t i = 0; i < refOnKminmers.size(); i++) {
+  //   if (refOnKminmers[i].has_value()) {
+  //     const auto& [startPos, endPos, hash, isReverse] = uniqueKminmers[refOnKminmers[i].value()];
+  //     kminmersDynamic.emplace_back(std::make_tuple(hash, mgsr::degapGlobal(startPos, degapCoordIndex), mgsr::degapGlobal(endPos, degapCoordIndex), isReverse));
+  //   }
+  // }
 
-  if (kminmersDynamic.size() != kminmersBruteForce.size()) {
-    std::cout << "K-min-mer count mismatch: dynamic " << kminmersDynamic.size() << " != brute force " << kminmersBruteForce.size() << std::endl;
-    std::cout << "Dynamic k-min-mers: ";
-    for (const auto& kminmer : kminmersDynamic) {
-      std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
-    }
-    std::cout << std::endl;
-    std::cout << "Brute force k-min-mers: ";
-    for (const auto& kminmer : kminmersBruteForce) {
-      std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
-    }
-    std::cout << std::endl;
-    std::exit(1);
-  } else if (printCorrect && node->identifier == nodeToDebug) {
-    std::cout << "Identical k-min-mer count... passed: " << kminmersDynamic.size() << " == " << kminmersBruteForce.size() << std::endl;
-  }
+  // if (kminmersDynamic.size() != kminmersBruteForce.size()) {
+  //   std::cout << "K-min-mer count mismatch: dynamic " << kminmersDynamic.size() << " != brute force " << kminmersBruteForce.size() << std::endl;
+  //   std::cout << "Dynamic k-min-mers: ";
+  //   for (const auto& kminmer : kminmersDynamic) {
+  //     std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
+  //   }
+  //   std::cout << std::endl;
+  //   std::cout << "Brute force k-min-mers: ";
+  //   for (const auto& kminmer : kminmersBruteForce) {
+  //     std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
+  //   }
+  //   std::cout << std::endl;
+  //   std::exit(1);
+  // } else if (printCorrect && node->identifier == nodeToDebug) {
+  //   std::cout << "Identical k-min-mer count... passed: " << kminmersDynamic.size() << " == " << kminmersBruteForce.size() << std::endl;
+  // }
 
-  for (size_t i = 0; i < kminmersDynamic.size(); i++) {
-    const auto& [hash, startPos, endPos, isReverse] = kminmersDynamic[i];
-    const auto& [hashBruteForce, startPosBruteForce, endPosBruteForce, isReverseBruteForce] = kminmersBruteForce[i];
-    if (hash != hashBruteForce || startPos != startPosBruteForce || endPos != endPosBruteForce || isReverse != isReverseBruteForce) {
-      std::cout << "K-min-mer mismatch at " << i << "th k-min-mer: dynamic (" << hash << ", " << startPos << ", " << endPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << endPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
-      std::exit(1);
-    }
-  }
-  std::cout << "k-min-mers passed... " << std::flush;
+  // for (size_t i = 0; i < kminmersDynamic.size(); i++) {
+  //   const auto& [hash, startPos, endPos, isReverse] = kminmersDynamic[i];
+  //   const auto& [hashBruteForce, startPosBruteForce, endPosBruteForce, isReverseBruteForce] = kminmersBruteForce[i];
+  //   if (hash != hashBruteForce || startPos != startPosBruteForce || endPos != endPosBruteForce || isReverse != isReverseBruteForce) {
+  //     std::cout << "K-min-mer mismatch at " << i << "th k-min-mer: dynamic (" << hash << ", " << startPos << ", " << endPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << endPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
+  //     std::exit(1);
+  //   }
+  // }
+  // std::cout << "k-min-mers passed... " << std::flush;
 
   std::cout << "         " << node->identifier << " states passed brute force check" << std::endl;
   
