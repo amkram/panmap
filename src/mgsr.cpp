@@ -5808,15 +5808,15 @@ void mgsr::mgsrPlacer::scoreNodesHelper(
     const uint32_t curReadNumDuplicates = numDuplicates[readIndex];
     auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
     if (newScore > oldScore) {
-      curNodeSumRawScore += curReadNumDuplicates * (newScore - oldScore);
       if (newScore == curMaxScore) {
+        curNodeSumRawScore += curReadNumDuplicates;
         curNodeSumEPPRawScore += curReadNumDuplicates * curMaxScore;
         curNodeSumWEPPScore.add(readWEPPWeights[readIndex]);
         lastParsimoniousNode = node;
       }
     } else if (oldScore > newScore) {
-      curNodeSumRawScore -= curReadNumDuplicates * (oldScore - newScore);
       if (oldScore == curMaxScore) {
+        curNodeSumRawScore -= curReadNumDuplicates;
         curNodeSumEPPRawScore -= curReadNumDuplicates * curMaxScore;
         curNodeSumWEPPScore.subtract(readWEPPWeights[readIndex]);
         if (lastParsimoniousNode != nullptr) {

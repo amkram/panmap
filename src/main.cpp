@@ -1320,8 +1320,38 @@ int main(int argc, char *argv[]) {
       }
       scoresOut.close();
 
+      std::ofstream scoresOutExtra(prefix + ".nodeScores.extra.tsv");
+      scoresOutExtra << "NodeId\tdistance\tParsimonyReads\tscoresWeightedParsimonyReadsScore\tavgParsimonyScore\tWEPPScore\tWEPPScoreCorrected\tWEPPScoreCorrectedSelected\tSelectedNeighbor\tinSample\tcollapsedNodes" << std::endl;
+      for (const auto& [nodeId, node] : liteTree.allLiteNodes) {
+        if (liteTree.detachedNodes.find(node) != liteTree.detachedNodes.end()) {
+          continue;
+        }
+        scoresOutExtra << nodeId
+                  << "\t" << node->seedDistance
+                  << "\t" << node->sumRawScore
+                  << "\t" << node->sumEPPRawScore
+                  << "\t" << (node->sumRawScore == 0 ? 0.0 : static_cast<double>(node->sumEPPRawScore) / static_cast<double>(node->sumRawScore))
+                  << "\t" << node->sumWEPPScore.sum
+                  << "\t" << node->sumWEPPScoreCorrected.sum
+                  << "\t" << node->selected
+                  << "\t" << node->selectedNeighbor
+                  << "\t" << node->inSample << "\t";
+        if (node->identicalNodeIdentifiers.empty()) {
+          scoresOutExtra << "." << std::endl;
+        } else {
+          for (size_t i = 0; i < node->identicalNodeIdentifiers.size(); ++i) {
+            scoresOutExtra << node->identicalNodeIdentifiers[i];
+            if (i != node->identicalNodeIdentifiers.size() - 1) {
+              scoresOutExtra << ",";
+            }
+          }
+          scoresOutExtra << std::endl;
+        }
+      }
+      scoresOutExtra.close();
+
       mgsr::squareEM squareEM(threadsManager, liteTree, prefix, overlap_coefficients_threshold, vm.count("read-scores") > 0);
-      liteTree.cleanup(); // no longer needed. clear memory to prep for EM.
+      liteTree.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
       for (size_t i = 0; i < 5; ++i) {
@@ -1341,14 +1371,21 @@ int main(int argc, char *argv[]) {
       });
       std::cout << std::endl;
 
+      std::cout << "writing abundance file: " << prefix + ".mgsr.abundance.out" << std::endl;
       std::ofstream abundanceOutput(prefix + ".mgsr.abundance.out");
       abundanceOutput << std::setprecision(5) << std::fixed;
       for (size_t i = 0; i < indices.size(); ++i) {
         size_t index = indices[i];
         abundanceOutput << squareEM.nodes[index];
+        for (const auto& member : liteTree.allLiteNodes.at(squareEM.nodes[index])->identicalNodeIdentifiers) {
+          abundanceOutput << "," << member;
+        }
         if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
           for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
             abundanceOutput << "," << member;
+            for (const auto& identicalMember : liteTree.allLiteNodes.at(member)->identicalNodeIdentifiers) {
+              abundanceOutput << "," << identicalMember;
+            }
           }
         }
         abundanceOutput << "\t" << squareEM.props[index] << std::endl;
