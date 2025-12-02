@@ -994,7 +994,7 @@ int main(int argc, char *argv[]) {
       bool lowMemory = vm.count("low-memory") > 0;
       
       mgsr::MgsrLiteTree T;
-      T.initialize(indexReader, numThreads, lowMemory, false);
+      T.initialize(indexReader, numThreads, lowMemory, true);
 
       if (vm.count("dump-node-cluster") || vm.count("dump-node-cluster-leaves")) {
         if (!vm.count("mgsr-index")) {
@@ -1051,7 +1051,7 @@ int main(int argc, char *argv[]) {
           }
         }
         allNodeIDs.shrink_to_fit();
-
+        std::sort(allNodeIDs.begin(), allNodeIDs.end(), std::greater<std::string_view>());
         std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
 
         std::vector<mgsr::MgsrLiteNode*> nearestNodes = vm.count("dump-random-node-cluster")
@@ -1085,7 +1085,7 @@ int main(int argc, char *argv[]) {
           }
         }
         allNodeIDs.shrink_to_fit();
-
+        std::sort(allNodeIDs.begin(), allNodeIDs.end(), std::greater<std::string_view>());
         std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
 
         std::vector<std::vector<std::string_view>> nodeClusters(nodeClusterNodes.size());
@@ -1486,7 +1486,7 @@ int main(int argc, char *argv[]) {
         }
       }
       allNodeIDs.shrink_to_fit();
-
+      std::sort(allNodeIDs.begin(), allNodeIDs.end(), std::greater<std::string_view>());
       std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
 
       std::ofstream outFile(prefix + ".randomNodeIDs.txt");
