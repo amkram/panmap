@@ -751,6 +751,7 @@ int main(int argc, char *argv[]) {
         ("mgsr-t", po::value<int>()->default_value(0), "Offset for syncmer selection")
         ("mgsr-open", "Use open syncmers")
         ("no-progress", "Disable progress bars")
+        ("discard", po::value<double>()->default_value(0.5), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
         ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
         ("read-scores", "Use read scores to score nodes")
         ("seed-scores", "Use seed scores instead of read scores to score nodes")
@@ -1282,6 +1283,29 @@ int main(int argc, char *argv[]) {
       auto end_time_place = std::chrono::high_resolution_clock::now();
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+
+      double discard_threshold = vm["discard"].as<double>();
+      size_t num_discarded = 0;
+      size_t num_unmapped = 0;
+      for (auto& read : threadsManager.reads) {
+        if (read.maxScore == 0) {
+          ++num_unmapped;
+        }
+        if (read.maxScore < static_cast<int>(read.seedmersList.size() * discard_threshold)) {
+          read.maxScore = 0;
+          ++num_discarded;
+        }
+      }
+
+      std::cout << num_unmapped << " reads unmapped... " << std::endl;
+      std::cout << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
+      std::cout << threadsManager.reads.size() - num_unmapped - num_discarded << " reads remain for node scoring and EM... " << std::endl;
+
+      if (threadsManager.reads.size() - num_unmapped - num_discarded == 0) {
+        std::cerr << "No reads remain for node scoring and EM after discarding low-score reads... Exiting... " << std::endl;
+        exit(0);
+      }
+
 
       if (vm.count("read-scores")) {
         threadsManager.scoreNodesMultithreaded();
