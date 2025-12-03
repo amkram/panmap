@@ -1674,6 +1674,7 @@ void mgsr::ThreadsManager::initializeQueryData(
   double maskSeedsRelativeFrequency,
   bool fast_mode
 ) {
+  std::cerr << "Processing query reads... k=" << k << ", s=" << s << ", l=" << l << ", t=" << t << ", openSyncmer=" << openSyncmer << std::endl;
   std::vector<std::vector<std::string>> readSequencesByGroup;
   extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup);
   size_t rawReadsSize = 0;
@@ -6123,14 +6124,22 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     std::cerr << "Pruned " << prunedReads << " reads due to ambiguous seedmers." << std::endl;
   }
 
-  // std::ofstream readScoresOut("read_scores_info.tsv");
-  // readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tReadWeights" << std::endl;
-  // for (size_t i = 0; i < reads.size(); ++i) {
-  //   const auto& curRead = reads[i];
-  //   if (curRead.maxScore == 0) continue;
-  //   readScoresOut << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << std::endl;
-  // }
-  // readScoresOut.close();
+  std::ofstream readScoresOut("read_scores_info.tsv");
+  readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tReadWeights" << std::endl;
+  for (size_t i = 0; i < reads.size(); ++i) {
+    const auto& curRead = reads[i];
+    if (curRead.maxScore == 0) continue;
+    readScoresOut << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << "\t";
+    for (size_t j = 0; j < readSeedmersDuplicatesIndex[i].size(); ++j) {
+      if (j == 0) {
+        readScoresOut << readSeedmersDuplicatesIndex[i][j];
+      } else {
+        readScoresOut << "," << readSeedmersDuplicatesIndex[i][j];
+      }
+    }
+    readScoresOut << std::endl;
+  }
+  readScoresOut.close();
 
 
   if (liteTree->debugNodeID != "") {
@@ -7334,11 +7343,13 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
         const auto& curNodeThreadScoreDeltasLowMemory = node->readScoreDeltasLowMemory[threadId];
         for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
           const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
+          if (reads[threadReadStart + readIndex].maxScore == 0) continue;
           curNodeScores[threadReadStart + readIndex] += currentScoreDelta;
           for (size_t i = 0; i < numTrailing; ++i) {
             int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
             // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply the trailing delta
             if (curDecodedTrailingDelta > -8) {
+              if (reads[threadReadStart + readIndex + i + 1].maxScore == 0) continue;
               curNodeScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + curDecodedTrailingDelta;
             }
           }
@@ -7346,6 +7357,7 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
       } else {
         const auto& curNodeThreadScoreDeltas = node->readScoreDeltas[threadId];
         for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
+          if (reads[threadReadStart + scoreDelta.readIndex].maxScore == 0) continue;
           curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
         }
       }
