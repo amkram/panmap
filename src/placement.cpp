@@ -1,1023 +1,247 @@
 #include "panman.hpp"
-#include <cstddef>
-#include <cstdint>
-#include <exception>
-#include <functional>
-#include <memory>
-#include <stdexcept>
-#include <tuple>
-#include <utility>
-#include <iomanip>  // For std::fixed and std::setprecision
-#include <algorithm> // Added for std::min and std::transform
-#include <sstream>  // For std::ostringstream
 #include "placement.hpp"
-#include "mgsr.hpp"
 #include "seeding.hpp"
-#include "caller_logging.hpp"
-#include "index.capnp.h"
 #include "index_lite.capnp.h"
-#include <capnp/common.h>
-#include <capnp/message.h>
-#include <capnp/serialize-packed.h>
-#include <capnp/serialize.h>
 #include "logging.hpp"
-#include "state.hpp"
-#include "seeding.hpp"
-#include "gap_map.hpp"
-#include <boost/filesystem.hpp>
-#include <boost/algorithm/string.hpp>
-#include <cmath>
-#include <fstream>
-#include <iostream>
-#include <sstream>
+
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_sort.h>
-#include <tbb/task_group.h>
+#include <tbb/enumerable_thread_specific.h>
+#include <zlib.h>
+#include "kseq.h"
+
 #include <algorithm>
 #include <chrono>
-#include <map>
-#include <mutex>
-#include <optional>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
-#include <fcntl.h> // For O_RDONLY, O_WRONLY, etc.
-#include <algorithm> // For std::min
-#include <limits>  // Add this include for std::numeric_limits
-#include <stack>   // For stack-based traversal
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <tuple>
+#include <vector>
 
-#include "progress_state.hpp"
-#include "indexing.hpp"
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
+// KSEQ_INIT already defined in seeding.hpp - don't redefine
 
-using namespace coordinates;
+namespace {
+
+// Perfect shuffle for interleaving paired-end reads
+template <typename T>
+void perfect_shuffle(std::vector<T>& v) {
+  const size_t n = v.size();
+  if (n < 2) return;
+  
+  std::vector<T> canvas(n);
+  for (size_t i = 0; i < n / 2; i++) {
+    canvas[i*2] = std::move(v[i]);
+    canvas[i*2+1] = std::move(v[i + n/2]);
+  }
+  v = std::move(canvas);
+}
+
+void extractReadSequences(const std::string& readPath1, const std::string& readPath2, std::vector<std::string>& readSequences) {
+  FILE *fp;
+  kseq_t *seq;
+  fp = fopen(readPath1.c_str(), "r");
+  if(!fp){
+    std::cerr << "Error: File " << readPath1 << " not found" << std::endl;
+    exit(0);
+  }
+  seq = kseq_init(fileno(fp));
+  int line;
+  while ((line = kseq_read(seq)) >= 0) {
+    readSequences.push_back(seq->seq.s);
+  }
+  kseq_destroy(seq);
+  fclose(fp);
+
+  if (readPath2.size() > 0) {
+    fp = fopen(readPath2.c_str(), "r");
+    if(!fp){
+      std::cerr << "Error: File " << readPath2 << " not found" << std::endl;
+      exit(0);
+    }
+    seq = kseq_init(fileno(fp));
+
+    line = 0;
+    int forwardReads = readSequences.size();
+    while ((line = kseq_read(seq)) >= 0) {
+      readSequences.push_back(seq->seq.s);
+    }
+    kseq_destroy(seq);
+    fclose(fp);
+
+    if (readSequences.size() != forwardReads*2){
+      std::cerr << "Error: File " << readPath2 << " does not contain the same number of reads as " << readPath1 << std::endl;
+      exit(0);
+    }
+    
+    //Shuffle reads together, so that pairs are next to each other
+    perfect_shuffle(readSequences);
+  }
+}
+
+// Extract full FASTQ data including sequences, qualities, and names
+void extractFullFastqData(const std::string& readPath1, const std::string& readPath2,
+                          std::vector<std::string>& readSequences,
+                          std::vector<std::string>& readQuals,
+                          std::vector<std::string>& readNames) {
+  FILE *fp;
+  kseq_t *seq;
+  fp = fopen(readPath1.c_str(), "r");
+  if(!fp){
+    std::cerr << "Error: File " << readPath1 << " not found" << std::endl;
+    exit(0);
+  }
+  seq = kseq_init(fileno(fp));
+  int line;
+  while ((line = kseq_read(seq)) >= 0) {
+    readSequences.push_back(seq->seq.s);
+    readNames.push_back(seq->name.s);
+    // Quality may be empty for FASTA files
+    readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
+  }
+  kseq_destroy(seq);
+  fclose(fp);
+
+  if (readPath2.size() > 0) {
+    fp = fopen(readPath2.c_str(), "r");
+    if(!fp){
+      std::cerr << "Error: File " << readPath2 << " not found" << std::endl;
+      exit(0);
+    }
+    seq = kseq_init(fileno(fp));
+
+    line = 0;
+    int forwardReads = readSequences.size();
+    while ((line = kseq_read(seq)) >= 0) {
+      readSequences.push_back(seq->seq.s);
+      readNames.push_back(seq->name.s);
+      readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
+    }
+    kseq_destroy(seq);
+    fclose(fp);
+
+    if (readSequences.size() != static_cast<size_t>(forwardReads*2)){
+      std::cerr << "Error: File " << readPath2 << " does not contain the same number of reads as " << readPath1 << std::endl;
+      exit(0);
+    }
+    
+    // Shuffle reads together, so that pairs are next to each other
+    perfect_shuffle(readSequences);
+    perfect_shuffle(readQuals);
+    perfect_shuffle(readNames);
+  }
+}
+
+} // anonymous namespace
+
 using namespace logging;
-using namespace state;
 
-// Forward declarations for MGSR-style functions  
-void updateSimilarityMetricsAdd(size_t hash,
-                               placement::MgsrGenomeState& genomeState,
-                               const placement::PlacementGlobalState& state,
-                               const std::string& nodeId = "");
 
-void updateSimilarityMetricsDel(size_t hash,
-                               placement::MgsrGenomeState& genomeState,
-                               const placement::PlacementGlobalState& state,
-                               const std::string& nodeId = "");
+void placement::NodeMetrics::computeChildMetrics(
+    placement::NodeMetrics& childMetrics,
+    std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges,
+    const placement::PlacementGlobalState& state) {
 
-void calculateMgsrStyleScores(const std::string& nodeId,
-                             const placement::MgsrGenomeState& genomeState,
-                             const placement::PlacementGlobalState& state,
-                             placement::PlacementResult& result,
-                             const placement::TraversalParams& params);
-
-void updateMetricsAfterBacktrack(placement::MgsrGenomeState& genomeState,
-                                const placement::PlacementGlobalState& state);
-
-void placeLiteHelper(panmapUtils::LiteNode* node,
-                    placement::MgsrGenomeState& genomeState,
-                    uint32_t& dfsIndex,
-                    const placement::PlacementGlobalState& state,
-                    placement::PlacementResult& result,
-                    const placement::TraversalParams& params);
-
-std::tuple<double, double, size_t> calculateScoresFromGenomeState(
-    const std::string& nodeId,
-    placement::PlacementGlobalState& state,
-    placement::PlacementResult& result,
-    const placement::TraversalParams& params,
-    const GenomeState& genomeState);
-
-// Implementation of GenomeState methods
-void GenomeState::applyNodeChanges(const std::vector<std::pair<size_t, int64_t>>& seedDeltas) {
-    for (const auto& [seedHash, countDelta] : seedDeltas) {
-        if (countDelta > 0) {
-            // Add seeds
-            auto [it, inserted] = seedCounts.try_emplace(seedHash, 0);
-            it->second += countDelta;
-            uniqueSeeds.insert(seedHash);
-        } else if (countDelta < 0) {
-            // Remove seeds
-            auto it = seedCounts.find(seedHash);
-            if (it != seedCounts.end()) {
-                it->second += countDelta; // countDelta is negative
-                if (it->second <= 0) {
-                    seedCounts.erase(it);
-                    uniqueSeeds.erase(seedHash);
-                }
-            }
-        }
+    const size_t numChanges = seedChanges.size();
+    
+    // Early exit for empty changes
+    if (numChanges == 0) [[unlikely]] return;
+    constexpr size_t PREFETCH_DISTANCE = 24; // Increased to 24 for deeper pipeline (L3 latency ~40 cycles)
+    constexpr size_t BATCH_SIZE = 64; // Process in cache-line aligned batches
+    
+    // OPTIMIZATION: Pre-fetch both seedChanges AND hash table buckets aggressively
+    const size_t initialPrefetchCount = std::min(numChanges, PREFETCH_DISTANCE);
+    for (size_t i = 0; i < initialPrefetchCount; ++i) {
+        const auto& [seedHash, _, __] = seedChanges[i];
+        __builtin_prefetch(&seedChanges[i], 0, 0);
+        state.seedFreqInReads.prefetch(seedHash);
     }
-    metricsValid = false; // Invalidate cached metrics
-}
-
-void GenomeState::computeMetrics(const placement::PlacementGlobalState& state) const {
-    if (metricsValid) return;
     
-    // Reset metrics
-    weightedJaccardNumerator = 0;
-    jaccardNumerator = 0; 
-    jaccardDenominator = 0;
-    cosineNumerator = 0.0;
-    cosineDenominator = 0.0;
-    
-    // Compute metrics by iterating through read seeds
-    for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-        auto genomeIt = seedCounts.find(seedHash);
-        int64_t genomeCount = (genomeIt != seedCounts.end()) ? genomeIt->second : 0;
+    // Process in batches for better instruction pipelining and cache utilization
+    for (size_t batch_start = 0; batch_start < numChanges; batch_start += BATCH_SIZE) {
+        const size_t batch_end = std::min(batch_start + BATCH_SIZE, numChanges);
         
-        if (genomeCount > 0) {
-            // Seed is in both read and genome (intersection)
-            jaccardNumerator += readCount; // For regular Jaccard: sum read frequencies in intersection
-            weightedJaccardNumerator += std::min(readCount, genomeCount); // min for weighted Jaccard
-            cosineNumerator += static_cast<double>(readCount) * genomeCount; // dot product
-        }
-        
-        // For denominators (union logic)
-        jaccardDenominator += readCount; // All read frequencies (will add genome-only later if needed)
-    }
-    
-    // For cosine denominator: compute genome magnitude
-    double genomeMagnitudeSquared = 0.0;
-    for (const auto& [seedHash, genomeCount] : seedCounts) {
-        genomeMagnitudeSquared += static_cast<double>(genomeCount) * genomeCount;
-    }
-    cosineDenominator = state.readMagnitude * std::sqrt(genomeMagnitudeSquared);
-    
-    metricsValid = true;
-}
-
-// NOTE: Legacy functions below not used by lite placement - commented out for now
-// TODO: Will need full index schema with positions to support full MGSR mode
-
-#if 0
-void applyNodeChangesToGenomeState(GenomeState& genomeState, 
-                                  const auto& nodeChanges, 
-                                  const placement::PlacementGlobalState& state) {
-    // Process seed deletions first - these are POSITIONS, not seed indices
-    auto deletions = nodeChanges.getSeedDeletions();
-    for (uint32_t position : deletions) {
-        // Look up which seed is at this position
-        auto posIt = genomeState.positionToSeedIndex.find(position);
-        if (posIt != genomeState.positionToSeedIndex.end()) {
-            uint32_t seedIdx = posIt->second;
-            if (seedIdx < state.seedHashes.size()) {
-                uint64_t seedHash = state.seedHashes[seedIdx];
-                
-                // Remove from hash-based tracking
-                auto it = genomeState.seedCounts.find(seedHash);
-                if (it != genomeState.seedCounts.end()) {
-                    it->second--;
-                    if (it->second <= 0) {
-                        genomeState.seedCounts.erase(it);
-                        genomeState.uniqueSeeds.erase(seedHash);
-                    }
-                }
+        for (size_t i = batch_start; i < batch_end; ++i) {
+            // Prefetch far ahead - both data and hash table
+            if (i + PREFETCH_DISTANCE < numChanges) [[likely]] {
+                const auto& [nextHash, _, __] = seedChanges[i + PREFETCH_DISTANCE];
+                __builtin_prefetch(&seedChanges[i + PREFETCH_DISTANCE], 0, 0);
+                state.seedFreqInReads.prefetch(nextHash);
             }
-            // Remove from position map
-            genomeState.positionToSeedIndex.erase(posIt);
-        }
-    }
-    
-    // Process seed additions (called seedInsubIndices in Cap'n Proto schema)
-    // These may be true additions OR substitutions (if position already had a seed)
-    auto additions = nodeChanges.getSeedInsubIndices();
-    for (uint32_t seedIdx : additions) {
-        if (seedIdx < state.seedHashes.size()) {
-            uint64_t seedHash = state.seedHashes[seedIdx];
-            uint32_t position = 0; // TODO: position not available in lite index
+        
+            const auto& [seedHash, parentCount, childCount] = seedChanges[i];
             
-            // Check if this position already has a seed (shouldn't after deletions, but be safe)
-            auto posIt = genomeState.positionToSeedIndex.find(position);
-            if (posIt != genomeState.positionToSeedIndex.end()) {
-                // Substitution case: remove old seed first
-                uint32_t oldSeedIdx = posIt->second;
-                if (oldSeedIdx < state.seedHashes.size()) {
-                    uint64_t oldSeedHash = state.seedHashes[oldSeedIdx];
-                    
-                    auto oldIt = genomeState.seedCounts.find(oldSeedHash);
-                    if (oldIt != genomeState.seedCounts.end()) {
-                        oldIt->second--;
-                        if (oldIt->second <= 0) {
-                            genomeState.seedCounts.erase(oldIt);
-                            genomeState.uniqueSeeds.erase(oldSeedHash);
-                        }
-                    }
-                }
-            }
+            // ========================================
+            // GENOME-ONLY METRICS (computed for ALL seed changes)
+            // These don't require read lookup - just parent/child counts
+            // ========================================
             
-            // Add new seed
-            genomeState.positionToSeedIndex[position] = seedIdx;
-            auto [it, inserted] = genomeState.seedCounts.try_emplace(seedHash, 0);
-            it->second++;
-            genomeState.uniqueSeeds.insert(seedHash);
-        }
-    }
-    
-    genomeState.metricsValid = false; // Invalidate cached metrics
-}
-#endif
-
-std::tuple<double, double, size_t> calculateScoresFromGenomeState(
-    const std::string& nodeId,
-    placement::PlacementGlobalState& state,
-    placement::PlacementResult& result,
-    const placement::TraversalParams& params,
-    const GenomeState& genomeState) {
-    
-    // Compute similarity metrics from genome state
-    genomeState.computeMetrics(state);
-    
-    // Calculate final similarity scores
-    double jaccardScore = 0.0;
-    if (genomeState.jaccardDenominator > 0) {
-        jaccardScore = static_cast<double>(genomeState.jaccardNumerator) / genomeState.jaccardDenominator;
-    }
-    
-    double cosineScore = 0.0;
-    if (genomeState.cosineDenominator > 0.0) {
-        cosineScore = genomeState.cosineNumerator / genomeState.cosineDenominator;
-    }
-    
-    double weightedJaccardScore = 0.0;
-    // Calculate weighted Jaccard denominator (max logic)
-    int64_t weightedJaccardDenominator = 0;
-    for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-        auto genomeIt = genomeState.seedCounts.find(seedHash);
-        int64_t genomeCount = (genomeIt != genomeState.seedCounts.end()) ? genomeIt->second : 0;
-        weightedJaccardDenominator += std::max(readCount, genomeCount);
-    }
-    if (weightedJaccardDenominator > 0) {
-        weightedJaccardScore = static_cast<double>(genomeState.weightedJaccardNumerator) / weightedJaccardDenominator;
-    }
-    
-    // Presence/absence Jaccard
-    size_t intersectionCount = 0;
-    for (const auto& [seedHash, _] : state.seedFreqInReads) {
-        if (genomeState.uniqueSeeds.find(seedHash) != genomeState.uniqueSeeds.end()) {
-            intersectionCount++;
-        }
-    }
-    double presenceAbsenceScore = 0.0;
-    size_t unionCount = state.seedFreqInReads.size(); // All read seeds are in union
-    if (unionCount > 0) {
-        presenceAbsenceScore = static_cast<double>(intersectionCount) / unionCount;
-    }
-    
-    // Update best scores in result
-    // Debug logging for ad-hoc scoring path: print components for a few nodes to detect anomalies
-    static int dbgCount2 = 0;
-    if (dbgCount2 < 10) {
-        logging::info("DEBUG(calcScores): Node {}: jaccard={:.9f} (num={}, denom={}), weightedJaccard={:.9f} (num={}, denom={}), cosine={:.9f} (num={:.6f}, denom={:.6f}), presence={:.9f}",
-                      nodeId,
-                      jaccardScore, genomeState.jaccardNumerator, genomeState.jaccardDenominator,
-                      weightedJaccardScore, genomeState.weightedJaccardNumerator, weightedJaccardDenominator,
-                      cosineScore, genomeState.cosineNumerator, genomeState.cosineDenominator,
-                      presenceAbsenceScore);
-
-        if (genomeState.cosineNumerator > 0.0 && !(cosineScore > 0.0)) {
-            logging::warn("Possible cosine anomaly (calcScores) for node {}: numerator={} denom={} => cosine={}",
-                         nodeId, genomeState.cosineNumerator, genomeState.cosineDenominator, cosineScore);
-        }
-        dbgCount2++;
-    }
-
-    result.updateJaccardScore(nodeId, jaccardScore);
-    result.updateJaccardPresenceScore(nodeId, presenceAbsenceScore);
-    result.updateCosineScore(nodeId, cosineScore);
-    result.updateWeightedJaccardScore(nodeId, weightedJaccardScore);
-    result.updateRawSeedMatchScore(nodeId, intersectionCount);
-    result.updateHitsScore(nodeId, intersectionCount);
-    
-    return {jaccardScore, cosineScore, genomeState.uniqueSeeds.size()};
-}
-
-// MGSR-style seed addition (matches mgsr::mgsrPlacer::addSeedAtPosition)
-// NOTE: Legacy MGSR-style functions below not used by lite placement - commented out
-// TODO: Will need full index schema with positions to support full MGSR mode
-
-#if 0
-void addSeedToGenomeState(uint64_t seedIndex, 
-                         placement::MgsrGenomeState& genomeState,
-                         const placement::PlacementGlobalState& state,
-                         std::vector<std::pair<uint64_t, uint8_t>>& backtrack,
-                         const std::string& nodeId) {
-    
-    auto seedReader = state.seedInfo[seedIndex];
-    uint64_t pos = seedReader.getStartPos();
-    size_t hash = seedReader.getHash();
-    
-    // Check if this seed hash already exists in genome (at different position)
-    auto existingCountIt = genomeState.currentSeedCounts.find(hash);
-    bool seedHashAlreadyInGenome = (existingCountIt != genomeState.currentSeedCounts.end() && existingCountIt->second > 0);
-    int64_t existingCount = seedHashAlreadyInGenome ? existingCountIt->second : 0;
-    
-    auto posIt = genomeState.positionMap.find(pos);
-    if (posIt != genomeState.positionMap.end()) {
-        // Position exists - substitution
-        uint64_t oldSeedIndex = posIt->second;
-        auto oldSeedReader = state.seedInfo[oldSeedIndex];
-        size_t oldHash = oldSeedReader.getHash();
-        
-        if (seedHashAlreadyInGenome && hash != oldHash) {
-            logging::critical("SUBSTITUTION at pos {}: Replacing oldHash={} (seedIdx={}) with newHash={} (seedIdx={}) which ALREADY has count={}!",
-                             pos, oldHash, oldSeedIndex, hash, seedIndex, existingCount);
-            logging::critical("  This means newHash appears at {} existing position(s) and now also at pos {}", existingCount, pos);
-        }
-        
-        backtrack.emplace_back(oldSeedIndex, 3);  // SUB
-        
-        // CRITICAL: Remove old seed's metrics first
-        updateSimilarityMetricsDel(oldHash, genomeState, state, nodeId);
-        
-        // Remove old seed from hash map
-        auto oldHashIt = genomeState.hashToPositionMap.find(oldHash);
-        if (oldHashIt != genomeState.hashToPositionMap.end()) {
-            auto& positions = oldHashIt->second;
-            positions.erase(std::remove(positions.begin(), positions.end(), posIt), positions.end());
-            if (positions.empty()) {
-                genomeState.hashToPositionMap.erase(oldHashIt);
-            }
-        }
-        
-        // Update position with new seed
-        posIt->second = seedIndex;
-        genomeState.hashToPositionMap[hash].push_back(posIt);
-        
-    } else {
-        // New position - addition
-        posIt = genomeState.positionMap.emplace(pos, seedIndex).first;
-        backtrack.emplace_back(seedIndex, 1);  // ADD
-        genomeState.hashToPositionMap[hash].push_back(posIt);
-        
-        // If this hash already exists in the genome at a different position,
-        // we're adding a duplicate occurrence. Log this for debugging.
-        if (seedHashAlreadyInGenome) {
-            logging::critical("ADDITION at pos {}: Adding newHash={} (seedIdx={}) which ALREADY has count={}!",
-                             pos, hash, seedIndex, existingCount);
-            logging::critical("  This means newHash appears at {} existing position(s) and now also at pos {}", existingCount, pos);
-        }
-    }
-    
-    // Update similarity metrics for new seed
-    // Note: If the seed hash already existed in genome, this will increment the count,
-    // which is correct for handling duplicate seeds (same k-mer at multiple positions)
-    updateSimilarityMetricsAdd(hash, genomeState, state, nodeId);
-}
-
-// MGSR-style seed deletion (matches mgsr::mgsrPlacer::delSeedAtPosition)
-void delSeedFromGenomeState(uint64_t pos,
-                           placement::MgsrGenomeState& genomeState,
-                           const placement::PlacementGlobalState& state,
-                           std::vector<std::pair<uint64_t, uint8_t>>& backtrack,
-                           const std::string& nodeId) {
-    
-    auto posIt = genomeState.positionMap.find(pos);
-    if (posIt == genomeState.positionMap.end()) {
-        // This can happen legitimately if the position was never seeded or already deleted
-        // logging::debug("Attempted to delete seed at position {} but no seed found", pos);
-        return;
-    }
-    
-    uint64_t seedIndex = posIt->second;
-    auto seedReader = state.seedInfo[seedIndex];
-    size_t hash = seedReader.getHash();
-    
-    backtrack.emplace_back(seedIndex, 2);  // DEL
-    
-    // Remove from hash map
-    auto hashIt = genomeState.hashToPositionMap.find(hash);
-    if (hashIt != genomeState.hashToPositionMap.end()) {
-        auto& positions = hashIt->second;
-        positions.erase(std::remove(positions.begin(), positions.end(), posIt), positions.end());
-        if (positions.empty()) {
-            genomeState.hashToPositionMap.erase(hashIt);
-        }
-    }
-    
-    // Remove from position map
-    genomeState.positionMap.erase(posIt);
-    
-    // Update similarity metrics
-    updateSimilarityMetricsDel(hash, genomeState, state, nodeId);
-}
-
-// Backtrack functions (for restoring parent state)
-void addSeedToGenomeStateBacktrack(uint64_t seedIndex, 
-                                  placement::MgsrGenomeState& genomeState,
-                                  const placement::PlacementGlobalState& state) {
-    auto seedReader = state.seedInfo[seedIndex];
-    uint64_t pos = seedReader.getStartPos();
-    size_t hash = seedReader.getHash();
-    
-    auto posIt = genomeState.positionMap.emplace(pos, seedIndex).first;
-    genomeState.hashToPositionMap[hash].push_back(posIt);
-    
-    updateSimilarityMetricsAdd(hash, genomeState, state);
-}
-
-void delSeedFromGenomeStateBacktrack(uint64_t pos,
-                                    placement::MgsrGenomeState& genomeState,
-                                    const placement::PlacementGlobalState& state) {
-    auto posIt = genomeState.positionMap.find(pos);
-    if (posIt == genomeState.positionMap.end()) return;
-    
-    uint64_t seedIndex = posIt->second;
-    auto seedReader = state.seedInfo[seedIndex];
-    size_t hash = seedReader.getHash();
-    
-    // Remove from hash map
-    auto hashIt = genomeState.hashToPositionMap.find(hash);
-    if (hashIt != genomeState.hashToPositionMap.end()) {
-        auto& positions = hashIt->second;
-        positions.erase(std::remove(positions.begin(), positions.end(), posIt), positions.end());
-        if (positions.empty()) {
-            genomeState.hashToPositionMap.erase(hashIt);
-        }
-    }
-    
-    genomeState.positionMap.erase(posIt);
-    updateSimilarityMetricsDel(hash, genomeState, state);
-}
-#endif  // End of legacy MGSR functions not used by lite placement
-
-// Update similarity metrics when adding a seed  
-void updateSimilarityMetricsAdd(size_t hash,
-                               placement::MgsrGenomeState& genomeState,
-                               const placement::PlacementGlobalState& state,
-                               const std::string& nodeId) {
-    // Update seed counts
-    auto [it, inserted] = genomeState.currentSeedCounts.try_emplace(hash, 0);
-    int64_t oldGenomeCount = it->second;
-    it->second++;
-    int64_t newGenomeCount = it->second;
-    
-    // Debug logging for specific nodes
-    double oldWJaccNum = genomeState.currentWeightedJaccardNumerator;
-    double oldCosNum = genomeState.currentCosineNumerator;
-    
-    if ((nodeId == "node_15" || nodeId == "node_2") && oldGenomeCount > 0) {
-        logging::debug("    updateSimilarityMetricsAdd[{}]: hash={}, oldGenomeCount={} -> {}", 
-                         nodeId, hash, oldGenomeCount, newGenomeCount);
-    }
-    
-    bool wasInGenome = (oldGenomeCount > 0);
-    bool nowInGenome = (newGenomeCount > 0);
-    
-    if (!wasInGenome && nowInGenome) {
-        genomeState.currentUniqueSeeds.insert(hash);
-    }
-    
-    // Check if seed is in reads
-    auto readIt = state.seedFreqInReads.find(hash);
-    bool inReads = (readIt != state.seedFreqInReads.end());
-    int64_t readCount = inReads ? readIt->second : 0;
-    
-    if (inReads) {
-        // Seed is in both reads and genome
-        
-        // Jaccard numerator: if becoming present, add read frequency
-        if (!wasInGenome && nowInGenome) {
-            genomeState.currentJaccardNumerator += readCount;
-            genomeState.currentPresenceIntersectionCount++;
-        }
-        
-        // Jaccard denominator: update with genome count delta (read part is constant)
-        // Denominator = total_read_freq + genome_only_freq
-        // When seed is in both, adding genome doesn't change denominator (already counted in reads)
-        // So no change to denominator for read-matching seeds
-        
-        // Weighted Jaccard numerator: update min(read, genome)
-        int64_t oldMin = std::min(readCount, oldGenomeCount);
-        int64_t newMin = std::min(readCount, newGenomeCount);
-        int64_t wJaccNumDelta = (newMin - oldMin);
-        genomeState.currentWeightedJaccardNumerator += wJaccNumDelta;
-        
-        // Weighted Jaccard denominator: update sum of max(read, genome)
-        int64_t oldMax = (oldGenomeCount == 0) ? readCount : std::max(readCount, oldGenomeCount);
-        int64_t newMax = std::max(readCount, newGenomeCount);
-        genomeState.currentWeightedJaccardDenominator += (newMax - oldMax);
-        
-        // Cosine: update dot product
-        double oldDot = static_cast<double>(readCount * oldGenomeCount);
-        double newDot = static_cast<double>(readCount * newGenomeCount);
-        double cosNumDelta = (newDot - oldDot);
-        genomeState.currentCosineNumerator += cosNumDelta;
-        
-        // Debug logging for node_15
-        if (nodeId == "node_15") {
-            logging::debug("      [ADD-READ] readCount={}, oldMin={}, newMin={}, wJaccDelta={} ({} -> {}), oldDot={}, newDot={}, cosDelta={} ({} -> {})",
-                         readCount, oldMin, newMin, wJaccNumDelta, 
-                         oldWJaccNum, genomeState.currentWeightedJaccardNumerator,
-                         oldDot, newDot, cosNumDelta,
-                         oldCosNum, genomeState.currentCosineNumerator);
-        }
-        
-        // Presence union: if first time in genome, no change (already in reads)
-        // Union stays same when seed transitions from read-only to both
-    } else {
-        // Genome-only seed (not in reads)
-        
-        // Jaccard denominator: genome-only seeds contribute their frequency delta
-        genomeState.currentJaccardDenominator += (newGenomeCount - oldGenomeCount);
-        
-        // Weighted Jaccard denominator: genome-only seeds contribute their count
-        if (!wasInGenome) {
-            genomeState.currentWeightedJaccardDenominator += newGenomeCount;
-        } else {
-            genomeState.currentWeightedJaccardDenominator += (newGenomeCount - oldGenomeCount);
-        }
-        
-        // Presence union: if first time in genome, increment union
-        if (!wasInGenome && nowInGenome) {
-            genomeState.currentPresenceUnionCount++;
-        }
-    }
-    
-    // Update genome magnitude for cosine: maintain squared magnitude to avoid rounding errors
-    double oldMagContribution = static_cast<double>(oldGenomeCount * oldGenomeCount);
-    double newMagContribution = static_cast<double>(newGenomeCount * newGenomeCount);
-    double magnitudeSquaredDelta = newMagContribution - oldMagContribution;
-    
-    // Update squared magnitude directly (no sqrt/square roundtrip)
-    genomeState.currentGenomeMagnitudeSquared += magnitudeSquaredDelta;
-    genomeState.currentGenomeMagnitude = std::sqrt(genomeState.currentGenomeMagnitudeSquared);
-}
-
-// Update similarity metrics when deleting a seed
-void updateSimilarityMetricsDel(size_t hash,
-                               placement::MgsrGenomeState& genomeState,
-                               const placement::PlacementGlobalState& state,
-                               const std::string& nodeId) {
-    
-    auto countIt = genomeState.currentSeedCounts.find(hash);
-    if (countIt == genomeState.currentSeedCounts.end()) return;
-    
-    int64_t oldGenomeCount = countIt->second;
-    countIt->second--;
-    int64_t newGenomeCount = countIt->second;
-    
-    // Debug logging for specific nodes
-    double oldWJaccNum = genomeState.currentWeightedJaccardNumerator;
-    double oldCosNum = genomeState.currentCosineNumerator;
-    
-    if ((nodeId == "node_15" || nodeId == "node_2") && newGenomeCount >= 0) {
-        logging::debug("    updateSimilarityMetricsDel[{}]: hash={}, oldGenomeCount={} -> {}", 
-                         nodeId, hash, oldGenomeCount, newGenomeCount);
-    }
-    
-    bool wasInGenome = (oldGenomeCount > 0);
-    bool nowInGenome = (newGenomeCount > 0);
-    
-    if (newGenomeCount <= 0) {
-        genomeState.currentSeedCounts.erase(countIt);
-        genomeState.currentUniqueSeeds.erase(hash);
-    }
-    
-    // Check if seed is in reads
-    auto readIt = state.seedFreqInReads.find(hash);
-    bool inReads = (readIt != state.seedFreqInReads.end());
-    int64_t readCount = inReads ? readIt->second : 0;
-    
-    if (inReads) {
-        // Seed is (or was) in both reads and genome
-        
-        // Jaccard numerator: if becoming absent, subtract read frequency
-        if (wasInGenome && !nowInGenome) {
-            genomeState.currentJaccardNumerator -= readCount;
-            genomeState.currentPresenceIntersectionCount--;
-        }
-        
-        // Jaccard denominator: no change for read-matching seeds
-        // (already counted in read part of union)
-        
-        // Weighted Jaccard numerator: update min(read, genome)
-        int64_t oldMin = std::min(readCount, oldGenomeCount);
-        int64_t newMin = std::min(readCount, newGenomeCount);
-        int64_t wJaccNumDelta = (newMin - oldMin);
-        genomeState.currentWeightedJaccardNumerator += wJaccNumDelta;
-        
-        // Weighted Jaccard denominator: update sum of max(read, genome)
-        int64_t oldMax = (oldGenomeCount == 0) ? readCount : std::max(readCount, oldGenomeCount);
-        int64_t newMax = (newGenomeCount == 0) ? readCount : std::max(readCount, newGenomeCount);
-        genomeState.currentWeightedJaccardDenominator += (newMax - oldMax);
-        
-        // Cosine: update dot product
-        double oldDot = static_cast<double>(readCount * oldGenomeCount);
-        double newDot = static_cast<double>(readCount * newGenomeCount);
-        double cosNumDelta = (newDot - oldDot);
-        genomeState.currentCosineNumerator += cosNumDelta;
-        
-        // Debug logging for node_15
-        if (nodeId == "node_15") {
-            logging::debug("      [DEL-READ] readCount={}, oldMin={}, newMin={}, wJaccDelta={} ({} -> {}), oldDot={}, newDot={}, cosDelta={} ({} -> {})",
-                         readCount, oldMin, newMin, wJaccNumDelta,
-                         oldWJaccNum, genomeState.currentWeightedJaccardNumerator,
-                         oldDot, newDot, cosNumDelta,
-                         oldCosNum, genomeState.currentCosineNumerator);
-        }
-        
-        // Presence union: no change (seed still in reads even if removed from genome)
-    } else {
-        // Genome-only seed (not in reads)
-        
-        // Jaccard denominator: genome-only seeds contribute
-        if (wasInGenome && !nowInGenome) {
-            // Seed completely removed from genome: subtract from denominator
-            genomeState.currentJaccardDenominator -= oldGenomeCount;
-        } else {
-            // Seed still in genome: update with frequency delta
-            genomeState.currentJaccardDenominator += (newGenomeCount - oldGenomeCount);
-        }
-        
-        // Weighted Jaccard denominator: genome-only seeds contribute their count
-        if (newGenomeCount == 0) {
-            genomeState.currentWeightedJaccardDenominator -= oldGenomeCount;
-        } else {
-            genomeState.currentWeightedJaccardDenominator += (newGenomeCount - oldGenomeCount);
-        }
-        
-        // Presence union: if removed from genome, decrement union
-        if (wasInGenome && !nowInGenome) {
-            genomeState.currentPresenceUnionCount--;
-        }
-    }
-    
-    // Update genome magnitude for cosine: maintain squared magnitude to avoid rounding errors
-    double oldMagContribution = static_cast<double>(oldGenomeCount * oldGenomeCount);
-    double newMagContribution = static_cast<double>(newGenomeCount * newGenomeCount);
-    double magnitudeSquaredDelta = newMagContribution - oldMagContribution;
-    
-    // Update squared magnitude directly (no sqrt/square roundtrip)
-    genomeState.currentGenomeMagnitudeSquared += magnitudeSquaredDelta;
-    genomeState.currentGenomeMagnitude = (genomeState.currentGenomeMagnitudeSquared > 0.0) ? 
-        std::sqrt(genomeState.currentGenomeMagnitudeSquared) : 0.0;
-}
-
-// Toggle for verification mode: compute scores from scratch instead of using incremental updates
-// Can be enabled via command line --verify-scores flag
-void calculateMgsrStyleScores(const std::string& nodeId,
-                             const placement::MgsrGenomeState& genomeState,
-                             const placement::PlacementGlobalState& state,
-                             placement::PlacementResult& result,
-                             const placement::TraversalParams& params) {
-    
-    // Calculate final scores from current accumulated metrics (fully dynamic - no iteration)
-    double jaccardScore = 0.0;
-    double cosineScore = 0.0;
-    double weightedJaccardScore = 0.0;
-    double presenceJaccardScore = 0.0;
-    
-    // Verification path: recompute from scratch for validation
-    const bool VERIFY_INCREMENTAL_SCORES = false;  // Toggle: set to true to enable verification
-    if (VERIFY_INCREMENTAL_SCORES) {
-        // CRITICAL: Use getStringFromReference() to get the TRUE genome sequence from tree structure
-        // NOT from the incrementally-maintained positionMap which may be corrupted!
-        if (state.fullTree == nullptr) {
-            logging::critical("VERIFICATION ERROR: fullTree is nullptr but verification is enabled!");
-            std::exit(1);
-        }
-        
-        // Get the true genome sequence from the tree
-        std::string genomeSequence = state.fullTree->getStringFromReference(nodeId, false, true);
-        logging::debug("VERIFICATION: Got genome sequence of length {} for node {}", 
-                      genomeSequence.length(), nodeId);
-        
-        // Extract syncmers first
-        auto syncmers = seeding::rollingSyncmers(genomeSequence, params.k, params.s, params.open, params.t, false);
-        
-        // Build seed frequency map - depends on whether index uses k-minimizers or raw syncmers
-        absl::flat_hash_map<size_t, int64_t> verifyGenomeSeedCounts;
-        
-        if (params.l > 1 && syncmers.size() >= params.l) {
-            // Index uses k-minimizers: compute rolling hashes over windows of l syncmers
-            // This matches mgsr.cpp lines 489-513
-            size_t forwardRolledHash = 0;
-            size_t reverseRolledHash = 0;
+            // Genome total seed frequency delta
+            const int64_t freqDelta = childCount - parentCount;
+            childMetrics.genomeTotalSeedFrequency += freqDelta;
             
-            // First k-minimizer
-            for (size_t i = 0; i < params.l; ++i) {
-                forwardRolledHash = seeding::rol(forwardRolledHash, params.k) ^ std::get<0>(syncmers[i]);
-                reverseRolledHash = seeding::rol(reverseRolledHash, params.k) ^ std::get<0>(syncmers[params.l - i - 1]);
-            }
+            // Genome magnitude squared delta: child² - parent²
+            const double magDelta = static_cast<double>(childCount * childCount) 
+                                  - static_cast<double>(parentCount * parentCount);
+            childMetrics.genomeMagnitudeSquared += magDelta;
             
-            if (forwardRolledHash != reverseRolledHash) {
-                size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-                verifyGenomeSeedCounts[minHash]++;
-            }
+            // Genome unique seed count delta (branchless)
+            const int64_t wasPresent = (parentCount > 0) ? 1 : 0;
+            const int64_t isPresent = (childCount > 0) ? 1 : 0;
+            childMetrics.genomeUniqueSeedCount += (isPresent - wasPresent);
             
-            // Remaining k-minimizers
-            for (uint64_t i = 1; i < syncmers.size() - params.l + 1; ++i) {
-                const size_t& prevSyncmerHash = std::get<0>(syncmers[i-1]);
-                const size_t& nextSyncmerHash = std::get<0>(syncmers[i + params.l - 1]);
-                forwardRolledHash = seeding::rol(forwardRolledHash, params.k) ^ seeding::rol(prevSyncmerHash, params.k * params.l) ^ nextSyncmerHash;
-                reverseRolledHash = seeding::ror(reverseRolledHash, params.k) ^ seeding::ror(prevSyncmerHash, params.k) ^ seeding::rol(nextSyncmerHash, params.k * (params.l - 1));
-                
-                if (forwardRolledHash != reverseRolledHash) {
-                    size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-                    verifyGenomeSeedCounts[minHash]++;
-                }
-            }
-        } else {
-            // Index uses raw syncmers
-            for (const auto& [hash, isReverse, isSyncmer, endPos] : syncmers) {
-                verifyGenomeSeedCounts[hash]++;
-            }
-        }
-        
-        // Check for duplicate seeds (genomeCount > 1) - only log if found
-        int duplicateSeedCount = 0;
-        int64_t totalDuplicateFrequency = 0;
-        for (const auto& [hash, count] : verifyGenomeSeedCounts) {
-            if (count > 1) {
-                duplicateSeedCount++;
-                totalDuplicateFrequency += count;
-                if (duplicateSeedCount <= 5) {
-                    auto readIt = state.seedFreqInReads.find(hash);
-                    int64_t readCount = (readIt != state.seedFreqInReads.end()) ? readIt->second : 0;
-                    logging::critical("    DUPLICATE SEED: hash={}, genomeCount={}, readCount={}", hash, count, readCount);
-                }
-            }
-        }
-        
-        logging::debug("VERIFICATION: Extracted {} syncmers ({} unique) from true genome sequence", 
-                      syncmers.size(), verifyGenomeSeedCounts.size());
-        
-        // Only log if there are duplicates
-        if (duplicateSeedCount > 0) {
-            logging::critical("VERIFICATION: Found {} unique seeds with duplicates (total freq={})", 
-                             duplicateSeedCount, totalDuplicateFrequency);
-        }
-        
-        // DEBUG: If this is node_2, compare verified seeds vs incremental seeds for the problem hashes
-        if (nodeId == "node_2") {
-            std::vector<size_t> problemHashes = {7376186388207194583ULL, 6864244690904188740ULL};
-            for (size_t problemHash : problemHashes) {
-                auto verifyIt = verifyGenomeSeedCounts.find(problemHash);
-                auto incrIt = genomeState.currentSeedCounts.find(problemHash);
-                int64_t verifyCount = (verifyIt != verifyGenomeSeedCounts.end()) ? verifyIt->second : 0;
-                int64_t incrCount = (incrIt != genomeState.currentSeedCounts.end()) ? incrIt->second : 0;
-                
-                logging::critical("DEBUG PROBLEM HASH {}: verifyCount={}, incrCount={}", 
-                                 problemHash, verifyCount, incrCount);
-                
-                // Find which positions have this hash in incremental state
-                auto hashPosIt = genomeState.hashToPositionMap.find(problemHash);
-                if (hashPosIt != genomeState.hashToPositionMap.end()) {
-                    logging::critical("  Incremental: hash appears at {} position(s):", hashPosIt->second.size());
-                    for (auto posMapIt : hashPosIt->second) {
-                        logging::critical("    Position: {}, seedIndex: {}", posMapIt->first, posMapIt->second);
-                    }
-                }
-            }
-        }
-        
-        // Recompute all metrics from scratch
-        int64_t verifyJaccardNum = 0;
-        int64_t verifyJaccardDenom = 0;
-        int64_t verifyWeightedJaccNum = 0;
-        int64_t verifyWeightedJaccDenom = 0;
-        double verifyCosineNum = 0.0;
-        double verifyGenomeMagSq = 0.0;
-        size_t verifyPresenceIntersection = 0;
-        size_t verifyPresenceUnionGenomeOnly = 0;
-        
-        // Iterate through all read seeds
-        for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-            auto genomeIt = verifyGenomeSeedCounts.find(seedHash);
-            int64_t genomeCount = (genomeIt != verifyGenomeSeedCounts.end()) ? genomeIt->second : 0;
+            // ========================================
+            // READ-GENOME INTERACTION METRICS (only for seeds in reads)
+            // ========================================
             
-            if (genomeCount > 0) {
-                // Seed in both read and genome
-                verifyJaccardNum += readCount;
-                verifyWeightedJaccNum += std::min(readCount, genomeCount);
-                verifyWeightedJaccDenom += std::max(readCount, genomeCount);
-                verifyCosineNum += static_cast<double>(readCount) * genomeCount;
-                verifyPresenceIntersection++;
-            } else {
-                // Read-only seed
-                verifyWeightedJaccDenom += readCount;
-            }
-        }
-        
-        // Add genome-only seeds to denominators
-        for (const auto& [seedHash, genomeCount] : verifyGenomeSeedCounts) {
-            verifyGenomeMagSq += static_cast<double>(genomeCount) * genomeCount;
+            // Fast path: skip unchanged seeds (23% of all seeds per profiler)
+            if (freqDelta == 0) [[likely]] continue;
             
+            // Single hash lookup: find() returns iterator, check if valid
             auto readIt = state.seedFreqInReads.find(seedHash);
-            if (readIt == state.seedFreqInReads.end()) {
-                // Genome-only seed
-                verifyJaccardDenom += genomeCount;
-                verifyWeightedJaccDenom += genomeCount;
-                verifyPresenceUnionGenomeOnly++;
-            }
-        }
-        
-        verifyJaccardDenom += state.totalReadSeedFrequency;
-        double verifyGenomeMag = std::sqrt(verifyGenomeMagSq);
-        
-        // Compute final scores
-        double verifyJaccardScore = (verifyJaccardDenom > 0) ? 
-            static_cast<double>(verifyJaccardNum) / verifyJaccardDenom : 0.0;
-        double verifyWeightedJaccardScore = (verifyWeightedJaccDenom > 0) ? 
-            static_cast<double>(verifyWeightedJaccNum) / verifyWeightedJaccDenom : 0.0;
-        double verifyCosineScore = (state.readMagnitude > 0.0 && verifyGenomeMag > 0.0) ? 
-            verifyCosineNum / (state.readMagnitude * verifyGenomeMag) : 0.0;
-        double verifyPresenceScore = (state.seedFreqInReads.size() + verifyPresenceUnionGenomeOnly > 0) ?
-            static_cast<double>(verifyPresenceIntersection) / (state.seedFreqInReads.size() + verifyPresenceUnionGenomeOnly) : 0.0;
-        
-        // Compare with incremental values
-        int64_t incrJaccardDenom = state.totalReadSeedFrequency + genomeState.currentJaccardDenominator;
-        double incrJaccardScore = (incrJaccardDenom > 0) ? 
-            static_cast<double>(genomeState.currentJaccardNumerator) / incrJaccardDenom : 0.0;
-        double incrWeightedJaccardScore = (genomeState.currentWeightedJaccardDenominator > 0) ? 
-            static_cast<double>(genomeState.currentWeightedJaccardNumerator) / genomeState.currentWeightedJaccardDenominator : 0.0;
-        double incrCosineScore = (state.readMagnitude > 0.0 && genomeState.currentGenomeMagnitude > 0.0) ? 
-            genomeState.currentCosineNumerator / (state.readMagnitude * genomeState.currentGenomeMagnitude) : 0.0;
-        
-        // Check for discrepancies - BREAK ON FIRST MISMATCH FOR INVESTIGATION
-        const double TOLERANCE = 1e-6;
-        bool jacDiff = std::abs(verifyJaccardScore - incrJaccardScore) > TOLERANCE;
-        bool wJacDiff = std::abs(verifyWeightedJaccardScore - incrWeightedJaccardScore) > TOLERANCE;
-        bool cosDiff = std::abs(verifyCosineScore - incrCosineScore) > TOLERANCE;
-        
-        if (jacDiff || wJacDiff || cosDiff) {
-            logging::critical("========================================");
-            logging::critical("VERIFICATION MISMATCH DETECTED at node: {}", nodeId);
-            logging::critical("========================================");
+            if (readIt == state.seedFreqInReads.end()) [[likely]] continue;
             
-            if (jacDiff) {
-                logging::critical("JACCARD MISMATCH:");
-                logging::critical("  Verified:    {:.12f} (numerator={}, denominator={})", 
-                                verifyJaccardScore, verifyJaccardNum, verifyJaccardDenom);
-                logging::critical("  Incremental: {:.12f} (numerator={}, denominator={})",
-                                incrJaccardScore, genomeState.currentJaccardNumerator, incrJaccardDenom);
-                logging::critical("  Difference:  {:.12f}", std::abs(verifyJaccardScore - incrJaccardScore));
-                logging::critical("  Numerator diff: {}", verifyJaccardNum - genomeState.currentJaccardNumerator);
-                logging::critical("  Denominator diff: {}", verifyJaccardDenom - incrJaccardDenom);
-            }
+            // Hot path: seed changed AND present in reads (29% of all seeds)
+            const int64_t readCount = readIt->second;
             
-            if (wJacDiff) {
-                logging::critical("WEIGHTED JACCARD MISMATCH:");
-                logging::critical("  Verified:    {:.12f} (numerator={}, denominator={})",
-                                verifyWeightedJaccardScore, verifyWeightedJaccNum, verifyWeightedJaccDenom);
-                logging::critical("  Incremental: {:.12f} (numerator={}, denominator={})",
-                                incrWeightedJaccardScore, genomeState.currentWeightedJaccardNumerator, 
-                                genomeState.currentWeightedJaccardDenominator);
-                logging::critical("  Difference:  {:.12f}", std::abs(verifyWeightedJaccardScore - incrWeightedJaccardScore));
-                logging::critical("  Numerator diff: {}", verifyWeightedJaccNum - genomeState.currentWeightedJaccardNumerator);
-                logging::critical("  Denominator diff: {}", verifyWeightedJaccDenom - genomeState.currentWeightedJaccardDenominator);
-            }
+            // If parentCount == 0: became present, add 1
+            // If childCount == 0: became absent, subtract 1
+            // Otherwise: no change
+            const int64_t becamePresent = (parentCount == 0) & (childCount != 0);
+            const int64_t becameAbsent = (childCount == 0) & (parentCount != 0);
+            const int64_t presenceDelta = becamePresent - becameAbsent;
             
-            if (cosDiff) {
-                logging::critical("COSINE MISMATCH:");
-                logging::critical("  Verified:    {:.12f} (numerator={:.6f}, magnitude={:.6f})",
-                                verifyCosineScore, verifyCosineNum, verifyGenomeMag);
-                logging::critical("  Incremental: {:.12f} (numerator={:.6f}, magnitude={:.6f})",
-                                incrCosineScore, genomeState.currentCosineNumerator, genomeState.currentGenomeMagnitude);
-                logging::critical("  Difference:  {:.12f}", std::abs(verifyCosineScore - incrCosineScore));
-                logging::critical("  Numerator diff: {:.6f}", verifyCosineNum - genomeState.currentCosineNumerator);
-                logging::critical("  Magnitude diff: {:.6f}", verifyGenomeMag - genomeState.currentGenomeMagnitude);
-            }
+            childMetrics.presenceIntersectionCount += presenceDelta;
+            childMetrics.jaccardNumerator += presenceDelta;
             
-            // Print genome state details for investigation
-            logging::critical("Current genome state:");
-            logging::critical("  Position map size: {}", genomeState.positionMap.size());
-            logging::critical("  Unique seeds: {}", genomeState.currentUniqueSeeds.size());
-            logging::critical("  Seed counts map size: {}", genomeState.currentSeedCounts.size());
-            
-            // Print first few seeds in genome for debugging
-            logging::critical("First 10 seeds in verified genome:");
-            int seedCount = 0;
-            for (const auto& [hash, count] : verifyGenomeSeedCounts) {
-                if (seedCount++ >= 10) break;
-                auto readIt = state.seedFreqInReads.find(hash);
-                int64_t readCount = (readIt != state.seedFreqInReads.end()) ? readIt->second : 0;
-                logging::critical("    hash={}, genomeCount={}, readCount={}", hash, count, readCount);
-            }
-            
-            logging::critical("========================================");
-            logging::critical("STOPPING at first mismatch for investigation");
-            logging::critical("========================================");
-            
-            // Exit immediately to allow investigation
-            std::exit(1);
-        }
-        
-        // Use verified scores
-        jaccardScore = verifyJaccardScore;
-        weightedJaccardScore = verifyWeightedJaccardScore;
-        cosineScore = verifyCosineScore;
-        presenceJaccardScore = verifyPresenceScore;
-    } else {
-        // Normal path: use incremental scores (much faster)
-        
-        // Regular Jaccard: numerator and denominator both cached
-        // Denominator = total_read_freq + genome_only_freq (cached incrementally)
-        int64_t jaccardDenominator = state.totalReadSeedFrequency + genomeState.currentJaccardDenominator;
-        if (jaccardDenominator > 0) {
-            jaccardScore = static_cast<double>(genomeState.currentJaccardNumerator) / jaccardDenominator;
-        }
+            // Update raw match score: Σ(readCount / genomeCount) for seeds in intersection
+            // Delta = readCount/childCount - readCount/parentCount (treating 1/0 as 0)
+            const double oldContrib = (parentCount > 0) ? (static_cast<double>(readCount) / parentCount) : 0.0;
+            const double newContrib = (childCount > 0) ? (static_cast<double>(readCount) / childCount) : 0.0;
+            childMetrics.rawMatchScore += (newContrib - oldContrib);
 
-        // Weighted Jaccard: numerator and denominator both cached
-        int64_t weightedJaccardDenominator = genomeState.currentWeightedJaccardDenominator;
-        if (weightedJaccardDenominator > 0) {
-            weightedJaccardScore = static_cast<double>(genomeState.currentWeightedJaccardNumerator) / weightedJaccardDenominator;
-        }
-        
-        // Debug logging for weighted Jaccard
-        if (weightedJaccardScore > 1.0 || weightedJaccardScore < 0.0) {
-            logging::warn("Node {}: INVALID weighted Jaccard = {:.6f} (numerator={}, denominator={})",
-                         nodeId, weightedJaccardScore, genomeState.currentWeightedJaccardNumerator, 
-                         weightedJaccardDenominator);
-        }
-        
-        // Cosine similarity: numerator and magnitude both cached
-        if (state.readMagnitude > 0.0 && genomeState.currentGenomeMagnitude > 0.0) {
-            cosineScore = genomeState.currentCosineNumerator / (state.readMagnitude * genomeState.currentGenomeMagnitude);
-        }
-        
-        // Presence/absence Jaccard: intersection and union both cached
-        size_t intersectionCount = genomeState.currentPresenceIntersectionCount;
-        size_t unionSize = state.seedFreqInReads.size() + genomeState.currentPresenceUnionCount;
-        if (unionSize > 0) {
-            presenceJaccardScore = static_cast<double>(intersectionCount) / unionSize;
-        }
-    }
-    
-    // Debug: Log first few nodes with detailed numeric diagnostics (AFTER computing scores)
-    // Increase precision and add a sanity check for zero/NaN values so we can detect ordering/type bugs.
-    static int debugCount = 0;
-    if (false && debugCount < 10) {  // Debug mode disabled
-        // Get current denominator for logging (whether from verify or incremental path)
-        int64_t currentWeightedJaccDenom = VERIFY_INCREMENTAL_SCORES ? 
-            0 : genomeState.currentWeightedJaccardDenominator; // For verify path, we already logged above
-        
-        // Log with higher precision
-        logging::info("DEBUG Node {}: wJacc={:.9f}, cosine={:.9f}, jaccard={:.9f}{}",
-                     nodeId,
-                     weightedJaccardScore,
-                     cosineScore,
-                     jaccardScore,
-                     VERIFY_INCREMENTAL_SCORES ? " [VERIFIED]" : "");
+            // Update weighted Jaccard numerator: delta of min(read, genome)
+            // Using branchless min (compiles to CMOV on x86-64)
+            const int64_t oldMin = std::min(readCount, parentCount);
+            const int64_t newMin = std::min(readCount, childCount);
+            childMetrics.weightedJaccardNumerator += (newMin - oldMin);
 
-        debugCount++;
-    }
-    
-    // Combined weighted score (scale = 1.0 means use weighted Jaccard as the combined metric)
-    double combinedWeightedScore = weightedJaccardScore;
-    
-    // Get intersection count (same in both paths)
-    size_t intersectionCount = genomeState.currentPresenceIntersectionCount;
-    
-    // Special tracking for true source node (read from environment variable)
-    static std::string expectedNode;
-    static bool checkedEnv = false;
-    if (!checkedEnv) {
-        const char* envNode = std::getenv("EXPECTED_NODE");
-        if (envNode) {
-            expectedNode = std::string(envNode);
-            logging::info("Tracking expected node: {}", expectedNode);
+            // Update cosine numerator: Σ(r_i * g_i) delta
+            childMetrics.cosineNumerator += static_cast<double>(readCount) * freqDelta;
         }
-        checkedEnv = true;
     }
     
-    if (!expectedNode.empty() && nodeId == expectedNode) {
-        logging::info("*** FOUND EXPECTED SOURCE NODE {} ***", nodeId);
-        logging::info("    Jaccard: {:.9f}", jaccardScore);
-        logging::info("    Cosine: {:.9f}", cosineScore);
-        logging::info("    Weighted Jaccard: {:.9f}", weightedJaccardScore);
-        logging::info("    Raw matches: {}", genomeState.currentJaccardNumerator);
-        logging::info("    Current best Jaccard: {:.9f} (node: {})", result.bestJaccardScore, result.bestJaccardNodeId);
-        logging::info("    Current best Cosine: {:.9f} (node: {})", result.bestCosineScore, result.bestCosineNodeId);
-        logging::info("    Current best Weighted: {:.9f} (node: {})", result.bestWeightedJaccardScore, result.bestWeightedJaccardNodeId);
-    }
-    
-    // Update best scores in result
-    result.updateJaccardScore(nodeId, jaccardScore);
-    result.updateWeightedJaccardScore(nodeId, weightedJaccardScore);
-    result.updateCosineScore(nodeId, cosineScore);
-    result.updateJaccardPresenceScore(nodeId, presenceJaccardScore);
-    result.updateRawSeedMatchScore(nodeId, genomeState.currentJaccardNumerator);  // Raw = sum of read frequencies for matched seeds
-    result.updateHitsScore(nodeId, intersectionCount);  // Hits = count of unique seeds matched
-    result.updateWeightedScore(nodeId, combinedWeightedScore, 1.0);  // Combined weighted score
-    
-    logging::debug("Node {}: Jaccard={:.6f}, WeightedJaccard={:.6f}, Cosine={:.6f}, PresenceJaccard={:.6f}, RawMatches={}, Hits={}", 
-                  nodeId, jaccardScore, weightedJaccardScore, cosineScore, presenceJaccardScore, 
-                  genomeState.currentJaccardNumerator, intersectionCount);
 }
 
-// Update metrics after backtracking  
-void updateMetricsAfterBacktrack(placement::MgsrGenomeState& genomeState,
-                                const placement::PlacementGlobalState& state) {
-    // After backtracking, we may need to recalculate some metrics
-    // For efficiency, we could track changes more precisely, but for correctness
-    // a simple approach is sufficient since this happens after score calculation
-}
 
 namespace placement {
 
@@ -1028,349 +252,34 @@ using ::panmanUtils::Tree;
 class PlacementResult;
 
 
-void dumpKmerDebugData(
-    const std::vector<std::string>& readSequences,
-    int k,
-    const std::string& outputFilename);
-
-// Add this new declaration
-void dumpSyncmerDetails(const std::string& filename, 
-                       const std::string& label,
-                       const absl::flat_hash_map<size_t, int64_t>& seedMap,
-                       const absl::flat_hash_map<size_t, std::string>& kmerMap);
-
-// Function to load dictionary entries from index
-void loadGlobalDictionary(
-    Index::Reader& indexReader,
-    PlacementGlobalState& state,
-    int k_param, 
-    int s_param  
-);
-
-// Shared progress state for UI updates
-std::shared_ptr<PlacementProgressState> progress_state;
-
-// Maximum number of nodes for which to dump recomputation range details
-const size_t MAX_NODES_TO_DUMP = 5;
-
-// Helper function to read a packed MGSR index file
-std::unique_ptr<::capnp::MessageReader> loadMgsrIndexFromFile(const std::string& indexPath) {
-    logging::debug("Loading MGSR index from file: {}", indexPath);
-    
-    // Normalize path to ensure consistent resolution
-    boost::filesystem::path normalizedPath = boost::filesystem::absolute(indexPath);
-    std::string resolvedPath = normalizedPath.string();
-    logging::debug("DEBUG-PLACE: Using normalized path: {}", resolvedPath);
-    
-    // First check if the file exists
-    if (!boost::filesystem::exists(resolvedPath)) {
-        throw std::runtime_error("Index file not found: " + resolvedPath);
-    }
-    
-    // Get the file size for validation
-    uintmax_t fileSize = boost::filesystem::file_size(resolvedPath);
-    if (fileSize == 0) {
-        throw std::runtime_error("Index file is empty: " + resolvedPath);
-    }
-    logging::debug("Index file exists and has size {} bytes", fileSize);
-    
-    // Open the file
-    int fd = open(resolvedPath.c_str(), O_RDONLY);
-    if (fd < 0) {
-        throw std::runtime_error("Failed to open index file: " + resolvedPath);
-    }
-    
-    try {
-        // Configure reader options
-        ::capnp::ReaderOptions opts;
-        opts.traversalLimitInWords = std::numeric_limits<uint64_t>::max();
-        opts.nestingLimit = 1024;
-        
-        // Use PackedFdMessageReader directly
-        auto reader = std::make_unique<::capnp::PackedFdMessageReader>(fd, opts);
-        
-        // Validate the MGSR index immediately to ensure it's usable
-        auto mgsrIndex = reader->getRoot<LiteIndex>();
-        uint32_t k = mgsrIndex.getK();
-        uint32_t s = mgsrIndex.getS();
-        size_t seedCount = mgsrIndex.getSeedInfo().size();
-        bool useRawSeeds = mgsrIndex.getUseRawSeeds();
-        
-        if (k <= 0 || seedCount <= 0) {
-            close(fd); // Close the fd since we're not returning the reader
-            throw std::runtime_error(
-                "Invalid MGSR index data: k=" + std::to_string(k) + 
-                ", seeds=" + std::to_string(seedCount) + 
-                ". The index appears to be corrupted or incomplete.");
-        }
-        
-        logging::debug("Successfully loaded MGSR index with k={}, s={}, seeds={}, useRawSeeds={}",
-                    k, s, seedCount, useRawSeeds);
-        
-        // Return the MessageReader
-        return reader;
-    } catch (const ::kj::Exception& e) {
-        // Clean up fd on exception
-        close(fd);
-        throw std::runtime_error("Cap'n Proto error: " + std::string(e.getDescription().cStr()));
-    } catch (const std::exception& e) {
-        // Clean up fd on exception
-        close(fd);
-        throw std::runtime_error("Error reading MGSR index: " + std::string(e.what()));
-    }
-}
-
-
-// Helper functions for processNodeMutations
-
-// Process seed deletion (quaternary value 1)
-void processSeedDeletion(
-    ::panmanUtils::Node* node,
-    int64_t pos,
-    state::StateManager& stateManager,
-    PlacementGlobalState& state,
-    PlacementResult& result,
-    absl::flat_hash_set<size_t>& uniqueSeedHashes,
-    int k) {
-    
-    // Get identifier, using a fallback only if node is null
-    std::string nodeId = node ? node->identifier : (result.bestWeightedNodeId.empty() ? "Unknown" : result.bestWeightedNodeId);
-    
-    // Check if this seed exists in our map
-    if (node && result.nodeSeedMap.find(nodeId) != result.nodeSeedMap.end() && 
-        result.nodeSeedMap[nodeId].find(pos) != result.nodeSeedMap[nodeId].end()) {
-        
-        // Get the seed from our map
-        const seeding::seed_t& seed = result.nodeSeedMap[nodeId][pos];
-        const size_t seedHash = seed.hash;
-        
-        // Remove it from our map
-        result.nodeSeedMap[nodeId].erase(pos);
-        
-        // Update scores if this seed was in reads
-        auto readIt = state.seedFreqInReads.find(seedHash);
-        if (readIt != state.seedFreqInReads.end()) {
-            const int64_t readCount = readIt->second;
-            result.hitsInThisGenome -= readCount;
-            result.currentJaccardNumerator -= readCount;
-            
-            // Handle weighted Jaccard numerator update 
-            auto genomeSeedIt = result.currentAllGenomeSeedCounts.find(seedHash);
-            int64_t oldGenomeCount = 0;
-            int64_t newGenomeCount = 0;
-            
-            if (genomeSeedIt != result.currentAllGenomeSeedCounts.end()) {
-                oldGenomeCount = genomeSeedIt->second;
-                newGenomeCount = oldGenomeCount - 1;
-                
-                // Update weighted Jaccard numerator: subtract old contribution, add new contribution
-                int64_t oldMinCount = std::min(readCount, oldGenomeCount);
-                int64_t newMinCount = (newGenomeCount > 0) ? std::min(readCount, newGenomeCount) : 0;
-                result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
-                
-                if (newGenomeCount <= 0) { 
-                    result.currentAllGenomeSeedCounts.erase(genomeSeedIt);
-                } else {
-                    genomeSeedIt->second = newGenomeCount;
-                }
-            }
-            
-            // Update cosine similarity components (numerator: readCount * genomeCount)
-            double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount); // Before deletion
-            double newCosineTerm = static_cast<double>(readCount * newGenomeCount); // After deletion
-            result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
-            
-            uniqueSeedHashes.erase(seedHash);
-            
-            logging::info("Deleted seed from scores: pos={}, node={}, hash={}, readCount={}", 
-                        pos, nodeId, seedHash, readCount);
-        }
-    } else {
-        logging::debug("No existing seed found at position {} to delete for node {}", pos, nodeId);
-    }
-}
-
-// Process existing seed for modification (part of quaternary value 3)
-void processExistingSeedRemoval(
-    ::panmanUtils::Node* node,
-    state::StateManager& stateManager,
-    PlacementGlobalState& state,
-    PlacementResult& result,
-    absl::flat_hash_set<size_t>& uniqueSeedHashes,
-    int64_t pos,
-    int k) {
-    
-    if (!node) {
-        logging::warn("Cannot process seed removal: node is null");
-        return;
-    }
-    
-    std::string nodeId = node->identifier;
-    std::optional<seeding::seed_t> existingSeedOpt;
-    
-    // Check if this seed exists in our map
-    if (result.nodeSeedMap.find(nodeId) != result.nodeSeedMap.end() && 
-        result.nodeSeedMap[nodeId].find(pos) != result.nodeSeedMap[nodeId].end()) {
-        // Found the seed in our map
-        existingSeedOpt = result.nodeSeedMap[nodeId][pos];
-        
-        // Process the found seed
-        if (existingSeedOpt) {
-            const seeding::seed_t& existingSeed = existingSeedOpt.value();
-            const size_t seedHash = existingSeed.hash;
-            
-            // Remove it from our map
-            result.nodeSeedMap[nodeId].erase(pos);
-            
-            // Update scores if this seed was in reads
-            auto readIt = state.seedFreqInReads.find(seedHash);
-            if (readIt != state.seedFreqInReads.end()) {
-                int64_t readCount = readIt->second;
-                result.hitsInThisGenome -= readCount;
-                result.currentJaccardNumerator -= readCount;
-                
-                // Handle weighted Jaccard numerator update
-                auto genomeSeedIt = result.currentAllGenomeSeedCounts.find(seedHash);
-                int64_t oldGenomeCount = 0;
-                int64_t newGenomeCount = 0;
-                
-                if (genomeSeedIt != result.currentAllGenomeSeedCounts.end()) {
-                    oldGenomeCount = genomeSeedIt->second;
-                    newGenomeCount = oldGenomeCount - 1;
-                    
-                    // Update weighted Jaccard numerator: subtract old contribution, add new contribution
-                    int64_t oldMinCount = std::min(readCount, oldGenomeCount);
-                    int64_t newMinCount = (newGenomeCount > 0) ? std::min(readCount, newGenomeCount) : 0;
-                    result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
-                    
-                    if (newGenomeCount <= 0) {
-                        result.currentAllGenomeSeedCounts.erase(genomeSeedIt);
-                    } else {
-                        genomeSeedIt->second = newGenomeCount;
-                    }
-                }
-                
-                // Update cosine similarity components (numerator: readCount * genomeCount)
-                double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount); // Before removal
-                double newCosineTerm = static_cast<double>(readCount * newGenomeCount); // After removal
-                result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
-                
-                uniqueSeedHashes.erase(seedHash);
-                
-                logging::info("Removed seed from scores: pos={}, node={}, hash={}, readCount={}", 
-                            pos, nodeId, seedHash, readCount);
-            }
-        }
-    } else {
-        logging::debug("No existing seed found at position {} to remove", pos);
-    }
-}
-
-// Add new seed and update scores
-void addSeedAndUpdateScores(
-    ::panmanUtils::Node* node,
-    state::StateManager& stateManager,
-    PlacementGlobalState& state,
-    PlacementResult& result,
-    absl::flat_hash_set<size_t>& uniqueSeedHashes,
-    int64_t pos,
-    const seeding::seed_t& newSeed) {
-    
-
-    if (!node) {
-        logging::warn("Cannot add seed: node is null");
-        return;
-    }
-    
-    // Add hash to uniqueSeedHashes
-    uniqueSeedHashes.insert(newSeed.hash);
-    
-    // Add seed to our direct map for this node
-    if (result.nodeSeedMap.find(node->identifier) == result.nodeSeedMap.end()) {
-        result.nodeSeedMap[node->identifier] = {};
-    }
-    result.nodeSeedMap[node->identifier][pos] = newSeed;
-    
-    // Update scores if seed exists in reads
-    auto readIt = state.seedFreqInReads.find(newSeed.hash);
-    bool inReads = readIt != state.seedFreqInReads.end();
-
-
-    
-    if (inReads) {
-        int64_t readCount = readIt->second;
-        result.hitsInThisGenome += readCount;
-        result.currentJaccardNumerator += readCount;
-        
-        // Safely increment count in currentAllGenomeSeedCounts
-        auto [it, inserted] = result.currentAllGenomeSeedCounts.try_emplace(newSeed.hash, 0);
-        int64_t oldGenomeCount = it->second;  // Should be 0 for new seeds
-        it->second++; // Increment the count
-        int64_t newGenomeCount = it->second;  // Should be 1 for new seeds
-        
-        // Update weighted Jaccard numerator: min(readCount, genomeCount)
-        int64_t oldMinCount = std::min(readCount, oldGenomeCount);  // Should be 0
-        int64_t newMinCount = std::min(readCount, newGenomeCount);  // Should be min(readCount, 1)
-        result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
-        
-        // Update cosine similarity components (numerator: readCount * genomeCount)
-        double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount); // Before addition
-        double newCosineTerm = static_cast<double>(readCount * newGenomeCount); // After addition
-        result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
-        
-        // Log successful match (only if seed is in reads)
-        logging::info("Added seed at pos {} for node {} with hash {}, read count: {}", 
-                     pos, node->identifier, newSeed.hash, readCount);
-    }
-}
-
-// Process new seed addition (quaternary value 2 or part of 3)
-// --- HELPER: Move the getNodeIndex function up here ---
 
 /**
- * @brief Helper function to find the node's index in the Cap'n Proto arrays
- * 
- * @param nodeId The node identifier
- * @param state The global placement state containing node path info
- * @param nodeIndex Output parameter to store the found index
- * @return True if node was found, false otherwise
- */
-bool getNodeIndex(const std::string& nodeId, 
-                  const PlacementGlobalState& state, 
-                  uint64_t& nodeIndex) {
-    // MGSR format doesn't use nodePathInfo lookup - DFS traversal handles indexing
-    logging::debug("MGSR mode: getNodeIndex called for node '{}' but MGSR uses DFS traversal", nodeId);
-    return false;
-}
-
-
-/**
- * @brief Update Jaccard similarity score for a node and track the best score
+ * @brief Update Jaccard similarity score for a node
  * 
  * @param nodeId The node ID being evaluated
  * @param jaccardScore The Jaccard similarity score
+ * @param node Pointer to the LiteNode (optional, for storing score on node)
  */
-void PlacementResult::updateJaccardScore(const std::string& nodeId, double jaccardScore) {
-    const double TIED_THRESHOLD = 0.0001; // Define threshold for considering scores tied
+void PlacementResult::updateJaccardScore(uint32_t nodeIndex, double jaccardScore, panmapUtils::LiteNode* node) {
+    // LOCK-FREE: Store score on node + update thread-local best
+    if (node) {
+        node->jaccardScore = static_cast<float>(jaccardScore);
+    }
     
-    // Check if score is better than current best
-    if (jaccardScore > bestJaccardScore + TIED_THRESHOLD) {
-        // Found a new best Jaccard score
+    // Update thread-local best (no locks needed!)
+    double tolerance = std::max(bestJaccardScore * 0.0001, 1e-9);
+    if (jaccardScore > bestJaccardScore + tolerance) {
         bestJaccardScore = jaccardScore;
-        bestJaccardNodeId = nodeId;
-        
-        // Reset tied nodes and add this one
-        tiedJaccardNodeIds.clear();
-        tiedJaccardNodeIds.push_back(nodeId);
-        
-        logging::debug("New best Jaccard node: {} with score {:.6f}", 
-                     nodeId, jaccardScore);
-                     
-    } else if (std::abs(jaccardScore - bestJaccardScore) <= TIED_THRESHOLD) {
-        // Add to tied nodes
-        tiedJaccardNodeIds.push_back(nodeId);
-        logging::debug("Tied Jaccard node: {} with score {:.6f}", 
-                     nodeId, jaccardScore);
+        bestJaccardNodeIndex = nodeIndex;
+        tiedJaccardNodeIndices.clear();
+        tiedJaccardNodeIndices.push_back(nodeIndex);
+    } else if (jaccardScore >= bestJaccardScore - tolerance && jaccardScore > 0) {
+        if (tiedJaccardNodeIndices.empty() || tiedJaccardNodeIndices.back() != bestJaccardNodeIndex) {
+            tiedJaccardNodeIndices.push_back(bestJaccardNodeIndex);
+        }
+        if (nodeIndex != bestJaccardNodeIndex) {
+            tiedJaccardNodeIndices.push_back(nodeIndex);
+        }
     }
 }
 
@@ -1378,494 +287,460 @@ void PlacementResult::updateJaccardScore(const std::string& nodeId, double jacca
  * Update the weighted Jaccard similarity score tracking
  * @param nodeId The node ID being evaluated  
  * @param weightedJaccardScore The weighted Jaccard similarity score
+ * @param node Pointer to the LiteNode (optional, for storing score on node)
  */
-void PlacementResult::updateWeightedJaccardScore(const std::string& nodeId, double weightedJaccardScore) {
-    const double TIED_THRESHOLD = 0.0001; // Define threshold for considering scores tied
+void PlacementResult::updateWeightedJaccardScore(uint32_t nodeIndex, double weightedJaccardScore, panmapUtils::LiteNode* node) {
+    // LOCK-FREE: Store score on node + update thread-local best
+    if (node) {
+        node->weightedJaccardScore = static_cast<float>(weightedJaccardScore);
+    }
     
-    // Check if score is better than current best
-    if (weightedJaccardScore > bestWeightedJaccardScore + TIED_THRESHOLD) {
-        // Found a new best weighted Jaccard score
+    // Update thread-local best
+    double tolerance = std::max(bestWeightedJaccardScore * 0.0001, 1e-9);
+    if (weightedJaccardScore > bestWeightedJaccardScore + tolerance) {
         bestWeightedJaccardScore = weightedJaccardScore;
-        bestWeightedJaccardNodeId = nodeId;
-        
-        // Reset tied nodes and add this one
-        tiedWeightedJaccardNodeIds.clear();
-        tiedWeightedJaccardNodeIds.push_back(nodeId);
-        
-        logging::debug("New best weighted Jaccard node: {} with score {:.6f}", 
-                     nodeId, weightedJaccardScore);
-                     
-    } else if (std::abs(weightedJaccardScore - bestWeightedJaccardScore) <= TIED_THRESHOLD) {
-        // Add to tied nodes if not already present
-        if (std::find(tiedWeightedJaccardNodeIds.begin(), tiedWeightedJaccardNodeIds.end(), nodeId) 
-            == tiedWeightedJaccardNodeIds.end()) {
-            tiedWeightedJaccardNodeIds.push_back(nodeId);
-            logging::debug("Tied weighted Jaccard node: {} with score {:.6f}", 
-                         nodeId, weightedJaccardScore);
+        bestWeightedJaccardNodeIndex = nodeIndex;
+        tiedWeightedJaccardNodeIndices.clear();
+        tiedWeightedJaccardNodeIndices.push_back(nodeIndex);
+    } else if (weightedJaccardScore >= bestWeightedJaccardScore - tolerance && weightedJaccardScore > 0) {
+        if (tiedWeightedJaccardNodeIndices.empty() || tiedWeightedJaccardNodeIndices.back() != bestWeightedJaccardNodeIndex) {
+            tiedWeightedJaccardNodeIndices.push_back(bestWeightedJaccardNodeIndex);
+        }
+        if (nodeIndex != bestWeightedJaccardNodeIndex) {
+            tiedWeightedJaccardNodeIndices.push_back(nodeIndex);
         }
     }
 }
 
 /**
- * @brief Update Raw Seed Match score for a node and track the best score
+ * @brief Update Raw Seed Match score for a node
  * 
  * @param nodeId The node ID being evaluated
  * @param score The raw seed match score (sum of read frequencies for matched seeds)
+ * @param node Pointer to the LiteNode (optional, for storing score on node)
  */
-void PlacementResult::updateRawSeedMatchScore(const std::string& nodeId, int64_t score) {
-    // Check if score is better than current best
-    if (score > bestRawSeedMatchScore) {
-        // Found a new best raw seed match score
+void PlacementResult::updateRawSeedMatchScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) {
+    // LOCK-FREE: Store score on node + update thread-local best
+    if (node) {
+        node->rawSeedMatchScore = static_cast<float>(score);
+    }
+    
+    // Update thread-local best with tolerance
+    double tolerance = std::max(bestRawSeedMatchScore * 0.0001, 1e-9);
+    if (score > bestRawSeedMatchScore + tolerance) {
         bestRawSeedMatchScore = score;
-        bestRawSeedMatchNodeId = nodeId;
-        
-        // Reset tied nodes and add this one
-        tiedRawSeedMatchNodeIds.clear();
-        tiedRawSeedMatchNodeIds.push_back(nodeId);
-        
-        logging::debug("New best Raw Seed Match node: {} with score {}", 
-                     nodeId, score);
-                     
-    } else if (score == bestRawSeedMatchScore) {
-        // Add to tied nodes
-        tiedRawSeedMatchNodeIds.push_back(nodeId);
-        logging::debug("Tied Raw Seed Match node: {} with score {}", 
-                     nodeId, score);
+        bestRawSeedMatchNodeIndex = nodeIndex;
+        tiedRawSeedMatchNodeIndices.clear();
+        tiedRawSeedMatchNodeIndices.push_back(nodeIndex);
+    } else if (score >= bestRawSeedMatchScore - tolerance && score > 0) {
+        if (tiedRawSeedMatchNodeIndices.empty() || tiedRawSeedMatchNodeIndices.back() != bestRawSeedMatchNodeIndex) {
+            tiedRawSeedMatchNodeIndices.push_back(bestRawSeedMatchNodeIndex);
+        }
+        if (nodeIndex != bestRawSeedMatchNodeIndex) {
+            tiedRawSeedMatchNodeIndices.push_back(nodeIndex);
+        }
     }
 }
 
 /**
- * @brief Update hits score for a node and track the best score
+ * @brief Update hits score for a node
  * 
  * @param nodeId The node ID being evaluated
  * @param hits The number of hits for this node
+ * @param node Pointer to the LiteNode (optional, for storing score on node)
  */
-void PlacementResult::updateHitsScore(const std::string& nodeId, int64_t hits) {
-    // Check if hits is better than current best
+void PlacementResult::updateHitsScore(uint32_t nodeIndex, int64_t hits, panmapUtils::LiteNode* node) {
+    // LOCK-FREE: Store score on node + update thread-local best
+    if (node) {
+        node->hitsScore = static_cast<float>(hits);
+    }
+    
+    // Update thread-local best
     if (hits > maxHitsInAnyGenome) {
-        // Found a new best hits score
         maxHitsInAnyGenome = hits;
-        maxHitsNodeId = nodeId;
-        
-        // Reset tied nodes and add this one
-        tiedMaxHitsNodeIds.clear();
-        tiedMaxHitsNodeIds.push_back(nodeId);
-        
-        logging::debug("New best hits node: {} with hits {}", 
-                     nodeId, hits);
-                     
-    } else if (hits == maxHitsInAnyGenome) {
-        // Add to tied nodes
-        tiedMaxHitsNodeIds.push_back(nodeId);
-        logging::debug("Tied hits node: {} with hits {}", 
-                     nodeId, hits);
+        maxHitsNodeIndex = nodeIndex;
+        tiedMaxHitsNodeIndices.clear();
+        tiedMaxHitsNodeIndices.push_back(nodeIndex);
+    } else if (hits == maxHitsInAnyGenome && hits > 0) {
+        if (tiedMaxHitsNodeIndices.empty() || tiedMaxHitsNodeIndices.back() != maxHitsNodeIndex) {
+            tiedMaxHitsNodeIndices.push_back(maxHitsNodeIndex);
+        }
+        if (nodeIndex != maxHitsNodeIndex) {
+            tiedMaxHitsNodeIndices.push_back(nodeIndex);
+        }
     }
 }
 
 /**
- * @brief Update Jaccard (Presence/Absence) score for a node and track the best score
+ * @brief Update Jaccard (Presence/Absence) score for a node
  * 
  * @param nodeId The node ID being evaluated
  * @param score The Jaccard score based on presence/absence of seeds
+ * @param node Pointer to the LiteNode (optional, for storing score on node)
  */
-void PlacementResult::updateJaccardPresenceScore(const std::string& nodeId, double score) {
-    const double TIED_THRESHOLD = 0.0001; // Define threshold for considering scores tied
+void PlacementResult::updateJaccardPresenceScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) {
+    // Store score on node first
+    if (node) {
+        node->jaccardPresenceScore = static_cast<float>(score);
+    }
     
-    // Check if score is better than current best
-    if (score > bestJaccardPresenceScore + TIED_THRESHOLD) {
-        // Found a new best Jaccard (Presence/Absence) score
+    // Early exit for non-competitive scores
+    if (score <= bestJaccardPresenceScore) [[likely]] return;
+    
+    // Only update if score is better (simple best tracking, no mutex needed)
+    if (score > bestJaccardPresenceScore) {
         bestJaccardPresenceScore = score;
-        bestJaccardPresenceNodeId = nodeId;
-        
-        // Reset tied nodes and add this one
-        tiedJaccardPresenceNodeIds.clear();
-        tiedJaccardPresenceNodeIds.push_back(nodeId);
-        
-        logging::debug("New best Jaccard (Presence) node: {} with score {:.6f}", 
-                     nodeId, score);
-                     
-    } else if (std::abs(score - bestJaccardPresenceScore) <= TIED_THRESHOLD) {
-        // Add to tied nodes
-        tiedJaccardPresenceNodeIds.push_back(nodeId);
-        logging::debug("Tied Jaccard (Presence) node: {} with score {:.6f}", 
-                     nodeId, score);
+        bestJaccardPresenceNodeIndex = nodeIndex;
     }
 }
 
 /**
- * @brief Update cosine similarity score for a node and track the best score
+ * @brief Update cosine similarity score for a node
  * 
  * @param nodeId The node ID being evaluated
  * @param cosineScore The cosine similarity score
+ * @param node Pointer to the LiteNode (optional, for storing score on node)
  */
-void PlacementResult::updateCosineScore(const std::string& nodeId, double cosineScore) {
-    const double TIED_THRESHOLD = 0.0001; // Define threshold for considering scores tied
+void PlacementResult::updateCosineScore(uint32_t nodeIndex, double cosineScore, panmapUtils::LiteNode* node) {
+    // LOCK-FREE: Store score on node + update thread-local best
+    if (node) {
+        node->cosineScore = static_cast<float>(cosineScore);
+    }
     
-    // Check if score is better than current best
-    if (cosineScore > bestCosineScore + TIED_THRESHOLD) {
-        // Found a new best cosine score
+    // Update thread-local best
+    double tolerance = std::max(bestCosineScore * 0.0001, 1e-9);
+    if (cosineScore > bestCosineScore + tolerance) {
         bestCosineScore = cosineScore;
-        bestCosineNodeId = nodeId;
-        
-        // Reset tied nodes and add this one
-        tiedCosineNodeIds.clear();
-        tiedCosineNodeIds.push_back(nodeId);
-        
-        logging::debug("New best cosine node: {} with score {:.6f}", 
-                     nodeId, cosineScore);
-                     
-    } else if (std::abs(cosineScore - bestCosineScore) <= TIED_THRESHOLD) {
-        // Add to tied nodes
-        tiedCosineNodeIds.push_back(nodeId);
-        logging::debug("Tied cosine node: {} with score {:.6f}", 
-                     nodeId, cosineScore);
+        bestCosineNodeIndex = nodeIndex;
+        tiedCosineNodeIndices.clear();
+        tiedCosineNodeIndices.push_back(nodeIndex);
+    } else if (cosineScore >= bestCosineScore - tolerance && cosineScore > 0) {
+        if (tiedCosineNodeIndices.empty() || tiedCosineNodeIndices.back() != bestCosineNodeIndex) {
+            tiedCosineNodeIndices.push_back(bestCosineNodeIndex);
+        }
+        if (nodeIndex != bestCosineNodeIndex) {
+            tiedCosineNodeIndices.push_back(nodeIndex);
+        }
     }
 }
 
-/**
- * @brief Update weighted score (combined Jaccard and cosine) for a node
- * 
- * @param nodeId The node ID being evaluated
- * @param weightedScore The weighted similarity score
- * @param scoreScale The weight for Jaccard in the combined score (1-scoreScale is used for cosine)
- */
-void PlacementResult::updateWeightedScore(const std::string& nodeId, double weightedScore, double scoreScale) {
-    const double TIED_THRESHOLD = 0.0001; // Define threshold for considering scores tied
+void PlacementResult::resolveNodeIds(panmapUtils::LiteTree* liteTree) {
+    // LOCK-FREE: Store score on node + update thread-local best
+    if (!liteTree) return;
     
-    // Check if score is better than current best
-    if (weightedScore > bestWeightedScore + TIED_THRESHOLD) {
-        // Found a new best weighted score
-        bestWeightedScore = weightedScore;
-        bestWeightedNodeId = nodeId;
-        
-        // Reset tied nodes and add this one
-        tiedWeightedNodeIds.clear();
-        tiedWeightedNodeIds.push_back(nodeId);
-        
-        logging::debug("New best weighted node: {} with score {:.6f} (scale={:.2f})", 
-                     nodeId, weightedScore, scoreScale);
-                     
-    } else if (std::abs(weightedScore - bestWeightedScore) <= TIED_THRESHOLD) {
-        // Add to tied nodes
-        tiedWeightedNodeIds.push_back(nodeId);
-        logging::debug("Tied weighted node: {} with score {:.6f}", 
-                     nodeId, weightedScore);
+    // Resolve best node indices to string IDs
+    if (bestJaccardNodeIndex != UINT32_MAX) {
+        bestJaccardNodeId = liteTree->resolveNodeId(bestJaccardNodeIndex);
+    }
+    if (bestWeightedJaccardNodeIndex != UINT32_MAX) {
+        bestWeightedJaccardNodeId = liteTree->resolveNodeId(bestWeightedJaccardNodeIndex);
+    }
+    if (bestCosineNodeIndex != UINT32_MAX) {
+        bestCosineNodeId = liteTree->resolveNodeId(bestCosineNodeIndex);
+    }
+    if (bestJaccardPresenceNodeIndex != UINT32_MAX) {
+        bestJaccardPresenceNodeId = liteTree->resolveNodeId(bestJaccardPresenceNodeIndex);
+    }
+    if (bestRawSeedMatchNodeIndex != UINT32_MAX) {
+        bestRawSeedMatchNodeId = liteTree->resolveNodeId(bestRawSeedMatchNodeIndex);
+    }
+    if (maxHitsNodeIndex != UINT32_MAX) {
+        maxHitsNodeId = liteTree->resolveNodeId(maxHitsNodeIndex);
     }
 }
 
 
+// Placement helper using BFS traversal with delta-based metrics
+void placeLiteHelperBFS(
+    std::vector<panmapUtils::LiteNode*>& nodes,
+    std::vector<placement::NodeMetrics>& parentMetrics,
+    std::vector<absl::flat_hash_map<uint64_t, int64_t>>& parentSeedCounts,
+    const placement::PlacementGlobalState& state,
+    placement::PlacementResult& result,
+    const placement::TraversalParams& params,
+    std::atomic<size_t>& nodesProcessed) {
 
-// LiteTree-specific scoring function (avoids StateManager dependency)
-std::tuple<double, double, size_t> calculateAndUpdateScoresLite(
-    const std::string& nodeId,
-    PlacementGlobalState& state,
-    PlacementResult& result,
-    const TraversalParams& params,
-    absl::flat_hash_set<size_t>& uniqueSeedHashes,
-    uint32_t nodeChangeIndex) {
+    if (nodes.empty()) {
+        return;
+    }
+
+    std::vector<panmapUtils::LiteNode*> current_nodes = std::move(nodes);
+    std::vector<placement::NodeMetrics> current_metrics = std::move(parentMetrics);
+    std::vector<absl::flat_hash_map<uint64_t, int64_t>> current_seeds = std::move(parentSeedCounts);
     
-    // Process current node's changes if available
-    if (nodeChangeIndex < state.perNodeChanges.size()) {
-        const auto& nodeSeedChanges = state.perNodeChanges[nodeChangeIndex];
+    struct alignas(64) ThreadLocalData {  // Cache-line aligned to prevent false sharing
+        std::vector<panmapUtils::LiteNode*> next_nodes;
+        std::vector<placement::NodeMetrics> next_metrics;
+        std::vector<absl::flat_hash_map<uint64_t, int64_t>> next_seeds;
         
-        // Process all deserialized seed changes
-        for (const auto& seedChange : nodeSeedChanges.seedChanges) {
-            uint32_t seedIdx = seedChange.seedIndex;
-            bool isDeleted = seedChange.isDeleted;
+        // Thread-local best scores (lock-free during traversal!)
+        placement::PlacementResult local_result;
+        
+        // Pre-allocate buffers to reduce reallocation
+        ThreadLocalData() {
+            next_nodes.reserve(1024);
+            next_metrics.reserve(1024);
+            next_seeds.reserve(1024);
+        }
+        
+        void clear() {
+            next_nodes.clear();
+            next_metrics.clear();
+            next_seeds.clear();
+        }
+    };
+
+    // Use enumerable_thread_specific to manage thread-local storage automatically
+    tbb::enumerable_thread_specific<ThreadLocalData> thread_data;
+    
+    // Get thread count for optimal grain size
+    const size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+
+    while (!current_nodes.empty()) {
+        size_t num_nodes = current_nodes.size();
+        
+        // Adaptive grain size based on level size and thread count
+        // Larger chunks = less overhead, but need enough chunks for load balancing
+        size_t grain_size = std::max(size_t(1), num_nodes / (numThreads * 8));
+        
+        // Pre-allocate empty seed counts for verification disabled case
+        static const absl::flat_hash_map<uint64_t, int64_t> empty_seed_counts;
+
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, num_nodes, grain_size), 
+            [&](const tbb::blocked_range<size_t>& r) {
             
-            if (seedIdx < state.seedHashes.size()) {
-                uint64_t seedHash = state.seedHashes[seedIdx];
+            auto& tls = thread_data.local();
+            size_t batch_counter = 0;
+
+            for (size_t i = r.begin(); i != r.end(); ++i) {
+                panmapUtils::LiteNode* node = current_nodes[i];
+                const placement::NodeMetrics& p_metrics = current_metrics[i];
+                const absl::flat_hash_map<uint64_t, int64_t>& p_seed_counts = params.verify_scores ? current_seeds[i] : empty_seed_counts;
+
+                if (!node) continue;
                 
-                if (isDeleted) {
-                    // Process deletion
-                    // Remove from unique seed hashes
-                    uniqueSeedHashes.erase(seedHash);
-                    
-                    // Update ALL genome seed counts and magnitude
-                    auto allGenomeIt = result.currentAllGenomeSeedCounts.find(seedHash);
-                    if (allGenomeIt != result.currentAllGenomeSeedCounts.end()) {
-                        int64_t oldGenomeCount = allGenomeIt->second;
-                        int64_t newGenomeCount = oldGenomeCount - 1;
-                        
-                        // Update genome magnitude squared
-                        result.currentGenomeMagnitudeSquared += (static_cast<double>(newGenomeCount * newGenomeCount) - 
-                                                                  static_cast<double>(oldGenomeCount * oldGenomeCount));
-                        
-                        if (newGenomeCount <= 0) {
-                            result.currentAllGenomeSeedCounts.erase(allGenomeIt);
-                        } else {
-                            allGenomeIt->second = newGenomeCount;
-                        }
-                        
-                        // Update metrics if this seed exists in reads
-                        auto readIt = state.seedFreqInReads.find(seedHash);
-                        if (readIt != state.seedFreqInReads.end()) {
-                            int64_t readCount = readIt->second;
-                            
-                            // Update weighted Jaccard numerator
-                            int64_t oldMinCount = std::min(readCount, oldGenomeCount);
-                            int64_t newMinCount = std::min(readCount, newGenomeCount);
-                            result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
-                            
-                            // Update regular Jaccard numerator (if seed becomes absent, decrease by readCount)
-                            if (oldGenomeCount > 0 && newGenomeCount == 0) {
-                                result.currentJaccardNumerator -= readCount;
-                            }
-                            
-                            // Update raw match score
-                            result.hitsInThisGenome += (readCount * newGenomeCount) - (readCount * oldGenomeCount);
-                            
-                            // Update cosine similarity numerator
-                            double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount);
-                            double newCosineTerm = static_cast<double>(readCount * newGenomeCount);
-                            result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
-                        }
-                    }
-                } else {
-                    // Process insertion/substitution
-                    // Add to unique seed hashes
-                    uniqueSeedHashes.insert(seedHash);
-                    
-                    // Update ALL genome seed counts and magnitude
-                    auto [allGenomeIt, inserted] = result.currentAllGenomeSeedCounts.try_emplace(seedHash, 0);
-                    int64_t oldGenomeCount = allGenomeIt->second;
-                    int64_t newGenomeCount = oldGenomeCount + 1;
-                    allGenomeIt->second = newGenomeCount;
-                    
-                    // Update genome magnitude squared
-                    result.currentGenomeMagnitudeSquared += (static_cast<double>(newGenomeCount * newGenomeCount) - 
-                                                              static_cast<double>(oldGenomeCount * oldGenomeCount));
-                    
-                    // Update metrics if this seed exists in reads
-                    auto readIt = state.seedFreqInReads.find(seedHash);
-                    if (readIt != state.seedFreqInReads.end()) {
-                        int64_t readCount = readIt->second;
-                        
-                        // Update weighted Jaccard numerator
-                        int64_t oldMinCount = std::min(readCount, oldGenomeCount);
-                        int64_t newMinCount = std::min(readCount, newGenomeCount);
-                        result.currentWeightedJaccardNumerator += (newMinCount - oldMinCount);
-                        
-                        // Update regular Jaccard numerator (if seed becomes present, increase by readCount)
-                        if (oldGenomeCount == 0 && newGenomeCount > 0) {
-                            result.currentJaccardNumerator += readCount;
-                        }
-                        
-                        // Update raw match score
-                        result.hitsInThisGenome += (readCount * newGenomeCount) - (readCount * oldGenomeCount);
-                        
-                        // Update cosine similarity numerator
-                        double oldCosineTerm = static_cast<double>(readCount * oldGenomeCount);
-                        double newCosineTerm = static_cast<double>(readCount * newGenomeCount);
-                        result.currentCosineNumerator += (newCosineTerm - oldCosineTerm);
+                // Aggressive software prefetch for next 4 nodes
+                constexpr size_t PREFETCH_DISTANCE = 4;
+                for (size_t j = 1; j <= PREFETCH_DISTANCE && i + j < r.end(); ++j) {
+                    __builtin_prefetch(current_nodes[i + j], 0, 1);         // Prefetch node pointer
+                    __builtin_prefetch(&current_metrics[i + j], 0, 1);      // Prefetch metrics
+                    if (current_nodes[i + j]) {
+                        __builtin_prefetch(&current_nodes[i + j]->seedChanges, 0, 1);  // Prefetch seed changes
                     }
                 }
+                
+                batch_counter++;
+                uint32_t nodeIndex = node->nodeIndex;  // Use index instead of deserializing string!
+
+                placement::NodeMetrics nodeMetrics = p_metrics;
+                placement::NodeMetrics::computeChildMetrics(nodeMetrics, node->seedChanges, state);
+                
+                absl::flat_hash_map<uint64_t, int64_t> incrementalGenomeCounts;
+                if (params.verify_scores) {
+                    incrementalGenomeCounts = p_seed_counts;
+                    for (const auto& [seedHash, parentCount, childCount] : node->seedChanges) {
+                        int64_t delta = childCount - parentCount;
+                        if (delta != 0) {
+                            incrementalGenomeCounts[seedHash] += delta;
+                            if (incrementalGenomeCounts[seedHash] <= 0) {
+                                incrementalGenomeCounts.erase(seedHash);
+                            }
+                        }
+                    }
+                }
+                
+                // NOTE: genomeMagnitudeSquared, genomeUniqueSeedCount, genomeTotalSeedFrequency
+                // are computed incrementally in computeChildMetrics() - NO per-node storage needed!
+
+                double jaccardScore = nodeMetrics.getJaccardScore(state.readUniqueSeedCount);
+                double weightedJaccardScore = nodeMetrics.getWeightedJaccardScore(state.totalReadSeedFrequency);
+                double cosineScore = nodeMetrics.getCosineScore(state.readMagnitude);
+                double presenceJaccardScore = nodeMetrics.getPresenceJaccardScore(state.readUniqueSeedCount);
+                
+                // Update thread-local results (NO LOCKS - parallel performance!)
+                tls.local_result.updateJaccardScore(nodeIndex, jaccardScore, node);
+                tls.local_result.updateWeightedJaccardScore(nodeIndex, weightedJaccardScore, node);
+                tls.local_result.updateCosineScore(nodeIndex, cosineScore, node);
+                tls.local_result.updateJaccardPresenceScore(nodeIndex, presenceJaccardScore, node);
+                // Raw score: Σ(readCount / genomeCount) - rewards unique hits
+                tls.local_result.updateRawSeedMatchScore(nodeIndex, nodeMetrics.rawMatchScore, node);
+                // Hits score uses presence-based intersection count (unique seeds matched)
+                tls.local_result.updateHitsScore(nodeIndex, nodeMetrics.presenceIntersectionCount, node);
+
+                if (!node->children.empty()) {
+                    // Batch append to thread-local storage
+                    tls.next_nodes.insert(tls.next_nodes.end(), node->children.begin(), node->children.end());
+                    tls.next_metrics.insert(tls.next_metrics.end(), node->children.size(), nodeMetrics);
+                    if (params.verify_scores) {
+                        tls.next_seeds.insert(tls.next_seeds.end(), node->children.size(), incrementalGenomeCounts);
+                    }
+                }
+            }
+            nodesProcessed.fetch_add(batch_counter, std::memory_order_relaxed);
+        });
+        
+        size_t currentCount = nodesProcessed.load(std::memory_order_relaxed);
+        static std::atomic<size_t> lastReported{0};
+        size_t last = lastReported.load(std::memory_order_relaxed);
+        if (currentCount / 500 > last / 500) {
+            lastReported.store(currentCount, std::memory_order_relaxed);
+            logging::info("Processed {} nodes", currentCount);
+        }
+        
+        // Parallel Merge Step - Optimized for minimal synchronization
+        std::vector<ThreadLocalData*> active_tls;
+        active_tls.reserve(thread_data.size());
+        for (auto& tls : thread_data) {
+            if (!tls.next_nodes.empty()) active_tls.push_back(&tls);
+        }
+        
+        if (active_tls.empty()) break;
+        
+        // Calculate offsets for parallel merge
+        std::vector<size_t> offsets(active_tls.size() + 1, 0);
+        for (size_t i = 0; i < active_tls.size(); ++i) {
+            offsets[i+1] = offsets[i] + active_tls[i]->next_nodes.size();
+        }
+        size_t total_next = offsets.back();
+        
+        // Resize destination vectors once
+        current_nodes.clear(); current_nodes.resize(total_next);
+        current_metrics.clear(); current_metrics.resize(total_next);
+        if (params.verify_scores) {
+            current_seeds.clear(); current_seeds.resize(total_next);
+        }
+        
+        // Parallel copy/move from thread-local buffers to unified arrays
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, active_tls.size()), 
+            [&](const tbb::blocked_range<size_t>& r) {
+                for (size_t i = r.begin(); i != r.end(); ++i) {
+                    auto* src = active_tls[i];
+                    size_t offset = offsets[i];
+                    
+                    std::copy(src->next_nodes.begin(), src->next_nodes.end(), current_nodes.begin() + offset);
+                    std::copy(src->next_metrics.begin(), src->next_metrics.end(), current_metrics.begin() + offset);
+                    if (params.verify_scores) {
+                        std::move(src->next_seeds.begin(), src->next_seeds.end(), current_seeds.begin() + offset);
+                    }
+                    src->clear();
+                }
+            });
+    }
+    
+    // ========================================
+    // MERGE PHASE: Combine thread-local results into global result
+    // ========================================
+    // This is the KEY optimization: all threads computed scores independently (lock-free),
+    // now we do a single-pass merge with minimal synchronization
+    logging::info("Merging {} thread-local results...", thread_data.size());
+    auto merge_start = std::chrono::high_resolution_clock::now();
+    
+    for (auto& tls : thread_data) {
+        // Merge Jaccard scores
+        if (tls.local_result.bestJaccardNodeIndex != UINT32_MAX) {
+            double tolerance = std::max(result.bestJaccardScore * 0.0001, 1e-9);
+            if (tls.local_result.bestJaccardScore > result.bestJaccardScore + tolerance) {
+                result.bestJaccardScore = tls.local_result.bestJaccardScore;
+                result.bestJaccardNodeIndex = tls.local_result.bestJaccardNodeIndex;
+                result.tiedJaccardNodeIndices = tls.local_result.tiedJaccardNodeIndices;
+            } else if (tls.local_result.bestJaccardScore >= result.bestJaccardScore - tolerance) {
+                // Merge tied nodes
+                result.tiedJaccardNodeIndices.insert(
+                    result.tiedJaccardNodeIndices.end(),
+                    tls.local_result.tiedJaccardNodeIndices.begin(),
+                    tls.local_result.tiedJaccardNodeIndices.end()
+                );
+            }
+        }
+        
+        // Merge Weighted Jaccard scores
+        if (tls.local_result.bestWeightedJaccardNodeIndex != UINT32_MAX) {
+            double tolerance = std::max(result.bestWeightedJaccardScore * 0.0001, 1e-9);
+            if (tls.local_result.bestWeightedJaccardScore > result.bestWeightedJaccardScore + tolerance) {
+                result.bestWeightedJaccardScore = tls.local_result.bestWeightedJaccardScore;
+                result.bestWeightedJaccardNodeIndex = tls.local_result.bestWeightedJaccardNodeIndex;
+                result.tiedWeightedJaccardNodeIndices = tls.local_result.tiedWeightedJaccardNodeIndices;
+            } else if (tls.local_result.bestWeightedJaccardScore >= result.bestWeightedJaccardScore - tolerance) {
+                result.tiedWeightedJaccardNodeIndices.insert(
+                    result.tiedWeightedJaccardNodeIndices.end(),
+                    tls.local_result.tiedWeightedJaccardNodeIndices.begin(),
+                    tls.local_result.tiedWeightedJaccardNodeIndices.end()
+                );
+            }
+        }
+        
+        // Merge Cosine scores
+        if (tls.local_result.bestCosineNodeIndex != UINT32_MAX) {
+            double tolerance = std::max(result.bestCosineScore * 0.0001, 1e-9);
+            if (tls.local_result.bestCosineScore > result.bestCosineScore + tolerance) {
+                result.bestCosineScore = tls.local_result.bestCosineScore;
+                result.bestCosineNodeIndex = tls.local_result.bestCosineNodeIndex;
+                result.tiedCosineNodeIndices = tls.local_result.tiedCosineNodeIndices;
+            } else if (tls.local_result.bestCosineScore >= result.bestCosineScore - tolerance) {
+                result.tiedCosineNodeIndices.insert(
+                    result.tiedCosineNodeIndices.end(),
+                    tls.local_result.tiedCosineNodeIndices.begin(),
+                    tls.local_result.tiedCosineNodeIndices.end()
+                );
+            }
+        }
+        
+        // Merge Presence Jaccard scores
+        if (tls.local_result.bestJaccardPresenceNodeIndex != UINT32_MAX) {
+            if (tls.local_result.bestJaccardPresenceScore > result.bestJaccardPresenceScore) {
+                result.bestJaccardPresenceScore = tls.local_result.bestJaccardPresenceScore;
+                result.bestJaccardPresenceNodeIndex = tls.local_result.bestJaccardPresenceNodeIndex;
+            }
+        }
+        
+        // Merge Raw Seed Match scores
+        if (tls.local_result.bestRawSeedMatchNodeIndex != UINT32_MAX) {
+            if (tls.local_result.bestRawSeedMatchScore > result.bestRawSeedMatchScore) {
+                result.bestRawSeedMatchScore = tls.local_result.bestRawSeedMatchScore;
+                result.bestRawSeedMatchNodeIndex = tls.local_result.bestRawSeedMatchNodeIndex;
+                result.tiedRawSeedMatchNodeIndices = tls.local_result.tiedRawSeedMatchNodeIndices;
+            } else if (tls.local_result.bestRawSeedMatchScore == result.bestRawSeedMatchScore) {
+                result.tiedRawSeedMatchNodeIndices.insert(
+                    result.tiedRawSeedMatchNodeIndices.end(),
+                    tls.local_result.tiedRawSeedMatchNodeIndices.begin(),
+                    tls.local_result.tiedRawSeedMatchNodeIndices.end()
+                );
+            }
+        }
+        
+        // Merge Hits scores
+        if (tls.local_result.maxHitsNodeIndex != UINT32_MAX) {
+            if (tls.local_result.maxHitsInAnyGenome > result.maxHitsInAnyGenome) {
+                result.maxHitsInAnyGenome = tls.local_result.maxHitsInAnyGenome;
+                result.maxHitsNodeIndex = tls.local_result.maxHitsNodeIndex;
+                result.tiedMaxHitsNodeIndices = tls.local_result.tiedMaxHitsNodeIndices;
+            } else if (tls.local_result.maxHitsInAnyGenome == result.maxHitsInAnyGenome) {
+                result.tiedMaxHitsNodeIndices.insert(
+                    result.tiedMaxHitsNodeIndices.end(),
+                    tls.local_result.tiedMaxHitsNodeIndices.begin(),
+                    tls.local_result.tiedMaxHitsNodeIndices.end()
+                );
             }
         }
     }
     
-    // Calculate final scores from current metric components
-    double jaccardScore = 0.0;
-    double cosineScore = 0.0;
-    size_t intersectionCount = 0;
-    
-    // Count intersection for presence/absence Jaccard
-    for (const size_t seedHash : uniqueSeedHashes) {
-        if (state.seedFreqInReads.find(seedHash) != state.seedFreqInReads.end()) {
-            intersectionCount++;
-        }
-    }
-    
-    // Calculate regular Jaccard similarity (presence/absence with frequency weighting)
-    // Denominator for regular Jaccard: sum of read frequencies for seeds that are present in genome
-    int64_t regularJaccardDenominator = 0;
-    
-    // Add contributions from read seeds that are present in genome (intersection + read-only seeds)
-    for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-        auto genomeIt = result.currentAllGenomeSeedCounts.find(seedHash);
-        if (genomeIt != result.currentAllGenomeSeedCounts.end() && genomeIt->second > 0) {
-            // Seed is in intersection - already counted in numerator
-            regularJaccardDenominator += readCount;
-        } else {
-            // Seed is read-only - add to denominator but not in numerator  
-            regularJaccardDenominator += readCount;
-        }
-    }
-    
-    if (regularJaccardDenominator > 0) {
-        jaccardScore = static_cast<double>(result.currentJaccardNumerator) / static_cast<double>(regularJaccardDenominator);
-    }
-    
-    // Calculate weighted Jaccard similarity 
-    // Denominator: sum of max(read_freq, genome_freq) for each seed in union
-    int64_t weightedJaccardDenominator = 0;
-    
-    // Add contributions from all read seeds
-    for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-        auto genomeIt = result.currentAllGenomeSeedCounts.find(seedHash);
-        int64_t genomeCount = (genomeIt != result.currentAllGenomeSeedCounts.end()) ? genomeIt->second : 0;
-        weightedJaccardDenominator += std::max(readCount, genomeCount);
-    }
-    
-    // Add contributions from genome seeds not in reads
-    for (const auto& [seedHash, genomeCount] : result.currentAllGenomeSeedCounts) {
-        if (state.seedFreqInReads.find(seedHash) == state.seedFreqInReads.end()) {
-            weightedJaccardDenominator += genomeCount;
-        }
-    }
-    
-    double weightedJaccardScore = 0.0;
-    if (weightedJaccardDenominator > 0) {
-        weightedJaccardScore = static_cast<double>(result.currentWeightedJaccardNumerator) / static_cast<double>(weightedJaccardDenominator);
-    }
-    
-    // Calculate cosine similarity using tracked genome magnitude
-    double genomeMagnitude = std::sqrt(result.currentGenomeMagnitudeSquared);
-    
-    // Use precomputed read magnitude and tracked genome magnitude
-    if (state.readMagnitude > 0.0 && genomeMagnitude > 0.0) {
-        cosineScore = result.currentCosineNumerator / (state.readMagnitude * genomeMagnitude);
-    }
-    
-    // Calculate presence/absence Jaccard
-    double jaccardPresenceScore = 0.0;
-    size_t totalReadSeeds = state.seedFreqInReads.size();
-    size_t genomeUniqueSeeds = uniqueSeedHashes.size();
-    size_t unionSize = totalReadSeeds + genomeUniqueSeeds - intersectionCount;
-    
-    if (unionSize > 0) {
-        jaccardPresenceScore = static_cast<double>(intersectionCount) / static_cast<double>(unionSize);
-    }
-    
-    // Update PlacementResult with computed scores
-    result.updateJaccardScore(nodeId, jaccardScore);
-    result.updateCosineScore(nodeId, cosineScore);
-    result.updateRawSeedMatchScore(nodeId, result.hitsInThisGenome);
-    result.updateJaccardPresenceScore(nodeId, jaccardPresenceScore);
-    result.updateHitsScore(nodeId, result.hitsInThisGenome);
-    result.updateWeightedScore(nodeId, weightedJaccardScore, 1.0);  // Use weighted Jaccard as weighted score
-    
-    logging::debug("Node {}: Jaccard={:.6f}, WeightedJaccard={:.6f}, Cosine={:.6f}, JaccardPresence={:.6f}, RawMatch={}, "
-                  "intersectionCount={}", 
-                  nodeId, jaccardScore, weightedJaccardScore, cosineScore, jaccardPresenceScore, 
-                  result.hitsInThisGenome, intersectionCount);
-    
-    return {jaccardScore, cosineScore, intersectionCount};
+    auto merge_end = std::chrono::high_resolution_clock::now();
+    auto merge_ms = std::chrono::duration_cast<std::chrono::milliseconds>(merge_end - merge_start).count();
+    logging::info("Thread-local merge completed in {}ms", merge_ms);
 }
 
-
-
-// Helper to reset placement progress counter (for multiple placement calls)
-void resetPlacementProgress();
-
-// Placement helper adapted from mgsr::ThreadsManager::placeLiteHelper
-// Modified to use MgsrGenomeState for multi-metric tracking
-void placeLiteHelper(panmapUtils::LiteNode* node,
-                    placement::MgsrGenomeState& genomeState,
-                    uint32_t& dfsIndex,
-                    const placement::PlacementGlobalState& state,
-                    placement::PlacementResult& result,
-                    const placement::TraversalParams& params) {
-  
-  if (!node) return;
-  
-  // Progress tracking
-  static size_t nodesProcessed = 0;
-  static auto lastProgressTime = std::chrono::high_resolution_clock::now();
-  static size_t totalNodes = 0;
-  static bool needsReset = false;
-  
-  // Allow reset from outside
-  if (needsReset) {
-    nodesProcessed = 0;
-    totalNodes = 0;
-    needsReset = false;
-  }
-  
-  if (nodesProcessed == 0) {
-    // Initialize on first call
-    totalNodes = state.perNodeChanges.size();
-    lastProgressTime = std::chrono::high_resolution_clock::now();
-  }
-  
-  nodesProcessed++;
-  
-  // Log progress every 1M nodes or every 30 seconds
-  auto now = std::chrono::high_resolution_clock::now();
-  auto timeSinceLastLog = std::chrono::duration_cast<std::chrono::seconds>(now - lastProgressTime).count();
-  
-  if (nodesProcessed % 1000000 == 0 || timeSinceLastLog >= 30) {
-    double percentComplete = (100.0 * nodesProcessed) / totalNodes;
-    logging::info("Placement progress: {}/{} nodes ({:.1f}%)", 
-                  nodesProcessed, totalNodes, percentComplete);
-    lastProgressTime = now;
-  }
-  
-  // Mark for reset when we finish (detected when returning to root)
-  if (node->parent == nullptr && nodesProcessed > 1) {
-    needsReset = true;
-  }
-  
-  const std::string& nodeId = node->identifier;
-  
-  // Save current genome state for backtracking (replaces: curNodeSeedScoreBacktrack = curNodeSeedScore)
-  placement::MgsrGenomeState genomeStateBacktrack = genomeState;
-
-  // Get deserialized seed changes for this node
-  if (dfsIndex < state.perNodeChanges.size()) {
-    const auto& nodeSeedChanges = state.perNodeChanges[dfsIndex];
-    
-    // Apply all seed changes for this node
-    for (const auto& seedChange : nodeSeedChanges.seedChanges) {
-      if (seedChange.seedIndex < state.seedHashes.size()) {
-        uint64_t seedHash = state.seedHashes[seedChange.seedIndex];
-        
-        if (seedChange.isDeleted) {
-          updateSimilarityMetricsDel(seedHash, genomeState, state, nodeId);
-        } else {
-          updateSimilarityMetricsAdd(seedHash, genomeState, state, nodeId);
-        }
-      }
-    }
-  }
-  
-  // Calculate and record scores (replaces: nodeSeedScores[node] = curNodeSeedScore)
-  calculateMgsrStyleScores(nodeId, genomeState, state, result, params);
-
-  // Recurse on children (replaces: for (MgsrLiteNode *child : node->collapsedChildren))
-  ++dfsIndex;
-  for (panmapUtils::LiteNode* child : node->children) {
-    placeLiteHelper(child, genomeState, dfsIndex, state, result, params);
-  }
-  
-  // Restore state (replaces: curNodeSeedScore = curNodeSeedScoreBacktrack)
-  genomeState = genomeStateBacktrack;
-  
-  // Second loop: Backtrack seed count map (implicit in genomeState restoration above)
-  // The reference does this explicitly for kminmerOnRefCount, but our approach restores
-  // the entire state via copy, which includes currentSeedCounts
-}
-
-
-    
-void placeLite(placement::PlacementResult &result, 
+void placeLite(PlacementResult &result, 
                        panmapUtils::LiteTree *liteTree,
-                       ::LiteIndex::Reader &mgsrIndex, 
+                       ::capnp::MessageReader &liteIndex, 
                        const std::string &reads1,
                        const std::string &reads2,
-                       std::vector<std::vector<seeding::seed_t>>& readSeeds,
-                       std::vector<std::string>& readSequences,
-                       std::vector<std::string>& readNames,
-                       std::vector<std::string>& readQuals,
                        std::string &outputPath,
-                       const std::string &indexPath,
-                       const std::string &debug_node_id_param,
                        bool verify_scores,
                        panmanUtils::Tree *fullTree) {
+    auto placement_total_start = std::chrono::high_resolution_clock::now();
+    logging::info("Starting lite-index placement");
     
-    logging::info("Starting MGSR-style recursive placement");
-    
-    // Store verify_scores flag in a place accessible to calculateMgsrStyleScores
+    // Store verify_scores flag in a place accessible to score calculation
     if (verify_scores) {
         logging::info("VERIFICATION MODE: Will recompute all scores from scratch at each node");
         if (fullTree == nullptr) {
@@ -1874,313 +749,589 @@ void placeLite(placement::PlacementResult &result,
         }
     }
     
-    auto time_init_start = std::chrono::high_resolution_clock::now();
+    // State initialization moved to after parameter setup
     
-    // Initialize placement global state
-    PlacementGlobalState state;
-    state.kmerSize = mgsrIndex.getK();
-    state.fullTree = fullTree;  // Store full tree pointer for verification mode
+    logging::info("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
     
-    // Deserialize seed hashes upfront (just hashes, no positions needed for lite placement)
-    auto seedInfoReader = mgsrIndex.getSeedInfo();
-    state.seedHashes.reserve(seedInfoReader.size());
-    for (size_t i = 0; i < seedInfoReader.size(); i++) {
-        state.seedHashes.push_back(seedInfoReader[i].getHash());
-    }
-    logging::info("Deserialized {} seed hashes", state.seedHashes.size());
+    auto time_hash_delta_start = std::chrono::high_resolution_clock::now();
+    size_t totalHashDeltas = 0;
     
-    // Deserialize all seed changes upfront (avoid repeated Cap'n Proto deserialization in hot loop)
-    auto perNodeChangesReader = mgsrIndex.getPerNodeChanges();
-    state.perNodeChanges.reserve(perNodeChangesReader.size());
+    auto indexRoot = liteIndex.getRoot<LiteIndex>();
+    auto genomeMagSquaredReader = indexRoot.getGenomeMagnitudeSquared();
+    auto genomeUniqueSeedReader = indexRoot.getGenomeUniqueSeedCount();
+    auto genomeTotalFreqReader = indexRoot.getGenomeTotalSeedFrequency();
     
-    logging::info("Deserializing {} node seed changes...", perNodeChangesReader.size());
-    for (size_t i = 0; i < perNodeChangesReader.size(); i++) {
-        auto nodeChangesReader = perNodeChangesReader[i];
-        NodeSeedChanges nodeSeedChanges;
-        nodeSeedChanges.nodeIndex = nodeChangesReader.getNodeIndex();
+    // OPTIMIZATION: Process nodes in DFS order with direct vector indexing for O(1) access
+    // This eliminates hash map lookup overhead in the hot path
+    const size_t numNodes = liteTree->allLiteNodes.size();
+    
+    // Parallel Pass 1: Count seed changes per node to calculate offsets
+    std::vector<size_t> nodeOffsets(numNodes + 1, 0);
+    
+    std::atomic<size_t> nodesWithChanges(0);
+
+    {
+
         
-        // Decode delta-encoded seed changes
-        const auto& encodedReader = nodeChangesReader.getSeedChangesDeltaEncoded();
-        const auto& deltaIndicesReader = encodedReader.getDeltaIndices();
-        const auto& largeDeltasReader = encodedReader.getLargeDeltas();
-        const auto& deletionFlagsReader = encodedReader.getDeletionFlags();
-        
-        size_t numDeltas = deltaIndicesReader.size() + 1;  // +1 for first absolute index
-        nodeSeedChanges.seedChanges.reserve(numDeltas);
-        
-        // Decode first seed index
-        uint32_t currentIndex = encodedReader.getFirstSeedIndex();
-        bool isDeleted = (deletionFlagsReader.size() > 0) && ((deletionFlagsReader[0] & 1) != 0);
-        nodeSeedChanges.seedChanges.push_back({currentIndex, isDeleted});
-        
-        // Decode remaining indices using deltas
-        size_t largeDeltaIdx = 0;
-        for (size_t j = 0; j < deltaIndicesReader.size(); j++) {
-            uint16_t delta = deltaIndicesReader[j];
-            
-            if (delta == 0xFFFF) {
-                delta = largeDeltasReader[largeDeltaIdx++];
+        if (!indexRoot.hasSeedChangeHashes() || !indexRoot.hasSeedChangeParentCounts() || 
+            !indexRoot.hasSeedChangeChildCounts() || !indexRoot.hasNodeChangeOffsets()) {
+             throw std::runtime_error("Index missing required V3 fields (seedChangeHashes, etc). V2 is no longer supported.");
+        }
+
+        logging::info("Using VERSION 3 struct-of-arrays format from index (optimal parallel access)");
+        auto indexOffsets = indexRoot.getNodeChangeOffsets();
+        if (indexOffsets.size() >= numNodes + 1) {
+            for (size_t i = 0; i <= numNodes; ++i) {
+                nodeOffsets[i] = indexOffsets[i];
             }
-            
-            currentIndex += delta;
-            
-            // Extract deletion flag from packed bits
-            size_t bitPos = j + 1;
-            size_t byteIdx = bitPos / 8;
-            size_t bitIdx = bitPos % 8;
-            isDeleted = (byteIdx < deletionFlagsReader.size()) && 
-                        ((deletionFlagsReader[byteIdx] & (1 << bitIdx)) != 0);
-            
-            nodeSeedChanges.seedChanges.push_back({currentIndex, isDeleted});
+        } else {
+             throw std::runtime_error(fmt::format("Struct-of-arrays format offsets size mismatch: {} vs {}", indexOffsets.size(), numNodes + 1));
         }
+        totalHashDeltas = nodeOffsets[numNodes];
         
-        state.perNodeChanges.push_back(std::move(nodeSeedChanges));
-    }
-    logging::info("Deserialized {} seed changes across {} nodes", 
-                  std::accumulate(state.perNodeChanges.begin(), state.perNodeChanges.end(), 0UL,
-                                  [](size_t sum, const auto& nc) { return sum + nc.seedChanges.size(); }),
-                  state.perNodeChanges.size());
-    
-    state.liteNodes = mgsrIndex.getLiteTree().getLiteNodes();
-    
-    // Set traversal parameters
-    TraversalParams params;
-    params.k = mgsrIndex.getK();
-    params.s = mgsrIndex.getS();
-    params.t = mgsrIndex.getT();
-    params.l = mgsrIndex.getL();  // k-minimizer window size
-    params.open = mgsrIndex.getOpen();
-    params.debug_node_id = debug_node_id_param;
-    params.verify_scores = verify_scores; // Pass flag through params
-    
-    auto time_init_end = std::chrono::high_resolution_clock::now();
-    auto duration_init = std::chrono::duration_cast<std::chrono::milliseconds>(
-        time_init_end - time_init_start);
-    logging::info("[TIME] Placement initialization: {}ms", duration_init.count());
-    
-    // Process reads and extract seeds using MGSR method
-    auto time_read_start = std::chrono::high_resolution_clock::now();
-    std::vector<std::string> allReadSequences;
-    
-    if (!reads1.empty()) {
-        mgsr::extractReadSequences(reads1, reads2, allReadSequences);
-    } else if (!readSequences.empty()) {
-        allReadSequences = readSequences;
-    }
-    
-    // Build MgsrLiteTree for ThreadsManager
-    mgsr::MgsrLiteTree mgsrLiteTree;
-    mgsrLiteTree.initialize(mgsrIndex, 1, false, false);
-    
-    uint32_t maskReads = 0;  // No masking for old placement
-    bool progressBar = false;
-    bool lowMemory = false;
-    mgsr::ThreadsManager threadsManager(&mgsrLiteTree, 1, maskReads, progressBar, lowMemory);
-    threadsManager.initializeMGSRIndex(mgsrIndex);
-    
-    uint32_t l = mgsrIndex.getL();
-    logging::info("Index parameters: k={}, s={}, t={}, l={}", 
-                  params.k, params.s, params.t, l);
-    
-    // If l=0, use raw syncmers instead of k-minimizers (parallelized with deduplication)
-    if (l == 0) {
-        logging::info("l=0: Using raw syncmers instead of k-minimizers");
+        // Allocate backing storage once
+        liteTree->allSeedChanges.resize(totalHashDeltas);
         
-        // Step 1: Sort reads to group duplicates together
-        std::vector<std::pair<std::string, size_t>> sortedReads;
-        sortedReads.reserve(allReadSequences.size());
-        for (size_t i = 0; i < allReadSequences.size(); i++) {
-            sortedReads.emplace_back(allReadSequences[i], i);
-        }
-        tbb::parallel_sort(sortedReads.begin(), sortedReads.end(), 
-            [](const auto& a, const auto& b) { return a.first < b.first; });
+        // Parallel Pass 2: Populate data and assign spans
         
-        // Step 2: Build dupReadsIndex - map unique sequences to their duplicate indices
-        std::vector<std::pair<std::string, std::vector<size_t>>> dupReadsIndex;
-        for (size_t i = 0; i < sortedReads.size(); ) {
-            std::vector<size_t> duplicates;
-            const std::string& uniqueSeq = sortedReads[i].first;
-            while (i < sortedReads.size() && sortedReads[i].first == uniqueSeq) {
-                duplicates.push_back(sortedReads[i].second);
-                i++;
-            }
-            dupReadsIndex.emplace_back(uniqueSeq, std::move(duplicates));
-        }
+        // VERSION 3: Struct-of-arrays format - THREE separate primitive arrays
+        // This is OPTIMAL for parallel access! Each thread reads contiguous memory.
+        auto hashesReader = indexRoot.getSeedChangeHashes();
+        auto parentCountsReader = indexRoot.getSeedChangeParentCounts();
+        auto childCountsReader = indexRoot.getSeedChangeChildCounts();
         
-        logging::info("Deduplication: {} reads → {} unique sequences", 
-                      allReadSequences.size(), dupReadsIndex.size());
+        logging::info("Struct-of-arrays format: {} hashes, {} parent counts, {} child counts",
+                        hashesReader.size(), parentCountsReader.size(), childCountsReader.size());
         
-        // Step 3: Extract syncmers from unique sequences in parallel
-        size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
-        std::vector<absl::flat_hash_map<size_t, int64_t>> threadLocalMaps(num_cpus);
-        
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, dupReadsIndex.size()), 
+        // Phase 2a: Parallel read of THREE primitive arrays (optimal cache-friendly access!)
+        // Each array is contiguous in memory, so threads can read sequential chunks without contention.
+        const size_t GRAIN_SIZE = 262144; // 256K items per chunk
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, totalHashDeltas, GRAIN_SIZE), 
             [&](const tbb::blocked_range<size_t>& range) {
-                size_t threadId = tbb::this_task_arena::current_thread_index();
-                auto& localMap = threadLocalMaps[threadId];
-                
                 for (size_t i = range.begin(); i < range.end(); ++i) {
-                    const auto& [seq, duplicates] = dupReadsIndex[i];
-                    int64_t multiplicity = duplicates.size();
-                    
-                    const auto& syncmers = seeding::rollingSyncmers(seq, params.k, params.s, params.open, params.t, false);
-                    for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : syncmers) {
-                        if (!isSyncmer) continue;
-                        localMap[kmerHash] += multiplicity;
-                    }
+                    liteTree->allSeedChanges[i] = std::make_tuple(
+                        hashesReader[i],
+                        parentCountsReader[i],
+                        childCountsReader[i]
+                    );
                 }
             });
         
-        // Step 4: Merge thread-local maps into global map
-        for (const auto& localMap : threadLocalMaps) {
-            for (const auto& [hash, count] : localMap) {
-                state.seedFreqInReads[hash] += count;
-            }
+        // Phase 2b: Assign spans to nodes (embarrassingly parallel, no I/O)
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes), 
+            [&](const tbb::blocked_range<size_t>& range) {
+                size_t localNodesWithChanges = 0;
+                for (size_t dfsIndex = range.begin(); dfsIndex < range.end(); ++dfsIndex) {
+                    auto* liteNode = liteTree->dfsIndexToNode[dfsIndex];
+                    size_t offset = nodeOffsets[dfsIndex];
+                    size_t size = nodeOffsets[dfsIndex+1] - offset;
+                    
+                    if (size > 0) {
+                        liteNode->seedChanges = std::span<std::tuple<uint64_t, int64_t, int64_t>>(
+                            liteTree->allSeedChanges.data() + offset, size);
+                        localNodesWithChanges++;
+                    } else {
+                        liteNode->seedChanges = std::span<std::tuple<uint64_t, int64_t, int64_t>>();
+                    }
+                }
+                nodesWithChanges.fetch_add(localNodesWithChanges, std::memory_order_relaxed);
+            });
+    }
+    
+    auto time_hash_delta_end = std::chrono::high_resolution_clock::now();
+    auto duration_hash_delta = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_hash_delta_end - time_hash_delta_start);
+    logging::info("[PLACEMENT TIMING]   Hash delta loading: {}ms", duration_hash_delta.count());
+    logging::info("Loaded {} hash deltas from index", totalHashDeltas);
+    
+    // Set traversal parameters
+    TraversalParams params;
+    params.k = indexRoot.getK();
+    params.s = indexRoot.getS();
+    params.t = indexRoot.getT();
+    params.l = indexRoot.getL();
+    params.open = indexRoot.getOpen();
+    params.verify_scores = verify_scores;
+    
+    std::vector<std::string> allReadSequences;
+    
+    // Initialize placement global state
+    PlacementGlobalState state;
+    state.kmerSize = indexRoot.getK();
+    state.fullTree = fullTree;  // Store full tree pointer for verification mode
+    state.liteNodes = liteTree->dfsIndexToNode;
+
+    auto time_read_processing_start = std::chrono::high_resolution_clock::now();
+    {
+        if (!reads1.empty()) {
+            extractReadSequences(reads1, reads2, allReadSequences);
         }
         
-        logging::info("Extracted {} unique syncmers from {} reads ({} unique patterns)", 
-                      state.seedFreqInReads.size(), allReadSequences.size(), dupReadsIndex.size());
-    } else {
-        // Use MGSR's k-minimizer processing
-        uint32_t maskSeedThreshold = 0;  // No masking for old placement
-        threadsManager.initializeQueryData(allReadSequences, maskSeedThreshold, false);
+        uint32_t l = indexRoot.getL();
+        logging::info("Index parameters: k={}, s={}, t={}, l={}", 
+                    params.k, params.s, params.t, l);
         
-        // Debug: Check what we got from MGSR processing
-        logging::info("MGSR processed {} unique read patterns from {} total reads", 
-                      threadsManager.reads.size(), allReadSequences.size());
-        
-        size_t readsWithSeeds = 0;
-        size_t totalKminmers = 0;
-        for (const auto& read : threadsManager.reads) {
-            if (!read.uniqueSeedmers.empty()) {
-                readsWithSeeds++;
-                for (const auto& [hash, positions] : read.uniqueSeedmers) {
-                    totalKminmers += positions.size();
+        if (l == 0) {
+            logging::info("l=0: Using raw syncmers instead of k-minimizers");
+            
+            std::vector<std::pair<std::string, size_t>> sortedReads;
+            auto time_dedup_start = std::chrono::high_resolution_clock::now();
+            {
+                sortedReads.reserve(allReadSequences.size());
+                for (size_t i = 0; i < allReadSequences.size(); i++) {
+                    sortedReads.emplace_back(allReadSequences[i], i);
+                }
+                tbb::parallel_sort(sortedReads.begin(), sortedReads.end(), 
+                    [](const auto& a, const auto& b) { return a.first < b.first; });
+            }
+            auto time_dedup_end = std::chrono::high_resolution_clock::now();
+            auto duration_dedup = std::chrono::duration_cast<std::chrono::milliseconds>(
+                time_dedup_end - time_dedup_start);
+            logging::info("[PLACEMENT TIMING]     Read deduplication: {}ms", duration_dedup.count());
+            
+            // Estimate unique count (typically 50-90% unique for paired-end reads)
+            std::vector<std::pair<std::string, std::vector<size_t>>> dupReadsIndex;
+            
+            if (!sortedReads.empty()) {
+                // Parallel identification of unique sequence boundaries
+                std::vector<uint8_t> is_new_seq(sortedReads.size());
+                is_new_seq[0] = 1;
+                
+                tbb::parallel_for(tbb::blocked_range<size_t>(1, sortedReads.size()), 
+                    [&](const tbb::blocked_range<size_t>& range) {
+                        for (size_t i = range.begin(); i < range.end(); ++i) {
+                            is_new_seq[i] = (sortedReads[i].first != sortedReads[i-1].first) ? 1 : 0;
+                        }
+                    });
+                
+                std::vector<size_t> unique_starts;
+                unique_starts.reserve(sortedReads.size() / 2);
+                for (size_t i = 0; i < is_new_seq.size(); ++i) {
+                    if (is_new_seq[i]) unique_starts.push_back(i);
+                }
+                unique_starts.push_back(sortedReads.size());
+                
+                dupReadsIndex.resize(unique_starts.size() - 1);
+                
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, unique_starts.size() - 1), 
+                    [&](const tbb::blocked_range<size_t>& range) {
+                        for (size_t i = range.begin(); i < range.end(); ++i) {
+                            size_t start = unique_starts[i];
+                            size_t end = unique_starts[i+1];
+                            
+                            std::vector<size_t> duplicates;
+                            duplicates.reserve(end - start);
+                            for (size_t j = start; j < end; ++j) {
+                                duplicates.push_back(sortedReads[j].second);
+                            }
+                            dupReadsIndex[i] = std::make_pair(sortedReads[start].first, std::move(duplicates));
+                        }
+                    });
+            }
+            
+            logging::info("Deduplication: {} reads → {} unique sequences", 
+                        allReadSequences.size(), dupReadsIndex.size());
+            
+            auto time_seed_extract_start = std::chrono::high_resolution_clock::now();
+            {
+                size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+                std::vector<absl::flat_hash_map<size_t, int64_t>> threadLocalMaps(num_cpus);
+                
+                // Pre-allocate capacity based on empirical analysis to eliminate malloc overhead
+                // Profiler shows 14% time in malloc (7.2% consolidate + 6.9% perturb)
+                // Formula: estimate seeds/read * reads/thread * load_factor_headroom
+                const size_t avg_seeds_per_read = 50; // Conservative estimate for syncmers
+                const size_t reads_per_thread = (dupReadsIndex.size() + num_cpus - 1) / num_cpus;
+                const size_t estimated_seeds = avg_seeds_per_read * reads_per_thread;
+                // Reserve 1.5x for hash table load factor (typically 0.875 max)
+                const size_t reserve_capacity = (estimated_seeds * 3) / 2;
+                
+                for (auto& localMap : threadLocalMaps) {
+                    localMap.reserve(reserve_capacity);
+                }
+                
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, dupReadsIndex.size()), 
+                    [&](const tbb::blocked_range<size_t>& range) {
+                        size_t threadId = tbb::this_task_arena::current_thread_index();
+                        auto& localMap = threadLocalMaps[threadId];
+                        
+                        // Process reads in this thread's range
+                        for (size_t i = range.begin(); i < range.end(); ++i) {
+                            const auto& [seq, duplicates] = dupReadsIndex[i];
+                            const int64_t multiplicity = static_cast<int64_t>(duplicates.size());
+                            
+                            const auto& syncmers = seeding::rollingSyncmers(seq, params.k, params.s, params.open, params.t, false);
+                            for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : syncmers) {
+                                if (!isSyncmer) [[unlikely]] continue;
+                                localMap[kmerHash] += multiplicity;
+                            }
+                        }
+                    });
+                
+                // Calculate exact size needed for final merge to avoid any resizing
+                size_t exact_total_seeds = 0;
+                for (const auto& localMap : threadLocalMaps) {
+                    exact_total_seeds += localMap.size();
+                }
+                
+                // Reserve with headroom for hash table load factor
+                // absl::flat_hash_map maintains load factor ~0.875, so reserve 1.15x
+                state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
+                
+                // Parallel merge: each thread merges its own map into the final result
+                // Use atomic operations or partitioned hash ranges
+                // For simplicity, merge serially since it's fast (< 100ms typically)
+                // The extraction phase is the real bottleneck, not the merge
+                for (const auto& localMap : threadLocalMaps) {
+                    for (const auto& [hash, count] : localMap) {
+                        state.seedFreqInReads[hash] += count;
+                    }
                 }
             }
-        }
-        logging::info("Reads with k-minimizers: {}/{}, total k-minimizers: {}", 
-                      readsWithSeeds, threadsManager.reads.size(), totalKminmers);
-        
-        for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
-            const auto& read = threadsManager.reads[i];
-            for (const auto& [kminmerHash, positions] : read.uniqueSeedmers) {
-                // Count each unique k-minimizer occurrence
-                state.seedFreqInReads[kminmerHash] += positions.size() * threadsManager.readSeedmersDuplicatesIndex[i].size();
+            auto time_seed_extract_end = std::chrono::high_resolution_clock::now();
+            auto duration_seed_extract = std::chrono::duration_cast<std::chrono::milliseconds>(
+                time_seed_extract_end - time_seed_extract_start);
+            logging::info("[PLACEMENT TIMING]     Seed extraction: {}ms", duration_seed_extract.count());
+            
+            logging::info("Extracted {} unique syncmers from {} reads ({} unique patterns)", 
+                        state.seedFreqInReads.size(), allReadSequences.size(), dupReadsIndex.size());
+            
+        } else {
+            auto time_kminimizer_start = std::chrono::high_resolution_clock::now();
+            
+            // Deduplicate reads first (same as l=0 case)
+            std::vector<std::pair<std::string, size_t>> sortedReads;
+            sortedReads.reserve(allReadSequences.size());
+            for (size_t i = 0; i < allReadSequences.size(); i++) {
+                sortedReads.emplace_back(allReadSequences[i], i);
             }
+            tbb::parallel_sort(sortedReads.begin(), sortedReads.end(), 
+                [](const auto& a, const auto& b) { return a.first < b.first; });
+
+            std::vector<std::pair<std::string, std::vector<size_t>>> dupReadsIndex;
+            if (!sortedReads.empty()) {
+                std::vector<uint8_t> is_new_seq(sortedReads.size());
+                is_new_seq[0] = 1;
+                tbb::parallel_for(tbb::blocked_range<size_t>(1, sortedReads.size()), 
+                    [&](const tbb::blocked_range<size_t>& range) {
+                        for (size_t i = range.begin(); i < range.end(); ++i) {
+                            is_new_seq[i] = (sortedReads[i].first != sortedReads[i-1].first) ? 1 : 0;
+                        }
+                    });
+                
+                std::vector<size_t> unique_starts;
+                unique_starts.reserve(sortedReads.size() / 2);
+                for (size_t i = 0; i < is_new_seq.size(); ++i) {
+                    if (is_new_seq[i]) unique_starts.push_back(i);
+                }
+                unique_starts.push_back(sortedReads.size());
+                
+                dupReadsIndex.resize(unique_starts.size() - 1);
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, unique_starts.size() - 1), 
+                    [&](const tbb::blocked_range<size_t>& range) {
+                        for (size_t i = range.begin(); i < range.end(); ++i) {
+                            size_t start = unique_starts[i];
+                            size_t end = unique_starts[i+1];
+                            std::vector<size_t> duplicates;
+                            duplicates.reserve(end - start);
+                            for (size_t j = start; j < end; ++j) {
+                                duplicates.push_back(sortedReads[j].second);
+                            }
+                            dupReadsIndex[i] = std::make_pair(sortedReads[start].first, std::move(duplicates));
+                        }
+                    });
+            }
+
+            logging::info("Deduplication: {} reads → {} unique sequences", 
+                        allReadSequences.size(), dupReadsIndex.size());
+
+            // Extract k-min-mers in parallel
+            size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+            std::vector<absl::flat_hash_map<size_t, int64_t>> threadLocalMaps(num_cpus);
+            
+            // Estimate capacity
+            const size_t avg_kminmers_per_read = 15;
+            const size_t reads_per_thread = (dupReadsIndex.size() + num_cpus - 1) / num_cpus;
+            const size_t estimated_kminmers = avg_kminmers_per_read * reads_per_thread;
+            const size_t reserve_capacity = (estimated_kminmers * 3) / 2;
+            
+            for (auto& localMap : threadLocalMaps) {
+                localMap.reserve(reserve_capacity);
+            }
+
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, dupReadsIndex.size()), 
+                [&](const tbb::blocked_range<size_t>& range) {
+                    size_t threadId = tbb::this_task_arena::current_thread_index();
+                    auto& localMap = threadLocalMaps[threadId];
+                    
+                    for (size_t i = range.begin(); i < range.end(); ++i) {
+                        const auto& [seq, duplicates] = dupReadsIndex[i];
+                        const int64_t multiplicity = static_cast<int64_t>(duplicates.size());
+                        
+                        const auto& syncmers = seeding::rollingSyncmers(seq, params.k, params.s, params.open, params.t, false);
+                        
+                        if (syncmers.size() < params.l) continue;
+
+                        // Special case for l=1: just use syncmer hashes directly
+                        if (params.l == 1) {
+                            for (const auto& syncmer : syncmers) {
+                                size_t seedHash = std::get<0>(syncmer);
+                                localMap[seedHash] += multiplicity;
+                            }
+                            continue;
+                        }
+
+                        size_t forwardRolledHash = 0;
+                        size_t reverseRolledHash = 0;
+                        
+                        // First k-min-mer
+                        for (size_t j = 0; j < params.l; ++j) {
+                            forwardRolledHash = seeding::rol(forwardRolledHash, params.k) ^ std::get<0>(syncmers[j]);
+                            reverseRolledHash = seeding::rol(reverseRolledHash, params.k) ^ std::get<0>(syncmers[params.l-j-1]);
+                        }
+
+                        if (forwardRolledHash != reverseRolledHash) {
+                            size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+                            localMap[minHash] += multiplicity;
+                        }
+
+                        // Rest of k-min-mers
+                        for (size_t j = 1; j < syncmers.size() - params.l + 1; ++j) {
+                            const size_t& prevSyncmerHash = std::get<0>(syncmers[j-1]);
+                            const size_t& nextSyncmerHash = std::get<0>(syncmers[j+params.l-1]);
+                            
+                            forwardRolledHash = seeding::rol(forwardRolledHash, params.k) ^ seeding::rol(prevSyncmerHash, params.k * params.l) ^ nextSyncmerHash;
+                            reverseRolledHash = seeding::ror(reverseRolledHash, params.k) ^ seeding::ror(prevSyncmerHash, params.k) ^ seeding::rol(nextSyncmerHash, params.k * (params.l-1));
+
+                            if (forwardRolledHash != reverseRolledHash) {
+                                size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+                                localMap[minHash] += multiplicity;
+                            }
+                        }
+                    }
+                });
+
+            // Merge results
+            size_t exact_total_seeds = 0;
+            for (const auto& localMap : threadLocalMaps) {
+                exact_total_seeds += localMap.size();
+            }
+            state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
+            
+            for (const auto& localMap : threadLocalMaps) {
+                for (const auto& [hash, count] : localMap) {
+                    state.seedFreqInReads[hash] += count;
+                }
+            }
+            
+            auto time_kminimizer_end = std::chrono::high_resolution_clock::now();
+            auto duration_kminimizer = std::chrono::duration_cast<std::chrono::milliseconds>(
+                time_kminimizer_end - time_kminimizer_start);
+            logging::info("[PLACEMENT TIMING]     K-minimizer extraction: {}ms", duration_kminimizer.count());
+            logging::info("Extracted {} unique k-minimizers from {} reads", 
+                        state.seedFreqInReads.size(), allReadSequences.size());
         }
+    }
+    auto time_read_processing_end = std::chrono::high_resolution_clock::now();
+    auto duration_read_processing = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_read_processing_end - time_read_processing_start);
+    logging::info("[PLACEMENT TIMING]   Total read processing: {}ms", duration_read_processing.count());
+    
+    auto time_magnitude_start = std::chrono::high_resolution_clock::now();
+    {
+
+        state.totalReadSeedFrequency = 0;
+        state.readUniqueSeedCount = state.seedFreqInReads.size();
         
-        logging::info("Extracted {} unique k-minimizers from {} reads ({} unique read patterns)", 
-                      state.seedFreqInReads.size(), allReadSequences.size(), threadsManager.reads.size());
+        // Compute read magnitude and total frequency
+        // Note: seedFreqInReads map serves as both frequency storage and O(1) membership test
+        for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
+            state.readMagnitude += static_cast<double>(readCount * readCount);
+            state.totalReadSeedFrequency += readCount;
+        }
+        state.readMagnitude = std::sqrt(state.readMagnitude);
+        logging::info("Precomputed read magnitude: {:.6f}, total read seed frequency: {}, unique read seeds: {}", 
+                    state.readMagnitude, state.totalReadSeedFrequency, state.readUniqueSeedCount);
     }
+    auto time_magnitude_end = std::chrono::high_resolution_clock::now();
+    auto duration_magnitude = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_magnitude_end - time_magnitude_start);
+    logging::info("[PLACEMENT TIMING]   Read magnitude precomputation: {}ms", duration_magnitude.count());
     
-    auto time_read_end = std::chrono::high_resolution_clock::now();
-    auto duration_read = std::chrono::duration_cast<std::chrono::milliseconds>(
-        time_read_end - time_read_start);
-    logging::info("[TIME] Read processing & seed extraction: {}ms", duration_read.count());
-    
-    // Precompute read magnitude for cosine similarity and total read seed frequency
-    auto time_precomp_start = std::chrono::high_resolution_clock::now();
-    state.totalReadSeedFrequency = 0;
-    for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-        state.readMagnitude += static_cast<double>(readCount * readCount);
-        state.totalReadSeedFrequency += readCount;
-    }
-    state.readMagnitude = std::sqrt(state.readMagnitude);
-    logging::info("Precomputed read magnitude: {:.6f}, total read seed frequency: {}", 
-                  state.readMagnitude, state.totalReadSeedFrequency);
-    
-    auto time_precomp_end = std::chrono::high_resolution_clock::now();
-    auto duration_precomp = std::chrono::duration_cast<std::chrono::milliseconds>(
-        time_precomp_end - time_precomp_start);
-    if (duration_precomp.count() > 0) {
-        logging::info("[TIME] Magnitude precomputation: {}ms", duration_precomp.count());
-    }
-    
-    // Set root pointer in state
     state.root = liteTree->root;
-    
-    // Initialize MGSR-style global genome state (single instance, modified in-place)
-    // Start with empty state - root will be initialized by placeLiteHelper
-    placement::MgsrGenomeState globalGenomeState;
-    
-    // Initialize denominators for empty genome state:
-    // - Weighted Jaccard denominator = sum of all read frequencies (max when genome is empty)
-    // - Jaccard denominator starts at 0 (no genome-only seeds yet)
-    // - Presence union count tracks GENOME-ONLY seeds (starts at 0, read seeds added via formula)
+
+    placement::NodeMetrics rootMetrics;
+    // CRITICAL: Root starts with empty genome (all genome metrics = 0) but with
+    // read-based metrics pre-initialized. This represents the state BEFORE the root node
+    // processes its mutations (i.e., a hypothetical empty ancestor genome).
+    // The root's seed changes will then apply deltas to compute the actual root state.
+    //
+    // Pre-initialize read-based components:
+    // - weightedJaccardDenominator starts with sum of read frequencies (max(read, 0) = read for all seeds)
+    // All genome-based components start at 0 and will be updated via computeChildMetrics.
     for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-        globalGenomeState.currentWeightedJaccardDenominator += readCount;
+        // Note: weightedJaccardDenominator is now computed from pre-indexed genomeTotalSeedFrequency
     }
-    globalGenomeState.currentPresenceUnionCount = 0;  // Genome-only seeds (none initially)
-    globalGenomeState.currentJaccardDenominator = 0;  // No genome-only seeds initially
-    
-    logging::debug("Initialized: weighted Jaccard denom={}, presence union genome-only={}, Jaccard denom={}", 
-                  globalGenomeState.currentWeightedJaccardDenominator,
-                  globalGenomeState.currentPresenceUnionCount,
-                  globalGenomeState.currentJaccardDenominator);
-    
+
     uint32_t currentDfsIndex = 0;
-    
-    logging::info("Starting MGSR-style recursive placement traversal with {} tree nodes", 
+
+    logging::info("Starting BFS placement traversal with {} tree nodes",
                   liteTree->allLiteNodes.size());
-    
-    // Start recursive traversal from root (dfsIndex=0)
-    // placeLiteHelper will apply root's changes and calculate its scores
+
     auto time_traversal_start = std::chrono::high_resolution_clock::now();
     if (liteTree && liteTree->root) {
-        placeLiteHelper(liteTree->root, globalGenomeState, currentDfsIndex, state, result, params);
+        std::vector<panmapUtils::LiteNode*> root_level_nodes;
+        std::vector<placement::NodeMetrics> root_level_metrics;
+        std::vector<absl::flat_hash_map<uint64_t, int64_t>> root_level_seed_counts;
+
+        // Start with the root node itself (not just its children)
+        root_level_nodes.push_back(liteTree->root);
+        root_level_metrics.push_back(rootMetrics);
+        if (params.verify_scores) {
+            root_level_seed_counts.emplace_back();
+        }
+        
+        std::atomic<size_t> nodesProcessed(0);
+        placeLiteHelperBFS(root_level_nodes, root_level_metrics, root_level_seed_counts, state, result, params, nodesProcessed);
+
+        // Lazy ID resolution: Only deserialize winning node IDs (eliminates ~1800ms overhead!)
+        result.resolveNodeIds(liteTree);
+        
     } else {
         logging::err("LiteTree or root is null, cannot perform placement");
         return;
     }
-    
     auto time_traversal_end = std::chrono::high_resolution_clock::now();
     auto duration_traversal = std::chrono::duration_cast<std::chrono::milliseconds>(
         time_traversal_end - time_traversal_start);
-    logging::info("[TIME] Tree traversal & scoring: {}ms", duration_traversal.count());
+    logging::info("[PLACEMENT TIMING]   Tree traversal: {}ms", duration_traversal.count());
     
-    // Performance metrics
     result.totalReadsProcessed = allReadSequences.size();
     
-    // Write placements.tsv file with all metrics
-    // outputPath is actually the prefix directory, not a filename
+    // ==========================================================================
+    // Store minimal alignment data (paths + seed frequencies only)
+    // Full read data will be re-extracted during alignment to save memory
+    // ==========================================================================
+    {
+        result.reads1Path = reads1;
+        result.reads2Path = reads2;
+        result.seedFreqInReads = std::move(state.seedFreqInReads);
+        result.k = params.k;
+        result.s = params.s;
+        result.t = params.t;
+        result.open = params.open;
+        
+        logging::info("Stored alignment parameters: k={}, s={}, t={}, open={}", 
+                     result.k, result.s, result.t, result.open);
+    }
+    
+    auto time_write_start = std::chrono::high_resolution_clock::now();
     std::string placementsFilePath = outputPath;
     std::ofstream placementsFile(placementsFilePath);
     if (placementsFile.is_open()) {
-        // Write header
         placementsFile << "metric\tscore\thits\tnodes\n";
         
-        // Write raw matches (sum of read frequencies for matched seeds)
+        // Raw score - join all tied nodes with comma
         placementsFile << "raw\t" << result.bestRawSeedMatchScore 
-                      << "\t" << result.maxHitsInAnyGenome
-                      << "\t" << result.bestRawSeedMatchNodeId << "\n";
+                      << "\t" << result.maxHitsInAnyGenome << "\t";
+        if (!result.tiedRawSeedMatchNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedRawSeedMatchNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedRawSeedMatchNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestRawSeedMatchNodeId;
+        }
+        placementsFile << "\n";
         
-        // Write jaccard (regular Jaccard with frequency weighting)
-        placementsFile << "jaccard\t" << std::fixed << std::setprecision(6) << result.bestJaccardScore
-                      << "\t\t" << result.bestJaccardNodeId << "\n";
+        // Jaccard score - join all tied nodes with comma
+        placementsFile << "jaccard\t" << std::fixed << std::setprecision(6) << result.bestJaccardScore << "\t\t";
+        if (!result.tiedJaccardNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedJaccardNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedJaccardNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestJaccardNodeId;
+        }
+        placementsFile << "\n";
         
-        // Write cosine similarity
-        placementsFile << "cosine\t" << std::fixed << std::setprecision(6) << result.bestCosineScore
-                      << "\t\t" << result.bestCosineNodeId << "\n";
+        // Cosine score - join all tied nodes with comma
+        placementsFile << "cosine\t" << std::fixed << std::setprecision(6) << result.bestCosineScore << "\t\t";
+        if (!result.tiedCosineNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedCosineNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedCosineNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestCosineNodeId;
+        }
+        placementsFile << "\n";
         
-        // Write weighted Jaccard
-        placementsFile << "weighted_jaccard\t" << std::fixed << std::setprecision(6) << result.bestWeightedJaccardScore
-                      << "\t\t" << result.bestWeightedJaccardNodeId << "\n";
+        // Weighted Jaccard score - join all tied nodes with comma
+        placementsFile << "weighted_jaccard\t" << std::fixed << std::setprecision(6) << result.bestWeightedJaccardScore << "\t\t";
+        if (!result.tiedWeightedJaccardNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedWeightedJaccardNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedWeightedJaccardNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestWeightedJaccardNodeId;
+        }
+        placementsFile << "\n";
         
         placementsFile.close();
         logging::info("Wrote placement results to {}", placementsFilePath);
     } else {
         logging::err("Failed to open placements file: {}", placementsFilePath);
     }
+    auto time_write_end = std::chrono::high_resolution_clock::now();
+    auto duration_write = std::chrono::duration_cast<std::chrono::milliseconds>(
+        time_write_end - time_write_start);
+    logging::info("[PLACEMENT TIMING]   Result file writing: {}ms", duration_write.count());
     
-    logging::info("MGSR-style placement completed. Best Jaccard score: {} (node: {})", 
+    auto placement_total_end = std::chrono::high_resolution_clock::now();
+    auto duration_placement_total = std::chrono::duration_cast<std::chrono::milliseconds>(
+        placement_total_end - placement_total_start);
+    
+    logging::info("Placement completed. Best Jaccard score: {} (node: {})", 
                  result.bestJaccardScore, result.bestJaccardNodeId);
+    if (result.tiedJaccardNodeIndices.size() > 1) {
+        double jaccard_tol = std::max(result.bestJaccardScore * 0.0001, 1e-9);
+        logging::info("  {} nodes tied for best Jaccard score (within relative tolerance {:.2e})", 
+                     result.tiedJaccardNodeIndices.size(), jaccard_tol);
+    }
+    
+    logging::info("\n=== PLACEMENT INTERNAL TIMING BREAKDOWN ===");
+    logging::info("HashDeltaLoading: {}ms", duration_hash_delta.count());
+    logging::info("ReadProcessing: {}ms", duration_read_processing.count());
+    logging::info("ReadMagnitude: {}ms", duration_magnitude.count());
+    logging::info("TreeTraversal: {}ms", duration_traversal.count());
+    logging::info("FileWriting: {}ms", duration_write.count());
+    logging::info("PlacementTotal: {}ms", duration_placement_total.count());
+    logging::info("==========================================\n");
+    
     logging::info("Best Cosine score: {} (node: {})", 
                  result.bestCosineScore, result.bestCosineNodeId);
-    logging::info("Best Weighted score: {} (node: {})", 
-                 result.bestWeightedScore, result.bestWeightedNodeId);
+    if (result.tiedCosineNodeIndices.size() > 1) {
+        double cosine_tol = std::max(result.bestCosineScore * 0.0001, 1e-9);
+        logging::info("  {} nodes tied for best Cosine score (within relative tolerance {:.2e})", 
+                     result.tiedCosineNodeIndices.size(), cosine_tol);
+    }
+    
+    logging::info("Best Weighted Jaccard: {} (node: {})", 
+                 result.bestWeightedJaccardScore, result.bestWeightedJaccardNodeId);
+    if (result.tiedWeightedJaccardNodeIndices.size() > 1) {
+        double weighted_tol = std::max(result.bestWeightedJaccardScore * 0.0001, 1e-9);
+        logging::info("  {} nodes tied for best Weighted Jaccard (within relative tolerance {:.2e})", 
+                     result.tiedWeightedJaccardNodeIndices.size(), weighted_tol);
+    }
+    
     logging::info("Best Raw matches: {} (node: {})", 
                  result.bestRawSeedMatchScore, result.bestRawSeedMatchNodeId);
+    if (result.tiedRawSeedMatchNodeIndices.size() > 1) {
+        logging::info("  {} nodes tied for best Raw score", result.tiedRawSeedMatchNodeIndices.size());
+    }
 }
 
 } // namespace placement

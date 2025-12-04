@@ -286,7 +286,7 @@ int our_mplp_func(void *data, bam1_t *b) {
       ret = -1;
     } else {
       ret = 1;
-      bam_copy1(b, bam_records[bam_index]);
+      (void)bam_copy1(b, bam_records[bam_index]);
     }
     bam_index += 1;
 

@@ -1,3 +1,6 @@
+import hashlib
+import pathlib, os, re
+
 OUTPUT_DIR = "workflow_output"
 
 # Available pangenome datasets with genome size estimates
@@ -9,15 +12,15 @@ PANGENOMES = {
     'sars_20K': {
         'path': 'panmans/sars_20000.panman', 
         'genome_size': 30000  # SARS-CoV-2 genome ~30kb
-    },
-    'tb_400': {
-        'path': 'panmans/tb_400.panman',
-        'genome_size': 4000000  # Mycobacterium tuberculosis genome ~4Mb
-    },
-    'sars_8M': {
-        'path': 'panmans/sars_8M.panman',
-        'genome_size': 30000  # SARS-CoV-2 genome ~30kb
     }
+    # 'tb_400': {
+    #     'path': 'panmans/tb_400.panman',
+    #     'genome_size': 4000000  # Mycobacterium tuberculosis genome ~4Mb
+    # },
+    # 'sars_8M': {
+    #     'path': 'panmans/sars_8M.panman',
+    #     'genome_size': 30000  # SARS-CoV-2 genome ~30kb
+    # }
 }
 
 # CONFIG = {
@@ -34,7 +37,7 @@ PANGENOMES = {
 # }
 # Experiment parameters - modify these to customize experiments
 CONFIG = {
-    'pangenomes': ['rsv_4K', 'sars_20K', 'tb_400'],   # Which datasets to test - multiple pangenomes
+    'pangenomes': ['rsv_4K', 'sars_20K'],   # Which datasets to test - multiple pangenomes
     'k_values': range(7, 41, 6),
     's_values': [8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
     'l_values': [1, 3],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
@@ -185,104 +188,47 @@ rule dump_random_node:
     input:
         panmap_bin="build/bin/panmap",
         panman=lambda wc: EXP_BY_ID[wc.eid]['panman_path']
-
-        
-
     output:
         f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/genomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/random_node.fasta"
-    run:
-        ex = EXP_BY_ID[wildcards.eid]
-        print(f"[dump_random_node] eid={wildcards.eid} pan_stem={wildcards.pan_stem} cov={wildcards.cov} n={wildcards.n} rep={wildcards.rep}")
-        outp = pathlib.Path(output[0]).resolve()  # Use absolute path
-        print(f"[dump_random_node] output path: {outp}")
-        outp.parent.mkdir(parents=True, exist_ok=True)
+    params:
+        seed=lambda wc: int(hashlib.md5(f"{EXP_BY_ID[wc.eid]['id']}_random_node_cov{wc.cov}_{wc.n}_rep{wc.rep}".encode()).hexdigest()[:8], 16) % (2**31 - 1)
+    shell:
+        r'''
+        set -e
+        mkdir -p $(dirname {output})
         
-        print(f"[dump_random_node] running panmap --dump-random-node for {ex['pan_stem']} replicate {wildcards.rep}")
-        import glob, shutil, os, tempfile, time, hashlib
+        # Get absolute paths before changing directory
+        PANMAP_BIN=$(realpath {input.panmap_bin})
+        PANMAN=$(realpath {input.panman})
+        OUTPUT=$(realpath -m {output})
         
-        # Create deterministic seed based on experiment ID AND replicate to ensure different random node per replicate
-        seed_string = f"{ex['id']}_random_node_cov{wildcards.cov}_{wildcards.n}_rep{wildcards.rep}"
-        seed_hash = hashlib.md5(seed_string.encode()).hexdigest()[:8]
-        seed_int = int(seed_hash, 16) % (2**31 - 1)
-        print(f"[dump_random_node] using deterministic seed: {seed_int} for experiment {ex['id']} replicate {wildcards.rep}")
+        # Create unique temp directory
+        TMPDIR=$(mktemp -d)
+        trap "rm -rf $TMPDIR" EXIT
         
-        # Use a temporary working directory to avoid race conditions
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir_path = pathlib.Path(tmpdir)
-            panmap_bin_abs = str(pathlib.Path(input.panmap_bin).resolve())
-            panman_abs = str(pathlib.Path(input.panman).resolve())
-            
-            # Copy panman file to temp directory to avoid conflicts
-            temp_panman = tmpdir_path / f"{ex['pan_stem']}_{wildcards.eid}.panman"
-            shutil.copy2(panman_abs, temp_panman)
-            
-            # Run panmap in temp directory with deterministic seed
-            original_cwd = os.getcwd()
-            try:
-                os.chdir(tmpdir)
-                print(f"[dump_random_node] running: {panmap_bin_abs} {temp_panman} --dump-random-node --seed {seed_int}")
-                
-                import subprocess
-                result = subprocess.run(
-                    [panmap_bin_abs, str(temp_panman), "--dump-random-node", "--seed", str(seed_int)],
-                    capture_output=True,
-                    text=True
-                )
-                print(f"[dump_random_node] panmap exit code: {result.returncode}")
-                if result.returncode != 0:
-                    print(f"[dump_random_node] STDERR: {result.stderr}")
-                    print(f"[dump_random_node] STDOUT: {result.stdout}")
-                
-                # Find generated random node fasta in temp directory
-                candidates = list(tmpdir_path.glob("*.random.*.fa"))
-                print(f"[dump_random_node] found {len(candidates)} candidate files: {[c.name for c in candidates]}")
-                
-                if candidates:
-                    # Sort by modification time and take the newest
-                    newest = max(candidates, key=lambda x: x.stat().st_mtime)
-                    print(f"[dump_random_node] copying {newest} -> {outp}")
-                    print(f"[dump_random_node] source file size: {newest.stat().st_size} bytes")
-                    
-                    # Ensure output directory exists
-                    outp.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    # Remove existing target if present
-                    if outp.exists() or outp.is_symlink():
-                        try:
-                            outp.unlink()
-                        except Exception:
-                            pass
-                    
-                    # Copy to final location and verify
-                    shutil.copyfile(newest, outp)
-                    
-                    # Force filesystem sync
-                    import os
-                    try:
-                        if hasattr(os, 'fsync'):
-                            with open(outp, 'r+b') as f:
-                                os.fsync(f.fileno())
-                    except Exception:
-                        pass
-                    
-                    # Verify the file was copied successfully
-                    if outp.exists() and outp.stat().st_size > 0:
-                        print(f"[dump_random_node] successfully copied to {outp}, size: {outp.stat().st_size} bytes")
-                    else:
-                        print(f"[dump_random_node] copy failed - output file doesn't exist or is empty")
-                        raise RuntimeError(f"Failed to copy random node sequence for {ex['pan_stem']}")
-                        
-                else:
-                    print(f"[dump_random_node] ERROR: No output files generated")
-                    print(f"[dump_random_node] panmap exit code: {result.returncode}")
-                    print(f"[dump_random_node] temp directory contents: {list(tmpdir_path.iterdir())}")
-                    print(f"[dump_random_node] experiment: {ex['id']}, pangenome: {ex['pan_stem']}, seed: {seed_int}")
-                    print(f"[dump_random_node] panmap stderr: {result.stderr[:500]}")
-                    print(f"[dump_random_node] panmap stdout: {result.stdout[:500]}")
-                    raise RuntimeError(f"Failed to generate random node sequence for {ex['pan_stem']} (experiment {ex['id']}, replicate {wildcards.rep})")
-                    
-            finally:
-                os.chdir(original_cwd)
+        # Copy panman to temp directory
+        cp "$PANMAN" "$TMPDIR/temp.panman"
+        
+        # Run panmap in temp directory and capture node ID
+        cd "$TMPDIR"
+        node_id=$("$PANMAP_BIN" temp.panman --dump-random-node --seed {params.seed} | tail -1)
+        
+        if [ -z "$node_id" ]; then
+            echo "ERROR: No node ID returned from panmap"
+            exit 1
+        fi
+        
+        # Find the generated file in temp directory
+        generated=$(ls temp.panman.random.*.fa 2>/dev/null | head -1)
+        
+        if [ -z "$generated" ] || [ ! -f "$generated" ]; then
+            echo "ERROR: No random node file generated"
+            exit 1
+        fi
+        
+        # Move to final output location
+        mv "$generated" "$OUTPUT"
+        '''
 
 rule index_experiment:
         input:
@@ -353,168 +299,56 @@ rule simulate_reads:
         meta=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/results/reads/cov{{cov}}_{{n}}_rep{{rep}}.txt",
         mut_fa=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/mutgenomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/mutated.fasta"
     params:
-        model='NovaSeq',
-        cpus=1,
-        mm_type='snp'  # Use SNP matrices (simulate only supports 'snp')
-    resources:
-        tmpdir=f"/tmp/panmap_{{eid}}_simulate_cov{{cov}}_{{n}}_rep{{rep}}"
-    run:
-        ex = EXP_BY_ID[wildcards.eid]
-        print(f"[simulate_reads] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag} cov={wildcards.cov} n={wildcards.n} rep={wildcards.rep}")
-        out_dir = pathlib.Path(output.mut_fa).parent
-        out_dir.mkdir(parents=True, exist_ok=True)
-        reads_dir = pathlib.Path(output.r1).parent
-        reads_dir.mkdir(parents=True, exist_ok=True)
+        out_dir=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/mutgenomes/reads/cov{wc.cov}_{wc.n}_rep{wc.rep}",
+        seed=lambda wc: int(hashlib.md5(f"{EXP_BY_ID[wc.eid]['id']}_{wc.cov}_{wc.n}_{wc.rep}".encode()).hexdigest()[:8], 16) % (2**31 - 1),
+        model=lambda wc: EXP_BY_ID[wc.eid]['model'],
+        mut_rate=lambda wc: EXP_BY_ID[wc.eid].get('mutation_rate', 0.0),
+        genome_size=lambda wc: EXP_BY_ID[wc.eid].get('genome_size', 15000),
+        snps=lambda wc: int(EXP_BY_ID[wc.eid].get('mutation_rate', 0.0) * EXP_BY_ID[wc.eid].get('genome_size', 15000)),
+        indels=lambda wc: int(EXP_BY_ID[wc.eid].get('mutation_rate', 0.0) * EXP_BY_ID[wc.eid].get('genome_size', 15000) / 4)
+    shell:
+        r'''
+        set -e
+        mkdir -p {params.out_dir} $(dirname {output.r1}) $(dirname {output.meta})
         
-        if pathlib.Path(input.simulate_bin).exists():
-            print(f"[simulate_reads] running simulate for {ex['pangenome_name']} cov={wildcards.cov} n={wildcards.n} rep={wildcards.rep}")
-            include_internal_flag = "--include_internal" if ex['include_internal'] else ""
-            
-            # Create deterministic seed based on experiment parameters 
-            import hashlib
-            seed_string = f"{ex['id']}_{wildcards.cov}_{wildcards.n}_{wildcards.rep}"
-            seed_hash = hashlib.md5(seed_string.encode()).hexdigest()[:8]
-            seed_int = int(seed_hash, 16) % (2**31 - 1)
-            
-            # Calculate mutations based on mutation rate and genome size
-            mutation_rate = ex.get('mutation_rate', 0.0)
-            genome_size = ex.get('genome_size', 15000)  # Default to RSV size
-            
-            # Calculate total number of mutations across the genome
-            total_snps = int(mutation_rate * genome_size) if mutation_rate > 0 else 0
-            # Indels = mutation_rate * genome_size / 4, split equally between insertions and deletions
-            total_indels = int(mutation_rate * genome_size / 4) if mutation_rate > 0 else 0
-            total_insertions = total_indels // 2
-            total_deletions = total_indels - total_insertions  # Handle odd numbers
-            
-            print(f"[simulate_reads] Mutation rate: {mutation_rate}, Genome size: {genome_size}")
-            print(f"[simulate_reads] Generating {total_snps} SNPs, {total_insertions} insertions, and {total_deletions} deletions")
-            
-            # Use mutation matrix if available
-            mm_flag = f"--mut_spec {input.mm}" if pathlib.Path(input.mm).exists() else ""
-            mm_type_flag = f"--mut_spec_type {params.mm_type}" if mm_flag else ""
-            
-            # Extract node name from fasta file
-            with open(input.fasta, 'r') as f:
-                node_name = f.readline().strip()[1:]  # Remove '>' from header
-            
-            # Capture simulate output to parse mutation counts
-            import subprocess
-            simulate_cmd = (
-                f"{input.simulate_bin} --panmat {input.panman} --ref {node_name} --out_dir {out_dir} "
-                f"--n_reads {wildcards.n} --rep 1 --model {ex['model']} --cpus 4 "
-                f"--seed {seed_int} --mutnum {total_snps} {total_insertions} {total_deletions} "
-                f"{mm_flag} {mm_type_flag}"
-            )
-            
-            print(f"[simulate_reads] Running: {simulate_cmd}")
-            result = subprocess.run(simulate_cmd, shell=True, capture_output=True, text=True)
-            simulate_output = result.stdout + result.stderr
-            print(f"[simulate_reads] Simulate output:\n{simulate_output}")
-            
-            # Parse actual mutation counts from simulate output
-            applied_snps = applied_insertions = applied_deletions = 0
-            insertion_lengths = deletion_lengths = ""
-            selected_node = "unknown"  # prefer original (unsanitized) if available
-            selected_node_sanitized = "unknown"
-            
-            for line in simulate_output.split('\n'):
-                if "Applied" in line and "SNPs" in line:
-                    # Parse lines like: "Applied 15 SNPs to node KJ643480.1"
-                    # or "Applied 2 SNPs, 1 insertions (lengths: 3), 1 deletions (lengths: 2) to node KJ643480.1"
-                    import re
-                    
-                    # Extract SNP count
-                    snp_match = re.search(r'(\d+) SNPs', line)
-                    if snp_match:
-                        applied_snps = int(snp_match.group(1))
-                    
-                    # Extract insertion count and lengths
-                    ins_match = re.search(r'(\d+) insertions', line)
-                    if ins_match:
-                        applied_insertions = int(ins_match.group(1))
-                        # Extract insertion lengths if present
-                        ins_len_match = re.search(r'insertions \(lengths: ([0-9,]+)\)', line)
-                        if ins_len_match:
-                            insertion_lengths = ins_len_match.group(1)
-                    
-                    # Extract deletion count and lengths
-                    del_match = re.search(r'(\d+) deletions', line)
-                    if del_match:
-                        applied_deletions = int(del_match.group(1))
-                        # Extract deletion lengths if present
-                        del_len_match = re.search(r'deletions \(lengths: ([0-9,]+)\)', line)
-                        if del_len_match:
-                            deletion_lengths = del_len_match.group(1)
-                    
-                    # Extract node name
-                    if "to node" in line:
-                        selected_node = line.split("to node")[-1].strip()
-                elif line.strip().startswith("curNodeID:"):
-                    # Prefer the original (unsanitized) node identifier when available
-                    selected_node = line.split(":", 1)[-1].strip()
-                elif "curNodeID (from FASTA):" in line:
-                    selected_node = line.split(":", 1)[-1].strip()
-            
-            print(f"[simulate_reads] Parsed mutations: SNPs={applied_snps}, Insertions={applied_insertions} (lengths: {insertion_lengths}), Deletions={applied_deletions} (lengths: {deletion_lengths}), Node={selected_node}")
-            
-            import glob, shutil
-            produced_fa = glob.glob(str(out_dir / '*varFasta*/*.fa')) or glob.glob(str(out_dir / '*.fa'))
-            shutil.copyfile(produced_fa[0], output.mut_fa) if produced_fa else pathlib.Path(output.mut_fa).write_text(f">mut_{ex['pangenome_name']}\nN\n")
-            produced_r1 = glob.glob(str(out_dir / '*reads*/*_R1.fastq'))
-            produced_r2 = glob.glob(str(out_dir / '*reads*/*_R2.fastq'))
-            shutil.copyfile(produced_r1[0], output.r1) if produced_r1 else pathlib.Path(output.r1).write_text("@r/1\nA\n+\nI\n")
-            shutil.copyfile(produced_r2[0], output.r2) if produced_r2 else pathlib.Path(output.r2).write_text("@r/2\nT\n+\nI\n")
-            
-            # Extract true_node from the generated FASTQ read header
-            true_node = selected_node  # default to original from simulate output
-            try:
-                with open(output.r1, 'r') as f:
-                    first_line = f.readline().strip()
-                    if first_line.startswith('@'):
-                        # Extract node ID from FASTQ header (format: @NODE_ID_... or @NODE_ID.var_...)
-                        header_node = first_line[1:]  # Remove @
-                        if '.var_' in header_node:
-                            selected_node_sanitized = header_node.split('.var_')[0]
-                        elif '_' in header_node:
-                            # ISS format: @NODE_ID_read_number/pair -> extract NODE_ID
-                            selected_node_sanitized = '_'.join(header_node.split('_')[:-2]) if header_node.count('_') >= 2 else header_node.split('_')[0]
-                        else:
-                            selected_node_sanitized = header_node.split('/')[0]  # Remove /1 or /2 if present
-                        
-                        # Keep true_node as the original if we found it earlier; otherwise fall back to sanitized
-                        if true_node == "unknown" or not true_node:
-                            true_node = selected_node_sanitized
-            except Exception:
-                pass
-        else:
-            print(f"[simulate_reads] simulate_bin missing, writing synthetic outputs for {ex['pangenome_name']} n={wildcards.n}")
-            pathlib.Path(output.mut_fa).write_text(f">mut_{ex['pangenome_name']}\n{'N'*100}\n")
-            pathlib.Path(output.r1).write_text(f"@r/1\n{'A'*50}\n+\n{'I'*50}\n")
-            pathlib.Path(output.r2).write_text(f"@r/2\n{'T'*50}\n+\n{'I'*50}\n")
-            true_node = "synthetic"
-            applied_snps = applied_insertions = applied_deletions = 0
-            insertion_lengths = deletion_lengths = ""
+        # Extract node name from fasta
+        node_name=$(head -1 {input.fasta} | sed 's/^>//')
         
-        # Write comprehensive metadata including mutation counts
-        pathlib.Path(output.meta).parent.mkdir(parents=True, exist_ok=True)
-        with open(output.meta,'w') as meta_file:
-            meta_file.write(f"id={ex['id']}\t")
-            meta_file.write(f"coverage={wildcards.cov}\t")
-            meta_file.write(f"reads={wildcards.n}\t")
-            meta_file.write(f"{wildcards.tag}\t")
-            meta_file.write(f"mutation_rate={ex['mutation_rate']}\t")
-            meta_file.write(f"genome_size={ex['genome_size']}\t")
-            meta_file.write(f"requested_snps={total_snps}\t")
-            meta_file.write(f"requested_indels={total_indels}\t")
-            meta_file.write(f"applied_snps={applied_snps}\t")
-            meta_file.write(f"applied_insertions={applied_insertions}\t")
-            meta_file.write(f"applied_deletions={applied_deletions}\t")
-            meta_file.write(f"insertion_lengths={insertion_lengths}\t")
-            meta_file.write(f"deletion_lengths={deletion_lengths}\t")
-            # Record both forms for downstream consumers
-            meta_file.write(f"true_node={true_node}\t")
-            meta_file.write(f"true_node_sanitized={selected_node_sanitized}\n")
+        # Calculate insertions and deletions (split indels evenly)
+        insertions=$((({params.indels} + 1) / 2))
+        deletions=$(({params.indels} / 2))
+        
+        # Run simulate and capture output
+        mm_flag=""
+        [ -f {input.mm} ] && mm_flag="--mut_spec {input.mm} --mut_spec_type snp"
+        
+        {input.simulate_bin} --panmat {input.panman} --ref "$node_name" \
+            --out_dir {params.out_dir} --n_reads {wildcards.n} --rep 1 \
+            --model {params.model} --cpus 4 --seed {params.seed} \
+            --mutnum {params.snps} $insertions $deletions $mm_flag \
+            2>&1 | tee {params.out_dir}/simulate.log
+        
+        # Copy outputs to expected locations
+        find {params.out_dir} -name "*_R1.fastq" -exec cp {{}} {output.r1} \;
+        find {params.out_dir} -name "*_R2.fastq" -exec cp {{}} {output.r2} \;
+        find {params.out_dir} -name "*.fa" ! -name "*.fai" -exec cp {{}} {output.mut_fa} \;
+        
+        # Parse mutations from log and extract true_node from FASTQ header
+        true_node=$(grep -oP '(curNodeID|Applied.*to node)\K[^\s]+$' {params.out_dir}/simulate.log | tail -1 || echo "$node_name")
+        applied_snps=$(grep -oP 'Applied \K\d+(?= SNPs)' {params.out_dir}/simulate.log || echo "0")
+        applied_ins=$(grep -oP '\K\d+(?= insertions)' {params.out_dir}/simulate.log || echo "0")
+        applied_del=$(grep -oP '\K\d+(?= deletions)' {params.out_dir}/simulate.log || echo "0")
+        ins_lens=$(grep -oP 'insertions \(lengths: \K[0-9,]+' {params.out_dir}/simulate.log || echo "")
+        del_lens=$(grep -oP 'deletions \(lengths: \K[0-9,]+' {params.out_dir}/simulate.log || echo "")
+        
+        # Extract sanitized node from FASTQ header if available
+        true_node_sanitized=$(head -1 {output.r1} | sed 's/^@//' | sed 's/[_/].*//')
+        
+        # Write metadata
+        cat > {output.meta} << EOF
+id={wildcards.eid}	coverage={wildcards.cov}	reads={wildcards.n}	{wildcards.tag}	mutation_rate={params.mut_rate}	genome_size={params.genome_size}	requested_snps={params.snps}	requested_indels={params.indels}	applied_snps=$applied_snps	applied_insertions=$applied_ins	applied_deletions=$applied_del	insertion_lengths=$ins_lens	deletion_lengths=$del_lens	true_node=$true_node	true_node_sanitized=$true_node_sanitized
+EOF
+        '''
 
 rule place_reads:
     input:
@@ -522,112 +356,42 @@ rule place_reads:
         panman=lambda wc: EXP_BY_ID[wc.eid]['panman_path'],
         index=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi",
         r1=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R1.fastq",
-        r2=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R2.fastq"
+        r2=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R2.fastq",
+        meta=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/results/reads/cov{{cov}}_{{n}}_rep{{rep}}.txt"
     output:
         placement=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/placements.tsv",
         detailed=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/detailed.tsv",
-        raw_log=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/panmap.log",
         time_log=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/time.log"
     params:
-        prefix=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/placements/reads/cov{wc.cov}_{wc.n}_rep{wc.rep}"
-    resources:
-        tmpdir=f"/tmp/panmap_{{eid}}_place_cov{{cov}}_{{n}}_rep{{rep}}"
-    run:
-        ex = EXP_BY_ID[wildcards.eid]
-        print(f"[place_reads] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag} n={wildcards.n} rep={wildcards.rep}")
-        print(f"[place_reads] k={ex['k']}, s={ex['s']}, l={ex['l']}")
-        out_dir = pathlib.Path(output.placement).parent
-        out_dir.mkdir(parents=True, exist_ok=True)
+        outprefix=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/placements/reads/cov{wc.cov}_{wc.n}_rep{wc.rep}/result",
+        k=lambda wc: EXP_BY_ID[wc.eid]['k'],
+        s=lambda wc: EXP_BY_ID[wc.eid]['s'],
+        l=lambda wc: EXP_BY_ID[wc.eid]['l']
+    shell:
+        r'''
+        set -e
+        mkdir -p $(dirname {output.placement})
         
-        # Check if index file exists and is valid
-        if not pathlib.Path(input.index).exists() or pathlib.Path(input.index).stat().st_size == 0:
-            raise FileNotFoundError(f"Index file missing or empty: {input.index}")
+        # Get true_node from metadata
+        true_node=$(grep -oP 'true_node=\K[^\t]+' {input.meta} || echo "unknown")
         
-        if not pathlib.Path(input.panmap_bin).exists():
-            print(f"[place_reads] panmap_bin missing, writing placeholder for {ex['pan_stem']} n={wildcards.n}")
-            pathlib.Path(output.placement).write_text(f"PLACEMENTS placeholder\nindex={input.index}\nr1={input.r1}\nr2={input.r2}\n")
-        else:
-            print(f"[place_reads] running panmap --place mode for {ex['pan_stem']} n={wildcards.n}")
-            print(f"[place_reads] using MGSR index: {input.index}")
-            import subprocess, pandas as pd
-            
-            # Run panmap with --place flag which generates placements.tsv directly
-            # Note: k, s, l parameters are read from the index file, not command line
-            try:
-                result = subprocess.run([
-                    "/usr/bin/time", "-v",
-                    input.panmap_bin,
-                    "-o", "placement",  # Only run placement, not full alignment
-                    "--time",
-                    "-m", input.index,  # Pass experiment-specific MGSR index (contains k/s/l)
-                    "-p", params.prefix,
-                    input.panman,
-                    input.r1, 
-                    input.r2
-                ], capture_output=True, text=True, timeout=21600)  # 6 hours timeout
-                log_output = result.stderr + result.stdout
-                
-                # Save raw panmap log for debugging
-                with open(output.raw_log, 'w') as f:
-                    f.write(log_output)
-                
-                # Parse and save time/memory stats separately
-                with open(output.time_log, 'w') as f:
-                    f.write(result.stderr)  # /usr/bin/time outputs to stderr
-                
-                # C++ now writes placements.tsv directly to prefix/placements.tsv
-                placements_file = params.prefix + "/placements.tsv"
-                if not pathlib.Path(placements_file).exists():
-                    raise FileNotFoundError(f"Placements file not generated: {placements_file}")
-                
-                # Read the placements to get best nodes
-                df = pd.read_csv(placements_file, sep='\t')
-                
-                # Get true_node from metadata
-                true_node = "unknown"
-                try:
-                    meta_file = f"{OUTPUT_DIR}/experiments/{wildcards.eid}/{wildcards.pan_stem}/{wildcards.tag}/results/reads/cov{wildcards.cov}_{wildcards.n}_rep{wildcards.rep}.txt"
-                    if pathlib.Path(meta_file).exists():
-                        with open(meta_file) as mf:
-                            meta_line = mf.read().strip()
-                            fields = dict(part.split('=',1) for part in meta_line.split('\t') if '=' in part)
-                            true_node = fields.get("true_node", "unknown")
-                except Exception as e:
-                    print(f"[place_reads] could not read true_node: {e}")
-                
-                # Write detailed placement information
-                with open(output.detailed, 'w') as f:
-                    f.write("experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl\n")
-                    import time
-                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    # Write each metric's best node
-                    for _, row in df.iterrows():
-                        metric = row['metric']
-                        score = row['score']
-                        node_id = row['nodes']
-                        f.write(f"{wildcards.eid}\t{wildcards.n}\t{wildcards.rep}\t{true_node}\t{metric}\t{score}\t{node_id}\t{node_id}\t{timestamp}\t{ex['k']}\t{ex['s']}\t{ex['l']}\n")
-                
-                # Print summary
-                jaccard_row = df[df['metric'] == 'jaccard'].iloc[0]
-                cosine_row = df[df['metric'] == 'cosine'].iloc[0]
-                print(f"[place_reads] best nodes - jaccard: {jaccard_row['nodes']} ({jaccard_row['score']:.4f}), cosine: {cosine_row['nodes']} ({cosine_row['score']:.4f})")
-                
-            except Exception as e:
-                print(f"[place_reads] panmap failed or parsing error: {e}")
-                import traceback
-                traceback.print_exc()
-                # Write empty results on failure
-                with open(output.placement, 'w') as f:
-                    f.write("metric\tscore\thits\tnodes\n")
-                    f.write("raw\t0\t0\t\n")
-                    f.write("jaccard\t0\t\t\n")
-                    f.write("cosine\t0\t\t\n")
-                    f.write("weighted_jaccard\t0\t\t\n")
-                with open(output.detailed, 'w') as f:
-                    f.write("experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl\n")
-                with open(output.raw_log, 'w') as f:
-                    f.write(f"ERROR: {e}\n")
+        # Run panmap with explicit output prefix
+        /usr/bin/time -v {input.panmap_bin} {input.panman} {input.r1} {input.r2} \
+            --output {params.outprefix} --cpus 1 --stop place \
+            2> {output.time_log}
+        
+        # Move placement output to expected location
+        mv {params.outprefix}.placement.tsv {output.placement}
+        
+        # Create detailed TSV with true_node info
+        {{
+            echo -e "experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl"
+            tail -n +2 {output.placement} | while IFS=$'\t' read metric score hits nodes; do
+                timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+                echo -e "{wildcards.eid}\t{wildcards.n}\t{wildcards.rep}\t$true_node\t$metric\t$score\t$nodes\t$nodes\t$timestamp\t{params.k}\t{params.s}\t{params.l}"
+            done
+        }} > {output.detailed}
+        '''
 
 rule align_placement_accuracy:
     input:

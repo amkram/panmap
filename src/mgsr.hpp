@@ -58,7 +58,7 @@ uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64
 
 int open_file(const std::string& path);
 
-void extractReadSequences(const std::string& readPath1, const std::string& readPath2, std::vector<std::string>& readSequences);
+void extractReadSequences(const std::string& readPath1, const std::string& readPath2, const std::string& ampliconDepthPath, std::vector<std::vector<std::string>>& readSequences);
 
 
 enum RefSeedmerExistStatus : uint8_t {
@@ -202,11 +202,11 @@ struct affectedSeedmerInfo {
 
 
 struct readSeedmer {
-  const size_t hash;
-  const uint32_t begPos;
-  const uint32_t endPos;
-  const bool rev;
-  const uint32_t iorder;
+  size_t hash;
+  uint32_t begPos;
+  uint32_t endPos;
+  bool rev;
+  uint32_t iorder;
 };
 
 struct SeedmerState {
@@ -230,7 +230,8 @@ enum ReadType : uint8_t {
   PASS,
   HIGH_DUPLICATES,
   IDENTICAL_SCORE_ACROSS_NODES,
-  CONTAINS_SINGLETON
+  CONTAINS_SINGLETON,
+  AMBIGUOUS
 };
 
 struct readScoreDelta {
@@ -269,6 +270,8 @@ public:
   std::vector<MgsrLiteNode*> collapsedChildren;
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
+
+  size_t ocRank = std::numeric_limits<size_t>::max();
 
   std::vector<KahanSum> sumWEPPScoresByThread;
   std::vector<size_t> sumRawScoresByThread; 
@@ -355,7 +358,8 @@ public:
   }
   
   void cleanup();
-  void initialize(LiteIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
+  // NOTE: MgsrLiteTree::initialize requires MGSRIndex format which is not available in lite mode
+  // void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
   void collapseEmptyNodes(bool ignoreGapRunDeltas);
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
@@ -424,16 +428,21 @@ struct EPPNodeRange {
 class Read {
   public:
     std::vector<readSeedmer> seedmersList;
+    std::string seedmerMatches;
+    bool seen = false;
     std::vector<SeedmerState> seedmerStates;
     std::unordered_map<size_t, std::vector<uint32_t>> uniqueSeedmers;
     std::vector<Minichain> minichains;
     std::unordered_set<int32_t> duplicates;
     ReadType readType = ReadType::PASS;
     int32_t maxScore = 0;
+    bool maxScoreRev;
     int32_t epp = 0;
     int32_t numForwardMatching = 0;
     int32_t numReverseMatching = 0;
     MgsrLiteNode* lastParsimoniousNode = nullptr;
+    std::unordered_map<std::string, std::pair<double, std::vector<EPPNodeRange>>> eppNodeRangesBySeedmerMatches;
+    std::unordered_map<std::string, std::pair<double, std::vector<EPPNodeRange>>>::iterator lastParsimoniousEppNodeRangesBySeedmerMatchesIt;
     std::vector<EPPNodeRange> eppNodeRanges;
 };
 
@@ -481,7 +490,6 @@ class mgsrIndexBuilder {
     // capnp object
     ::capnp::MallocMessageBuilder outMessage;
     LiteIndex::Builder indexBuilder;
-    capnp::List<NodeChanges>::Builder perNodeChanges;
     
 
     // tree pointer
@@ -497,23 +505,35 @@ class mgsrIndexBuilder {
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;
 
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
+    
+    // For tracking seed counts per node (needed for LiteIndex format)
+    std::vector<std::unordered_map<uint64_t, int64_t>> nodeSeedCounts;
 
     mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer) 
-      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T)
+      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), k_(k), s_(s), l_(l)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
       indexBuilder.setT(t);
       indexBuilder.setL(l);
       indexBuilder.setOpen(openSyncmer);
-      perNodeChanges = indexBuilder.initPerNodeChanges(T->allNodes.size());
+      indexBuilder.setVersion(3);
       nodeToDfsIndex.reserve(T->allNodes.size());
+      nodeSeedCounts.resize(T->allNodes.size());
     }
 
     void buildIndex();
 
     void writeIndex(const std::string& path);
+
+    // Getters for parameters (for testing)
+    int getK() const { return k_; }
+    int getS() const { return s_; }
+    int getL() const { return l_; }
+
   private:
+    int k_, s_, l_;
+    
     void buildIndexHelper(
       panmanUtils::Node *node,
       std::unordered_set<std::string_view>& emptyNodes,
@@ -614,9 +634,12 @@ class ThreadsManager {
     // Experimental
     std::unordered_map<size_t, uint32_t> seedReadsFrequency;
     std::unordered_map<size_t, uint32_t> seedNodesFrequency;
+    std::unordered_map<size_t, double> seedWeightsByNodeFrequency;
+    std::unordered_map<size_t, std::pair<MgsrLiteNode*, std::vector<EPPNodeRange>>> seedMatchedNodeRanges;
+
     std::unordered_map<MgsrLiteNode*, double> nodeSeedScores;
     std::unordered_map<MgsrLiteNode*, double> nodeSeedScoresCorrected;
-    void countSeedNodesFrequencyHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, size_t& curDFSIndex);
+    void countSeedNodesFrequencyHelper(MgsrLiteNode* node, mgsr::MgsrLiteNode*& processingNode, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, size_t& curDFSIndex);
     void countSeedNodesFrequency();
     void computeNodeSeedScoresHelper(MgsrLiteNode* node, std::unordered_map<size_t, int32_t>& kminmerOnRefCount, std::unordered_set<mgsr::MgsrLiteNode*>& selectedNodes, const std::unordered_map<size_t, double>& seedWeights, double& curNodeSeedScore, size_t& curDFSIndex);
     void computeNodeSeedScores();
@@ -633,8 +656,9 @@ class ThreadsManager {
       readMinichainsUpdated.resize(numThreads);
     }
 
-    void initializeMGSRIndex(LiteIndex::Reader indexReader);
-    void initializeQueryData(std::span<const std::string> readSequences, uint32_t maskSeedThreshold, bool fast_mode = false);
+    // NOTE: initializeMGSRIndex requires MGSRIndex format which is not available in lite mode
+    // void initializeMGSRIndex(MGSRIndex::Reader indexReader);
+    void initializeQueryData(const std::string& readPath1, const std::string& readPath2, uint32_t maskSeeds, const std::string& ampliconDepthPath, double maskReadsRelativeFrequency, double maskSeedsRelativeFrequency, bool fast_mode = false);
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();
@@ -662,6 +686,7 @@ class ThreadsManager {
     void scoreNodes();
 
     void scoreNodesMultithreaded();
+    void scoreNodesReadSeedMultithreaded();
 
     void computeKminmerCoverage();
     void computeKminmerCoverageHelper(
@@ -771,14 +796,15 @@ class mgsrPlacer {
         progressBar(threadsManager.progressBar)
     {}
     
-    mgsrPlacer(MgsrLiteTree* liteTree, LiteIndex::Reader indexReader, bool lowMemory, size_t threadId)
-      : liteTree(liteTree),
-        lowMemory(lowMemory),
-        threadId(threadId)
-    {
-      initializeMGSRIndex(indexReader);
-    }
-    void initializeMGSRIndex(LiteIndex::Reader indexReader);
+    // NOTE: Constructor and initializeMGSRIndex require MGSRIndex format which is not available in lite mode
+    // mgsrPlacer(MgsrLiteTree* liteTree, MGSRIndex::Reader indexReader, bool lowMemory, size_t threadId)
+    //   : liteTree(liteTree),
+    //     lowMemory(lowMemory),
+    //     threadId(threadId)
+    // {
+    //   initializeMGSRIndex(indexReader);
+    // }
+    // void initializeMGSRIndex(MGSRIndex::Reader indexReader);
     void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
@@ -792,7 +818,8 @@ class mgsrPlacer {
       size_t& curNodeSumRawScore,
       size_t& curNodeSumEPPRawScore,
       KahanSum& curNodeSumWEPPScore);
-    void scoreNodes();
+    void pruneAmbiguousReads(MgsrLiteNode* node);
+    void scoreNodes(const std::unordered_map<size_t, uint32_t>& seedNodesFrequency);
 
     void traverseTreeHelper(MgsrLiteNode* node);
     void traverseTree();
@@ -922,7 +949,8 @@ class squareEM {
       ThreadsManager& threadsManager,
       MgsrLiteTree& liteTree,
       const std::string& prefix,
-      uint32_t overlapCoefficientCutoff
+      size_t overlapCoefficientCutoff,
+      bool useReadWeightedScores
     );
 
 

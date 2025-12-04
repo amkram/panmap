@@ -8,7 +8,7 @@
 #include <random>
 #include <functional>
 #include "panmanUtils.hpp"
-#include "../seed_annotated_tree.hpp"
+#include "../genotyping.hpp"
 
 
 namespace po = boost::program_options;
@@ -19,8 +19,8 @@ void makeDir(const std::string& path);
 std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt19937& gen);
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& out_dir, const std::string& prefix,
   const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-  int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads);
-void scaleMutationMatrices(seed_annotated_tree::mutationMatrices& mutMat, double mutation_rate);
+  int n_reads, int rep, const genotyping::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads);
+void scaleMutationMatrices(genotyping::mutationMatrices& mutMat, double mutation_rate);
 
 int main(int argc, char *argv[]) {
     std::cout << "What is my purpose?\nYou pass butter" << std::endl;
@@ -72,15 +72,15 @@ int main(int argc, char *argv[]) {
         int cpus                  = vm["cpus"].as<int>();
         bool no_reads             = vm["no-reads"].as<bool>();
 
-        // Check mut_spec
-       seed_annotated_tree::mutationMatrices mutMat = seed_annotated_tree::mutationMatrices();
-        if (mut_spec != "") {
+        // Check mut_spec - only load if a file was specified
+        genotyping::mutationMatrices mutMat = genotyping::mutationMatrices();
+        if (!mut_spec.empty()) {
             if (fs::exists(mut_spec)) {
                 std::ifstream mminf(mut_spec);
-               seed_annotated_tree::fillMutationMatricesFromFile(mutMat, mminf);
+                genotyping::fillMutationMatricesFromFile(mutMat, mminf);
                 mminf.close();
             } else {
-                throw std::invalid_argument("--mut_spec input file doesn't exist");
+                throw std::invalid_argument("--mut_spec input file doesn't exist: " + mut_spec);
             }
         }
 
@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
 
         // Check out_dir input
         if (!fs::is_directory(fs::path(out_dir))) {
-            throw std::invalid_argument("--out_dir input s not a valid directory");
+            throw std::invalid_argument("--out_dir input is not a valid directory: " + out_dir);
         }
 
         std::ofstream logFile(out_dir + "/log.txt");
@@ -180,29 +180,13 @@ int main(int argc, char *argv[]) {
           }
         }
         if (TG != nullptr) {
-          // Search all trees for the reference node
-          T = nullptr;
-          if (refNode != "RANDOM") {
-            for (auto& tree : TG->trees) {
-              if (tree.allNodes.find(refNode) != tree.allNodes.end()) {
-                T = &tree;
-                std::cerr << "Found --ref node " << refNode << " in one of the trees" << std::endl;
-                break;
-              }
-            }
-            if (T == nullptr) {
-              throw std::invalid_argument("Couldn't find --ref node on tree (searched all " + std::to_string(TG->trees.size()) + " trees)");
-            }
-          } else {
-            // RANDOM node - just use first tree
-            T = &(TG->trees[0]);
-          }
+          T = &(TG->trees[0]);
         }
 
 
 
-        // check node (only needed if not already checked above for multi-tree case)
-        if (TG == nullptr && refNode != "RANDOM" && T->allNodes.find(refNode) == T->allNodes.end()) {
+        // check node
+        if (refNode != "RANDOM" && T->allNodes.find(refNode) == T->allNodes.end()) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
         // GO time
@@ -286,7 +270,7 @@ double getMinDouble(const std::vector<double>& doubles) {
 }
 
 
-char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, std::mt19937& gen) {
+char subNuc(char ref, const genotyping::mutationMatrices& mutMat, std::mt19937& gen) {
     std::vector<char> bases = {'A', 'C', 'G', 'T'};
     int refIdx = getIndexFromNucleotide(ref);
     if (refIdx > 3) {
@@ -316,9 +300,9 @@ char subNuc(char ref, const seed_annotated_tree::mutationMatrices& mutMat, std::
     return bases[index];
 }
 
-std::vector<double> convertMap(const std::unordered_map<long, double> &in) {
-    int maxKey = std::max_element(in.begin(), in.end(), 
-                                  [](const std::pair<long, double>& a, const std::pair<long, double>& b) {
+std::vector<double> convertMap(const std::unordered_map<int64_t, double> &in) {
+    int64_t maxKey = std::max_element(in.begin(), in.end(), 
+                                  [](const std::pair<int64_t, double>& a, const std::pair<int64_t, double>& b) {
                                       return a.first < b.first;
                                   })->first;
     std::vector<double> outVector(maxKey + 1);
@@ -327,7 +311,7 @@ std::vector<double> convertMap(const std::unordered_map<long, double> &in) {
     }
     return outVector;
 }
-size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::mutationMatrices& mutMat, int type, std::mt19937& gen) {
+size_t genLen(const std::pair<int, int>& indel_len, const genotyping::mutationMatrices& mutMat, int type, std::mt19937& gen) {
     if (!mutMat.filled) {
         std::uniform_int_distribution<> distribLen(indel_len.first, indel_len.second);
         return distribLen(gen);
@@ -359,7 +343,7 @@ size_t genLen(const std::pair<int, int>& indel_len, const seed_annotated_tree::m
 }
 
 void genMut(const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
-    const seed_annotated_tree::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
+    const genotyping::mutationMatrices& mutMat, const std::vector<double> mutnum_double, const std::pair<int, int> indel_len,
     size_t beg, size_t end, std::mt19937& gen, unsigned seed)
 {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
@@ -497,7 +481,7 @@ struct snpInfo {
 
 void genMutSNP(
   const std::string& curNode, const std::string& seq, const fs::path& fastaOut, const fs::path& vcfOut,
-  const seed_annotated_tree::mutationMatrices& mutMat, std::mt19937& gen, std::vector<std::discrete_distribution<>>& distributions, std::vector<char>& bases
+  const genotyping::mutationMatrices& mutMat, std::mt19937& gen, std::vector<std::discrete_distribution<>>& distributions, std::vector<char>& bases
 ) {
   std::string nseq = seq;
   std::vector<snpInfo> snps;
@@ -547,7 +531,7 @@ void simReads(const fs::path& fastaOut, const fs::path& outReadsObj, const std::
 
 void sim(panmanUtils::Tree* T, const std::string& refNode, const std::string& outDir, const std::string& prefix,
     const std::string& mut_spec_type, const std::vector<double>& num, const std::pair<int, int>& indel_len, const std::string& model,
-    int n_reads, int rep, const seed_annotated_tree::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads)
+    int n_reads, int rep, const genotyping::mutationMatrices& mutMat, unsigned seed, int cpus, bool no_reads)
 {
     fs::path outDirObj = outDir;
     fs::path outRefFastaObj = outDir / fs::path(prefix + "_refFasta");
@@ -697,7 +681,7 @@ inline double getAverageMutationRate(const std::vector<std::vector<double>>& mat
   return sum / count;
 }
 
-void scaleMutationMatrices(seed_annotated_tree::mutationMatrices& mutMat, double mutation_rate) {
+void scaleMutationMatrices(genotyping::mutationMatrices& mutMat, double mutation_rate) {
   std::vector<std::vector<double>> scaled_submat_phred = mutMat.submat;
   std::vector<std::vector<double>> scaled_submat_prob = phredMatrix2ProbMatrix(scaled_submat_phred);
   double avg_mutation_rate = getAverageMutationRate(scaled_submat_prob);
