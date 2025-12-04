@@ -8,6 +8,7 @@
 #include <string>
 #include <iostream>
 #include <random>
+#include <span>
 
 
 namespace panmapUtils {
@@ -55,14 +56,34 @@ class LiteNode {
     std::string identifier;
     LiteNode* parent = nullptr;
     std::vector<LiteNode*> children;
+    
+    // Node index in DFS order (used for efficient lookups)
+    uint32_t nodeIndex = 0;
+    
+    // Seed changes from parent to this node (hash, parentCount, childCount)
+    std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges;
+    
+    // Placement scores (populated during placement)
+    float jaccardScore = 0.0f;
+    float weightedJaccardScore = 0.0f;
+    float cosineScore = 0.0f;
+    float hitsScore = 0.0f;
+    float rawSeedMatchScore = 0.0f;
+    float jaccardPresenceScore = 0.0f;
 };
 
 class LiteTree {
   public:
-    LiteNode* root;
+    LiteNode* root = nullptr;
     std::unordered_map<std::string, LiteNode*> allLiteNodes;
     std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
+    
+    // Index-based lookup (dfsIndex -> LiteNode*)
+    std::vector<LiteNode*> dfsIndexToNode;
+    
+    // Storage for all seed changes (flat array, nodes reference spans into this)
+    std::vector<std::tuple<uint64_t, int64_t, int64_t>> allSeedChanges;
     
 
     ~LiteTree() {
@@ -76,6 +97,14 @@ class LiteTree {
 
     uint32_t getBlockStartScalar(const uint32_t blockId) const;
     uint32_t getBlockEndScalar(const uint32_t blockId) const;
+    
+    // Resolve node index to node ID string
+    std::string resolveNodeId(uint32_t nodeIndex) const {
+      if (nodeIndex < dfsIndexToNode.size() && dfsIndexToNode[nodeIndex]) {
+        return dfsIndexToNode[nodeIndex]->identifier;
+      }
+      return "";
+    }
 
   private:
     bool cleaned = false;

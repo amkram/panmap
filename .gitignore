@@ -9,6 +9,10 @@ install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
 _deps
+.cache
+.snakemake
+build
+external_cache
 
 # Prerequisites
 *.d
@@ -18,6 +22,10 @@ _deps
 *.lo
 *.o
 *.obj
+
+panmans
+pan8
+workflow_output
 
 # Precompiled Headers
 *.gch

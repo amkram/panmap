@@ -117,44 +117,7 @@ add_custom_target(capnp_tools ALL)
 # Set up CapnProto include directories
 include_directories(/usr/local/include)
 
-# Generate CapnProto files from index.capnp
-set(CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/index.capnp")
-set(CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-set(CAPNP_GEN_CPP "${CAPNP_GEN_DIR}/index.capnp.c++")
-set(CAPNP_GEN_H "${CAPNP_GEN_DIR}/index.capnp.h")
-
-# Custom command to generate CapnProto files
-add_custom_command(
-    OUTPUT ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
-    COMMAND ${CAPNP_EXECUTABLE}
-        compile
-        -o${CAPNPC_CXX_EXECUTABLE}
-        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
-        ${CAPNP_SRC_FILE}
-    DEPENDS ${CAPNP_SRC_FILE} capnp_tools
-    COMMENT "Generating C++ files from index.capnp"
-    VERBATIM
-)
-
-
-set(MGSR_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/mgsr_index.capnp")
-set(MGSR_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-set(MGSR_CAPNP_GEN_CPP "${MGSR_CAPNP_GEN_DIR}/mgsr_index.capnp.c++")
-set(MGSR_CAPNP_GEN_H "${MGSR_CAPNP_GEN_DIR}/mgsr_index.capnp.h")
-# Custom command to generate CapnProto files
-add_custom_command(
-    OUTPUT ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
-    COMMAND ${CAPNP_EXECUTABLE}
-        compile
-        -o${CAPNPC_CXX_EXECUTABLE}
-        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
-        ${MGSR_CAPNP_SRC_FILE}
-    DEPENDS ${MGSR_CAPNP_SRC_FILE} capnp_tools
-    COMMENT "Generating C++ files from mgsr_index.capnp"
-    VERBATIM
-)
-
-# Add index_lite.capnp generation
+# Add index_lite.capnp generation (the only capnp schema used)
 set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/index_lite.capnp")
 set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(LITE_CAPNP_GEN_CPP "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.c++")
@@ -173,17 +136,11 @@ add_custom_command(
 )
 
 # Set variables to point to the generated files
-set(CAPNP_SRCS ${CAPNP_GEN_CPP})
-set(CAPNP_HDRS ${CAPNP_GEN_H})
-set(MGSR_CAPNP_SRCS ${MGSR_CAPNP_GEN_CPP})
-set(MGSR_CAPNP_HDRS ${MGSR_CAPNP_GEN_H})
 set(LITE_CAPNP_SRCS ${LITE_CAPNP_GEN_CPP})
 set(LITE_CAPNP_HDRS ${LITE_CAPNP_GEN_H})
 
 # Create a target that depends on the generated files
 add_custom_target(index_capnp_generator ALL
-    DEPENDS ${CAPNP_GEN_CPP} ${CAPNP_GEN_H}
-    DEPENDS ${MGSR_CAPNP_GEN_CPP} ${MGSR_CAPNP_GEN_H}
     DEPENDS ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
 )
 
@@ -485,15 +442,7 @@ ExternalProject_Add(samtools_ext
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env 
         LDFLAGS=-L/usr/local/lib
         LD_LIBRARY_PATH=/usr/local/lib
-        <SOURCE_DIR>/configure 
-        --prefix=${SAMTOOLS_INSTALL_DIR} 
-        --with-htslib=/usr/local
-        --disable-lzma 
-        --disable-bz2 
-        --disable-libcurl 
-        --disable-shared 
-        --with-pic
-        --without-curses
+        sh -c "cd <SOURCE_DIR> && autoheader && autoconf && ./configure --prefix=${SAMTOOLS_INSTALL_DIR} --with-htslib=/usr/local --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic --without-curses"
     BUILD_COMMAND ${CMAKE_COMMAND} -E env SHELL=/bin/bash make libst.a
     INSTALL_COMMAND ""
     BUILD_IN_SOURCE 1
@@ -597,20 +546,17 @@ target_compile_options(bcftools PRIVATE -fPIC)
 # Define panmap executable sources using the correct list
 set(PANMAP_SOURCES_MAIN
     src/main.cpp
-    src/mgsr.cpp
     src/conversion.cpp
     src/panmap_utils.cpp
     src/genotyping.cpp
-    src/gap_map.cpp
-    src/indexing.cpp
+    src/mgsr.cpp
     src/alignment.cpp
     src/placement.cpp
     src/seeding.cpp
+    src/index_utils.cpp
+    src/panman_index.cpp
     src/mm_align.c
     src/pileup.c
-    src/performance.cpp
-    src/state.cpp
-    src/state_helpers.cpp
     src/zstd_compression.cpp
 )
 
@@ -641,10 +587,13 @@ add_dependencies(panmap build-deps index_capnp_generator tbb_build)
 if(OPTION_BUILD_SIMULATE)
     add_executable(simulate 
         src/test/simulate.cpp
-        src/simulate_utils.cpp
+        src/genotyping.cpp
+        src/conversion.cpp
+        src/mm_align.c
+        src/pileup.c
     )
     
-    add_dependencies(simulate panman_lib)
+    add_dependencies(simulate panman_lib minimap2_target htslib_ext samtools_ext)
     
     target_include_directories(simulate PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -652,15 +601,25 @@ if(OPTION_BUILD_SIMULATE)
         ${CMAKE_CURRENT_BINARY_DIR}/include
         ${panman_SOURCE_DIR}/src
         ${panman_BINARY_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
+        ${HTSLIB_INSTALL_DIR}/include
     )
     
     target_link_libraries(simulate PRIVATE
         panman_lib
+        minimap2
+        bcftools
+        samtools
+        htslib
+        libdeflate_shared
         ${Boost_LIBRARIES}
         ${PROTOBUF_LIBRARIES}
         spdlog::spdlog
         absl::flat_hash_map
         absl::flat_hash_set
+        ZLIB::ZLIB
+        pthread
+        m
     )
     
     # Set output directory to build/bin
@@ -669,8 +628,62 @@ if(OPTION_BUILD_SIMULATE)
     )
 endif()
 
+# Build correctness tests if enabled
+if(OPTION_BUILD_TESTS)
+    find_package(Boost REQUIRED COMPONENTS unit_test_framework)
+    
+    add_executable(correctness_tests 
+        src/test/correctness_tests.cpp
+        src/seeding.cpp
+        src/placement.cpp
+        src/mgsr.cpp
+        src/panmap_utils.cpp
+        src/zstd_compression.cpp
+        src/index_utils.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/index_lite.capnp.c++
+    )
+    
+    add_dependencies(correctness_tests panman_lib build-deps index_capnp_generator tbb_build)
+    
+    target_include_directories(correctness_tests PRIVATE 
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2
+        ${CMAKE_CURRENT_BINARY_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/include
+        ${HTSLIB_INSTALL_DIR}/include
+        ${panman_SOURCE_DIR}/src
+        ${panman_BINARY_DIR}
+    )
+    
+    target_link_libraries(correctness_tests PRIVATE
+        panman_lib
+        ${Boost_LIBRARIES}
+        Boost::unit_test_framework
+        ${PROTOBUF_LIBRARIES}
+        spdlog::spdlog
+        absl::flat_hash_map
+        absl::flat_hash_set
+        ${CAPNP_LIBRARY}
+        ${KJ_LIBRARY}
+        ${TBB_LIBRARY}
+        libzstd_static
+    )
+    
+    target_compile_definitions(correctness_tests PRIVATE BOOST_TEST_DYN_LINK)
+    
+    # Set output directory to build/bin
+    set_target_properties(correctness_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    
+    # Enable CTest
+    enable_testing()
+    add_test(NAME correctness_tests COMMAND correctness_tests --log_level=test_suite WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
 # Add generated sources to panmap target
-  target_sources(panmap PRIVATE ${CAPNP_SRCS} ${MGSR_CAPNP_SRCS} ${LITE_CAPNP_SRCS})
+  target_sources(panmap PRIVATE ${LITE_CAPNP_SRCS})
 
 # Add include directories
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

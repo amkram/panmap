@@ -317,12 +317,22 @@ void LiteTree::initialize(::LiteTree::Reader liteTreeReader) {
 
   // initialize allLiteNodes
   auto liteNodesReader = liteTreeReader.getLiteNodes();
-  for (size_t i = 0; i < liteNodesReader.size(); i++) {
+  size_t numNodes = liteNodesReader.size();
+  
+  // Pre-allocate dfsIndexToNode vector
+  dfsIndexToNode.resize(numNodes, nullptr);
+  
+  for (size_t i = 0; i < numNodes; i++) {
     const auto liteNodeReader = liteNodesReader[i];
     const auto& nodeIdentifier = liteNodeReader.getId();
     const auto parentIndex = liteNodeReader.getParentIndex();
     nodeToDfsIndex.emplace(nodeIdentifier, i);
     auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new LiteNode(nodeIdentifier, nullptr, {}));
+    
+    // Store pointer in dfsIndexToNode for index-based access
+    it->second->nodeIndex = i;
+    dfsIndexToNode[i] = it->second;
+    
     if (i == 0) continue;
     const auto parentNodeReader = liteNodesReader[parentIndex];
     const auto& parentNodeId = parentNodeReader.getId();
