@@ -7406,7 +7406,6 @@ mgsr::squareEM::squareEM(
     }
   }
 
-
   std::vector<std::vector<uint32_t>> scoreMatrix(probableNodes.size(), std::vector<uint32_t>(numReads, 0));
   tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
     const auto& range = threadRanges[threadIdx];
@@ -7463,9 +7462,13 @@ mgsr::squareEM::squareEM(
     size_t end = (i == numThreads - 1) ? scoresToNodeIdsVector.size() : (i + 1) * chunkSizeScoresToNodeIdsVector;
     if (start < scoresToNodeIdsVector.size()) {
       threadRangesScoresToNodeIdsVector[i].first = start;
-      threadRangesScoresToNodeIdsVector[i].second = end;
+      threadRangesScoresToNodeIdsVector[i].second = std::min(end, scoresToNodeIdsVector.size());
+      if (threadRangesScoresToNodeIdsVector[i].second == scoresToNodeIdsVector.size()) {
+        break;
+      }
     }
   }
+
   tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
     const auto& range = threadRangesScoresToNodeIdsVector[threadIdx];
     for (size_t i = range.first; i < range.second; ++i) {
@@ -7508,7 +7511,10 @@ mgsr::squareEM::squareEM(
     size_t end = (i == numThreads - 1) ? numNodes : (i + 1) * propsChunkSize;
     if (start < numNodes) {
       threadsRangeByProps[i].first = start;
-      threadsRangeByProps[i].second = end;
+      threadsRangeByProps[i].second = std::min(end, numNodes);
+      if (threadsRangeByProps[i].second == numNodes) {
+        break;
+      }
     }
   }
 
