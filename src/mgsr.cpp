@@ -6124,23 +6124,6 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     std::cerr << "Pruned " << prunedReads << " reads due to ambiguous seedmers." << std::endl;
   }
 
-  // std::ofstream readScoresOut("read_scores_info.tsv");
-  // readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tReadWeights" << std::endl;
-  // for (size_t i = 0; i < reads.size(); ++i) {
-  //   const auto& curRead = reads[i];
-  //   if (curRead.maxScore == 0) continue;
-  //   readScoresOut << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << "\t";
-  //   for (size_t j = 0; j < readSeedmersDuplicatesIndex[i].size(); ++j) {
-  //     if (j == 0) {
-  //       readScoresOut << readSeedmersDuplicatesIndex[i][j];
-  //     } else {
-  //       readScoresOut << "," << readSeedmersDuplicatesIndex[i][j];
-  //     }
-  //   }
-  //   readScoresOut << std::endl;
-  // }
-  // readScoresOut.close();
-
 
   if (liteTree->debugNodeID != "") {
     const auto& debugNodeID = liteTree->debugNodeID;
