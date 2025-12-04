@@ -7416,11 +7416,11 @@ mgsr::squareEM::squareEM(
     }
   });
   
-  // clear memory that are no longer needed
-  for (auto [nodeId, node] : liteTree.allLiteNodes) {
-    decltype(node->readScoreDeltas)().swap(node->readScoreDeltas);
-    decltype(node->readScoreDeltasLowMemory)().swap(node->readScoreDeltasLowMemory);
-  }
+  // // clear memory that are no longer needed
+  // for (auto [nodeId, node] : liteTree.allLiteNodes) {
+  //   decltype(node->readScoreDeltas)().swap(node->readScoreDeltas);
+  //   decltype(node->readScoreDeltasLowMemory)().swap(node->readScoreDeltasLowMemory);
+  // }
 
 
 
