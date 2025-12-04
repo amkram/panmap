@@ -1330,6 +1330,7 @@ int main(int argc, char *argv[]) {
 
 
 
+
       std::ofstream scoresOut;
       if (vm.count("read-seed-scores")) {
         scoresOut.open(prefix + ".nodeReadSeedScores.tsv");
@@ -1432,25 +1433,41 @@ int main(int argc, char *argv[]) {
         }
         abundanceOutput << "\t" << squareEM.props[index] << std::endl;
       }
-      // for (size_t i = 0; i < indices.size(); ++i) {
-      //   size_t index = indices[i];
-      //   auto node = liteTree.allLiteNodes.at(squareEM.nodes[index]);
-      //   abundanceOutput << node->identifier;
-      //   for (const auto& member : node->identicalNodeIdentifiers) {
-      //     abundanceOutput << "," << member;
-      //   }
-      //   if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
-      //     for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
-      //       auto memberNode = liteTree.allLiteNodes.at(member);
-      //       abundanceOutput << "," << memberNode->identifier;
-      //       for (const auto& identicalMember : memberNode->identicalNodeIdentifiers) {
-      //         abundanceOutput << "," << identicalMember;
-      //       }
-      //     }
-      //   }
-      //   abundanceOutput << "\t" << squareEM.props[index] << std::endl;
-      // }
       abundanceOutput.close();
+
+      std::vector<std::vector<size_t>> assignedReadsIndices(indices.size());
+      for (size_t i = 0; i < indices.size(); ++i) {
+        size_t index = indices[i];
+        const auto& nodeId = squareEM.nodes[index];
+        auto curNodeScores = threadsManager.getScoresAtNode(nodeId);
+        for (size_t j = 0; j < curNodeScores.size(); ++j) {
+          const auto& curRead = threadsManager.reads[j];
+          if (curRead.maxScore != 0 && curNodeScores[j] == curRead.maxScore) {
+            for (const auto& rawReadIndex : threadsManager.readSeedmersDuplicatesIndex[j]) {
+              assignedReadsIndices[i].push_back(rawReadIndex);
+            }
+          }
+        }
+        if (assignedReadsIndices[i].size() > 0) {
+          std::sort(assignedReadsIndices[i].begin(), assignedReadsIndices[i].end());
+        }
+      }
+      std::ofstream assignedReadsOutput(prefix + ".mgsr.assignedReads.out");
+      for (size_t i = 0; i < indices.size(); ++i) {
+        size_t index = indices[i];
+        assignedReadsOutput << squareEM.nodes[index] << "\t" << assignedReadsIndices[i].size() << "\t";
+        for (size_t j = 0; j < assignedReadsIndices[i].size(); ++j) {
+          if (j == 0) {
+            assignedReadsOutput << assignedReadsIndices[i][j];
+          } else {
+            assignedReadsOutput << "," << assignedReadsIndices[i][j];
+          }
+        }
+        assignedReadsOutput << std::endl;
+      }
+      assignedReadsOutput.close();
+
+      
       auto end_time_squareEM = std::chrono::high_resolution_clock::now();
       auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
       std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
