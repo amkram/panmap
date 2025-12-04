@@ -1311,6 +1311,24 @@ int main(int argc, char *argv[]) {
         threadsManager.scoreNodesMultithreaded();
       }
 
+      std::ofstream readScoresOut(prefix + ".read_scores_info.tsv");
+      readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tRawReadsIndices" << std::endl;
+      for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+        const auto& curRead = threadsManager.reads[i];
+        if (curRead.maxScore == 0) continue;
+        readScoresOut << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
+        for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
+          if (j == 0) {
+            readScoresOut << threadsManager.readSeedmersDuplicatesIndex[i][j];
+          } else {
+            readScoresOut << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+          }
+        }
+        readScoresOut << std::endl;
+      }
+      readScoresOut.close();
+
+
 
       std::ofstream scoresOut;
       if (vm.count("read-seed-scores")) {
