@@ -1,0 +1,38 @@
+name: goodpan
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Python
+  - python=3.11
+  
+  # Workflow management
+  - snakemake>=7.0
+  - snakemake-minimal
+  
+  # Bioinformatics tools
+  - biopython
+  - pysam
+  
+  # Scientific computing
+  - numpy
+  - scipy
+  - pandas
+  
+  # Plotting and visualization
+  - matplotlib
+  - seaborn
+  
+  # Build tools (for C++ compilation)
+  - cmake>=3.20
+  - make
+  - cxx-compiler
+  
+  # Additional utilities
+  - pip
+  
+  # Pip packages
+  - pip:
+    - toml
+    - InSilicoSeq

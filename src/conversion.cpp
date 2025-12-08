@@ -21,9 +21,10 @@ void addSeeds(std::vector<seeding::seed_t> &fwdmatchingSeeds,
   for (uint32_t rpos : positions) {
     seeding::seed_t thisSeed = curSeed;
     thisSeed.reversed = thisSeed.reversed == reverseCondition;
+    // endPos is the last position of the seed in the query (0-indexed)
+    // This is always pos + k - 1, regardless of strand. The reversed flag
+    // tells minimap2 which strand the seed is on.
     thisSeed.endPos = thisSeed.pos + k - 1;
-    thisSeed.endPos = (thisSeed.reversed) ? readlen - thisSeed.pos + k - 2 : thisSeed.endPos;
-
     thisSeed.rpos = rpos;
 
     if (thisSeed.reversed) {

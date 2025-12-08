@@ -1,147 +1,173 @@
-import hashlib
-import pathlib, os, re
+"""
+Panmap benchmarking workflow - simplified version
+"""
+import hashlib, pathlib, os, re, subprocess, shutil
+from pathlib import Path
 
 OUTPUT_DIR = "workflow_output"
 
-# Available pangenome datasets with genome size estimates
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 PANGENOMES = {
-    'rsv_4K': {
-        'path': 'panmans/rsv_4K.panman',
-        'genome_size': 15000  # RSV genome ~15kb
-    },
-    'sars_20K': {
-        'path': 'panmans/sars_20000.panman', 
-        'genome_size': 30000  # SARS-CoV-2 genome ~30kb
-    }
-    # 'tb_400': {
-    #     'path': 'panmans/tb_400.panman',
-    #     'genome_size': 4000000  # Mycobacterium tuberculosis genome ~4Mb
-    # },
-    # 'sars_8M': {
-    #     'path': 'panmans/sars_8M.panman',
-    #     'genome_size': 30000  # SARS-CoV-2 genome ~30kb
-    # }
+    'rsv_4K': {'path': 'panmans/rsv_4K.panman', 'genome_size': 15000},
+    'tb_400': {'path': 'panmans/tb_400.panman', 'genome_size': 4400000}
 }
 
-# CONFIG = {
-#     'pangenomes': ['rsv_4K', 'sars_20K', 'tb_400'],   # Which datasets to test - multiple pangenomes
-#     'k_values': range(5, 61, 4),  # k-mer sizes from 5 to 61 in steps of 4
-#     's_values': [3, 6, 8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
-#     'l_values': [1, 3, 5],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
-#     'include_internal': [True],            # Include internal nodes? [False, True]
-#     'coverage_levels': [1,10,100],        # Coverage levels (X coverage) (removed 1x)
-#     'mutation_rates': [0.0001, 0.0005, 0.001], # Mutation rates per base pair (reduced to 1)
-#     'replicates': 50,                        # Replicates per condition (reduced from 100 to 10)
-#     'model': 'NovaSeq',                     # Sequencing model
-#     'read_length': 150                      # Average read length for coverage calculation
-# }
-# Experiment parameters - modify these to customize experiments
 CONFIG = {
-    'pangenomes': ['rsv_4K', 'sars_20K'],   # Which datasets to test - multiple pangenomes
-    'k_values': range(7, 41, 6),
-    's_values': [8],                    # Minimizer spacing - test density vs speed tradeoff (reduced to 1)
-    'l_values': [1, 3],                 # k-min-mer lengths (l=1 is syncmers, l=3 is k-min-mers)
-    'include_internal': [True],            # Include internal nodes? [False, True]
-    'coverage_levels': [1, 10, 100, 10000],        # Coverage levels (X coverage) (removed 1x)
-    'mutation_rates': [0.0001, 0.0005, 0.001], # Mutation rates per base pair (reduced to 1)
-    'replicates': 30,                        # Replicates per condition (reduced from 100 to 30)
-    'model': 'NovaSeq',                     # Sequencing model
-    'read_length': 150                      # Average read length for coverage calculation
+    'pangenomes': ['rsv_4K'],
+    'k_values': range(11, 60, 8),
+    's_values': [4, 8],
+    'l_values': [1, 3],
+    'include_internal': [True],
+    'coverage_levels': [.1, 0.5, 1, 10, 100, 1000],
+    'mutation_rates': [0.0001, 0.0005, 0.001],
+    'replicates': 100,
+    'model': 'NovaSeq',
+    'read_length': 150
 }
 
+# ============================================================================
+# EXPERIMENT GENERATION
+# ============================================================================
 def generate_experiments():
-    """Generate all parameter combinations"""
     experiments = []
-    exp_id = 0
-    
-    for pangenome in CONFIG['pangenomes']:
-        for k in CONFIG['k_values']:
-            for s in CONFIG['s_values']:
-                for l in CONFIG['l_values']:
-                    for include_internal in CONFIG['include_internal']:
-                        for mutation_rate in CONFIG['mutation_rates']:
-                            tag = f"k{k}_s{s}_l{l}_{'int' if include_internal else 'noint'}"
-                            if mutation_rate > 0:
-                                tag += f"_mut{mutation_rate}"
-                            
-                            # Calculate read counts for each coverage level
-                            genome_size = PANGENOMES[pangenome]['genome_size']
-                            read_length = CONFIG['read_length']
-                            read_counts = []
-                            for coverage in CONFIG['coverage_levels']:
-                                num_reads = int((genome_size * coverage) / read_length)
-                                read_counts.append(num_reads)
-                            
-                            experiments.append({
-                                'id': f'exp{exp_id}',
-                                'pangenome_name': pangenome,
-                                'panman_path': PANGENOMES[pangenome]['path'],
-                                'genome_size': genome_size,
-                                'pan_stem': pangenome,
-                                'k': k, 's': s, 'l': l,
-                                'include_internal': include_internal,
-                                'mutation_rate': mutation_rate,
-                                'model': CONFIG['model'],
-                                'coverage_levels': CONFIG['coverage_levels'],
-                                'num_reads_values': read_counts,
-                                'replicates': CONFIG['replicates'],
-                                'tag': tag
-                            })
-                            exp_id += 1
-    
+    for i, (pan, k, s, l, inc_int, mut_rate) in enumerate(
+        (pan, k, s, l, inc, mut) 
+        for pan in CONFIG['pangenomes']
+        for k in CONFIG['k_values']
+        for s in CONFIG['s_values']
+        for l in CONFIG['l_values']
+        for inc in CONFIG['include_internal']
+        for mut in CONFIG['mutation_rates']
+    ):
+        genome_size = PANGENOMES[pan]['genome_size']
+        # index_tag excludes mutation_rate since index doesn't depend on it
+        index_tag = f"k{k}_s{s}_l{l}_{'int' if inc_int else 'noint'}"
+        experiments.append({
+            'id': f'exp{i}',
+            'pangenome_name': pan,
+            'panman_path': PANGENOMES[pan]['path'],
+            'genome_size': genome_size,
+            'pan_stem': pan,
+            'k': k, 's': s, 'l': l,
+            'include_internal': inc_int,
+            'mutation_rate': mut_rate,
+            'model': CONFIG['model'],
+            'coverage_levels': CONFIG['coverage_levels'],
+            'num_reads_values': [int((genome_size * cov) / CONFIG['read_length']) for cov in CONFIG['coverage_levels']],
+            'replicates': CONFIG['replicates'],
+            'tag': f"k{k}_s{s}_l{l}_{'int' if inc_int else 'noint'}" + (f"_mut{mut_rate}" if mut_rate > 0 else ""),
+            'index_tag': index_tag  # for shared index lookup
+        })
     return experiments
 
 EXPERIMENTS = generate_experiments()
-EXP_BY_ID = {exp['id']: exp for exp in EXPERIMENTS}
+EXP_BY_ID = {e['id']: e for e in EXPERIMENTS}
 
-def _exp_root(eid, pan_stem, tag):
+def exp_root(eid, pan_stem, tag):
     return f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}"
 
-def _tag(exp):
-    return exp['tag']
+# Generate unique index combinations (pangenome + k/s/l, independent of mutation_rate)
+INDEX_COMBOS = list({(e['pan_stem'], e['k'], e['s'], e['l'], e['include_internal'], e['index_tag'], e['panman_path']) 
+                     for e in EXPERIMENTS})
 
-# Print experiment summary
-print(f"[config] Generated {len(EXPERIMENTS)} experiments")
-print(f"[config] Coverage levels: {CONFIG['coverage_levels']} with read length {CONFIG['read_length']}")
-print(f"[config] Read counts per coverage:")
-genome_size = list(PANGENOMES.values())[0]['genome_size']  # Use first genome size as reference
-for cov in CONFIG['coverage_levels']:
-    reads = int((genome_size * cov) / CONFIG['read_length'])
-    print(f"  {cov}x coverage: {reads} reads")
-print(f"[config] Experiments:")
-for exp in EXPERIMENTS[:3]:  # Show first 3
-    print(f"  {exp['id']}: {exp['pangenome_name']} - {exp['tag']} (mutation_rate: {exp['mutation_rate']})")
-if len(EXPERIMENTS) > 3:
-    print(f"  ... and {len(EXPERIMENTS)-3} more")
+def index_root(pan_stem, index_tag):
+    return f"{OUTPUT_DIR}/indexes/{pan_stem}/{index_tag}"
 
-import pathlib, os, re
-
-# =============================================================================
-# GENERATED FILE PATHS
-# =============================================================================
-
+# Generate all read combinations
 READS = [(e['id'], e['pan_stem'], e['tag'], cov, n, rep) 
          for e in EXPERIMENTS 
          for cov, n in zip(e['coverage_levels'], e['num_reads_values'])
          for rep in range(e['replicates'])]
 
-FASTQS = {
-    'r1': [f"{_exp_root(eid, pan_stem, tag)}/reads/cov{cov}_{n}_rep{rep}_R1.fastq" for (eid, pan_stem, tag, cov, n, rep) in READS],
-    'r2': [f"{_exp_root(eid, pan_stem, tag)}/reads/cov{cov}_{n}_rep{rep}_R2.fastq" for (eid, pan_stem, tag, cov, n, rep) in READS]
-}
-RESULT_FILES = [f"{_exp_root(eid, pan_stem, tag)}/results/reads/cov{cov}_{n}_rep{rep}.txt" for (eid, pan_stem, tag, cov, n, rep) in READS]
-INDEX_FILES = [f"{_exp_root(e['id'], e['pangenome_name'], e['tag'])}/indexes/index.pmi" for e in EXPERIMENTS]
-MM_FILES = [f"{_exp_root(e['id'], e['pangenome_name'], e['tag'])}/indexes/{e['pangenome_name']}.panman.mm" for e in EXPERIMENTS]
-GENOME_FASTA = [f"{_exp_root(eid, pan_stem, tag)}/genomes/reads/cov{cov}_{n}_rep{rep}/random_node.fasta" for (eid, pan_stem, tag, cov, n, rep) in READS]
-MUT_FASTA = [f"{_exp_root(eid, pan_stem, tag)}/mutgenomes/reads/cov{cov}_{n}_rep{rep}/mutated.fasta" for (eid, pan_stem, tag, cov, n, rep) in READS]
-PLACEMENTS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/placements.tsv" for (eid, pan_stem, tag, cov, n, rep) in READS]
-DETAILED_PLACEMENTS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/detailed.tsv" for (eid, pan_stem, tag, cov, n, rep) in READS]
-PLACEMENT_LOGS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/panmap.log" for (eid, pan_stem, tag, cov, n, rep) in READS]
-PLACEMENT_TIME_LOGS = [f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log" for (eid, pan_stem, tag, cov, n, rep) in READS]
-INDEX_TIME_LOGS = [f"{_exp_root(e['id'], e['pangenome_name'], e['tag'])}/indexes/index_time.log" for e in EXPERIMENTS]
-ALIGNMENT_ACCURACY = [f"{_exp_root(eid, pan_stem, tag)}/alignments/reads/cov{cov}_{n}_rep{rep}/accuracy.tsv" for (eid, pan_stem, tag, cov, n, rep) in READS]
-AGGREGATION_MARKERS = [f"{OUTPUT_DIR}/results/aggregated/{eid}/{pan_stem}/{tag}/cov{cov}_{n}_rep{rep}.done" for (eid, pan_stem, tag, cov, n, rep) in READS]
+print(f"[config] {len(EXPERIMENTS)} experiments, {len(INDEX_COMBOS)} unique indexes, {len(READS)} total read sets")
 
+# ============================================================================
+# FILE PATHS
+# ============================================================================
+def paths(template):
+    return [template.format(eid=eid, pan=pan, tag=tag, cov=cov, n=n, rep=rep) 
+            for (eid, pan, tag, cov, n, rep) in READS]
+
+EXP_ROOT = f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan}}/{{tag}}"
+GENOME_FASTA = paths(f"{EXP_ROOT}/genomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/random_node.fasta")
+MUT_FASTA = paths(f"{EXP_ROOT}/mutgenomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/mutated.fasta")
+FASTQ_R1 = paths(f"{EXP_ROOT}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R1.fastq")
+FASTQ_R2 = paths(f"{EXP_ROOT}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R2.fastq")
+META_FILES = paths(f"{EXP_ROOT}/results/reads/cov{{cov}}_{{n}}_rep{{rep}}.txt")
+PLACEMENTS = paths(f"{EXP_ROOT}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/placements.tsv")
+DETAILED = paths(f"{EXP_ROOT}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/detailed.tsv")
+ACCURACY = paths(f"{EXP_ROOT}/alignments/reads/cov{{cov}}_{{n}}_rep{{rep}}/accuracy.tsv")
+# Shared indexes - one per (pangenome, k, s, l) combination
+INDEX_FILES = [f"{index_root(pan, idx_tag)}/index.pmi" for (pan, k, s, l, inc, idx_tag, path) in INDEX_COMBOS]
+MM_FILES = [f"{index_root(pan, idx_tag)}/{pan}.panman.mm" for (pan, k, s, l, inc, idx_tag, path) in INDEX_COMBOS]
+INDEX_TIME_LOGS = [f"{index_root(pan, idx_tag)}/index_time.log" for (pan, k, s, l, inc, idx_tag, path) in INDEX_COMBOS]
+PLACEMENT_TIME_LOGS = paths(f"{EXP_ROOT}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/time.log")
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+def sanitize_filename(name):
+    return re.sub(r'[\/\\:\*\?"<>|]', '_', name)
+
+def parse_time_log(log_file):
+    """Parse /usr/bin/time -v output"""
+    stats = {}
+    try:
+        with open(log_file) as f:
+            for line in f:
+                if 'Elapsed (wall clock) time' in line:
+                    m = re.search(r'(\d+):(\d+):(\d+\.\d+)', line) or re.search(r'(\d+):(\d+\.\d+)', line)
+                    if m:
+                        g = m.groups()
+                        stats['wall_time_sec'] = sum(float(x) * (60 ** (len(g)-1-i)) for i, x in enumerate(g))
+                elif 'Maximum resident set size' in line:
+                    m = re.search(r':\s*(\d+)', line)
+                    if m: stats['max_rss_mb'] = int(m.group(1)) / 1024.0
+                elif 'User time (seconds)' in line:
+                    m = re.search(r':\s*([\d.]+)', line)
+                    if m: stats['user_time_sec'] = float(m.group(1))
+                elif 'System time (seconds)' in line:
+                    m = re.search(r':\s*([\d.]+)', line)
+                    if m: stats['system_time_sec'] = float(m.group(1))
+    except FileNotFoundError:
+        pass
+    return stats
+
+def count_variants_with_exclusion(cs_field, target_start, target_end, exclude_bp):
+    """Count SNPs/indels from CS string, excluding bp from ends"""
+    snps = indels = 0
+    if target_end - target_start < 2 * exclude_bp:
+        return snps, indels
+    exclude_start, exclude_end = target_start + exclude_bp, target_end - exclude_bp
+    pos, i = target_start, 0
+    while i < len(cs_field):
+        c = cs_field[i]
+        if c == ':':
+            i += 1
+            num = ""
+            while i < len(cs_field) and cs_field[i].isdigit():
+                num += cs_field[i]; i += 1
+            if num: pos += int(num)
+        elif c == '*':
+            if exclude_start <= pos < exclude_end: snps += 1
+            pos += 1; i += 3 if i + 2 < len(cs_field) else len(cs_field)
+        elif c == '+':
+            if exclude_start <= pos < exclude_end: indels += 1
+            i += 1
+            while i < len(cs_field) and cs_field[i] in 'acgtACGT': i += 1
+        elif c == '-':
+            if exclude_start <= pos < exclude_end: indels += 1
+            i += 1; del_len = 0
+            while i < len(cs_field) and cs_field[i] in 'acgtACGT': del_len += 1; i += 1
+            pos += del_len
+        else: i += 1
+    return snps, indels
+
+# ============================================================================
+# RULES
+# ============================================================================
 rule all:
     input:
         f"{OUTPUT_DIR}/reports/experiments_summary.tsv",
@@ -149,142 +175,68 @@ rule all:
         f"{OUTPUT_DIR}/reports/placements_by_metric.tsv",
         f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv",
         f"{OUTPUT_DIR}/plots/placement_accuracy_plots.done",
-        # k-value analysis plots (split by l)
-        f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l1.png",
-        f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l3.png",
-        # Performance summaries and plots
+        # Per-pangenome accuracy plots
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/k_analysis/accuracy_by_k_l1.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/k_analysis/accuracy_by_k_l3.png", pan=PANGENOMES.keys()),
         f"{OUTPUT_DIR}/reports/index_performance_summary.tsv",
         f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv",
-        f"{OUTPUT_DIR}/plots/performance/index_time_by_k.png",
-        f"{OUTPUT_DIR}/plots/performance/placement_time_by_k.png",
-        *GENOME_FASTA,
-        *MUT_FASTA,
-        *INDEX_FILES,
-        *MM_FILES,
-        *FASTQS['r1'],
-        *FASTQS['r2'],
-        *RESULT_FILES,
-        *PLACEMENTS,
-        *DETAILED_PLACEMENTS,
-        *ALIGNMENT_ACCURACY,
-        *AGGREGATION_MARKERS
+        # Comprehensive results tables
+        f"{OUTPUT_DIR}/reports/index_stats.tsv",
+        f"{OUTPUT_DIR}/reports/placement_stats.tsv",
+        f"{OUTPUT_DIR}/reports/combined_results.tsv",
+        # Per-pangenome performance plots
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/index_time_by_k.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/placement_time_by_k.png", pan=PANGENOMES.keys()),
+        *GENOME_FASTA, *MUT_FASTA, *INDEX_FILES, *MM_FILES, *FASTQ_R1, *FASTQ_R2,
+        *META_FILES, *PLACEMENTS, *DETAILED, *ACCURACY
 
 rule experiments_summary:
-    output:
-        tsv=f"{OUTPUT_DIR}/reports/experiments_summary.tsv"
+    output: tsv=f"{OUTPUT_DIR}/reports/experiments_summary.tsv"
     run:
-        # Ensure output directory's reports path exists
-        pathlib.Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
-        header = ['id','tag','pan_stem','panman_path','include_internal','k','s','l','mutation_rate','genome_size','num_reads_values','replicates','model']
-        with open(output.tsv, 'w') as tf:
-            tf.write('\t'.join(header)+'\n')
+        Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.tsv, 'w') as f:
+            f.write('\t'.join(['id','tag','pan_stem','panman_path','include_internal','k','s','l','mutation_rate','genome_size','num_reads_values','replicates','model'])+'\n')
             for e in EXPERIMENTS:
-                tf.write('\t'.join([
-                    e['id'], e['tag'], e['pan_stem'], str(e['panman_path']), str(e['include_internal']).lower(), str(e['k']), str(e['s']), str(e['l']),
-                    str(e['mutation_rate']), str(e['genome_size']), ';'.join(map(str,e['num_reads_values'])), str(e['replicates']), e['model']
-                ])+'\n')
+                f.write('\t'.join(map(str, [e['id'], e['tag'], e['pan_stem'], e['panman_path'], str(e['include_internal']).lower(), e['k'], e['s'], e['l'], e['mutation_rate'], e['genome_size'], ';'.join(map(str,e['num_reads_values'])), e['replicates'], e['model']]))+'\n')
 
 rule dump_random_node:
     input:
         panmap_bin="build/bin/panmap",
         panman=lambda wc: EXP_BY_ID[wc.eid]['panman_path']
-    output:
-        f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/genomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/random_node.fasta"
+    output: f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/genomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/random_node.fasta"
     params:
-        seed=lambda wc: int(hashlib.md5(f"{EXP_BY_ID[wc.eid]['id']}_random_node_cov{wc.cov}_{wc.n}_rep{wc.rep}".encode()).hexdigest()[:8], 16) % (2**31 - 1)
+        seed=lambda wc: int(hashlib.md5(f"{wc.eid}_random_node_cov{wc.cov}_{wc.n}_rep{wc.rep}".encode()).hexdigest()[:8], 16) % (2**31 - 1)
     shell:
         r'''
-        set -e
-        mkdir -p $(dirname {output})
-        
-        # Get absolute paths before changing directory
-        PANMAP_BIN=$(realpath {input.panmap_bin})
-        PANMAN=$(realpath {input.panman})
-        OUTPUT=$(realpath -m {output})
-        
-        # Create unique temp directory
-        TMPDIR=$(mktemp -d)
-        trap "rm -rf $TMPDIR" EXIT
-        
-        # Copy panman to temp directory
-        cp "$PANMAN" "$TMPDIR/temp.panman"
-        
-        # Run panmap in temp directory and capture node ID
-        cd "$TMPDIR"
-        node_id=$("$PANMAP_BIN" temp.panman --dump-random-node --seed {params.seed} | tail -1)
-        
-        if [ -z "$node_id" ]; then
-            echo "ERROR: No node ID returned from panmap"
-            exit 1
-        fi
-        
-        # Find the generated file in temp directory
-        generated=$(ls temp.panman.random.*.fa 2>/dev/null | head -1)
-        
-        if [ -z "$generated" ] || [ ! -f "$generated" ]; then
-            echo "ERROR: No random node file generated"
-            exit 1
-        fi
-        
-        # Move to final output location
-        mv "$generated" "$OUTPUT"
+        set -e; mkdir -p $(dirname {output})
+        PANMAP=$(realpath {input.panmap_bin}); PANMAN=$(realpath {input.panman}); OUT=$(realpath -m {output})
+        TMPDIR=$(mktemp -d); trap "rm -rf $TMPDIR" EXIT
+        cp "$PANMAN" "$TMPDIR/temp.panman"; cd "$TMPDIR"
+        "$PANMAP" temp.panman --dump-random-node --seed {params.seed} | tail -1
+        mv temp.panman.random.*.fa "$OUT" 2>/dev/null || {{ echo "ERROR: No file generated"; exit 1; }}
         '''
 
 rule index_experiment:
-        input:
-                bin="build/bin/panmap",
-                pan=lambda wc: EXP_BY_ID[wc.eid]['panman_path']
-        output:
-                index=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi",
-                mm=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/{{pan_stem}}.panman.mm",
-                time_log=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index_time.log"
-        params:
-                pan=lambda wc: EXP_BY_ID[wc.eid]['panman_path'],
-                k=lambda wc: EXP_BY_ID[wc.eid]['k'],
-                s=lambda wc: EXP_BY_ID[wc.eid]['s'],
-                l=lambda wc: EXP_BY_ID[wc.eid]['l']
-        resources:
-                tmpdir=f"/tmp/panmap_{{eid}}_index"
-        shell:
-                r'''
-                set -e
-                echo "[index_experiment] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag}" >&2
-                echo "[index_experiment] k={params.k} s={params.s} l={params.l}" >&2
-                
-                # Create experiment-specific temp directory
-                exp_tmp_dir="/tmp/panmap_{wildcards.eid}_index_$$"
-                mkdir -p "$exp_tmp_dir"
-                trap "rm -rf $exp_tmp_dir" EXIT
-                
-                mkdir -p $(dirname {output.index})
-                
-                # Check if index already exists and is valid
-                if [[ -f {output.index} && -s {output.index} ]]; then
-                    echo "[index_experiment] Index already exists: {output.index}" >&2
-                    if [[ ! -f {output.mm} ]]; then
-                        cp {params.pan}.mm {output.mm}
-                    fi
-                    exit 0
-                fi
-                
-                # Build index with temporary name first, then move atomically
-                temp_index="$exp_tmp_dir/index.pmi.tmp"
-                /usr/bin/time -v {input.bin} -k {params.k} -s {params.s} -l {params.l} --index-mgsr "$temp_index" {params.pan} 2> {output.time_log}
-                
-                # Verify the index was created and has content
-                if [[ ! -f "$temp_index" || ! -s "$temp_index" ]]; then
-                    echo "[index_experiment] ERROR: Index creation failed" >&2
-                    exit 1
-                fi
-                
-                # Move atomically
-                mv "$temp_index" {output.index}
-                
-                # Copy mutation matrix
-                cp {params.pan}.mm {output.mm}
-                
-                echo "[index_experiment] Index built successfully: {output.index}" >&2
-                '''
+    input:
+        bin="build/bin/panmap",
+        pan=lambda wc: PANGENOMES[wc.pan_stem]['path']
+    output:
+        index=f"{OUTPUT_DIR}/indexes/{{pan_stem}}/{{index_tag}}/index.pmi",
+        mm=f"{OUTPUT_DIR}/indexes/{{pan_stem}}/{{index_tag}}/{{pan_stem}}.panman.mm",
+        time_log=f"{OUTPUT_DIR}/indexes/{{pan_stem}}/{{index_tag}}/index_time.log"
+    params:
+        pan=lambda wc: PANGENOMES[wc.pan_stem]['path'],
+        k=lambda wc: int(re.search(r'k(\d+)', wc.index_tag).group(1)),
+        s=lambda wc: int(re.search(r's(\d+)', wc.index_tag).group(1)),
+        l=lambda wc: int(re.search(r'l(\d+)', wc.index_tag).group(1))
+    shell:
+        r'''
+        set -e; mkdir -p $(dirname {output.index})
+        [[ -f {output.index} && -s {output.index} ]] && {{ [[ ! -f {output.mm} ]] && cp {params.pan}.mm {output.mm}; exit 0; }}
+        TMP=$(mktemp -d); trap "rm -rf $TMP" EXIT
+        /usr/bin/time -v {input.bin} {params.pan} -k {params.k} -s {params.s} -l {params.l} -i "$TMP/idx.pmi" --stop index -f 2> {output.time_log}
+        mv "$TMP/idx.pmi" {output.index}; cp {params.pan}.mm {output.mm}
+        '''
 
 rule simulate_reads:
     threads: 4
@@ -292,7 +244,7 @@ rule simulate_reads:
         fasta=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/genomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/random_node.fasta",
         panman=lambda wc: EXP_BY_ID[wc.eid]['panman_path'],
         simulate_bin="build/bin/simulate",
-        mm=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/{{pan_stem}}.panman.mm"
+        mm=lambda wc: f"{index_root(wc.pan_stem, EXP_BY_ID[wc.eid]['index_tag'])}/{wc.pan_stem}.panman.mm"
     output:
         r1=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R1.fastq",
         r2=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R2.fastq",
@@ -300,61 +252,33 @@ rule simulate_reads:
         mut_fa=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/mutgenomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/mutated.fasta"
     params:
         out_dir=lambda wc: f"{OUTPUT_DIR}/experiments/{wc.eid}/{wc.pan_stem}/{wc.tag}/mutgenomes/reads/cov{wc.cov}_{wc.n}_rep{wc.rep}",
-        seed=lambda wc: int(hashlib.md5(f"{EXP_BY_ID[wc.eid]['id']}_{wc.cov}_{wc.n}_{wc.rep}".encode()).hexdigest()[:8], 16) % (2**31 - 1),
+        seed=lambda wc: int(hashlib.md5(f"{wc.eid}_{wc.cov}_{wc.n}_{wc.rep}".encode()).hexdigest()[:8], 16) % (2**31 - 1),
         model=lambda wc: EXP_BY_ID[wc.eid]['model'],
-        mut_rate=lambda wc: EXP_BY_ID[wc.eid].get('mutation_rate', 0.0),
-        genome_size=lambda wc: EXP_BY_ID[wc.eid].get('genome_size', 15000),
-        snps=lambda wc: int(EXP_BY_ID[wc.eid].get('mutation_rate', 0.0) * EXP_BY_ID[wc.eid].get('genome_size', 15000)),
-        indels=lambda wc: int(EXP_BY_ID[wc.eid].get('mutation_rate', 0.0) * EXP_BY_ID[wc.eid].get('genome_size', 15000) / 4)
+        mut_rate=lambda wc: EXP_BY_ID[wc.eid].get('mutation_rate', 0.0)
     shell:
         r'''
-        set -e
-        mkdir -p {params.out_dir} $(dirname {output.r1}) $(dirname {output.meta})
-        
-        # Extract node name from fasta
-        node_name=$(head -1 {input.fasta} | sed 's/^>//')
-        
-        # Calculate insertions and deletions (split indels evenly)
-        insertions=$((({params.indels} + 1) / 2))
-        deletions=$(({params.indels} / 2))
-        
-        # Run simulate and capture output
-        mm_flag=""
-        [ -f {input.mm} ] && mm_flag="--mut_spec {input.mm} --mut_spec_type snp"
-        
-        {input.simulate_bin} --panmat {input.panman} --ref "$node_name" \
-            --out_dir {params.out_dir} --n_reads {wildcards.n} --rep 1 \
-            --model {params.model} --cpus 4 --seed {params.seed} \
-            --mutnum {params.snps} $insertions $deletions $mm_flag \
-            2>&1 | tee {params.out_dir}/simulate.log
-        
-        # Copy outputs to expected locations
+        set -e; mkdir -p {params.out_dir} $(dirname {output.r1}) $(dirname {output.meta})
+        node=$(head -1 {input.fasta} | sed 's/^>//')
+        # Calculate actual genome length from FASTA (excluding header lines)
+        genome_size=$(grep -v '^>' {input.fasta} | tr -d '\n' | wc -c)
+        # Calculate mutations based on actual genome size and mutation rate
+        snps=$(python3 -c "print(int({params.mut_rate} * $genome_size))")
+        indels=$(python3 -c "print(int({params.mut_rate} * $genome_size / 4))")
+        ins=$(((indels + 1) / 2)); del=$((indels / 2))
+        mm_flag=""; [ -f {input.mm} ] && mm_flag="--mut_spec {input.mm} --mut_spec_type snp"
+        {input.simulate_bin} --panmat {input.panman} --ref "$node" --out_dir {params.out_dir} --n_reads {wildcards.n} --rep 1 --model {params.model} --cpus 4 --seed {params.seed} --mutnum $snps $ins $del $mm_flag 2>&1 | tee {params.out_dir}/simulate.log
         find {params.out_dir} -name "*_R1.fastq" -exec cp {{}} {output.r1} \;
         find {params.out_dir} -name "*_R2.fastq" -exec cp {{}} {output.r2} \;
         find {params.out_dir} -name "*.fa" ! -name "*.fai" -exec cp {{}} {output.mut_fa} \;
-        
-        # Parse mutations from log and extract true_node from FASTQ header
-        true_node=$(grep -oP '(curNodeID|Applied.*to node)\K[^\s]+$' {params.out_dir}/simulate.log | tail -1 || echo "$node_name")
-        applied_snps=$(grep -oP 'Applied \K\d+(?= SNPs)' {params.out_dir}/simulate.log || echo "0")
-        applied_ins=$(grep -oP '\K\d+(?= insertions)' {params.out_dir}/simulate.log || echo "0")
-        applied_del=$(grep -oP '\K\d+(?= deletions)' {params.out_dir}/simulate.log || echo "0")
-        ins_lens=$(grep -oP 'insertions \(lengths: \K[0-9,]+' {params.out_dir}/simulate.log || echo "")
-        del_lens=$(grep -oP 'deletions \(lengths: \K[0-9,]+' {params.out_dir}/simulate.log || echo "")
-        
-        # Extract sanitized node from FASTQ header if available
-        true_node_sanitized=$(head -1 {output.r1} | sed 's/^@//' | sed 's/[_/].*//')
-        
-        # Write metadata
-        cat > {output.meta} << EOF
-id={wildcards.eid}	coverage={wildcards.cov}	reads={wildcards.n}	{wildcards.tag}	mutation_rate={params.mut_rate}	genome_size={params.genome_size}	requested_snps={params.snps}	requested_indels={params.indels}	applied_snps=$applied_snps	applied_insertions=$applied_ins	applied_deletions=$applied_del	insertion_lengths=$ins_lens	deletion_lengths=$del_lens	true_node=$true_node	true_node_sanitized=$true_node_sanitized
-EOF
+        true_node=$(grep -oP '(curNodeID|Applied.*to node)\K[^\s]+$' {params.out_dir}/simulate.log | tail -1 || echo "$node")
+        echo "id={wildcards.eid}	coverage={wildcards.cov}	reads={wildcards.n}	{wildcards.tag}	mutation_rate={params.mut_rate}	genome_size=$genome_size	requested_snps=$snps	requested_indels=$indels	true_node=$true_node" > {output.meta}
         '''
 
 rule place_reads:
     input:
         panmap_bin="build/bin/panmap",
         panman=lambda wc: EXP_BY_ID[wc.eid]['panman_path'],
-        index=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/indexes/index.pmi",
+        index=lambda wc: f"{index_root(wc.pan_stem, EXP_BY_ID[wc.eid]['index_tag'])}/index.pmi",
         r1=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R1.fastq",
         r2=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/reads/cov{{cov}}_{{n}}_rep{{rep}}_R2.fastq",
         meta=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/results/reads/cov{{cov}}_{{n}}_rep{{rep}}.txt"
@@ -369,28 +293,14 @@ rule place_reads:
         l=lambda wc: EXP_BY_ID[wc.eid]['l']
     shell:
         r'''
-        set -e
-        mkdir -p $(dirname {output.placement})
-        
-        # Get true_node from metadata
+        set -e; mkdir -p $(dirname {output.placement})
         true_node=$(grep -oP 'true_node=\K[^\t]+' {input.meta} || echo "unknown")
-        
-        # Run panmap with explicit output prefix
-        /usr/bin/time -v {input.panmap_bin} {input.panman} {input.r1} {input.r2} \
-            --output {params.outprefix} --cpus 1 --stop place \
-            2> {output.time_log}
-        
-        # Move placement output to expected location
+        /usr/bin/time -v {input.panmap_bin} {input.panman} {input.r1} {input.r2} --output {params.outprefix} -t 1 --stop place -i {input.index} 2> {output.time_log}
         mv {params.outprefix}.placement.tsv {output.placement}
-        
-        # Create detailed TSV with true_node info
-        {{
-            echo -e "experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl"
-            tail -n +2 {output.placement} | while IFS=$'\t' read metric score hits nodes; do
-                timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-                echo -e "{wildcards.eid}\t{wildcards.n}\t{wildcards.rep}\t$true_node\t$metric\t$score\t$nodes\t$nodes\t$timestamp\t{params.k}\t{params.s}\t{params.l}"
-            done
-        }} > {output.detailed}
+        echo -e "experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl" > {output.detailed}
+        tail -n +2 {output.placement} | while IFS=$'\t' read metric score hits nodes; do
+            echo -e "{wildcards.eid}\t{wildcards.n}\t{wildcards.rep}\t$true_node\t$metric\t$score\t$nodes\t$nodes\t$(date '+%Y-%m-%d %H:%M:%S')\t{params.k}\t{params.s}\t{params.l}"
+        done >> {output.detailed}
         '''
 
 rule align_placement_accuracy:
@@ -404,2320 +314,597 @@ rule align_placement_accuracy:
         accuracy_50bp=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/alignments/reads/cov{{cov}}_{{n}}_rep{{rep}}/accuracy_50bp.tsv",
         accuracy_150bp=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/alignments/reads/cov{{cov}}_{{n}}_rep{{rep}}/accuracy_150bp.tsv",
         accuracy_500bp=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/alignments/reads/cov{{cov}}_{{n}}_rep{{rep}}/accuracy_500bp.tsv",
-        alignment_results=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/alignments/reads/cov{{cov}}_{{n}}_rep{{rep}}/accuracy.tsv",  # Keep original for compatibility
+        alignment_results=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/alignments/reads/cov{{cov}}_{{n}}_rep{{rep}}/accuracy.tsv",
         log_dir=directory(f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/alignments/reads/cov{{cov}}_{{n}}_rep{{rep}}/logs")
     run:
-        import subprocess, pathlib, tempfile, os, re
-
-        out_dir = pathlib.Path(output.alignment_results).parent
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        log_dir = pathlib.Path(output.log_dir)
+        log_dir = Path(output.log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Read metadata to get true_node
+        
+        # Read metadata
         true_node = "unknown"
         try:
-            with open(input.meta) as mf:
-                meta_line = mf.read().strip()
-                fields = dict(part.split('=',1) for part in meta_line.split('\t') if '=' in part)
+            with open(input.meta) as f:
+                fields = dict(p.split('=',1) for p in f.read().strip().split('\t') if '=' in p)
                 true_node = fields.get("true_node", "unknown")
-        except Exception:
-            pass
-
-        if true_node == "unknown":
-            # Write empty results for all versions
-            for output_file in [output.accuracy_0bp, output.accuracy_50bp, output.accuracy_150bp, output.accuracy_500bp, output.alignment_results]:
-                with open(output_file, 'w') as f:
-                    f.write("metric\ttrue_node\tplacement_node\tgenome_length\tsnps\tindels\ttotal_variants\talignment_length\tidentity\texcluded_bp\n")
-            return
-
-        # Read placement results for each metric
+        except: pass
+        
+        # Read placements
         placement_nodes = {}
         try:
-            with open(input.placement) as pf:
-                lines = pf.readlines()
-                for line in lines[1:]:  # Skip header
+            with open(input.placement) as f:
+                for line in f.readlines()[1:]:
                     parts = line.strip().split('\t')
-                    if len(parts) >= 4:
-                        metric = parts[0]
-                        node = parts[3]
-                        if node and node != "":
-                            placement_nodes[metric] = node
-        except Exception:
-            pass
+                    if len(parts) >= 4 and parts[3]:
+                        placement_nodes[parts[0]] = parts[3]
+        except: pass
         
-        # Helper to mirror C++ sanitizeFilename for output files
-        def sanitize_filename(name: str) -> str:
-            # Replace characters: / \ : * ? " < > |
-            return re.sub(r'[\/\\:\*\?"<>|]', '_', name)
-
-        # Function to process variants with different exclusion levels
-        def count_variants_with_exclusion(cs_field, target_start, target_end, exclude_bp):
-            """Count variants excluding specified bp from both ends"""
-            snps = indels = 0
-            
-            # Calculate exclusion boundaries
-            exclude_start = target_start + exclude_bp
-            exclude_end = target_end - exclude_bp
-            
-            # Skip if alignment is too short for filtering
-            if target_end - target_start < 2 * exclude_bp:
-                return snps, indels
-            
-            position = target_start  # Current position in target sequence
-            
-            # Parse CS string element by element
-            i = 0
-            while i < len(cs_field):
-                if cs_field[i] == ':':
-                    # Match segment (:12)
-                    i += 1
-                    num_str = ""
-                    while i < len(cs_field) and cs_field[i].isdigit():
-                        num_str += cs_field[i]
-                        i += 1
-                    if num_str:
-                        position += int(num_str)
-                elif cs_field[i] == '*':
-                    # SNP (*ag)
-                    if exclude_start <= position < exclude_end:
-                        snps += 1
-                    position += 1
-                    i += 3 if i + 2 < len(cs_field) else len(cs_field)
-                elif cs_field[i] == '+':
-                    # Insertion (+acgt)
-                    if exclude_start <= position < exclude_end:
-                        indels += 1
-                    i += 1
-                    while i < len(cs_field) and cs_field[i] in 'acgtACGT':
-                        i += 1
-                elif cs_field[i] == '-':
-                    # Deletion (-acgt)
-                    if exclude_start <= position < exclude_end:
-                        indels += 1
-                    i += 1
-                    del_len = 0
-                    while i < len(cs_field) and cs_field[i] in 'acgtACGT':
-                        del_len += 1
-                        i += 1
-                    position += del_len
-                else:
-                    i += 1
-            
-            return snps, indels
-
-        # Define exclusion levels and corresponding output files
-        exclusion_configs = [
-            (0, output.accuracy_0bp),
-            (50, output.accuracy_50bp), 
-            (150, output.accuracy_150bp),
-            (500, output.accuracy_500bp)
-        ]
-
-        # Initialize all output files with headers
-        for exclude_bp, output_file in exclusion_configs:
-            with open(output_file, 'w') as f:
-                f.write("metric\ttrue_node\tplacement_node\tgenome_length\tsnps\tindels\ttotal_variants\talignment_length\tidentity\texcluded_bp\n")
+        exclusion_configs = [(0, output.accuracy_0bp), (50, output.accuracy_50bp), (150, output.accuracy_150bp), (500, output.accuracy_500bp)]
+        header = "metric\ttrue_node\tplacement_node\tgenome_length\tsnps\tindels\ttotal_variants\talignment_length\tidentity\texcluded_bp\n"
+        for _, f in exclusion_configs:
+            with open(f, 'w') as out: out.write(header)
         
+        if true_node == "unknown":
+            for _, f in exclusion_configs:
+                with open(f, 'a') as out:
+                    for m in ["raw","jaccard","cosine","weighted_jaccard"]:
+                        out.write(f"{m}\tunknown\t\t0\t0\t0\t0\t0\t0.0\t0\n")
+            return
         
-        # Metrics to evaluate - must match keys in placement_nodes dict
         for metric in ["raw", "jaccard", "cosine", "weighted_jaccard"]:
             placement_node = placement_nodes.get(metric, "")
+            genome_length = snps = indels = 0
+            identity = 1.0 if placement_node == true_node else 0.0
             
             if not placement_node or placement_node == true_node:
-                # Perfect match or no placement - get genome length from true node
-                genome_length = 0
+                # Get genome length from true node
                 try:
-                    # Extract true node sequence (panmap writes to file: {panman}.{sanitized(node)}.fa)
-                    true_fa_path = f"{input.panman}.{sanitize_filename(true_node)}.fa"
-                    # Remove existing file if present
-                    if os.path.exists(true_fa_path):
-                        os.unlink(true_fa_path)
-                    # Run extraction
-                    result = subprocess.run([
-                        input.panmap_bin, input.panman,
-                        "--dump-sequence", true_node
-                    ], capture_output=True, text=True, timeout=60)
-                    if result.returncode != 0:
-                        raise Exception(f"dump-sequence failed for {true_node}: {result.stderr}")
-                    # Verify file exists and has content
-                    if not os.path.exists(true_fa_path) or os.path.getsize(true_fa_path) == 0:
-                        raise Exception(f"FASTA not created: {true_fa_path}")
-                    # Get genome length (count only sequence lines)
-                    with open(true_fa_path) as tf:
-                        for line in tf:
-                            if not line.startswith('>'):
-                                genome_length += len(line.strip())
-                except Exception:
-                    pass
-                
-                snps = indels = total_variants = 0
-                alignment_length = genome_length
-                identity = 1.0 if placement_node == true_node else 0.0
-                
-                # Write to all output files with different exclusion levels
-                for exclude_bp, output_file in exclusion_configs:
-                    with open(output_file, 'a') as f:
-                        f.write(f"{metric}\t{true_node}\t{placement_node}\t{genome_length}\t{snps}\t{indels}\t{total_variants}\t{alignment_length}\t{identity:.6f}\t{exclude_bp}\n")
-                
-                # Write to original file for compatibility
-                with open(output.alignment_results, 'a') as f:
-                    f.write(f"{metric}\t{true_node}\t{placement_node}\t{genome_length}\t{snps}\t{indels}\t{total_variants}\t{alignment_length}\t{identity:.6f}\n")
-            
+                    true_fa = str(log_dir / f"{sanitize_filename(true_node)}.fa")
+                    subprocess.run([input.panmap_bin, input.panman, "--dump-sequence", true_node, "-o", true_fa], capture_output=True, timeout=60)
+                    with open(true_fa) as f:
+                        genome_length = sum(len(l.strip()) for l in f if not l.startswith('>'))
+                except: pass
+                for excl, f in exclusion_configs:
+                    with open(f, 'a') as out:
+                        out.write(f"{metric}\t{true_node}\t{placement_node}\t{genome_length}\t0\t0\t0\t{genome_length}\t{identity:.6f}\t{excl}\n")
             else:
-                # Different nodes - need alignment
-                print(f"[align_placement_accuracy] {metric}: aligning {true_node} vs {placement_node}")
+                # Align sequences
                 try:
-                    # Extract both node sequences - panmap creates files with sanitized names
-                    true_fa_path = f"{input.panman}.{sanitize_filename(true_node)}.fa"
-                    place_fa_path = f"{input.panman}.{sanitize_filename(placement_node)}.fa"
-
-                    # Remove existing files if they exist
-                    if os.path.exists(true_fa_path):
-                        os.unlink(true_fa_path)
-                    if os.path.exists(place_fa_path):
-                        os.unlink(place_fa_path)
-
-                    # Extract true node
-                    result1 = subprocess.run([
-                        input.panmap_bin, input.panman,
-                        "--dump-sequence", true_node
-                    ], capture_output=True, text=True, timeout=60)
-                    if result1.returncode != 0:
-                        print(f"[align_placement_accuracy] Failed to extract {true_node}: {result1.stderr}")
-                        raise Exception(f"Failed to extract {true_node}")
-
-                    # Extract placement node
-                    result2 = subprocess.run([
-                        input.panmap_bin, input.panman,
-                        "--dump-sequence", placement_node
-                    ], capture_output=True, text=True, timeout=60)
-                    if result2.returncode != 0:
-                        print(f"[align_placement_accuracy] Failed to extract {placement_node}: {result2.stderr}")
-                        raise Exception(f"Failed to extract {placement_node}")
-
-                    if not (os.path.exists(true_fa_path) and os.path.exists(place_fa_path)):
-                        raise Exception("FASTA files not created")
-
-                    genome_length = 0
-                    with open(true_fa_path) as tf:
-                        for line in tf:
-                            if not line.startswith('>'):
-                                genome_length += len(line.strip())
-
-                    paf_path = log_dir / f"{metric}_{true_node}_vs_{placement_node}.paf"
-                    minimap_log_path = log_dir / f"{metric}_{true_node}_vs_{placement_node}_minimap.log"
-                    with open(paf_path, 'w') as paf_file, open(minimap_log_path, 'w') as log_file:
-                        result3 = subprocess.run([
-                            "minimap2", "-cx", "asm20", "--cs",
-                            true_fa_path, place_fa_path
-                        ], stdout=paf_file, stderr=log_file, timeout=60, text=True)
-                    if result3.returncode != 0:
-                        with open(minimap_log_path) as log_f:
-                            stderr_content = log_f.read()
-                        raise Exception(f"minimap2 failed: {stderr_content}")
-
-                    # Parse PAF
-                    snps = indels = 0
-                    alignment_length = 0
-                    identity = 0.0
-                    results_by_exclusion = {}
-                    with open(paf_path) as paf:
-                        for line in paf:
-                            if line.startswith('#'):
-                                continue
+                    true_fa = str(log_dir / f"{sanitize_filename(true_node)}.fa")
+                    place_fa = str(log_dir / f"{sanitize_filename(placement_node)}.fa")
+                    subprocess.run([input.panmap_bin, input.panman, "--dump-sequence", true_node, "-o", true_fa], capture_output=True, timeout=60)
+                    subprocess.run([input.panmap_bin, input.panman, "--dump-sequence", placement_node, "-o", place_fa], capture_output=True, timeout=60)
+                    with open(true_fa) as f:
+                        genome_length = sum(len(l.strip()) for l in f if not l.startswith('>'))
+                    
+                    paf = log_dir / f"{metric}.paf"
+                    with open(paf, 'w') as pf:
+                        subprocess.run(["minimap2", "-cx", "asm20", "--cs", true_fa, place_fa], stdout=pf, timeout=60)
+                    
+                    results_by_excl = {}
+                    aln_len = 0
+                    with open(paf) as f:
+                        for line in f:
                             parts = line.strip().split('\t')
-                            if len(parts) < 12:
-                                continue
-                            alignment_length = int(parts[10])
-                            matches = int(parts[9])
-                            cs_field = None
-                            for field in parts[12:]:
-                                if field.startswith('cs:Z:'):
-                                    cs_field = field[5:]
-                                    break
-                            if cs_field:
-                                target_start = int(parts[7])
-                                target_end = int(parts[8])
-                                for exclude_bp, _out in exclusion_configs:
-                                    snps_excl, indels_excl = count_variants_with_exclusion(cs_field, target_start, target_end, exclude_bp)
-                                    results_by_exclusion[exclude_bp] = (snps_excl, indels_excl)
-                                if alignment_length > 0:
-                                    identity = matches / alignment_length
-                            break  # first alignment only
-
-                    # Write per-exclusion outputs
-                    for exclude_bp, out_file in exclusion_configs:
-                        s_excl, i_excl = results_by_exclusion.get(exclude_bp, (0,0))
-                        total_excl = s_excl + i_excl
-                        with open(out_file, 'a') as f_out:
-                            f_out.write(f"{metric}\t{true_node}\t{placement_node}\t{genome_length}\t{s_excl}\t{i_excl}\t{total_excl}\t{alignment_length}\t{identity:.6f}\t{exclude_bp}\n")
-
-                    # Append legacy summary
-                    total_variants = snps + indels
-                    with open(output.alignment_results, 'a') as legacy:
-                        legacy.write(f"{metric}\t{true_node}\t{placement_node}\t{genome_length}\t{snps}\t{indels}\t{total_variants}\t{alignment_length}\t{identity:.6f}\n")
-
-                    # Save copies of fasta (debug)
-                    import shutil
-                    saved_true_fa = log_dir / f"{metric}_{true_node}.fa"
-                    saved_place_fa = log_dir / f"{metric}_{placement_node}.fa"
-                    shutil.copy2(true_fa_path, saved_true_fa)
-                    shutil.copy2(place_fa_path, saved_place_fa)
-                    os.unlink(true_fa_path)
-                    os.unlink(place_fa_path)
+                            if len(parts) >= 12:
+                                aln_len, matches = int(parts[10]), int(parts[9])
+                                cs = next((p[5:] for p in parts[12:] if p.startswith('cs:Z:')), None)
+                                if cs:
+                                    for excl, _ in exclusion_configs:
+                                        results_by_excl[excl] = count_variants_with_exclusion(cs, int(parts[7]), int(parts[8]), excl)
+                                    identity = matches / aln_len if aln_len else 0
+                                break
+                    
+                    for excl, f in exclusion_configs:
+                        s, i = results_by_excl.get(excl, (0, 0))
+                        with open(f, 'a') as out:
+                            out.write(f"{metric}\t{true_node}\t{placement_node}\t{genome_length}\t{s}\t{i}\t{s+i}\t{aln_len}\t{identity:.6f}\t{excl}\n")
                 except Exception as e:
-                    print(f"[align_placement_accuracy] Error for {metric}: {e}")
-                    for exclude_bp, out_file in exclusion_configs:
-                        with open(out_file, 'a') as f_out:
-                            f_out.write(f"{metric}\t{true_node}\t{placement_node}\t0\t0\t0\t0\t0\t0.0\t{exclude_bp}\n")
-                    with open(output.alignment_results, 'a') as legacy:
-                        legacy.write(f"{metric}\t{true_node}\t{placement_node}\t0\t0\t0\t0\t0\t0.0\n")
+                    print(f"[align] Error for {metric}: {e}")
+                    for excl, f in exclusion_configs:
+                        with open(f, 'a') as out:
+                            out.write(f"{metric}\t{true_node}\t{placement_node}\t0\t0\t0\t0\t0\t0.0\t{excl}\n")
+        
+        # Create combined accuracy.tsv from individual files
+        with open(output.alignment_results, 'w') as out:
+            out.write(header)
+            for excl, f in exclusion_configs:
+                with open(f) as inp:
+                    for line in inp.readlines()[1:]:  # Skip header
+                        out.write(line)
 
-rule aggregate_results:
-    input:
-        detailed=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/detailed.tsv"
-    output:
-        touch(f"{OUTPUT_DIR}/results/aggregated/{{eid}}/{{pan_stem}}/{{tag}}/cov{{cov}}_{{n}}_rep{{rep}}.done")
-    run:
-        import time
-        # Aggregate results incrementally
-        results_dir = pathlib.Path(f"{OUTPUT_DIR}/results")
-        results_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Append to master results file
-        master_file = results_dir / "all_placements.tsv"
-        header_written = master_file.exists()
-        
-        with open(master_file, 'a') as master:
-            if not header_written:
-                master.write("experiment\treads\treplicate\ttrue_node\tmetric\tscore\tbest_node\ttimestamp\n")
-            
-            # Copy detailed results to master file
-            try:
-                with open(input.detailed, 'r') as detailed:
-                    lines = detailed.readlines()
-                    if len(lines) > 1:  # Skip header
-                        for line in lines[1:]:
-                            master.write(line)
-                print(f"[aggregate_results] Added results for {wildcards.eid} cov={wildcards.cov} n={wildcards.n} rep={wildcards.rep}")
-            except Exception as e:
-                print(f"[aggregate_results] Error aggregating {input.detailed}: {e}")
-        
-        # Also create per-experiment summary
-        exp_summary_file = results_dir / f"{wildcards.eid}_summary.tsv"
-        exp_header_written = exp_summary_file.exists()
-        
-        with open(exp_summary_file, 'a') as exp_file:
-            if not exp_header_written:
-                exp_file.write("reads\treplicate\ttrue_node\tmetric\tscore\tbest_node\tnode_id\ttimestamp\tk\ts\tl\n")
-            
-            try:
-                with open(input.detailed, 'r') as detailed:
-                    lines = detailed.readlines()
-                    if len(lines) > 1:
-                        for line in lines[1:]:
-                            # Remove experiment column since it's in filename
-                            parts = line.strip().split('\t')
-                            if len(parts) >= 7:
-                                exp_file.write('\t'.join(parts[1:]) + '\n')
-            except Exception as e:
-                print(f"[aggregate_results] Error writing experiment summary: {e}")
-
+# ============================================================================
+# SUMMARY RULES
+# ============================================================================
 rule placements_summary:
-    input:
-        placements=PLACEMENTS,
-        metas=RESULT_FILES
-    output:
-        tsv=f"{OUTPUT_DIR}/reports/placements_summary.tsv"
+    input: placements=PLACEMENTS, metas=META_FILES
+    output: tsv=f"{OUTPUT_DIR}/reports/placements_summary.tsv"
     run:
-        import re
-        pathlib.Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
-        # Map meta path to metadata fields including mutation counts
+        Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
         meta_map = {}
         for m in input.metas:
             try:
-                with open(m) as fh:
-                    line = fh.read().strip()
-                # expecting key=val pairs separated by tabs
-                fields = dict(part.split('=',1) for part in line.split('\t') if '=' in part)
-                meta_map[m] = fields
-            except Exception:
-                meta_map[m] = {}
+                with open(m) as f:
+                    meta_map[m] = dict(p.split('=',1) for p in f.read().strip().split('\t') if '=' in p)
+            except: meta_map[m] = {}
         
-        header = ["id","pan_stem","tag","reads","replicate","true_node","top_node","top_score","rows",
-                 "mutation_rate","genome_size","requested_snps","requested_indels",
-                 "applied_snps","applied_insertions","applied_deletions","insertion_lengths","deletion_lengths"]
-        with open(output.tsv, 'w') as tf:
-            tf.write('\t'.join(header)+"\n")
-            for (eid, pan_stem, tag, cov, n, rep) in READS:
-                p = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/placements/reads/cov{cov}_{n}_rep{rep}/placements.tsv"
-                m = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/results/reads/cov{cov}_{n}_rep{rep}.txt"
-                genome_fa = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/genomes/reads/cov{cov}_{n}_rep{rep}/random_node.fasta"
-                
-                # Determine true_node with fallback to random_node.fasta header
-                meta_data = meta_map.get(m, {})
-                true_node = meta_data.get('true_node', '')
-                if not true_node or true_node in ("random_node", "unknown"):
-                    try:
-                        with open(genome_fa, 'r') as gf:
-                            for ln in gf:
-                                if ln.startswith('>'):
-                                    hdr = ln[1:].strip()
-                                    true_node = hdr.split()[0]
-                                    break
-                    except Exception:
-                        true_node = "random_node"
-                
-                # Extract mutation information from metadata
-                mutation_rate = meta_data.get('mutation_rate', '0')
-                genome_size = meta_data.get('genome_size', '0')
-                requested_snps = meta_data.get('requested_snps', '0')
-                requested_indels = meta_data.get('requested_indels', '0')
-                applied_snps = meta_data.get('applied_snps', '0')
-                applied_insertions = meta_data.get('applied_insertions', '0')
-                applied_deletions = meta_data.get('applied_deletions', '0')
-                insertion_lengths = meta_data.get('insertion_lengths', '')
-                deletion_lengths = meta_data.get('deletion_lengths', '')
-                
-                top_node = "n/a"
-                top_score = "0"
-                rows = n  # Use the read count as rows since we know it
-                
-                try:
-                    with open(p, 'r') as pf:
-                        # Skip header line
-                        next(pf)
-                        weighted_score = "0"
-                        for line in pf:
-                            parts = line.strip().split('\t')
-                            if len(parts) >= 2:
-                                metric = parts[0]
-                                score = parts[1]
-                                if metric == "weighted" and score != "0":
-                                    weighted_score = score
-                                elif metric == "cosine" and score != "0" and weighted_score == "0":
-                                    weighted_score = score
-                                elif metric == "jaccard" and score != "0" and weighted_score == "0":
-                                    weighted_score = score
-                        top_score = weighted_score
-                except FileNotFoundError:
-                    pass
-                
-                tf.write('\t'.join(map(str,[eid, pan_stem, tag, n, rep, true_node, top_node, top_score, rows,
-                                          mutation_rate, genome_size, requested_snps, requested_indels,
-                                          applied_snps, applied_insertions, applied_deletions, 
-                                          insertion_lengths, deletion_lengths]))+"\n")
+        with open(output.tsv, 'w') as out:
+            out.write("id\tpan_stem\ttag\treads\treplicate\ttrue_node\ttop_score\tmutation_rate\tgenome_size\n")
+            for (eid, pan, tag, cov, n, rep) in READS:
+                m = f"{exp_root(eid, pan, tag)}/results/reads/cov{cov}_{n}_rep{rep}.txt"
+                meta = meta_map.get(m, {})
+                out.write(f"{eid}\t{pan}\t{tag}\t{n}\t{rep}\t{meta.get('true_node','')}\t0\t{meta.get('mutation_rate','0')}\t{meta.get('genome_size','0')}\n")
 
 rule placements_by_metric:
-    input:
-        placements=PLACEMENTS,
-        metas=RESULT_FILES
-    output:
-        tsv=f"{OUTPUT_DIR}/reports/placements_by_metric.tsv"
+    input: placements=PLACEMENTS, metas=META_FILES
+    output: tsv=f"{OUTPUT_DIR}/reports/placements_by_metric.tsv"
     run:
-        import re
-        pathlib.Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
-        # Map meta path to true_node
-        true_map = {}
-        for m in input.metas:
-            try:
-                with open(m) as fh:
-                    line = fh.read().strip()
-                fields = dict(part.split('=',1) for part in line.split('\t') if '=' in part)
-                true_map[m] = fields.get('true_node') or ''
-            except Exception:
-                true_map[m] = ''
-        header = ["id","pan_stem","tag","reads","replicate","true_node","metric","score","nodes","hits","rows"]
-        with open(output.tsv, 'w') as tf:
-            tf.write('\t'.join(header)+"\n")
-            for (eid, pan_stem, tag, cov, n, rep) in READS:
-                p = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/placements/reads/cov{cov}_{n}_rep{rep}/placements.tsv"
-                m = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/results/reads/cov{cov}_{n}_rep{rep}.txt"
-                genome_fa = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/genomes/reads/cov{cov}_{n}_rep{rep}/random_node.fasta"
-                
-                # Determine true_node with fallback to random_node.fasta header
-                true_node = true_map.get(m, '')
-                if not true_node or true_node in ("random_node", "unknown"):
-                    try:
-                        with open(genome_fa, 'r') as gf:
-                            for ln in gf:
-                                if ln.startswith('>'):
-                                    hdr = ln[1:].strip()
-                                    true_node = hdr.split()[0]
-                                    break
-                    except Exception:
-                        true_node = "random_node"
-                
-                rows = 0
-                raw_hits = None
-                cosine_score = None
-                jaccard_score = None
-                raw_nodes = []
-                cosine_nodes = []
-                jaccard_nodes = []
-                
+        Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
+        meta_map = {m: dict(p.split('=',1) for p in open(m).read().strip().split('\t') if '=' in p) if os.path.exists(m) else {} for m in input.metas}
+        with open(output.tsv, 'w') as out:
+            out.write("id\tpan_stem\ttag\treads\treplicate\ttrue_node\tmetric\tscore\tnodes\n")
+            for (eid, pan, tag, cov, n, rep) in READS:
+                p = f"{exp_root(eid, pan, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/placements.tsv"
+                m = f"{exp_root(eid, pan, tag)}/results/reads/cov{cov}_{n}_rep{rep}.txt"
+                true_node = meta_map.get(m, {}).get('true_node', '')
                 try:
-                    with open(p, 'r') as pf:
-                        # Skip header line
-                        next(pf)
-                        for line in pf:
+                    with open(p) as f:
+                        for line in f.readlines()[1:]:
                             parts = line.strip().split('\t')
                             if len(parts) >= 4:
-                                metric = parts[0]
-                                score = parts[1] if parts[1] else "0"
-                                hits = parts[2] if parts[2] else ""
-                                nodes = parts[3] if parts[3] else ""
-                                
-                                tf.write('\t'.join(map(str,[eid, pan_stem, tag, n, rep, true_node, metric, score, nodes, hits, n]))+"\n")
-                except FileNotFoundError:
-                    # Write empty rows for missing files
-                    for metric in ["raw", "jaccard", "cosine", "weighted"]:
-                        tf.write('\t'.join(map(str,[eid, pan_stem, tag, n, rep, true_node, metric, "0", "", "", n]))+"\n")
+                                out.write(f"{eid}\t{pan}\t{tag}\t{n}\t{rep}\t{true_node}\t{parts[0]}\t{parts[1]}\t{parts[3]}\n")
+                except: pass
 
 rule alignment_accuracy_summary:
-    # Relaxed inputs: we intentionally do NOT require every accuracy.tsv file as an input
-    # so that we can summarize partially generated accuracy variant files without
-    # forcing creation of placeholder legacy files for missing replicates.
-    # The rule will iterate over READS and gracefully handle missing variant files.
-    input:
-        metas=RESULT_FILES
-    output:
-        tsv=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
+    input: metas=META_FILES
+    output: tsv=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
     run:
-        import pathlib
-        pathlib.Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Create comprehensive header with experiment info
-        header = [
-            "experiment_id", "pangenome", "tag", "coverage", "reads", "replicate",
-            "metric", "true_node", "placement_node", "genome_length", 
-            "snps", "indels", "total_variants", "alignment_length", "identity",
-            "mutation_rate", "applied_snps", "applied_insertions", "applied_deletions",
-            "excluded_bp"
-        ]
-        
-        with open(output.tsv, 'w') as tf:
-            tf.write('\t'.join(header) + "\n")
-            
-            for (eid, pan_stem, tag, cov, n, rep) in READS:
-                # Get experiment info
-                ex = EXP_BY_ID[eid]
-                
-                # Get metadata for mutation info
-                meta_file = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/results/reads/cov{cov}_{n}_rep{rep}.txt"
-                mutation_rate = applied_snps = applied_insertions = applied_deletions = 0
-                
+        Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.tsv, 'w') as out:
+            out.write("experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tmetric\ttrue_node\tplacement_node\tgenome_length\tsnps\tindels\ttotal_variants\talignment_length\tidentity\tmutation_rate\texcluded_bp\n")
+            for (eid, pan, tag, cov, n, rep) in READS:
+                meta = {}
                 try:
-                    with open(meta_file) as mf:
-                        meta_line = mf.read().strip()
-                        fields = dict(part.split('=',1) for part in meta_line.split('\t') if '=' in part)
-                        mutation_rate = float(fields.get("mutation_rate", 0))
-                        applied_snps = int(fields.get("applied_snps", 0))
-                        applied_insertions = int(fields.get("applied_insertions", 0))
-                        applied_deletions = int(fields.get("applied_deletions", 0))
-                except Exception:
-                    pass
-                
-                # Read all exclusion versions (0,50,150,500) plus legacy accuracy.tsv if present
-                exclusion_levels = [0,50,150,500]
-                base_path = f"{OUTPUT_DIR}/experiments/{eid}/{pan_stem}/{tag}/alignments/reads/cov{cov}_{n}_rep{rep}"
-                for excl in exclusion_levels:
-                    variant_file = f"{base_path}/accuracy_{excl}bp.tsv"
+                    with open(f"{exp_root(eid, pan, tag)}/results/reads/cov{cov}_{n}_rep{rep}.txt") as f:
+                        meta = dict(p.split('=',1) for p in f.read().strip().split('\t') if '=' in p)
+                except: pass
+                mut_rate = meta.get("mutation_rate", 0)
+                for excl in [0, 50, 150, 500]:
+                    acc_file = f"{exp_root(eid, pan, tag)}/alignments/reads/cov{cov}_{n}_rep{rep}/accuracy_{excl}bp.tsv"
                     try:
-                        with open(variant_file) as af:
-                            lines = af.readlines()
-                            for line in lines[1:]:  # skip header
+                        with open(acc_file) as f:
+                            for line in f.readlines()[1:]:
                                 parts = line.strip().split('\t')
-                                # Expected columns: metric true_node placement_node genome_length snps indels total_variants alignment_length identity excluded_bp
                                 if len(parts) >= 10:
-                                    metric, true_node, placement_node, genome_length, snps, indels, total_variants, alignment_length, identity, excluded_bp = parts[:10]
-                                    row = [
-                                        eid, pan_stem, tag, cov, n, rep,
-                                        metric, true_node, placement_node, genome_length,
-                                        snps, indels, total_variants, alignment_length, identity,
-                                        mutation_rate, applied_snps, applied_insertions, applied_deletions,
-                                        excluded_bp
-                                    ]
-                                    tf.write('\t'.join(map(str,row)) + "\n")
-                    except FileNotFoundError:
-                        # Write placeholder rows if variant file missing
-                        for metric in ["raw","jaccard","cosine","weighted"]:
-                            row = [
-                                eid, pan_stem, tag, cov, n, rep,
-                                metric, "unknown", "", 0,
-                                0, 0, 0, 0, 0.0,
-                                mutation_rate, applied_snps, applied_insertions, applied_deletions,
-                                excl
-                            ]
-                            tf.write('\t'.join(map(str,row)) + "\n")
+                                    out.write(f"{eid}\t{pan}\t{tag}\t{cov}\t{n}\t{rep}\t{parts[0]}\t{parts[1]}\t{parts[2]}\t{parts[3]}\t{parts[4]}\t{parts[5]}\t{parts[6]}\t{parts[7]}\t{parts[8]}\t{mut_rate}\t{parts[9]}\n")
+                    except: pass
 
-
-
-# =============================================================================
-# Performance (timing and memory) analysis
-# =============================================================================
-
+# ============================================================================
+# PERFORMANCE SUMMARIES
+# ============================================================================
 rule index_performance_summary:
-    input:
-        logs=INDEX_TIME_LOGS
+    input: logs=INDEX_TIME_LOGS
     output:
         summary=f"{OUTPUT_DIR}/reports/index_performance_summary.tsv",
-        per_pan=expand(f"{OUTPUT_DIR}/reports/{{pan}}/index_performance_summary.tsv", pan=[p for p in PANGENOMES.keys()])
+        per_pan=expand(f"{OUTPUT_DIR}/reports/{{pan}}/index_performance_summary.tsv", pan=PANGENOMES.keys())
     run:
-        import pathlib, re
-        
-        pathlib.Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
-        
-        def parse_time_log(log_file):
-            """Parse /usr/bin/time -v output"""
-            stats = {}
-            try:
-                with open(log_file) as f:
-                    for line in f:
-                        if 'Elapsed (wall clock) time' in line:
-                            # Format: h:mm:ss or m:ss.cs
-                            time_match = re.search(r'(\d+):(\d+):(\d+\.\d+)', line)
-                            if time_match:
-                                h, m, s = time_match.groups()
-                                stats['wall_time_sec'] = float(h) * 3600 + float(m) * 60 + float(s)
-                            else:
-                                time_match = re.search(r'(\d+):(\d+\.\d+)', line)
-                                if time_match:
-                                    m, s = time_match.groups()
-                                    stats['wall_time_sec'] = float(m) * 60 + float(s)
-                        elif 'Maximum resident set size' in line:
-                            # Format: (kbytes): 12345
-                            mem_match = re.search(r':\s*(\d+)', line)
-                            if mem_match:
-                                stats['max_rss_kb'] = int(mem_match.group(1))
-                                stats['max_rss_mb'] = stats['max_rss_kb'] / 1024.0
-                        elif 'User time (seconds)' in line:
-                            time_match = re.search(r':\s*([\d.]+)', line)
-                            if time_match:
-                                stats['user_time_sec'] = float(time_match.group(1))
-                        elif 'System time (seconds)' in line:
-                            time_match = re.search(r':\s*([\d.]+)', line)
-                            if time_match:
-                                stats['system_time_sec'] = float(time_match.group(1))
-            except FileNotFoundError:
-                pass
-            return stats
-        
-        with open(output.summary, 'w') as tf:
-            tf.write('experiment_id\tpangenome\ttag\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
-            
-            for exp in EXPERIMENTS:
-                eid = exp['id']
-                pan_stem = exp['pan_stem']
-                tag = exp['tag']
-                k, s, l = exp['k'], exp['s'], exp['l']
-                
-                log_file = f"{_exp_root(eid, pan_stem, tag)}/indexes/index_time.log"
-                stats = parse_time_log(log_file)
-                
-                # Only write if we have timing data
-                if stats and 'wall_time_sec' in stats:
-                    tf.write(f"{eid}\t{pan_stem}\t{tag}\t{k}\t{s}\t{l}\t")
-                    tf.write(f"{stats.get('wall_time_sec', 0)}\t")
-                    tf.write(f"{stats.get('user_time_sec', 0)}\t")
-                    tf.write(f"{stats.get('system_time_sec', 0)}\t")
-                    tf.write(f"{stats.get('max_rss_mb', 0)}\n")
-        
-        # Generate per-pangenome summaries
-        for pan_name in PANGENOMES.keys():
-            pan_dir = pathlib.Path(f"{OUTPUT_DIR}/reports/{pan_name}")
-            pan_dir.mkdir(parents=True, exist_ok=True)
-            
-            with open(pan_dir / 'index_performance_summary.tsv', 'w') as tf:
-                tf.write('experiment_id\tpangenome\ttag\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
-                
-                for exp in EXPERIMENTS:
-                    if exp['pan_stem'] != pan_name:
-                        continue
-                    
-                    eid = exp['id']
-                    pan_stem = exp['pan_stem']
-                    tag = exp['tag']
-                    k, s, l = exp['k'], exp['s'], exp['l']
-                    
-                    log_file = f"{_exp_root(eid, pan_stem, tag)}/indexes/index_time.log"
-                    stats = parse_time_log(log_file)
-                    
-                    if stats and 'wall_time_sec' in stats:
-                        tf.write(f"{eid}\t{pan_stem}\t{tag}\t{k}\t{s}\t{l}\t")
-                        tf.write(f"{stats.get('wall_time_sec', 0)}\t")
-                        tf.write(f"{stats.get('user_time_sec', 0)}\t")
-                        tf.write(f"{stats.get('system_time_sec', 0)}\t")
-                        tf.write(f"{stats.get('max_rss_mb', 0)}\n")
-        
-        print(f"[index_performance_summary] Processed {len(EXPERIMENTS)} experiments")
-
+        Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.summary, 'w') as out:
+            out.write('experiment_id\tpangenome\ttag\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
+            for e in EXPERIMENTS:
+                stats = parse_time_log(f"{exp_root(e['id'], e['pan_stem'], e['tag'])}/indexes/index_time.log")
+                if 'wall_time_sec' in stats:
+                    out.write(f"{e['id']}\t{e['pan_stem']}\t{e['tag']}\t{e['k']}\t{e['s']}\t{e['l']}\t{stats.get('wall_time_sec',0)}\t{stats.get('user_time_sec',0)}\t{stats.get('system_time_sec',0)}\t{stats.get('max_rss_mb',0)}\n")
+        for pan in PANGENOMES:
+            Path(f"{OUTPUT_DIR}/reports/{pan}").mkdir(parents=True, exist_ok=True)
+            with open(f"{OUTPUT_DIR}/reports/{pan}/index_performance_summary.tsv", 'w') as out:
+                out.write('experiment_id\tpangenome\ttag\tk\ts\tl\twall_time_sec\tmax_rss_mb\n')
+                for e in EXPERIMENTS:
+                    if e['pan_stem'] == pan:
+                        stats = parse_time_log(f"{exp_root(e['id'], e['pan_stem'], e['tag'])}/indexes/index_time.log")
+                        if 'wall_time_sec' in stats:
+                            out.write(f"{e['id']}\t{pan}\t{e['tag']}\t{e['k']}\t{e['s']}\t{e['l']}\t{stats.get('wall_time_sec',0)}\t{stats.get('max_rss_mb',0)}\n")
 
 rule placement_performance_summary:
-    input:
-        logs=PLACEMENT_TIME_LOGS
+    input: logs=PLACEMENT_TIME_LOGS
     output:
         summary=f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv",
-        per_pan=expand(f"{OUTPUT_DIR}/reports/{{pan}}/placement_performance_summary.tsv", pan=[p for p in PANGENOMES.keys()])
+        per_pan=expand(f"{OUTPUT_DIR}/reports/{{pan}}/placement_performance_summary.tsv", pan=PANGENOMES.keys())
     run:
-        import pathlib, re
-        
-        pathlib.Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
-        
-        def parse_time_log(log_file):
-            """Parse /usr/bin/time -v output"""
-            stats = {}
-            try:
-                with open(log_file) as f:
-                    for line in f:
-                        if 'Elapsed (wall clock) time' in line:
-                            time_match = re.search(r'(\d+):(\d+):(\d+\.\d+)', line)
-                            if time_match:
-                                h, m, s = time_match.groups()
-                                stats['wall_time_sec'] = float(h) * 3600 + float(m) * 60 + float(s)
-                            else:
-                                time_match = re.search(r'(\d+):(\d+\.\d+)', line)
-                                if time_match:
-                                    m, s = time_match.groups()
-                                    stats['wall_time_sec'] = float(m) * 60 + float(s)
-                        elif 'Maximum resident set size' in line:
-                            mem_match = re.search(r':\s*(\d+)', line)
-                            if mem_match:
-                                stats['max_rss_kb'] = int(mem_match.group(1))
-                                stats['max_rss_mb'] = stats['max_rss_kb'] / 1024.0
-                        elif 'User time (seconds)' in line:
-                            time_match = re.search(r':\s*([\d.]+)', line)
-                            if time_match:
-                                stats['user_time_sec'] = float(time_match.group(1))
-                        elif 'System time (seconds)' in line:
-                            time_match = re.search(r':\s*([\d.]+)', line)
-                            if time_match:
-                                stats['system_time_sec'] = float(time_match.group(1))
-            except FileNotFoundError:
-                pass
-            return stats
-        
-        with open(output.summary, 'w') as tf:
-            tf.write('experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
-            
-            for (eid, pan_stem, tag, cov, n, rep) in READS:
-                exp = EXP_BY_ID[eid]
-                k, s, l = exp['k'], exp['s'], exp['l']
-                
-                log_file = f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log"
-                stats = parse_time_log(log_file)
-                
-                # Only write if we have timing data
-                if stats and 'wall_time_sec' in stats:
-                    tf.write(f"{eid}\t{pan_stem}\t{tag}\t{cov}\t{n}\t{rep}\t{k}\t{s}\t{l}\t")
-                    tf.write(f"{stats.get('wall_time_sec', 0)}\t")
-                    tf.write(f"{stats.get('user_time_sec', 0)}\t")
-                    tf.write(f"{stats.get('system_time_sec', 0)}\t")
-                    tf.write(f"{stats.get('max_rss_mb', 0)}\n")
-        
-        # Generate per-pangenome summaries
-        for pan_name in PANGENOMES.keys():
-            pan_dir = pathlib.Path(f"{OUTPUT_DIR}/reports/{pan_name}")
-            pan_dir.mkdir(parents=True, exist_ok=True)
-            
-            with open(pan_dir / 'placement_performance_summary.tsv', 'w') as tf:
-                tf.write('experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tk\ts\tl\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\n')
-                
-                for (eid, pan_stem, tag, cov, n, rep) in READS:
-                    if pan_stem != pan_name:
-                        continue
-                    
-                    exp = EXP_BY_ID[eid]
-                    k, s, l = exp['k'], exp['s'], exp['l']
-                    
-                    log_file = f"{_exp_root(eid, pan_stem, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log"
-                    stats = parse_time_log(log_file)
-                    
-                    if stats and 'wall_time_sec' in stats:
-                        tf.write(f"{eid}\t{pan_stem}\t{tag}\t{cov}\t{n}\t{rep}\t{k}\t{s}\t{l}\t")
-                        tf.write(f"{stats.get('wall_time_sec', 0)}\t")
-                        tf.write(f"{stats.get('user_time_sec', 0)}\t")
-                        tf.write(f"{stats.get('system_time_sec', 0)}\t")
-                        tf.write(f"{stats.get('max_rss_mb', 0)}\n")
-        
-        print(f"[placement_performance_summary] Processed {len(READS)} placement runs")
+        Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.summary, 'w') as out:
+            out.write('experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tk\ts\tl\twall_time_sec\tmax_rss_mb\n')
+            for (eid, pan, tag, cov, n, rep) in READS:
+                e = EXP_BY_ID[eid]
+                stats = parse_time_log(f"{exp_root(eid, pan, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log")
+                if 'wall_time_sec' in stats:
+                    out.write(f"{eid}\t{pan}\t{tag}\t{cov}\t{n}\t{rep}\t{e['k']}\t{e['s']}\t{e['l']}\t{stats.get('wall_time_sec',0)}\t{stats.get('max_rss_mb',0)}\n")
+        for pan_name in PANGENOMES:
+            Path(f"{OUTPUT_DIR}/reports/{pan_name}").mkdir(parents=True, exist_ok=True)
+            with open(f"{OUTPUT_DIR}/reports/{pan_name}/placement_performance_summary.tsv", 'w') as out:
+                out.write('experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tk\ts\tl\twall_time_sec\tmax_rss_mb\n')
+                for (eid, pan, tag, cov, n, rep) in READS:
+                    if pan == pan_name:
+                        e = EXP_BY_ID[eid]
+                        stats = parse_time_log(f"{exp_root(eid, pan, tag)}/placements/reads/cov{cov}_{n}_rep{rep}/time.log")
+                        if 'wall_time_sec' in stats:
+                            out.write(f"{eid}\t{pan}\t{tag}\t{cov}\t{n}\t{rep}\t{e['k']}\t{e['s']}\t{e['l']}\t{stats.get('wall_time_sec',0)}\t{stats.get('max_rss_mb',0)}\n")
 
-
+# ============================================================================
+# PLOTTING
+# ============================================================================
 rule plot_performance:
     input:
         index_perf=f"{OUTPUT_DIR}/reports/index_performance_summary.tsv",
-        placement_perf=f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv",
-        index_logs=INDEX_TIME_LOGS,
-        placement_logs=PLACEMENT_TIME_LOGS
+        placement_perf=f"{OUTPUT_DIR}/reports/placement_performance_summary.tsv"
     output:
-        index_time_l1=f"{OUTPUT_DIR}/plots/performance/index_time_by_k_l1.png",
-        index_time_l3=f"{OUTPUT_DIR}/plots/performance/index_time_by_k_l3.png",
-        index_time=f"{OUTPUT_DIR}/plots/performance/index_time_by_k.png",
-        index_memory=f"{OUTPUT_DIR}/plots/performance/index_memory_by_k.png",
-        placement_time_l1=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k_l1.png",
-        placement_time_l3=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k_l3.png",
-        placement_time=f"{OUTPUT_DIR}/plots/performance/placement_time_by_k.png",
-        placement_memory=f"{OUTPUT_DIR}/plots/performance/placement_memory_by_k.png",
-        # Per-pangenome plots
-        index_time_per_pan=expand(f"{OUTPUT_DIR}/plots/performance/{{pan}}/index_time_by_k.png", pan=[p for p in PANGENOMES.keys()]),
-        placement_time_per_pan=expand(f"{OUTPUT_DIR}/plots/performance/{{pan}}/placement_time_by_k.png", pan=[p for p in PANGENOMES.keys()])
+        # Per-pangenome performance plots
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/index_time_by_k.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/index_memory_by_k.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/placement_time_by_k.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/placement_memory_by_k.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/index_time_by_k_l1.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/index_time_by_k_l3.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/placement_time_by_k_l1.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/performance/placement_time_by_k_l3.png", pan=PANGENOMES.keys())
     run:
         import pandas as pd
         import matplotlib.pyplot as plt
         import seaborn as sns
-        from pathlib import Path
         
-        Path(output.index_time).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Read performance data
         index_df = pd.read_csv(input.index_perf, sep='\t')
         placement_df = pd.read_csv(input.placement_perf, sep='\t')
         
-        print(f"[plot_performance] Index records: {len(index_df)}")
-        print(f"[plot_performance] Placement records: {len(placement_df)}")
-        
-        # Helper function to create box plots
-        def plot_boxplot(data, x_col, y_col, title, ylabel, output_file, hue_col=None):
+        def boxplot(data, x, y, title, ylabel, outfile, hue=None):
             plt.figure(figsize=(10, 6))
-            sns.set_style('whitegrid')
-            
             if len(data) == 0:
-                # Create empty plot with message
-                plt.text(0.5, 0.5, 'No data available yet', 
-                        horizontalalignment='center', verticalalignment='center',
-                        transform=plt.gca().transAxes, fontsize=14)
-                plt.xlabel('k-mer size (k)')
-                plt.ylabel(ylabel)
-                plt.title(title)
+                plt.text(0.5, 0.5, 'No data', ha='center', va='center', transform=plt.gca().transAxes)
             else:
-                if hue_col:
-                    sns.boxplot(data=data, x=x_col, y=y_col, hue=hue_col, palette='Set2')
-                else:
-                    sns.boxplot(data=data, x=x_col, y=y_col, palette='Set2')
-                
-                plt.xlabel('k-mer size (k)')
-                plt.ylabel(ylabel)
-                plt.title(title)
-                if hue_col:
-                    plt.legend(title=hue_col, bbox_to_anchor=(1.05, 1), loc='upper left')
-            
-            plt.tight_layout()
-            plt.savefig(output_file, dpi=300)
-            plt.savefig(output_file.replace('.png', '.pdf'))
-            plt.close()
-            print(f"[plot_performance] Saved {output_file}")
-        
-        # Index performance plots
-        # Combined plot
-        plot_boxplot(index_df, 'k', 'wall_time_sec', 
-                    'Index Build Time by k-mer Size',
-                    'Wall time (seconds)',
-                    output.index_time, hue_col='l')
-        
-        # Split by l (l=1)
-        data_l1 = index_df[index_df['l'] == 1] if len(index_df) > 0 else pd.DataFrame()
-        plot_boxplot(data_l1, 'k', 'wall_time_sec',
-                    'Index Build Time (l=1)',
-                    'Wall time (seconds)',
-                    output.index_time_l1)
-        
-        # Split by l (l=3)
-        data_l3 = index_df[index_df['l'] == 3] if len(index_df) > 0 else pd.DataFrame()
-        plot_boxplot(data_l3, 'k', 'wall_time_sec',
-                    'Index Build Time (l=3)',
-                    'Wall time (seconds)',
-                    output.index_time_l3)
-        
-        # Memory plot
-        plot_boxplot(index_df, 'k', 'max_rss_mb',
-                    'Index Build Memory by k-mer Size',
-                    'Peak memory (MB)',
-                    output.index_memory, hue_col='l')
-        
-        # Placement performance plots - line plots with error bars
-        def plot_time_lineplot(data, title, output_file, l_value=None):
-            plt.figure(figsize=(10, 6))
-            sns.set_style('whitegrid')
-            
-            if len(data) == 0:
-                plt.text(0.5, 0.5, 'No data available yet', 
-                        horizontalalignment='center', verticalalignment='center',
-                        transform=plt.gca().transAxes, fontsize=14)
-                plt.xlabel('Number of reads')
-                plt.ylabel('Wall time (seconds)')
-                plt.title(title)
-            else:
-                # Group by reads and k, calculate mean and std
-                stats = data.groupby(['reads', 'k'])['wall_time_sec'].agg(['mean', 'std']).reset_index()
-                
-                # Plot line for each k value
-                k_values = sorted(stats['k'].unique())
-                colors = plt.cm.Set2(range(len(k_values)))
-                
-                for idx, k_val in enumerate(k_values):
-                    k_data = stats[stats['k'] == k_val]
-                    plt.errorbar(k_data['reads'], k_data['mean'], yerr=k_data['std'],
-                                label=f'k={k_val}', marker='o', capsize=5, 
-                                color=colors[idx], linewidth=2, markersize=8)
-                
-                plt.xlabel('Number of reads', fontsize=12)
-                plt.ylabel('Wall time (seconds)', fontsize=12)
-                plt.title(title, fontsize=14)
-                plt.legend(title='k-mer size', fontsize=10)
-                plt.xscale('log')
-                plt.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            plt.savefig(output_file, dpi=300)
-            plt.savefig(output_file.replace('.png', '.pdf'))
-            plt.close()
-            print(f"[plot_performance] Saved {output_file}")
-        
-        # Time plots split by l value
-        if len(placement_df) > 0:
-            # l=1
-            data_l1 = placement_df[placement_df['l'] == 1]
-            plot_time_lineplot(data_l1, 'Placement Time vs Number of Reads (l=1)', 
-                              output.placement_time_l1)
-            
-            # l=3
-            data_l3 = placement_df[placement_df['l'] == 3]
-            plot_time_lineplot(data_l3, 'Placement Time vs Number of Reads (l=3)', 
-                              output.placement_time_l3)
-            
-            # Combined (for compatibility)
-            plot_time_lineplot(placement_df, 'Placement Time vs Number of Reads (All l)', 
-                              output.placement_time)
-        else:
-            # Create empty plots
-            plot_time_lineplot(pd.DataFrame(), 'Placement Time vs Number of Reads (l=1)', 
-                              output.placement_time_l1)
-            plot_time_lineplot(pd.DataFrame(), 'Placement Time vs Number of Reads (l=3)', 
-                              output.placement_time_l3)
-            plot_time_lineplot(pd.DataFrame(), 'Placement Time vs Number of Reads (All l)', 
-                              output.placement_time)
-        
-        # Memory plot (keep as box plot grouped by k)
-        plot_boxplot(placement_df, 'k', 'max_rss_mb',
-                    'Placement Memory by k-mer Size',
-                    'Peak memory (MB)',
-                    output.placement_memory, hue_col=None if len(placement_df) == 0 else 'l')
+                sns.boxplot(data=data, x=x, y=y, hue=hue, palette='Set2')
+            plt.xlabel('k-mer size (k)'); plt.ylabel(ylabel); plt.title(title)
+            plt.tight_layout(); plt.savefig(outfile, dpi=300); plt.close()
         
         # Generate per-pangenome plots
-        for pan_name in PANGENOMES.keys():
-            pan_dir = Path(f"{OUTPUT_DIR}/plots/performance/{pan_name}")
-            pan_dir.mkdir(parents=True, exist_ok=True)
+        for pan in PANGENOMES:
+            out_dir = Path(f"{OUTPUT_DIR}/plots/{pan}/performance")
+            out_dir.mkdir(parents=True, exist_ok=True)
             
-            # Filter data for this pangenome
-            pan_index_df = index_df[index_df['pangenome'] == pan_name] if len(index_df) > 0 else pd.DataFrame()
-            pan_placement_df = placement_df[placement_df['pangenome'] == pan_name] if len(placement_df) > 0 else pd.DataFrame()
+            pan_index = index_df[index_df['pangenome']==pan] if len(index_df) else index_df
+            pan_placement = placement_df[placement_df['pangenome']==pan] if len(placement_df) else placement_df
             
-            # Index time plot for this pangenome
-            plot_boxplot(pan_index_df, 'k', 'wall_time_sec',
-                        f'Index Build Time - {pan_name}',
-                        'Wall time (seconds)',
-                        str(pan_dir / 'index_time_by_k.png'), hue_col='l' if len(pan_index_df) > 0 else None)
-            
-            # Placement time plot for this pangenome
-            plot_time_lineplot(pan_placement_df, 
-                             f'Placement Time vs Number of Reads - {pan_name}',
-                             str(pan_dir / 'placement_time_by_k.png'))
-            
-            print(f"[plot_performance] Generated plots for {pan_name}")
-        
-        print(f"[plot_performance] Performance plots complete")
-
-
-rule compare_variants:
-    input:
-        panmap_bin="build/bin/panmap",
-        panman=lambda wc: EXP_BY_ID[wc.eid]['panman_path'],
-        true_node_fasta=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/mutgenomes/reads/cov{{cov}}_{{n}}_rep{{rep}}/mutated.fasta",
-        placement_results=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/placements/reads/cov{{cov}}_{{n}}_rep{{rep}}/placements.tsv",
-        meta=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/results/reads/cov{{cov}}_{{n}}_rep{{rep}}.txt"
-    output:
-        variant_analysis=f"{OUTPUT_DIR}/experiments/{{eid}}/{{pan_stem}}/{{tag}}/variants/reads/cov{{cov}}_{{n}}_rep{{rep}}/variants.tsv"
-    run:
-        import subprocess
-        ex = EXP_BY_ID[wildcards.eid]
-        print(f"[compare_variants] eid={wildcards.eid} pan_stem={wildcards.pan_stem} tag={wildcards.tag} cov={wildcards.cov} n={wildcards.n} rep={wildcards.rep}")
-        
-        out_dir = pathlib.Path(output.variant_analysis).parent
-        out_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Get the true node from metadata
-        true_node = "unknown"
-        try:
-            with open(input.meta) as mf:
-                meta_line = mf.read().strip()
-                fields = dict(part.split('=',1) for part in meta_line.split('\t') if '=' in part)
-                true_node = fields.get("true_node", "unknown")
-        except Exception:
-            pass
-        
-        # Get the best predicted node from placement results
-        predicted_node = "unknown"
-        best_score = 0
-        try:
-            with open(input.placement_results) as pf:
-                for line in pf:
-                    if line.startswith('metric'):
-                        continue
-                    parts = line.strip().split('\t')
-                    if len(parts) >= 4 and parts[0] == 'weighted':
-                        score = float(parts[1])
-                        if score > best_score:
-                            best_score = score
-                            predicted_node = parts[3] if len(parts) > 3 else "unknown"
-        except Exception as e:
-            print(f"[compare_variants] Error reading placement results: {e}")
-        
-        # Create predicted node FASTA by extracting from pangenome
-        predicted_fasta = out_dir / "predicted_node.fasta"
-        if predicted_node != "unknown" and pathlib.Path(input.panmap_bin).exists():
-            try:
-                # Use panmap to dump the specific node sequence
-                result = subprocess.run([
-                    input.panmap_bin, input.panman, 
-                    "--dump-node", predicted_node
-                ], capture_output=True, text=True, cwd=out_dir)
-                
-                # Find the generated FASTA file
-                node_files = list(out_dir.glob(f"{predicted_node}*.fa")) + list(out_dir.glob(f"{predicted_node}*.fasta"))
-                if node_files:
-                    shutil.move(str(node_files[0]), str(predicted_fasta))
-                else:
-                    # Fallback: create empty file
-                    predicted_fasta.write_text(f">{predicted_node}\\nN\\n")
-            except Exception as e:
-                print(f"[compare_variants] Error extracting predicted node: {e}")
-                predicted_fasta.write_text(f">{predicted_node}\\nN\\n")
-        else:
-            predicted_fasta.write_text(f">{predicted_node}\\nN\\n")
-        
-        # Align true and predicted sequences with minimap2
-        paf_file = out_dir / "alignment.paf"
-        try:
-            subprocess.run([
-                "minimap2", "-c", "-x", "asm5",
-                str(predicted_fasta), str(input.true_node_fasta)
-            ], stdout=open(paf_file, 'w'), stderr=subprocess.DEVNULL, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            print(f"[compare_variants] minimap2 failed: {e}")
-            # Create empty PAF file
-            paf_file.write_text("")
-        
-        # Parse PAF and count variants
-        total_snps = 0
-        total_indels = 0
-        true_node_length = 0
-        predicted_node_length = 0
-        alignment_length = 0
-        
-        # Get sequence lengths from FASTA files
-        try:
-            with open(input.true_node_fasta) as f:
-                seq = ""
-                for line in f:
-                    if not line.startswith('>'):
-                        seq += line.strip()
-                true_node_length = len(seq)
-        except Exception:
-            pass
-            
-        try:
-            with open(predicted_fasta) as f:
-                seq = ""
-                for line in f:
-                    if not line.startswith('>'):
-                        seq += line.strip()
-                predicted_node_length = len(seq)
-        except Exception:
-            pass
-        
-        # Parse PAF for variants (simplified - counts mismatches and gaps)
-        try:
-            with open(paf_file) as paf:
-                for line in paf:
-                    fields = line.strip().split('\\t')
-                    if len(fields) >= 12:
-                        # PAF format: query_length, target_start, target_end, matches, alignment_length
-                        matches = int(fields[9])
-                        alignment_length = int(fields[10])
-                        if alignment_length > 0:
-                            mismatches = alignment_length - matches
-                            total_snps += mismatches
-                            
-                        # Look for CIGAR string in optional fields for indels
-                        for field in fields[12:]:
-                            if field.startswith('cg:Z:'):
-                                cigar = field[5:]
-                                # Simple CIGAR parsing for indels
-                                import re
-                                insertions = sum(int(x) for x in re.findall(r'(\\d+)I', cigar))
-                                deletions = sum(int(x) for x in re.findall(r'(\\d+)D', cigar))
-                                total_indels += insertions + deletions
-                                break
-        except Exception as e:
-            print(f"[compare_variants] Error parsing PAF: {e}")
-        
-        # Write results
-        with open(output.variant_analysis, 'w') as f:
-            f.write("experiment\\ttrue_node\\tpredicted_node\\ttrue_length\\tpredicted_length\\talignment_length\\tsnps\\tindels\\ttotal_variants\\tcoverage\\treads\\treplicate\\n")
-            f.write(f"{wildcards.eid}\\t{true_node}\\t{predicted_node}\\t{true_node_length}\\t{predicted_node_length}\\t{alignment_length}\\t{total_snps}\\t{total_indels}\\t{total_snps + total_indels}\\t{wildcards.cov}\\t{wildcards.n}\\t{wildcards.rep}\\n")
+            boxplot(pan_index, 'k', 'wall_time_sec', f'Index Build Time - {pan}', 'Wall time (s)', out_dir / 'index_time_by_k.png', 'l')
+            boxplot(pan_index, 'k', 'max_rss_mb', f'Index Memory - {pan}', 'Peak memory (MB)', out_dir / 'index_memory_by_k.png', 'l')
+            boxplot(pan_index[pan_index['l']==1] if len(pan_index) else pan_index, 'k', 'wall_time_sec', f'Index Time (l=1) - {pan}', 'Wall time (s)', out_dir / 'index_time_by_k_l1.png')
+            boxplot(pan_index[pan_index['l']==3] if len(pan_index) else pan_index, 'k', 'wall_time_sec', f'Index Time (l=3) - {pan}', 'Wall time (s)', out_dir / 'index_time_by_k_l3.png')
+            boxplot(pan_placement, 'k', 'wall_time_sec', f'Placement Time - {pan}', 'Wall time (s)', out_dir / 'placement_time_by_k.png', 'l')
+            boxplot(pan_placement, 'k', 'max_rss_mb', f'Placement Memory - {pan}', 'Peak memory (MB)', out_dir / 'placement_memory_by_k.png', 'l')
+            boxplot(pan_placement[pan_placement['l']==1] if len(pan_placement) else pan_placement, 'k', 'wall_time_sec', f'Placement Time (l=1) - {pan}', 'Wall time (s)', out_dir / 'placement_time_by_k_l1.png')
+            boxplot(pan_placement[pan_placement['l']==3] if len(pan_placement) else pan_placement, 'k', 'wall_time_sec', f'Placement Time (l=3) - {pan}', 'Wall time (s)', out_dir / 'placement_time_by_k_l3.png')
 
 rule plot_placement_accuracy:
-    input:
-        accuracy_summary=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
-    output:
-        done=touch(f"{OUTPUT_DIR}/plots/placement_accuracy_plots.done")
+    input: accuracy_summary=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
+    output: done=touch(f"{OUTPUT_DIR}/plots/placement_accuracy_plots.done")
     run:
         import pandas as pd
+        import matplotlib.pyplot as plt
         import numpy as np
-        from pathlib import Path
-        import warnings
-        warnings.filterwarnings('ignore')
         
-        # Create plots directory
-        plots_dir = Path(f"{OUTPUT_DIR}/plots")
-        plots_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Check if summary file exists
         if not Path(input.accuracy_summary).exists():
-            print(f"[plot_placement_accuracy] Summary file not found: {input.accuracy_summary}")
-            summary_file = plots_dir / "summary.txt"
-            with open(summary_file, 'w') as f:
-                f.write("No accuracy data available for plotting.\n")
             return
         
-        # Load the pre-aggregated accuracy summary
-        print(f"[plot_placement_accuracy] Loading {input.accuracy_summary}")
         df = pd.read_csv(input.accuracy_summary, sep='\t')
-        
-        print(f"[plot_placement_accuracy] Loaded {len(df)} records")
-        print(f"[plot_placement_accuracy] Columns: {list(df.columns)}")
-        
         if len(df) == 0:
-            print(f"[plot_placement_accuracy] No data in summary file")
-            summary_file = plots_dir / "summary.txt"
-            with open(summary_file, 'w') as f:
-                f.write("No valid accuracy data in summary file.\n")
             return
         
-        # Extract k, s, l from tag
-        import re
         def extract_ksl(tag):
-            k_match = re.search(r'k(\d+)', tag)
-            s_match = re.search(r's(\d+)', tag)
-            l_match = re.search(r'l(\d+)', tag)
-            k = int(k_match.group(1)) if k_match else 0
-            s = int(s_match.group(1)) if s_match else 0
-            l = int(l_match.group(1)) if l_match else 1
+            k = int(re.search(r'k(\d+)', tag).group(1)) if re.search(r'k(\d+)', tag) else 0
+            s = int(re.search(r's(\d+)', tag).group(1)) if re.search(r's(\d+)', tag) else 0
+            l = int(re.search(r'l(\d+)', tag).group(1)) if re.search(r'l(\d+)', tag) else 1
             return k, s, l
         
         df[['k', 's', 'l']] = df['tag'].apply(lambda x: pd.Series(extract_ksl(x)))
-        df['k_s_l_params'] = df.apply(lambda row: f"k{row['k']}_s{row['s']}_l{row['l']}", axis=1)
-        
-        # Calculate distance from expected genome (total variants already in the data)
         df['distance'] = df['total_variants']
+        df['k_s_l'] = df.apply(lambda r: f"k{r['k']}_s{r['s']}_l{r['l']}", axis=1)
+        df['category'] = df['reads'].astype(str) + ' reads, μ=' + df['mutation_rate'].astype(str)
         
-        # Count replicates for each combination to add to legend
-        replicate_counts = df.groupby(['reads', 'mutation_rate'])['replicate'].nunique().reset_index()
-        replicate_counts.columns = ['reads', 'mutation_rate', 'n_replicates']
-        df = df.merge(replicate_counts, on=['reads', 'mutation_rate'], how='left')
-        
-        # Create read count + mutation rate categories for legend with replicate count
-        # Format mutation rate for legend (e.g., "1e-4" or "0.0001")
-        df['mutation_rate_str'] = df['mutation_rate'].apply(
-            lambda x: f"{x:.0e}" if x > 0 and x < 0.001 else f"{x:.4f}" if x > 0 else "0"
-        )
-        df['category'] = df['reads'].astype(str) + ' reads, μ=' + df['mutation_rate_str'].astype(str) + ' (n=' + df['n_replicates'].astype(str) + ')'
-        # Add separate columns for proper sorting
-        df['reads_sort'] = df['reads']
-        df['mutations_sort'] = df['mutation_rate'] * 10000  # Use mutation rate for sorting
-        
-        # Create a detailed summary TSV file instead of plots for now
-        summary_file = plots_dir / "placement_accuracy_summary.tsv"
-        
-        print(f"[plot_placement_accuracy] Creating summary table")
-        
-        # Calculate summary statistics
-        summary_data = []
-        metrics = df['metric'].unique() if 'metric' in df.columns else ['all']
-        
-        for metric in metrics:
-            if metric != 'all':
-                metric_data = df[df['metric'] == metric].copy()
-            else:
-                metric_data = df.copy()
+        # Generate plots per pangenome
+        for pan in df['pangenome'].unique():
+            pan_df = df[df['pangenome'] == pan]
+            plots_dir = Path(f"{OUTPUT_DIR}/plots/{pan}/accuracy")
+            plots_dir.mkdir(parents=True, exist_ok=True)
             
-            if len(metric_data) == 0:
-                continue
+            # Save per-pangenome summary
+            pan_df.to_csv(plots_dir / "accuracy_data.tsv", sep='\t', index=False)
             
-            # Sort categories by reads first, then by mutations
-            if 'reads_sort' in metric_data.columns and 'mutations_sort' in metric_data.columns:
-                category_order = metric_data[['category', 'reads_sort', 'mutations_sort']].drop_duplicates()
-                category_order = category_order.sort_values(['reads_sort', 'mutations_sort'])
-                categories = category_order['category'].tolist()
-            else:
-                categories = sorted(metric_data['category'].unique())
-            
-            for category in categories:
-                cat_data = metric_data[metric_data['category'] == category]
-                total_samples = len(cat_data)
-                
-                if total_samples == 0:
-                    continue
-                
-                # Calculate distance distribution
-                for distance in range(6):  # 0-5+ variants
-                    if distance < 5:
-                        count = len(cat_data[cat_data['distance'] == distance])
-                        distance_label = str(distance)
-                    else:
-                        count = len(cat_data[cat_data['distance'] >= 5])
-                        distance_label = "5+"
+            # Create plots per k_s_l and metric for this pangenome
+            for ksl in pan_df['k_s_l'].unique():
+                ksl_data = pan_df[pan_df['k_s_l'] == ksl]
+                for metric in ksl_data['metric'].unique():
+                    metric_data = ksl_data[ksl_data['metric'] == metric]
+                    if len(metric_data) == 0: continue
                     
-                    proportion = count / total_samples if total_samples > 0 else 0
-                    
-                    summary_data.append({
-                        'metric': metric,
-                        'category': category,
-                        'distance': distance_label,
-                        'count': count,
-                        'total_samples': total_samples,
-                        'proportion': proportion
-                    })
-        
-        # Save summary table
-        summary_df = pd.DataFrame(summary_data)
-        summary_df.to_csv(summary_file, sep='\t', index=False)
-        print(f"[plot_placement_accuracy] Saved summary table: {summary_file}")
-        
-        # Also save the raw combined data for future plotting
-        raw_data_file = plots_dir / "combined_accuracy_data.tsv"
-        df.to_csv(raw_data_file, sep='\t', index=False)
-        print(f"[plot_placement_accuracy] Saved raw data: {raw_data_file}")
-        
-        # Create a simple text report
-        report_file = plots_dir / "placement_accuracy_report.txt"
-        with open(report_file, 'w') as f:
-            f.write("Placement Accuracy Analysis Report\n")
-            f.write("==================================\n\n")
-            f.write(f"Total records: {len(df)}\n")
-            f.write(f"Metrics analyzed: {', '.join(metrics)}\n")
-            f.write(f"Categories found: {len(df['category'].unique())}\n\n")
-            
-            f.write("Summary by metric:\n")
-            for metric in metrics:
-                if metric != 'all':
-                    metric_data = df[df['metric'] == metric]
-                else:
-                    metric_data = df
-                    
-                perfect_matches = len(metric_data[metric_data['distance'] == 0])
-                total = len(metric_data)
-                accuracy = perfect_matches / total * 100 if total > 0 else 0
-                
-                f.write(f"  {metric}: {perfect_matches}/{total} perfect matches ({accuracy:.1f}%)\n")
-        
-        print(f"[plot_placement_accuracy] Created report: {report_file}")
-        
-        # Create visual plots with matplotlib - separate by (k,s) parameters
-        try:
-            import matplotlib.pyplot as plt
-            import seaborn as sns
-            import numpy as np
-            
-            plt.style.use('default')
-            sns.set_palette("viridis")
-            
-            # Calculate distance from expected genome (total variants)
-            if 'total_variants' in df.columns:
-                df['distance'] = df['total_variants']
-            else:
-                df['distance'] = df.get('snps', 0) + df.get('indels', 0)
-            
-            # Get unique (k,s,l) parameter combinations
-            k_s_l_combinations = df['k_s_l_params'].unique() if 'k_s_l_params' in df.columns else ['all']
-            
-            for k_s_l_params in k_s_l_combinations:
-                print(f"[plot_placement_accuracy] Creating plots for {k_s_l_params}")
-                
-                # Filter data for this (k,s,l) combination
-                if k_s_l_params != 'all':
-                    k_s_l_data = df[df['k_s_l_params'] == k_s_l_params].copy()
-                else:
-                    k_s_l_data = df.copy()
-                
-                if len(k_s_l_data) == 0:
-                    print(f"[plot_placement_accuracy] No data for {k_s_l_params}")
-                    continue
-                
-                # Create plots for each metric within this (k,s,l) combination
-                metrics = k_s_l_data['metric'].unique() if 'metric' in k_s_l_data.columns else ['combined']
-                
-                for metric in metrics:
-                    print(f"[plot_placement_accuracy] Creating plot for {k_s_l_params}, metric: {metric}")
-                    
-                    # Filter data for this metric
-                    if metric != 'combined':
-                        metric_data = k_s_l_data[k_s_l_data['metric'] == metric].copy()
-                    else:
-                        metric_data = k_s_l_data.copy()
-                    
-                    if len(metric_data) == 0:
-                        print(f"[plot_placement_accuracy] No data for {k_s_l_params}, metric {metric}")
-                        continue
-                    
-                    # Create the plot
+                    categories = sorted(metric_data['category'].unique())
                     fig, ax = plt.subplots(figsize=(12, 8))
                     
-                    # Calculate proportions for each category and distance
-                    # Sort categories by reads first, then by mutations
-                    if 'reads_sort' in metric_data.columns and 'mutations_sort' in metric_data.columns:
-                        category_order = metric_data[['category', 'reads_sort', 'mutations_sort']].drop_duplicates()
-                        category_order = category_order.sort_values(['reads_sort', 'mutations_sort'])
-                        categories = category_order['category'].tolist()
-                    else:
-                        categories = sorted(metric_data['category'].unique())
-                        
-                    max_distance = min(int(metric_data['distance'].max()), 10) if len(metric_data) > 0 else 5
-                    
-                    # Create distance bins (0, 1, 2, 3, 4, >=5)
-                    distance_bins = list(range(min(max_distance + 1, 6))) + ['>5']
-                    
-                    # Prepare data for plotting
+                    distance_bins = list(range(6)) + ['>5']
                     plot_data = []
                     for cat in categories:
                         cat_data = metric_data[metric_data['category'] == cat]
-                        total_samples = len(cat_data)
-                        
-                        if total_samples == 0:
-                            continue
-                        
-                        # Count samples in each distance bin
-                        distance_counts = []
-                        for d in range(min(max_distance + 1, 6)):
-                            count = len(cat_data[cat_data['distance'] == d])
-                            distance_counts.append(count / total_samples)
-                        
-                        # Count samples with distance > 5
-                        count_high = len(cat_data[cat_data['distance'] > 5])
-                        distance_counts.append(count_high / total_samples)
-                        
-                        plot_data.append(distance_counts)
+                        total = len(cat_data)
+                        if total == 0: continue
+                        counts = [len(cat_data[cat_data['distance']==d])/total for d in range(6)]
+                        counts.append(len(cat_data[cat_data['distance']>5])/total)
+                        plot_data.append(counts)
                     
-                    # Create the bar plot
                     x = np.arange(len(distance_bins))
-                    width = 0.8 / len(categories) if len(categories) > 0 else 0.8
-                    colors = plt.cm.viridis(np.linspace(1, 0, len(categories)))  # Inverted gradient
+                    width = 0.8 / max(len(categories), 1)
+                    colors = plt.cm.viridis(np.linspace(1, 0, len(categories)))
                     
                     for i, (cat, data) in enumerate(zip(categories, plot_data)):
-                        offset = (i - len(categories)/2 + 0.5) * width
-                        bars = ax.bar(x + offset, data, width, label=cat, alpha=0.8, color=colors[i])
+                        ax.bar(x + (i - len(categories)/2 + 0.5) * width, data, width, label=cat, color=colors[i], alpha=0.8)
                     
-                    # Customize the plot
-                    ax.set_xlabel('Dist. from expected genome (# SNPs + Indels)', fontsize=12)
-                    ax.set_ylabel('Proportion of samples', fontsize=12)
-                    ax.set_title(f'Placement accuracy, {k_s_l_params}, {metric} metric', fontsize=14, fontweight='bold')
+                    ax.set_xlabel('Distance from expected (SNPs + Indels)')
+                    ax.set_ylabel('Proportion')
+                    ax.set_title(f'{pan}: Placement accuracy, {ksl}, {metric}')
                     ax.set_xticks(x)
                     ax.set_xticklabels([str(d) for d in distance_bins])
-                    ax.set_ylim(0, 1.0)
+                    ax.set_ylim(0, 1)
+                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                    ax.grid(alpha=0.3)
                     
-                    # Add reference line at y=1.0
-                    ax.axhline(y=1.0, color='black', linestyle='--', alpha=0.3)
-                    
-                    # Add legend
-                    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
-                    
-                    # Add grid
-                    ax.grid(True, alpha=0.3)
-                    
-                    # Tight layout
                     plt.tight_layout()
-                    
-                    # Save the plot with (k,s,l) parameters in filename
-                    plot_file = plots_dir / f"placement_accuracy_{k_s_l_params}_{metric}.png"
-                    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-                    print(f"[plot_placement_accuracy] Saved plot: {plot_file}")
-                    
-                    # Also save as PDF
-                    plot_file_pdf = plots_dir / f"placement_accuracy_{k_s_l_params}_{metric}.pdf"
-                    plt.savefig(plot_file_pdf, bbox_inches='tight')
-                    
+                    plt.savefig(plots_dir / f"placement_accuracy_{ksl}_{metric}.png", dpi=300, bbox_inches='tight')
                     plt.close()
-            
-            print(f"[plot_placement_accuracy] Created visual plots for {len(k_s_l_combinations)} (k,s,l) combinations")
-            
-            # Create comprehensive PDF with all plots in a grid
-            print(f"[plot_placement_accuracy] Creating comprehensive PDF with all plots...")
-            
-            # Get metrics dynamically from the data
-            metrics = df['metric'].unique().tolist() if 'metric' in df.columns else ['combined']
-            n_metrics = len(metrics)
-            n_k_s_l_combinations = len(k_s_l_combinations)
-            
-            # Calculate grid dimensions (rows=k_s_l combinations, cols=metrics)
-            n_rows = n_k_s_l_combinations
-            n_cols = n_metrics
-            
-            # Create large figure for comprehensive view
-            fig_width = n_cols * 5  # 5 inches per plot
-            fig_height = n_rows * 4  # 4 inches per plot
-            fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height))
-            
-            # Handle case where we have only one row or column
-            if n_rows == 1 and n_cols == 1:
-                axes = [[axes]]
-            elif n_rows == 1:
-                axes = [axes]
-            elif n_cols == 1:
-                axes = [[ax] for ax in axes]
-            
-            # Plot each combination
-            for row_idx, k_s_l_params in enumerate(k_s_l_combinations):
-                k_s_l_data = df[df['k_s_l_params'] == k_s_l_params]
-                
-                for col_idx, metric in enumerate(metrics):
-                    ax = axes[row_idx][col_idx]
-                    
-                    # Filter by metric column if it exists in the dataframe
-                    if 'metric' in k_s_l_data.columns:
-                        metric_data = k_s_l_data[k_s_l_data['metric'] == metric].copy()
-                    else:
-                        metric_data = k_s_l_data.copy()
-                    
-                    if len(metric_data) == 0:
-                        ax.text(0.5, 0.5, f'No data\n{k_s_l_params}\n{metric}', 
-                               ha='center', va='center', transform=ax.transAxes)
-                        ax.set_xticks([])
-                        ax.set_yticks([])
-                        continue
-                    
-                    # Sort categories by reads first, then by mutations
-                    if 'reads_sort' in metric_data.columns and 'mutations_sort' in metric_data.columns:
-                        category_order = metric_data[['category', 'reads_sort', 'mutations_sort']].drop_duplicates()
-                        category_order = category_order.sort_values(['reads_sort', 'mutations_sort'])
-                        categories = category_order['category'].tolist()
-                    else:
-                        categories = sorted(metric_data['category'].unique())
-                        
-                    max_distance = min(int(metric_data['distance'].max()), 10) if len(metric_data) > 0 else 5
-                    distance_bins = list(range(min(max_distance + 1, 6))) + ['>5']
-                    
-                    # Prepare data for plotting
-                    plot_data = []
-                    for cat in categories:
-                        cat_data = metric_data[metric_data['category'] == cat]
-                        total_samples = len(cat_data)
-                        
-                        if total_samples == 0:
-                            continue
-                        
-                        # Count samples in each distance bin
-                        distance_counts = []
-                        for d in range(min(max_distance + 1, 6)):
-                            count = len(cat_data[cat_data['distance'] == d])
-                            distance_counts.append(count / total_samples)
-                        
-                        # Count samples with distance > 5
-                        count_high = len(cat_data[cat_data['distance'] > 5])
-                        distance_counts.append(count_high / total_samples)
-                        
-                        plot_data.append(distance_counts)
-                    
-                    if len(plot_data) > 0:
-                        # Create the bar plot
-                        x = np.arange(len(distance_bins))
-                        width = 0.8 / len(categories) if len(categories) > 0 else 0.8
-                        colors = plt.cm.viridis(np.linspace(1, 0, len(categories)))  # Inverted gradient
-                        
-                        for i, (cat, data) in enumerate(zip(categories, plot_data)):
-                            offset = (i - len(categories)/2 + 0.5) * width
-                            bars = ax.bar(x + offset, data, width, alpha=0.8, color=colors[i])
-                        
-                        # Customize the subplot
-                        ax.set_xticks(x)
-                        ax.set_xticklabels([str(d) for d in distance_bins], fontsize=8)
-                        ax.set_ylim(0, 1.0)
-                        ax.grid(True, alpha=0.3)
-                        
-                        # Only add labels on edge plots to save space
-                        if row_idx == n_rows - 1:  # Bottom row
-                            ax.set_xlabel('Dist. from expected genome (# SNPs + Indels)', fontsize=10)
-                        if col_idx == 0:  # Left column
-                            ax.set_ylabel('Proportion of samples', fontsize=10)
-                        
-                        # Add title for each subplot
-                        ax.set_title(f'{k_s_l_params}, {metric}', fontsize=11, fontweight='bold')
-                        
-                        # Add reference line at y=1.0
-                        ax.axhline(y=1.0, color='black', linestyle='--', alpha=0.3)
-                    else:
-                        ax.text(0.5, 0.5, f'No data\n{k_s_l_params}\n{metric}', 
-                               ha='center', va='center', transform=ax.transAxes)
-                        ax.set_xticks([])
-                        ax.set_yticks([])
-            
-            # Add overall title
-            fig.suptitle('Placement Accuracy Analysis by (k,s,l) Parameters and Metrics', 
-                        fontsize=16, fontweight='bold', y=0.98)
-            
-            # Create a legend for the entire figure (use data from first non-empty plot)
-            legend_categories = None
-            legend_colors = None
-            for k_s_l_params in k_s_l_combinations:
-                k_s_l_data = df[df['k_s_l_params'] == k_s_l_params]
-                if len(k_s_l_data) > 0:
-                    # Filter by metric if the column exists (use first available metric for legend)
-                    if 'metric' in k_s_l_data.columns:
-                        first_metric = k_s_l_data['metric'].iloc[0]
-                        metric_data = k_s_l_data[k_s_l_data['metric'] == first_metric]  # Use first metric for legend
-                    else:
-                        metric_data = k_s_l_data
-                    if len(metric_data) > 0 and 'category' in metric_data.columns:
-                        if 'reads_sort' in metric_data.columns and 'mutations_sort' in metric_data.columns:
-                            category_order = metric_data[['category', 'reads_sort', 'mutations_sort']].drop_duplicates()
-                            category_order = category_order.sort_values(['reads_sort', 'mutations_sort'])
-                            legend_categories = category_order['category'].tolist()
-                        else:
-                            legend_categories = sorted(metric_data['category'].unique())
-                        legend_colors = plt.cm.viridis(np.linspace(1, 0, len(legend_categories)))
-                        break
-            
-            if legend_categories and legend_colors is not None:
-                # Create legend handles
-                legend_handles = [plt.Rectangle((0,0),1,1, color=color, alpha=0.8) 
-                                for color in legend_colors]
-                fig.legend(legend_handles, legend_categories, 
-                          loc='center right', bbox_to_anchor=(0.98, 0.5), 
-                          title='Read count & mutation rate (μ)', fontsize=10)
-            
-            # Adjust layout to make room for legend
-            plt.tight_layout()
-            plt.subplots_adjust(right=0.85, top=0.94)
-            
-            # Save comprehensive PDF
-            comprehensive_pdf = plots_dir / "placement_accuracy_comprehensive.pdf"
-            plt.savefig(comprehensive_pdf, bbox_inches='tight', dpi=300)
-            print(f"[plot_placement_accuracy] Saved comprehensive PDF: {comprehensive_pdf}")
-            
-            # Also save as PNG for quick viewing
-            comprehensive_png = plots_dir / "placement_accuracy_comprehensive.png"
-            plt.savefig(comprehensive_png, bbox_inches='tight', dpi=300)
-        except Exception as e:
-            # Catch plotting errors so the rule can fail gracefully and report
-            print(f"[plot_placement_accuracy] plotting error: {e}")
-            err_file = plots_dir / "plotting_error.txt"
-            try:
-                with open(err_file, 'w') as ef:
-                    ef.write(str(e) + '\n')
-            except Exception:
-                pass
-        
 
-# -----------------------------------------------------------------------------
-# K-value analysis plots: accuracy vs k, split by l
-# -----------------------------------------------------------------------------
 rule plot_accuracy_by_k:
-    input:
-        summary=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
+    input: summary=f"{OUTPUT_DIR}/reports/alignment_accuracy_summary.tsv"
     output:
-        png_l1=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l1.png",
-        pdf_l1=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l1.pdf",
-        png_l3=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l3.png",
-        pdf_l3=f"{OUTPUT_DIR}/plots/k_analysis/accuracy_by_k_l3.pdf",
-    params:
-        title_prefix="Placement Accuracy vs k",
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/k_analysis/accuracy_by_k_l1.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/k_analysis/accuracy_by_k_l1.pdf", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/k_analysis/accuracy_by_k_l3.png", pan=PANGENOMES.keys()),
+        expand(f"{OUTPUT_DIR}/plots/{{pan}}/k_analysis/accuracy_by_k_l3.pdf", pan=PANGENOMES.keys())
     run:
         import pandas as pd
         import matplotlib.pyplot as plt
         import seaborn as sns
-        from pathlib import Path
-
-        Path(output.png_l1).parent.mkdir(parents=True, exist_ok=True)
-
-        # Read summary 
+        
         df = pd.read_csv(input.summary, sep='\t')
         
-        print(f"[plot_accuracy_by_k] Loaded {len(df)} records")
-        print(f"[plot_accuracy_by_k] Columns: {list(df.columns)}")
-
-        # Use total_variants as distance measure
-        if 'total_variants' not in df.columns:
-            raise ValueError(f"Expected 'total_variants' column in {input.summary}")
+        if 'total_variants' not in df.columns or len(df) == 0:
+            for pan in PANGENOMES:
+                out_dir = Path(f"{OUTPUT_DIR}/plots/{pan}/k_analysis")
+                out_dir.mkdir(parents=True, exist_ok=True)
+                for f in ['accuracy_by_k_l1.png', 'accuracy_by_k_l1.pdf', 'accuracy_by_k_l3.png', 'accuracy_by_k_l3.pdf']:
+                    Path(out_dir / f).touch()
+            return
         
-        df['distance'] = df['total_variants']
-        df['correct'] = (df['distance'] == 0).astype(int)
-
-        # Extract k, l from tag column (format: k{k}_s{s}_l{l}_...)
-        import re
-        def extract_k(tag):
-            match = re.search(r'k(\d+)', tag)
-            return int(match.group(1)) if match else 0
+        df['correct'] = (df['total_variants'] == 0).astype(int)
+        df['k'] = df['tag'].apply(lambda t: int(re.search(r'k(\d+)', t).group(1)) if re.search(r'k(\d+)', t) else 0)
+        df['l'] = df['tag'].apply(lambda t: int(re.search(r'l(\d+)', t).group(1)) if re.search(r'l(\d+)', t) else 1)
         
-        def extract_l(tag):
-            match = re.search(r'l(\d+)', tag)
-            return int(match.group(1)) if match else 1
-        
-        df['k'] = df['tag'].apply(extract_k)
-        df['l'] = df['tag'].apply(extract_l)
-        
-        # Ensure numeric types
-        df['k'] = df['k'].astype(int)
-        df['l'] = df['l'].astype(int)
-        df['reads'] = df['reads'].astype(int)
-
-        # Aggregate: mean accuracy per k, l, metric, reads
-        agg = df.groupby(['k','l','metric','reads'], as_index=False).agg({'correct':'mean'})
+        agg = df.groupby(['pangenome','k','l','metric','reads'], as_index=False).agg({'correct':'mean'})
         agg['accuracy'] = agg['correct'] * 100
-
-        # Category label for legend
-        agg['category'] = agg['metric'].astype(str) + ":" + agg['reads'].astype(str)
-
-        # Helper to plot for a given l value
-        def plot_for_l(l_value, png_out, pdf_out):
-            sub = agg[agg['l'] == l_value]
+        
+        def plot_l(pan_data, pan, l_val, png, pdf):
+            sub = pan_data[pan_data['l'] == l_val]
             if sub.empty:
-                print(f"[plot_accuracy_by_k] No data for l={l_value}, creating empty placeholder files")
-                # Create empty placeholder files so Snakemake doesn't fail
-                Path(png_out).touch()
-                Path(pdf_out).touch()
+                Path(png).touch(); Path(pdf).touch()
                 return
-
-            plt.figure(figsize=(10,6))
+            plt.figure(figsize=(10, 6))
             sns.set_style('whitegrid')
-
-            categories = sorted(sub['category'].unique())
-            palette = sns.color_palette('tab20', n_colors=max(3, len(categories)))
-            color_map = {cat: palette[i % len(palette)] for i,cat in enumerate(categories)}
-
-            for cat in categories:
-                m, r = cat.split(":")
-                dat = sub[(sub['metric'] == m) & (sub['reads'] == int(r))]
-                if dat.empty:
-                    continue
-                dat = dat.sort_values('k')
-                plt.plot(dat['k'], dat['accuracy'], marker='o', label=f"{m} ({r} reads)", color=color_map[cat])
-
-            plt.xlabel('k (k-mer size)')
-            plt.ylabel('Accuracy (%)')
-            plt.title(f"{params.title_prefix} (l={l_value})")
-            plt.xticks(sorted(sub['k'].unique()))
-            plt.ylim(0, 100)
+            for cat in sorted(sub.apply(lambda r: f"{r['metric']}:{r['reads']}", axis=1).unique()):
+                m, r = cat.split(':')
+                d = sub[(sub['metric']==m) & (sub['reads']==int(r))].sort_values('k')
+                if not d.empty:
+                    plt.plot(d['k'], d['accuracy'], marker='o', label=f"{m} ({r} reads)")
+            plt.xlabel('k'); plt.ylabel('Accuracy (%)'); plt.title(f'{pan}: Accuracy vs k (l={l_val})')
+            plt.xticks(sorted(sub['k'].unique())); plt.ylim(0, 100)
             plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
-            plt.tight_layout()
-            plt.savefig(png_out, dpi=300)
-            plt.savefig(pdf_out)
-            plt.close()
-            print(f"[plot_accuracy_by_k] Wrote {png_out} and {pdf_out}")
-
-        plot_for_l(1, output.png_l1, output.pdf_l1)
-        plot_for_l(3, output.png_l3, output.pdf_l3)
-
-
-rule clean:
-    run:
-        import shutil, pathlib, os, glob
-        outdir = pathlib.Path(OUTPUT_DIR)
-        print(f"[clean] Removing {outdir} if it exists...")
-        if outdir.exists():
-            shutil.rmtree(outdir, ignore_errors=True)
-        # Remove Snakemake working directory
-        sm = pathlib.Path('.snakemake')
-        if sm.exists():
-            print(f"[clean] Removing {sm}...")
-            shutil.rmtree(sm, ignore_errors=True)
-        # Remove per-panman byproducts in their directories
-        for e in EXPERIMENTS:
-            pan = pathlib.Path(e['panman_path']).resolve()
-            pan_dir = pan.parent
-            patterns = [
-                str(pan_dir / '*.placement.tsv'),
-                f"{str(pan)}.placement.tsv",
-                str(pan_dir / '*.random.*.fa'),
-                f"{str(pan)}.random.*.fa",
-                f"{str(pan)}.pmi",
-                str(pan_dir / 'read_seeds_debug.log'),
-            ]
-            for pat in patterns:
-                for f in glob.glob(pat):
-                    try:
-                        print(f"[clean] Removing {f}")
-                        os.remove(f)
-                    except FileNotFoundError:
-                        pass
-
-# =============================================================================
-# Timing Benchmarks (on-demand rule)
-# =============================================================================
-
-rule timing_benchmarks:
-    """
-    Run timing benchmarks for indexing and placement across all pangenomes.
-    Usage: snakemake timing_benchmarks
-    
-    This rule:
-    1. Times indexing for each pangenome with the first k,s,l combination in CONFIG
-    2. Times placement runs for one replicate at each coverage level
-    3. Aggregates timing data into a summary report
-    """
-    input:
-        f"{OUTPUT_DIR}/reports/timing_benchmarks.tsv",
-        f"{OUTPUT_DIR}/plots/timing/benchmark_summary.png"
-    
-rule run_timing_benchmarks:
-    output:
-        summary=f"{OUTPUT_DIR}/reports/timing_benchmarks.tsv"
-    run:
-        import subprocess
-        import pandas as pd
-        import pathlib
-        import re
-        import time
-        
-        pathlib.Path(output.summary).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Use first k,s,l combination for all pangenomes
-        k = CONFIG['k_values'][0]
-        s = CONFIG['s_values'][0]
-        l = CONFIG['l_values'][0]
-        
-        results = []
-        
-        print(f"[timing_benchmarks] Running benchmarks with k={k}, s={s}, l={l}")
-        
-        # Parse /usr/bin/time output
-        def parse_time_output(output_text):
-            stats = {}
-            for line in output_text.split('\n'):
-                if 'Elapsed (wall clock) time' in line:
-                    # Format: "Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.23"
-                    # Extract everything after the last colon before the time value
-                    try:
-                        # Find the actual time value - it's after ": " 
-                        time_match = re.search(r':\s+(\d+:\d+:\d+\.\d+|\d+:\d+\.\d+)', line)
-                        if time_match:
-                            time_str = time_match.group(1)
-                            if time_str.count(':') == 2:  # h:mm:ss.ms
-                                h, m, s = time_str.split(':')
-                                stats['wall_time_sec'] = int(h) * 3600 + int(m) * 60 + float(s)
-                            elif time_str.count(':') == 1:  # m:ss.ms
-                                m, s = time_str.split(':')
-                                stats['wall_time_sec'] = int(m) * 60 + float(s)
-                    except Exception as e:
-                        print(f"[timing_benchmarks] Warning: Could not parse wall time from: {line}")
-                elif 'User time (seconds)' in line:
-                    try:
-                        stats['user_time_sec'] = float(line.split(':')[1].strip())
-                    except:
-                        pass
-                elif 'System time (seconds)' in line:
-                    try:
-                        stats['system_time_sec'] = float(line.split(':')[1].strip())
-                    except:
-                        pass
-                elif 'Maximum resident set size (kbytes)' in line:
-                    try:
-                        stats['max_rss_mb'] = float(line.split(':')[1].strip()) / 1024.0
-                    except:
-                        pass
-            return stats
-        
-        # Parse panmap --time output for detailed timing
-        def parse_panmap_timing(output_text):
-            timing_info = {}
-            for line in output_text.split('\n'):
-                if '[TIME]' in line:
-                    # Format: [TIME] Phase name: XXXms
-                    match = re.search(r'\[TIME\]\s+([^:]+):\s+(\d+)ms', line)
-                    if match:
-                        phase = match.group(1).strip()
-                        ms = int(match.group(2))
-                        timing_info[phase] = ms
-            return timing_info
-        
-        # Get absolute paths
-        import os
-        panmap_bin = os.path.abspath("build/bin/panmap")
-        simulate_bin = os.path.abspath("build/bin/simulate")
-        
-        # Filter pangenomes if specified in config
-        timing_pangenomes = config.get('timing_pangenomes', None)
-        if timing_pangenomes:
-            selected_pangenomes = {k: v for k, v in PANGENOMES.items() if k in timing_pangenomes}
-            print(f"[timing_benchmarks] Running for selected pangenomes: {list(selected_pangenomes.keys())}")
-        else:
-            selected_pangenomes = PANGENOMES
-            print(f"[timing_benchmarks] Running for all pangenomes: {list(selected_pangenomes.keys())}")
-        
-        # Benchmark indexing for each pangenome
-        print(f"[timing_benchmarks] === INDEXING BENCHMARKS ===")
-        for pan_name, pan_info in selected_pangenomes.items():
-            print(f"[timing_benchmarks] Checking index for {pan_name}...")
-            
-            try:
-                panman_path = os.path.abspath(pan_info['path'])
-                temp_index = f"/tmp/timing_bench_{pan_name}_{k}_{s}_{l}.pmi"
-                
-                # Check if index already exists and is valid
-                if pathlib.Path(temp_index).exists():
-                    print(f"[timing_benchmarks]   Index exists, skipping rebuild: {temp_index}")
-                    # Still record it in results with zero time (or load from previous run)
-                    benchmark = {
-                        'pangenome': pan_name,
-                        'phase': 'indexing',
-                        'k': k,
-                        's': s,
-                        'l': l,
-                        'coverage': 'N/A',
-                        'num_reads': 0,
-                        'wall_time_sec': 0,
-                        'user_time_sec': 0,
-                        'system_time_sec': 0,
-                        'max_rss_mb': 0,
-                    }
-                    results.append(benchmark)
-                    print(f"[timing_benchmarks]   {pan_name} indexing: skipped (existing)")
-                    continue
-                
-                print(f"[timing_benchmarks] Indexing {pan_name}...")
-                
-                # Run indexing with timing
-                cmd = [
-                    "/usr/bin/time", "-v",
-                    panmap_bin,
-                    "-k", str(k),
-                    "-s", str(s),
-                    "-l", str(l),
-                    "--time",
-                    "-f",
-                    "--index-mgsr", temp_index,
-                    panman_path
-                ]
-                
-                start_time = time.time()
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-                end_time = time.time()
-                
-                # Parse timing
-                print(f"[timing_benchmarks]   Parsing time output...")
-                time_stats = parse_time_output(result.stderr)
-                print(f"[timing_benchmarks]   Parsing panmap timing...")
-                panmap_timing = parse_panmap_timing(result.stdout + result.stderr)
-                
-                # Store result
-                print(f"[timing_benchmarks]   Storing results...")
-                benchmark = {
-                    'pangenome': pan_name,
-                    'phase': 'indexing',
-                    'k': k,
-                    's': s,
-                    'l': l,
-                    'coverage': 'N/A',
-                    'num_reads': 0,
-                    'wall_time_sec': time_stats.get('wall_time_sec', end_time - start_time),
-                    'user_time_sec': time_stats.get('user_time_sec', 0),
-                    'system_time_sec': time_stats.get('system_time_sec', 0),
-                    'max_rss_mb': time_stats.get('max_rss_mb', 0),
-                }
-                
-                # Add detailed panmap timing if available
-                for phase_name, phase_ms in panmap_timing.items():
-                    benchmark[f'panmap_{phase_name.replace(" ", "_").lower()}_ms'] = phase_ms
-                
-                results.append(benchmark)
-                print(f"[timing_benchmarks]   {pan_name} indexing: {benchmark['wall_time_sec']:.2f}s, {benchmark['max_rss_mb']:.1f}MB")
-                
-                # Clean up temp index
-                if pathlib.Path(temp_index).exists():
-                    pathlib.Path(temp_index).unlink()
-                    
-            except subprocess.TimeoutExpired:
-                print(f"[timing_benchmarks]   {pan_name} indexing TIMEOUT (>1 hour)")
-                results.append({
-                    'pangenome': pan_name,
-                    'phase': 'indexing',
-                    'k': k, 's': s, 'l': l,
-                    'coverage': 'N/A',
-                    'num_reads': 0,
-                    'wall_time_sec': -1,
-                    'user_time_sec': -1,
-                    'system_time_sec': -1,
-                    'max_rss_mb': -1,
-                    'status': 'timeout'
-                })
-            except Exception as e:
-                import traceback
-                print(f"[timing_benchmarks]   {pan_name} indexing ERROR: {e}")
-                print(f"[timing_benchmarks]   Traceback: {traceback.format_exc()}")
-                results.append({
-                    'pangenome': pan_name,
-                    'phase': 'indexing',
-                    'k': k, 's': s, 'l': l,
-                    'coverage': 'N/A',
-                    'num_reads': 0,
-                    'wall_time_sec': -1,
-                    'user_time_sec': -1,
-                    'system_time_sec': -1,
-                    'max_rss_mb': -1,
-                    'status': 'error',
-                    'error': str(e)
-                })
-        
-        # Save results now (indexing complete)
-        df = pd.DataFrame(results)
-        df.to_csv(output.summary, sep='\t', index=False)
-        print(f"\n[timing_benchmarks] Indexing results saved to {output.summary}")
-        print(f"[timing_benchmarks] Total indexing benchmarks: {len(results)}")
-        
-        # Benchmark placement for each pangenome at each coverage level
-        print(f"\n[timing_benchmarks] === PLACEMENT BENCHMARKS ===")
-        
-        for pan_name, pan_info in selected_pangenomes.items():
-            panman_path = os.path.abspath(pan_info['path'])
-            genome_size = pan_info['genome_size']
-            
-            # Skip very large genomes for placement timing (too many reads)
-            if genome_size > 100000:  # Skip if > 100kb (like tb_400 with 4Mb)
-                print(f"[timing_benchmarks] Skipping {pan_name} placement (genome too large: {genome_size} bp)")
-                continue
-            
-            # Reuse index from indexing benchmark
-            temp_index = f"/tmp/timing_bench_{pan_name}_{k}_{s}_{l}.pmi"
-            
-            # Check if index exists from indexing phase, if not build it
-            if not pathlib.Path(temp_index).exists():
-                print(f"[timing_benchmarks] Building index for {pan_name} placement tests...")
-                try:
-                    cmd_index = [
-                        panmap_bin,
-                        "-k", str(k), "-s", str(s), "-l", str(l),
-                        "-f",
-                        "--index-mgsr", temp_index,
-                        panman_path
-                    ]
-                    subprocess.run(cmd_index, capture_output=True, text=True, timeout=3600, check=True)
-                except Exception as e:
-                    print(f"[timing_benchmarks]   Failed to build index for {pan_name}: {e}")
-                    continue
-            else:
-                print(f"[timing_benchmarks] Reusing existing index for {pan_name} placement tests")
-            
-            # Test placement at each coverage level
-            for cov in CONFIG['coverage_levels']:
-                num_reads = int((genome_size * cov) / CONFIG['read_length'])
-                print(f"[timing_benchmarks] Placement {pan_name} @ {cov}x coverage ({num_reads} reads)...")
-                
-                # Generate test reads (reuse existing simulate rule logic)
-                temp_dir = pathlib.Path(f"/tmp/timing_bench_{pan_name}_cov{cov}")
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                
-                try:
-                    # Copy panman file to temp dir to control where random node is written
-                    import shutil
-                    temp_panman = temp_dir / f"{pan_name}_temp.panman"
-                    shutil.copy2(panman_path, temp_panman)
-                    
-                    # Try multiple seeds to find a node with a valid filename (no slashes)
-                    random_fasta = None
-                    for seed in [12345, 999, 54321, 11111, 22222]:
-                        # Dump a random node - it will be written next to the temp panman file
-                        cmd_dump = f"{panmap_bin} {temp_panman} --dump-random-node --seed {seed}"
-                        result_dump = subprocess.run(cmd_dump, shell=True, capture_output=True, text=True, timeout=300)
-                        
-                        # Find generated fasta in temp directory
-                        fasta_files = list(temp_dir.glob("*.random.*.fa"))
-                        
-                        if fasta_files:
-                            random_fasta = fasta_files[0]
-                            print(f"[timing_benchmarks]   Random node found with seed {seed}")
-                            break
-                        
-                        # Check if it failed due to invalid filename
-                        if "Failed to save random node" in result_dump.stdout or "Failed to save random node" in result_dump.stderr:
-                            print(f"[timing_benchmarks]   Seed {seed} generated node with invalid filename, trying another...")
-                            continue
-                    
-                    if not random_fasta:
-                        print(f"[timing_benchmarks]   No valid random node generated for {pan_name} after trying multiple seeds")
-                        print(f"[timing_benchmarks]   Last error: {result_dump.stderr}")
-                        continue
-                    
-                    # Extract node name from fasta header
-                    with open(random_fasta, 'r') as f:
-                        node_name = f.readline().strip()[1:]  # Remove '>' from header
-                    
-                    print(f"[timing_benchmarks]   Generated random node: {node_name}")
-                    
-                    # Simulate reads using temp panman
-                    if pathlib.Path(simulate_bin).exists():
-                        cmd_sim = (
-                            f"{simulate_bin} --panmat {temp_panman} --ref {node_name} "
-                            f"--out_dir {str(temp_dir)} --n_reads {num_reads} --rep 1 "
-                            f"--model {CONFIG['model']} --cpus 4 --seed 12345 "
-                            f"--mutnum 0 0 0"  # No mutations for timing test
-                        )
-                        result_sim = subprocess.run(cmd_sim, shell=True, capture_output=True, text=True, timeout=600)
-                        if result_sim.returncode != 0:
-                            print(f"[timing_benchmarks]   Simulate failed: {result_sim.stderr}")
-                            continue
-                    else:
-                        print(f"[timing_benchmarks]   Simulate binary not found at {simulate_bin}")
-                        continue
-                    
-                    # Find generated reads
-                    r1_files = list(temp_dir.glob("*_R1.fastq")) + list(temp_dir.glob("*/*_R1.fastq"))
-                    r2_files = list(temp_dir.glob("*_R2.fastq")) + list(temp_dir.glob("*/*_R2.fastq"))
-                    
-                    if not r1_files or not r2_files:
-                        print(f"[timing_benchmarks]   No reads generated for {pan_name} @ {cov}x")
-                        continue
-                    
-                    r1_path = r1_files[0]
-                    r2_path = r2_files[0]
-                    
-                    # Run placement with timing
-                    placement_prefix = temp_dir / "placement"
-                    cmd_place = [
-                        "/usr/bin/time", "-v",
-                        panmap_bin,
-                        "-o", "placement",
-                        "--time",
-                        "-m", temp_index,
-                        "-p", str(placement_prefix),
-                        panman_path,
-                        str(r1_path),
-                        str(r2_path)
-                    ]
-                    
-                    start_time = time.time()
-                    result_place = subprocess.run(cmd_place, capture_output=True, text=True, timeout=3600)
-                    end_time = time.time()
-                    
-                    # Parse timing
-                    time_stats = parse_time_output(result_place.stderr)
-                    panmap_timing = parse_panmap_timing(result_place.stdout + result_place.stderr)
-                    
-                    # Store result
-                    benchmark = {
-                        'pangenome': pan_name,
-                        'phase': 'placement',
-                        'k': k,
-                        's': s,
-                        'l': l,
-                        'coverage': cov,
-                        'num_reads': num_reads,
-                        'wall_time_sec': time_stats.get('wall_time_sec', end_time - start_time),
-                        'user_time_sec': time_stats.get('user_time_sec', 0),
-                        'system_time_sec': time_stats.get('system_time_sec', 0),
-                        'max_rss_mb': time_stats.get('max_rss_mb', 0),
-                    }
-                    
-                    # Add detailed panmap timing
-                    for phase_name, phase_ms in panmap_timing.items():
-                        benchmark[f'panmap_{phase_name.replace(" ", "_").lower()}_ms'] = phase_ms
-                    
-                    results.append(benchmark)
-                    print(f"[timing_benchmarks]   {pan_name} @ {cov}x ({num_reads} reads): {benchmark['wall_time_sec']:.2f}s, {benchmark['max_rss_mb']:.1f}MB")
-                    
-                except subprocess.TimeoutExpired:
-                    print(f"[timing_benchmarks]   {pan_name} @ {cov}x TIMEOUT")
-                    results.append({
-                        'pangenome': pan_name,
-                        'phase': 'placement',
-                        'k': k, 's': s, 'l': l,
-                        'coverage': cov,
-                        'num_reads': num_reads,
-                        'wall_time_sec': -1,
-                        'user_time_sec': -1,
-                        'system_time_sec': -1,
-                        'max_rss_mb': -1,
-                        'status': 'timeout'
-                    })
-                except Exception as e:
-                    print(f"[timing_benchmarks]   {pan_name} @ {cov}x ERROR: {e}")
-                    results.append({
-                        'pangenome': pan_name,
-                        'phase': 'placement',
-                        'k': k, 's': s, 'l': l,
-                        'coverage': cov,
-                        'num_reads': num_reads,
-                        'wall_time_sec': -1,
-                        'user_time_sec': -1,
-                        'system_time_sec': -1,
-                        'max_rss_mb': -1,
-                        'status': 'error',
-                        'error': str(e)
-                    })
-                finally:
-                    # Cleanup temp dir
-                    import shutil
-                    if temp_dir.exists():
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-            
-            # Clean up index
-            if pathlib.Path(temp_index).exists():
-                pathlib.Path(temp_index).unlink()
-        
-        # Save results
-        df = pd.DataFrame(results)
-        df.to_csv(output.summary, sep='\t', index=False)
-        print(f"\n[timing_benchmarks] Results saved to {output.summary}")
-        print(f"[timing_benchmarks] Total benchmarks run: {len(results)}")
-
-rule plot_timing_benchmarks:
-    input:
-        summary=f"{OUTPUT_DIR}/reports/timing_benchmarks.tsv"
-    output:
-        summary_plot=f"{OUTPUT_DIR}/plots/timing/benchmark_summary.png",
-        index_plot=f"{OUTPUT_DIR}/plots/timing/indexing_benchmarks.png",
-        placement_plot=f"{OUTPUT_DIR}/plots/timing/placement_benchmarks.png",
-        # Per-pangenome plots
-        per_pan_plots=expand(f"{OUTPUT_DIR}/plots/timing/{{pan}}/benchmarks.png", pan=[p for p in PANGENOMES.keys()])
-    run:
-        import pandas as pd
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-        from pathlib import Path
-        
-        Path(output.summary_plot).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Load data
-        df = pd.read_csv(input.summary, sep='\t')
-        
-        print(f"[plot_timing_benchmarks] Loaded {len(df)} benchmark results")
-        
-        # Filter out errors/timeouts
-        df_valid = df[df['wall_time_sec'] > 0].copy()
-        
-        # Create summary plot
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-        
-        # 1. Indexing time by pangenome
-        index_data = df_valid[df_valid['phase'] == 'indexing']
-        if len(index_data) > 0:
-            ax = axes[0, 0]
-            index_data.plot(x='pangenome', y='wall_time_sec', kind='bar', ax=ax, legend=False)
-            ax.set_ylabel('Wall Time (seconds)')
-            ax.set_xlabel('Pangenome')
-            ax.set_title('Indexing Time by Pangenome')
-            ax.tick_params(axis='x', rotation=45)
-        
-        # 2. Indexing memory by pangenome
-        if len(index_data) > 0:
-            ax = axes[0, 1]
-            index_data.plot(x='pangenome', y='max_rss_mb', kind='bar', ax=ax, legend=False, color='orange')
-            ax.set_ylabel('Peak Memory (MB)')
-            ax.set_xlabel('Pangenome')
-            ax.set_title('Indexing Memory by Pangenome')
-            ax.tick_params(axis='x', rotation=45)
-        
-        # 3. Placement time by coverage
-        place_data = df_valid[df_valid['phase'] == 'placement']
-        if len(place_data) > 0:
-            ax = axes[1, 0]
-            for pan in place_data['pangenome'].unique():
-                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
-                ax.plot(pan_data['coverage'], pan_data['wall_time_sec'], marker='o', label=pan, linewidth=2, markersize=8)
-                # Add number of reads as text labels
-                for _, row in pan_data.iterrows():
-                    ax.annotate(f"{int(row['num_reads'])} reads", 
-                               xy=(row['coverage'], row['wall_time_sec']),
-                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
-            ax.set_ylabel('Wall Time (seconds)')
-            ax.set_xlabel('Coverage')
-            ax.set_title('Placement Time by Coverage')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        # 4. Placement memory by coverage
-        if len(place_data) > 0:
-            ax = axes[1, 1]
-            for pan in place_data['pangenome'].unique():
-                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
-                ax.plot(pan_data['coverage'], pan_data['max_rss_mb'], marker='o', label=pan, linewidth=2, markersize=8)
-                # Add number of reads as text labels
-                for _, row in pan_data.iterrows():
-                    ax.annotate(f"{int(row['num_reads'])} reads", 
-                               xy=(row['coverage'], row['max_rss_mb']),
-                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
-            ax.set_ylabel('Peak Memory (MB)')
-            ax.set_xlabel('Coverage')
-            ax.set_title('Placement Memory by Coverage')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(output.summary_plot, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Create detailed indexing plot
-        if len(index_data) > 0:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            x = range(len(index_data))
-            width = 0.35
-            
-            ax.bar([i - width/2 for i in x], index_data['wall_time_sec'], width, label='Wall Time')
-            ax.bar([i + width/2 for i in x], index_data['user_time_sec'], width, label='User Time')
-            
-            ax.set_ylabel('Time (seconds)')
-            ax.set_xlabel('Pangenome')
-            ax.set_title(f'Indexing Performance (k={index_data.iloc[0]["k"]}, s={index_data.iloc[0]["s"]}, l={index_data.iloc[0]["l"]})')
-            ax.set_xticks(x)
-            ax.set_xticklabels(index_data['pangenome'], rotation=45, ha='right')
-            ax.legend()
-            ax.grid(True, alpha=0.3, axis='y')
-            
-            plt.tight_layout()
-            plt.savefig(output.index_plot, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            # Create empty placeholder
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.text(0.5, 0.5, 'No valid indexing benchmark data available', 
-                   ha='center', va='center', fontsize=14)
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-            ax.axis('off')
-            plt.savefig(output.index_plot, dpi=300, bbox_inches='tight')
-            plt.close()
-        
-        # Create detailed placement plot
-        if len(place_data) > 0:
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-            
-            # Time vs coverage
-            ax = axes[0]
-            for pan in place_data['pangenome'].unique():
-                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
-                ax.plot(pan_data['coverage'], pan_data['wall_time_sec'], marker='o', label=pan, linewidth=2, markersize=8)
-                # Add number of reads annotation
-                for _, row in pan_data.iterrows():
-                    ax.annotate(f"{int(row['num_reads'])} reads", 
-                               xy=(row['coverage'], row['wall_time_sec']),
-                               xytext=(5, 5), textcoords='offset points', fontsize=9, alpha=0.7)
-            ax.set_xlabel('Coverage', fontsize=12)
-            ax.set_ylabel('Wall Time (seconds)', fontsize=12)
-            ax.set_title('Placement Time by Coverage', fontsize=13)
-            ax.legend(fontsize=10)
-            ax.grid(True, alpha=0.3)
-            
-            # Memory vs coverage
-            ax = axes[1]
-            for pan in place_data['pangenome'].unique():
-                pan_data = place_data[place_data['pangenome'] == pan].sort_values('coverage')
-                ax.plot(pan_data['coverage'], pan_data['max_rss_mb'], marker='o', label=pan, linewidth=2, markersize=8)
-                # Add number of reads annotation
-                for _, row in pan_data.iterrows():
-                    ax.annotate(f"{int(row['num_reads'])} reads", 
-                               xy=(row['coverage'], row['max_rss_mb']),
-                               xytext=(5, 5), textcoords='offset points', fontsize=9, alpha=0.7)
-            ax.set_xlabel('Coverage', fontsize=12)
-            ax.set_ylabel('Peak Memory (MB)', fontsize=12)
-            ax.set_title('Placement Memory by Coverage', fontsize=13)
-            ax.legend(fontsize=10)
-            ax.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            plt.savefig(output.placement_plot, dpi=300, bbox_inches='tight')
-            plt.close()
-        else:
-            # Create empty placeholder
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.text(0.5, 0.5, 'No valid placement benchmark data available', 
-                   ha='center', va='center', fontsize=14)
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-            ax.axis('off')
-            plt.savefig(output.placement_plot, dpi=300, bbox_inches='tight')
-            plt.close()
+            plt.tight_layout(); plt.savefig(png, dpi=300); plt.savefig(pdf); plt.close()
         
         # Generate per-pangenome plots
-        for pan_name in PANGENOMES.keys():
-            pan_dir = Path(f"{OUTPUT_DIR}/plots/timing/{pan_name}")
-            pan_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Filter data for this pangenome
-            pan_index_data = index_data[index_data['pangenome'] == pan_name] if len(index_data) > 0 else pd.DataFrame()
-            pan_place_data = place_data[place_data['pangenome'] == pan_name] if len(place_data) > 0 else pd.DataFrame()
-            
-            # Create combined plot for this pangenome
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-            fig.suptitle(f'Timing Benchmarks - {pan_name}', fontsize=16, fontweight='bold')
-            
-            # 1. Indexing time
-            if len(pan_index_data) > 0:
-                ax = axes[0, 0]
-                ax.bar(range(len(pan_index_data)), pan_index_data['wall_time_sec'], color='steelblue')
-                ax.set_ylabel('Wall Time (seconds)')
-                ax.set_xlabel('Run')
-                ax.set_title('Indexing Time')
-                ax.grid(True, alpha=0.3, axis='y')
-            else:
-                axes[0, 0].text(0.5, 0.5, 'No indexing data', ha='center', va='center')
-                axes[0, 0].axis('off')
-            
-            # 2. Indexing memory
-            if len(pan_index_data) > 0:
-                ax = axes[0, 1]
-                ax.bar(range(len(pan_index_data)), pan_index_data['max_rss_mb'], color='darkorange')
-                ax.set_ylabel('Peak Memory (MB)')
-                ax.set_xlabel('Run')
-                ax.set_title('Indexing Memory')
-                ax.grid(True, alpha=0.3, axis='y')
-            else:
-                axes[0, 1].text(0.5, 0.5, 'No indexing data', ha='center', va='center')
-                axes[0, 1].axis('off')
-            
-            # 3. Placement time by coverage
-            if len(pan_place_data) > 0:
-                ax = axes[1, 0]
-                pan_place_sorted = pan_place_data.sort_values('coverage')
-                ax.plot(pan_place_sorted['coverage'], pan_place_sorted['wall_time_sec'], 
-                       marker='o', linewidth=2, markersize=8, color='steelblue')
-                # Add read count labels
-                for _, row in pan_place_sorted.iterrows():
-                    ax.annotate(f"{int(row['num_reads'])} reads", 
-                               xy=(row['coverage'], row['wall_time_sec']),
-                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
-                ax.set_ylabel('Wall Time (seconds)')
-                ax.set_xlabel('Coverage (x)')
-                ax.set_title('Placement Time by Coverage')
-                ax.grid(True, alpha=0.3)
-            else:
-                axes[1, 0].text(0.5, 0.5, 'No placement data', ha='center', va='center')
-                axes[1, 0].axis('off')
-            
-            # 4. Placement memory by coverage
-            if len(pan_place_data) > 0:
-                ax = axes[1, 1]
-                pan_place_sorted = pan_place_data.sort_values('coverage')
-                ax.plot(pan_place_sorted['coverage'], pan_place_sorted['max_rss_mb'], 
-                       marker='o', linewidth=2, markersize=8, color='darkorange')
-                # Add read count labels
-                for _, row in pan_place_sorted.iterrows():
-                    ax.annotate(f"{int(row['num_reads'])} reads", 
-                               xy=(row['coverage'], row['max_rss_mb']),
-                               xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
-                ax.set_ylabel('Peak Memory (MB)')
-                ax.set_xlabel('Coverage (x)')
-                ax.set_title('Placement Memory by Coverage')
-                ax.grid(True, alpha=0.3)
-            else:
-                axes[1, 1].text(0.5, 0.5, 'No placement data', ha='center', va='center')
-                axes[1, 1].axis('off')
-            
-            plt.tight_layout()
-            plt.savefig(pan_dir / 'benchmarks.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            print(f"[plot_timing_benchmarks] Generated plots for {pan_name}")
+        for pan in PANGENOMES:
+            out_dir = Path(f"{OUTPUT_DIR}/plots/{pan}/k_analysis")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            pan_agg = agg[agg['pangenome'] == pan]
+            plot_l(pan_agg, pan, 1, out_dir / 'accuracy_by_k_l1.png', out_dir / 'accuracy_by_k_l1.pdf')
+            plot_l(pan_agg, pan, 3, out_dir / 'accuracy_by_k_l3.png', out_dir / 'accuracy_by_k_l3.pdf')
+
+# ============================================================================
+# COMPREHENSIVE STATS TABLES
+# ============================================================================
+
+def get_file_size_mb(path):
+    """Get file size in MB, returns 0 if file doesn't exist."""
+    try:
+        return os.path.getsize(path) / (1024 * 1024)
+    except:
+        return 0
+
+def get_gzip_size_mb(path):
+    """Get gzip-compressed size in MB without modifying the file."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['gzip', '-c', path],
+            capture_output=True,
+            timeout=300
+        )
+        return len(result.stdout) / (1024 * 1024)
+    except:
+        return 0
+
+rule index_stats:
+    """Comprehensive index statistics including file sizes."""
+    input: 
+        indexes=INDEX_FILES,
+        time_logs=INDEX_TIME_LOGS
+    output:
+        tsv=f"{OUTPUT_DIR}/reports/index_stats.tsv"
+    run:
+        Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
+        with open(output.tsv, 'w') as out:
+            out.write('experiment_id\tpangenome\ttag\tk\ts\tl\tindex_size_mb\tindex_size_gzip_mb\twall_time_sec\tuser_time_sec\tsystem_time_sec\tmax_rss_mb\tpct_cpu\n')
+            for e in EXPERIMENTS:
+                exp_dir = exp_root(e['id'], e['pan_stem'], e['tag'])
+                index_path = f"{exp_dir}/indexes/index.pmi"
+                time_log = f"{exp_dir}/indexes/index_time.log"
+                
+                size_mb = get_file_size_mb(index_path)
+                size_gzip_mb = get_gzip_size_mb(index_path)
+                stats = parse_time_log(time_log)
+                
+                out.write(f"{e['id']}\t{e['pan_stem']}\t{e['tag']}\t{e['k']}\t{e['s']}\t{e['l']}\t")
+                out.write(f"{size_mb:.2f}\t{size_gzip_mb:.2f}\t{stats.get('wall_time_sec',0)}\t{stats.get('user_time_sec',0)}\t")
+                out.write(f"{stats.get('system_time_sec',0)}\t{stats.get('max_rss_mb',0)}\t{stats.get('pct_cpu','0')}\n")
+
+rule placement_stats:
+    """Comprehensive placement statistics with accuracy."""
+    input:
+        placements=PLACEMENTS,
+        time_logs=PLACEMENT_TIME_LOGS,
+        metas=META_FILES,
+        accuracy=ACCURACY
+    output:
+        tsv=f"{OUTPUT_DIR}/reports/placement_stats.tsv"
+    run:
+        Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
         
-        print(f"[plot_timing_benchmarks] Plots saved to {Path(output.summary_plot).parent}")
-        print(f"[plot_timing_benchmarks] Summary: {output.summary_plot}")
-        print(f"[plot_timing_benchmarks] Indexing: {output.index_plot}")
-        print(f"[plot_timing_benchmarks] Placement: {output.placement_plot}")
+        # Build meta lookup
+        meta_map = {}
+        for m in input.metas:
+            if os.path.exists(m):
+                try:
+                    meta_map[m] = dict(p.split('=',1) for p in open(m).read().strip().split('\t') if '=' in p)
+                except:
+                    meta_map[m] = {}
+        
+        # Build accuracy lookup (from accuracy files)
+        acc_map = {}
+        for acc_file in input.accuracy:
+            if os.path.exists(acc_file):
+                try:
+                    with open(acc_file) as f:
+                        for line in f.readlines()[1:]:
+                            parts = line.strip().split('\t')
+                            if len(parts) >= 7:
+                                # key = (file, metric)
+                                key = (acc_file, parts[0])
+                                acc_map[key] = {
+                                    'snps': parts[4] if len(parts) > 4 else '0',
+                                    'indels': parts[5] if len(parts) > 5 else '0',
+                                    'total_variants': parts[6] if len(parts) > 6 else '0'
+                                }
+                except:
+                    pass
+        
+        with open(output.tsv, 'w') as out:
+            out.write('experiment_id\tpangenome\ttag\tcoverage\treads\treplicate\tk\ts\tl\t')
+            out.write('wall_time_sec\tmax_rss_mb\ttrue_node\tmutation_rate\t')
+            out.write('jaccard_distance\tweighted_distance\tcosine_distance\n')
+            
+            for (eid, pan, tag, cov, n, rep) in READS:
+                e = EXP_BY_ID[eid]
+                exp_dir = exp_root(eid, pan, tag)
+                time_log = f"{exp_dir}/placements/reads/cov{cov}_{n}_rep{rep}/time.log"
+                meta_file = f"{exp_dir}/results/reads/cov{cov}_{n}_rep{rep}.txt"
+                acc_file = f"{exp_dir}/alignments/reads/cov{cov}_{n}_rep{rep}/accuracy_0bp.tsv"
+                
+                stats = parse_time_log(time_log)
+                meta = meta_map.get(meta_file, {})
+                
+                # Get distances for each metric
+                jacc_dist = acc_map.get((acc_file, 'jaccard'), {}).get('total_variants', '')
+                weight_dist = acc_map.get((acc_file, 'weighted_jaccard'), {}).get('total_variants', '')
+                cos_dist = acc_map.get((acc_file, 'cosine'), {}).get('total_variants', '')
+                
+                out.write(f"{eid}\t{pan}\t{tag}\t{cov}\t{n}\t{rep}\t{e['k']}\t{e['s']}\t{e['l']}\t")
+                out.write(f"{stats.get('wall_time_sec',0)}\t{stats.get('max_rss_mb',0)}\t")
+                out.write(f"{meta.get('true_node','')}\t{meta.get('mutation_rate','')}\t")
+                out.write(f"{jacc_dist}\t{weight_dist}\t{cos_dist}\n")
+
+rule combined_results:
+    """Combined table with all index and placement data for analysis."""
+    input:
+        index_stats=f"{OUTPUT_DIR}/reports/index_stats.tsv",
+        placement_stats=f"{OUTPUT_DIR}/reports/placement_stats.tsv"
+    output:
+        tsv=f"{OUTPUT_DIR}/reports/combined_results.tsv"
+    run:
+        import pandas as pd
+        Path(output.tsv).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Read index stats
+        if os.path.exists(input.index_stats):
+            idx_df = pd.read_csv(input.index_stats, sep='\t')
+            idx_df = idx_df.rename(columns={
+                'wall_time_sec': 'index_wall_time_sec',
+                'user_time_sec': 'index_user_time_sec',
+                'system_time_sec': 'index_system_time_sec',
+                'max_rss_mb': 'index_max_rss_mb',
+                'pct_cpu': 'index_pct_cpu',
+                'index_size_gzip_mb': 'index_size_gzip_mb'
+            })
+        else:
+            idx_df = pd.DataFrame()
+        
+        # Read placement stats
+        if os.path.exists(input.placement_stats):
+            place_df = pd.read_csv(input.placement_stats, sep='\t')
+            place_df = place_df.rename(columns={
+                'wall_time_sec': 'placement_wall_time_sec',
+                'max_rss_mb': 'placement_max_rss_mb'
+            })
+        else:
+            place_df = pd.DataFrame()
+        
+        if idx_df.empty and place_df.empty:
+            pd.DataFrame().to_csv(output.tsv, sep='\t', index=False)
+            return
+        
+        if idx_df.empty:
+            place_df.to_csv(output.tsv, sep='\t', index=False)
+            return
+            
+        if place_df.empty:
+            idx_df.to_csv(output.tsv, sep='\t', index=False)
+            return
+        
+        # Merge on experiment_id, pangenome, tag
+        merged = pd.merge(
+            place_df,
+            idx_df[['experiment_id', 'pangenome', 'tag', 'index_size_mb', 'index_size_gzip_mb',
+                    'index_wall_time_sec', 'index_user_time_sec', 
+                    'index_system_time_sec', 'index_max_rss_mb', 'index_pct_cpu']],
+            on=['experiment_id', 'pangenome', 'tag'],
+            how='left'
+        )
+        
+        # Reorder columns for readability
+        col_order = [
+            'experiment_id', 'pangenome', 'tag', 'k', 's', 'l',
+            'coverage', 'reads', 'replicate', 'mutation_rate', 'true_node',
+            'index_size_mb', 'index_size_gzip_mb', 'index_wall_time_sec', 'index_max_rss_mb',
+            'placement_wall_time_sec', 'placement_max_rss_mb',
+            'jaccard_distance', 'weighted_distance', 'cosine_distance',
+            'index_user_time_sec', 'index_system_time_sec', 'index_pct_cpu'
+        ]
+        # Only include columns that exist
+        col_order = [c for c in col_order if c in merged.columns]
+        merged = merged[col_order]
+        
+        merged.to_csv(output.tsv, sep='\t', index=False)
+
+# ============================================================================
+# UTILITY RULES
+# ============================================================================
+rule clean:
+    run:
+        import shutil, glob
+        for d in [Path(OUTPUT_DIR), Path('.snakemake')]:
+            if d.exists(): shutil.rmtree(d, ignore_errors=True)
+        for e in EXPERIMENTS:
+            pan = Path(e['panman_path']).resolve()
+            for pat in [f"{pan}.placement.tsv", f"{pan}.random.*.fa", f"{pan}.pmi", str(pan.parent / 'read_seeds_debug.log')]:
+                for f in glob.glob(pat):
+                    try: os.remove(f)
+                    except: pass
