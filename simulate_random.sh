@@ -156,7 +156,7 @@ echo ""
 
 # Run placement
 cd "$ORIGINAL_DIR"
-"$PANMAP_BIN" "$PANMAN_FILE" "${OUTPUT_PREFIX}_R1.fastq" "${OUTPUT_PREFIX}_R2.fastq" --stop genotype -t 1 -k 27 -s 8 -l 1 -f
+"$PANMAP_BIN" "$PANMAN_FILE" "${OUTPUT_PREFIX}_R1.fastq" "${OUTPUT_PREFIX}_R2.fastq" --stop genotype
 
 echo ""
 echo "[simulate_random] =========================================="

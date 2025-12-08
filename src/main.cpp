@@ -124,6 +124,8 @@ struct Config {
     
     // Utility modes
     bool dumpRandomNode = false;
+    bool dumpSequence = false;
+    std::string dumpNodeId;
     int seed = 42;
     
     // Verbosity
@@ -500,6 +502,8 @@ int main(int argc, char** argv) {
     utility.add_options()
         ("dump-random-node", po::bool_switch(&cfg.dumpRandomNode),
             "Dump random node sequence to FASTA")
+        ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId),
+            "Dump specific node sequence to FASTA")
         ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
     
     po::options_description hidden("Hidden");
@@ -561,14 +565,15 @@ int main(int argc, char** argv) {
     
     // Set defaults
     if (cfg.index.empty()) cfg.index = cfg.panman + ".idx";
-    if (cfg.output.empty()) {
+    // Only set default output if we're not in dump mode (dump modes handle their own output)
+    if (cfg.output.empty() && !cfg.dumpRandomNode && cfg.dumpNodeId.empty()) {
         // Derive output prefix from reads filename (without path and common extensions)
         if (!cfg.reads1.empty()) {
             fs::path readsPath(cfg.reads1);
             std::string stem = readsPath.stem().string();
             // Remove common paired-end suffixes like _R1, _1, .R1, etc.
             for (const auto& suffix : {"_R1", "_R2", "_1", "_2", ".R1", ".R2", ".1", ".2"}) {
-                if (stem.size() > strlen(suffix) && 
+                if (stem.size() > strlen(suffix) &&
                     stem.substr(stem.size() - strlen(suffix)) == suffix) {
                     stem = stem.substr(0, stem.size() - strlen(suffix));
                     break;
@@ -576,7 +581,7 @@ int main(int argc, char** argv) {
             }
             // Also remove .fastq, .fq extensions if present (for .fastq.gz -> .fastq stem)
             for (const auto& ext : {".fastq", ".fq"}) {
-                if (stem.size() > strlen(ext) && 
+                if (stem.size() > strlen(ext) &&
                     stem.substr(stem.size() - strlen(ext)) == ext) {
                     stem = stem.substr(0, stem.size() - strlen(ext));
                     break;
@@ -604,9 +609,24 @@ int main(int argc, char** argv) {
         if (cfg.dumpRandomNode) {
             auto tg = loadPanMAN(cfg.panman);
             std::string nodeId = getRandomNodeId(&tg->trees[0], cfg.seed);
-            std::string outPath = cfg.panman + ".random." + sanitizeFilename(nodeId) + ".fa";
+            // Use -o output path if specified, otherwise default to panman path
+            std::string outPath = cfg.output.empty() 
+                ? cfg.panman + ".random." + sanitizeFilename(nodeId) + ".fa"
+                : cfg.output;
             saveNodeSequence(&tg->trees[0], nodeId, outPath);
             std::cout << nodeId << "\n";
+            return 0;
+        }
+        
+        // Utility: dump specific node sequence
+        if (!cfg.dumpNodeId.empty()) {
+            auto tg = loadPanMAN(cfg.panman);
+            // Use -o output path if specified, otherwise default to panman path
+            std::string outPath = cfg.output.empty()
+                ? cfg.panman + "." + sanitizeFilename(cfg.dumpNodeId) + ".fa"
+                : cfg.output;
+            saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath);
+            std::cout << cfg.dumpNodeId << "\n";
             return 0;
         }
         
