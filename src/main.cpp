@@ -1290,8 +1290,7 @@ int main(int argc, char *argv[]) {
       for (auto& read : threadsManager.reads) {
         if (read.maxScore == 0) {
           ++num_unmapped;
-        }
-        if (read.maxScore < static_cast<int>(read.seedmersList.size() * discard_threshold)) {
+        } else if (read.maxScore < static_cast<int>(read.seedmersList.size() * discard_threshold)) {
           read.maxScore = 0;
           ++num_discarded;
         }
