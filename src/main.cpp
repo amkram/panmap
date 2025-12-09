@@ -599,7 +599,81 @@ int main(int argc, char** argv) {
     
     // Initialize threading
     tbb::global_control tbb_ctl(tbb::global_control::max_allowed_parallelism, cfg.threads);
+
+    // ========================================================================
+    // Print Configuration Summary
+    // ========================================================================
     
+    auto printConfigSummary = [&]() {
+        if (cfg.verbosity == 0) return;  // Skip in quiet mode
+        if (cfg.dumpRandomNode || !cfg.dumpNodeId.empty()) return;  // Skip for utility modes
+        
+        // Build stage string
+        std::string stageStr;
+        switch (cfg.stopAfter) {
+            case PipelineStage::Index:    stageStr = "index"; break;
+            case PipelineStage::Place:    stageStr = "index → place"; break;
+            case PipelineStage::Align:    stageStr = "index → place → align"; break;
+            case PipelineStage::Genotype: stageStr = "index → place → align → genotype"; break;
+            default:                      stageStr = "full"; break;
+        }
+        
+        // Header
+        std::cout << color::bold << color::cyan << "┌─ panmap " << color::reset 
+                  << color::dim << "v" << VERSION << color::reset 
+                  << color::bold << color::cyan << " ─";
+        for (int i = 0; i < 50; i++) std::cout << "─";
+        std::cout << "┐" << color::reset << "\n";
+        
+        // Core inputs
+        std::cout << color::bold << color::cyan << "│" << color::reset << " "
+                  << color::bold << "Input:  " << color::reset 
+                  << color::yellow << cfg.panman << color::reset;
+        if (!cfg.reads1.empty()) {
+            std::cout << "  " << color::dim << "+" << color::reset << " " << cfg.reads1;
+            if (!cfg.reads2.empty()) std::cout << ", " << cfg.reads2;
+        }
+        std::cout << "\n";
+        
+        // Output prefix
+        std::cout << color::bold << color::cyan << "│" << color::reset << " "
+                  << color::bold << "Output: " << color::reset 
+                  << color::green << cfg.output << color::reset << ".*\n";
+        
+        // Pipeline stages
+        std::cout << color::bold << color::cyan << "│" << color::reset << " "
+                  << color::bold << "Stages: " << color::reset << stageStr << "\n";
+        
+        // Options line (compact)
+        std::cout << color::bold << color::cyan << "│" << color::reset << " "
+                  << color::bold << "Config: " << color::reset
+                  << color::dim << "threads=" << color::reset << cfg.threads
+                  << color::dim << "  k=" << color::reset << cfg.k
+                  << color::dim << " s=" << color::reset << cfg.s
+                  << color::dim << " l=" << color::reset << cfg.l;
+        
+        // Optional flags (only show if non-default)
+        if (cfg.metagenomic) {
+            std::cout << color::dim << "  meta" << color::reset 
+                      << color::dim << "(top=" << color::reset << cfg.topN 
+                      << color::dim << ")" << color::reset;
+        }
+        if (cfg.forceReindex) {
+            std::cout << "  " << color::yellow << "reindex" << color::reset;
+        }
+        if (cfg.aligner != "minimap2") {
+            std::cout << color::dim << "  aligner=" << color::reset << cfg.aligner;
+        }
+        std::cout << "\n";
+        
+        // Footer
+        std::cout << color::bold << color::cyan << "└";
+        for (int i = 0; i < 68; i++) std::cout << "─";
+        std::cout << "┘" << color::reset << "\n\n";
+    };
+    
+    printConfigSummary();
+
     // ========================================================================
     // Run Pipeline
     // ========================================================================

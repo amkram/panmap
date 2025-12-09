@@ -3080,6 +3080,135 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
   return newKminmerRanges;
 }
 
+// Overload for parallel building that uses BuildState instead of member variables
+std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> mgsr::mgsrIndexBuilder::computeNewKminmerRanges(
+  std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
+  BuildState& state,
+  const uint64_t dfsIndex
+) {
+  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges;
+  auto l = indexBuilder.getL();
+  if (state.refOnSyncmersMap.size() < static_cast<size_t>(l)) {
+    return newKminmerRanges;
+  }
+
+  std::sort(refOnSyncmersChangeRecord.begin(), refOnSyncmersChangeRecord.end(), [](const auto& a, const auto& b) {
+    return std::get<0>(a) < std::get<0>(b);
+  });
+
+  if (l == 1) {
+    for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
+      if (changeType == panmapUtils::seedChangeType::DEL) {
+        continue;
+      } else {
+        auto it = state.refOnSyncmersMap.find(syncmerPos);
+        if (it == state.refOnSyncmersMap.end()) {
+          std::cerr << "Error: syncmer position not found in refOnSyncmersMap when computing new k-min-mer ranges.\n";
+          exit(1);
+        }
+        newKminmerRanges.emplace_back(it, it);
+      }
+    }
+    return newKminmerRanges;
+  }
+
+  int64_t syncmerChangeIndex = 0;
+  while (syncmerChangeIndex < static_cast<int64_t>(refOnSyncmersChangeRecord.size())) {
+    const auto& [syncmerPos, changeType, rsyncmer] = refOnSyncmersChangeRecord[syncmerChangeIndex];
+    std::set<uint64_t>::iterator curBegIt, curEndIt;
+    if (changeType == panmapUtils::seedChangeType::DEL) {
+      if (syncmerPos < *state.refOnSyncmersMap.begin()) {
+        syncmerChangeIndex++;
+        continue;
+      } else {
+        curEndIt = state.refOnSyncmersMap.upper_bound(syncmerPos);
+        curBegIt = std::prev(curEndIt);
+      }
+    } else {
+      auto it = state.refOnSyncmersMap.lower_bound(syncmerPos);
+      curBegIt = syncmerPos == *state.refOnSyncmersMap.begin() ? state.refOnSyncmersMap.begin() : std::prev(it);
+      curEndIt = syncmerPos == *state.refOnSyncmersMap.rbegin() ? state.refOnSyncmersMap.end() : std::next(it);
+    }
+    
+    int offset = 1;
+    if (l == 2) {
+      if (curBegIt != state.refOnSyncmersMap.begin() && !newKminmerRanges.empty() && *curBegIt <= *(newKminmerRanges.back().second)) {
+          curBegIt = newKminmerRanges.back().first;
+          newKminmerRanges.pop_back();
+      }
+    } else {
+      while (offset < l - 1 && curBegIt != state.refOnSyncmersMap.begin()) {
+        if (!newKminmerRanges.empty() && *curBegIt <= *(newKminmerRanges.back().second)) {
+          curBegIt = newKminmerRanges.back().first;
+          newKminmerRanges.pop_back();
+          break;
+        }
+        --curBegIt;
+        offset++;
+      }
+    }
+
+    offset = 1;
+    if (l == 2) {
+      while (curEndIt != state.refOnSyncmersMap.end()) {
+        if (syncmerChangeIndex != static_cast<int64_t>(refOnSyncmersChangeRecord.size()) - 1) {
+          const auto& [nextSyncmerPos, nextChangeType, nextRsyncmer] = refOnSyncmersChangeRecord[syncmerChangeIndex + 1];
+          if (nextChangeType != panmapUtils::seedChangeType::DEL) {
+            if (*curEndIt >= nextSyncmerPos) {
+              auto nextIt = state.refOnSyncmersMap.lower_bound(nextSyncmerPos);
+              curEndIt = nextSyncmerPos == *state.refOnSyncmersMap.rbegin() ? state.refOnSyncmersMap.end() : std::next(nextIt);
+              syncmerChangeIndex++;
+              continue;
+            }
+          } else {
+            if (nextSyncmerPos < *state.refOnSyncmersMap.rbegin()) {
+              if (*curEndIt >= nextSyncmerPos) {
+                curEndIt = std::next(curEndIt);
+                syncmerChangeIndex++;
+                continue;
+              }
+            }
+          }
+        }
+        break;
+      }
+    } else {
+      while (offset < l - 1 && curEndIt != state.refOnSyncmersMap.end()) {
+        if (syncmerChangeIndex != static_cast<int64_t>(refOnSyncmersChangeRecord.size()) - 1) {
+          const auto& [nextSyncmerPos, nextChangeType, nextRsyncmer] = refOnSyncmersChangeRecord[syncmerChangeIndex + 1];
+          if (nextChangeType != panmapUtils::seedChangeType::DEL) {
+            if (*curEndIt >= nextSyncmerPos) {
+              auto nextIt = state.refOnSyncmersMap.lower_bound(nextSyncmerPos);
+              curEndIt = nextSyncmerPos == *state.refOnSyncmersMap.rbegin() ? state.refOnSyncmersMap.end() : std::next(nextIt);
+              syncmerChangeIndex++;
+              offset = 1;
+              continue;
+            }
+          } else {
+            if (nextSyncmerPos < *state.refOnSyncmersMap.rbegin()) {
+              if (*curEndIt >= nextSyncmerPos) {
+                curEndIt = std::next(curEndIt);
+                syncmerChangeIndex++;
+                offset = 1;
+                continue;
+              }
+            }
+          }
+        }
+        ++curEndIt;
+        offset++;
+      }
+    }
+
+    newKminmerRanges.emplace_back(curBegIt, curEndIt);
+    if (curEndIt == state.refOnSyncmersMap.end()) {
+      break;
+    }
+    syncmerChangeIndex++;
+  }
+  return newKminmerRanges;
+}
+
 void mgsr::mgsrIndexBuilder::buildIndexHelper(
   panmanUtils::Node *node,
   std::unordered_set<std::string_view>& emptyNodes,
@@ -3601,58 +3730,50 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
     }
   }
 
-  std::cout << "Computing seed deltas (parallel)..." << std::endl;
+  std::cout << "Computing seed deltas..." << std::endl;
 
-  // Parallelize per-node delta computation using TBB. Each node writes only its
-  // own entry in nodeChanges, so this is thread-safe. We'll aggregate totals
-  // after the parallel loop to avoid atomic contention.
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes),
-    [&](const tbb::blocked_range<size_t>& range) {
-      for (size_t nodeIdx = range.begin(); nodeIdx < range.end(); ++nodeIdx) {
-        const auto& curCounts = nodeSeedCounts[nodeIdx];
+  // Compute per-node deltas sequentially
+  for (size_t nodeIdx = 0; nodeIdx < numNodes; ++nodeIdx) {
+    const auto& curCounts = nodeSeedCounts[nodeIdx];
 
-        // Find parent's counts using the reverse lookup
-        const std::unordered_map<uint64_t, int64_t>* parentCounts = nullptr;
-        panmanUtils::Node* node = dfsIndexToNode[nodeIdx];
-        if (node && node->parent != nullptr) {
-          auto parentIt = nodeToDfsIndex.find(node->parent->identifier);
-          if (parentIt != nodeToDfsIndex.end()) {
-            parentCounts = &nodeSeedCounts[parentIt->second];
-          }
-        }
-
-        auto& changes = nodeChanges[nodeIdx];
-
-        // Seeds in current node
-        for (const auto& kv : curCounts) {
-          uint64_t hash = kv.first;
-          int64_t childCount = kv.second;
-          int64_t parentCount = 0;
-          if (parentCounts) {
-            auto it = parentCounts->find(hash);
-            if (it != parentCounts->end()) parentCount = it->second;
-          }
-          if (childCount != parentCount) changes.emplace_back(hash, parentCount, childCount);
-        }
-
-        // Seeds only in parent (deleted in child)
-        if (parentCounts) {
-          for (const auto& kv : *parentCounts) {
-            uint64_t hash = kv.first;
-            int64_t parentCount = kv.second;
-            if (curCounts.find(hash) == curCounts.end()) changes.emplace_back(hash, parentCount, 0);
-          }
-        }
+    // Find parent's counts using the reverse lookup
+    const std::unordered_map<uint64_t, int64_t>* parentCounts = nullptr;
+    panmanUtils::Node* node = dfsIndexToNode[nodeIdx];
+    if (node && node->parent != nullptr) {
+      auto parentIt = nodeToDfsIndex.find(node->parent->identifier);
+      if (parentIt != nodeToDfsIndex.end()) {
+        parentCounts = &nodeSeedCounts[parentIt->second];
       }
-    }, tbb::simple_partitioner());
+    }
 
-  // Aggregate totals after parallel step
-  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
-    const auto& changes = nodeChanges[nodeIdx];
+    auto& changes = nodeChanges[nodeIdx];
+
+    // Seeds in current node
+    for (const auto& kv : curCounts) {
+      uint64_t hash = kv.first;
+      int64_t childCount = kv.second;
+      int64_t parentCount = 0;
+      if (parentCounts) {
+        auto it = parentCounts->find(hash);
+        if (it != parentCounts->end()) parentCount = it->second;
+      }
+      if (childCount != parentCount) changes.emplace_back(hash, parentCount, childCount);
+    }
+
+    // Seeds only in parent (deleted in child)
+    if (parentCounts) {
+      for (const auto& kv : *parentCounts) {
+        uint64_t hash = kv.first;
+        int64_t parentCount = kv.second;
+        if (curCounts.find(hash) == curCounts.end()) changes.emplace_back(hash, parentCount, 0);
+      }
+    }
+
+    // Aggregate totals inline
     totalChanges += changes.size();
     if (changes.size() > largestNodeChangeCount) largestNodeChangeCount = changes.size();
     if (nodeIdx % 1000 == 0) {
-      std::cout << "\rProcessed up to node " << nodeIdx << "/" << numNodes << std::flush;
+      std::cout << "\rProcessed node " << nodeIdx << "/" << numNodes << std::flush;
     }
   }
   std::cout << std::endl;
@@ -3730,6 +3851,496 @@ void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path) {
   }
   
   std::cout << "Index written to " << path << std::endl;
+}
+
+// ============================================================================
+// Parallel Index Building Implementation
+// ============================================================================
+
+uint64_t mgsr::mgsrIndexBuilder::computeSubtreeSize(panmanUtils::Node* node) {
+  uint64_t size = 1;  // Count this node
+  for (auto* child : node->children) {
+    size += computeSubtreeSize(child);
+  }
+  subtreeSizes_[node->identifier] = size;
+  return size;
+}
+
+void mgsr::mgsrIndexBuilder::processNode(
+  panmanUtils::Node *node,
+  BuildState& state,
+  panmapUtils::GlobalCoords &globalCoords,
+  std::unordered_set<std::string_view>& localEmptyNodes,
+  uint64_t dfsIndex
+) {
+  // Record old and new block and nuc states for mutation application
+  std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> blockMutationRecord;
+  std::vector<std::tuple<panmapUtils::Coordinate, char, char>> nucMutationRecord;
+
+  // For building gap map
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapUpdates;
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunUpdates;
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunBacktracks;
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapRunBlockInversionBacktracks;
+  std::vector<std::pair<uint64_t, bool>> invertedBlocksBacktracks;
+
+  // For computing new syncmers
+  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> localMutationRanges;
+  std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>> refOnSyncmersChangeRecord;
+  std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>> blockOnSyncmersChangeRecord;
+
+  // For computing new k-min-mers
+  std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, uint64_t>> refOnKminmersChangeRecord;
+
+  // Nuc deletions on block without block mutation
+  std::vector<uint32_t> potentialSyncmerDeletions;
+
+  if (node->blockMutation.empty() && node->nucMutation.empty()) {
+    localEmptyNodes.insert(std::string_view(node->identifier));
+  }
+
+  blockMutationRecord.reserve(node->blockMutation.size());
+  nucMutationRecord.reserve(node->nucMutation.size() * 6);
+  potentialSyncmerDeletions.reserve(node->nucMutation.size() * 6);
+  localMutationRanges.reserve(node->blockMutation.size() + node->nucMutation.size() * 6);
+  gapRunUpdates.reserve(node->nucMutation.size() * 6 + node->blockMutation.size() * 10);
+  
+  applyMutations(node, dfsIndex, state.blockSequences, state.invertedBlocks, globalCoords, 
+                 localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, 
+                 invertedBlocksBacktracks, potentialSyncmerDeletions, 
+                 state.blockExistsDelayed, state.blockStrandDelayed);
+  
+  blockMutationRecord.shrink_to_fit();
+  nucMutationRecord.shrink_to_fit();
+  potentialSyncmerDeletions.shrink_to_fit();
+  localMutationRanges.shrink_to_fit();
+  gapRunUpdates.shrink_to_fit();
+
+  std::sort(gapRunUpdates.begin(), gapRunUpdates.end(), 
+            [&](const auto& a, const auto& b) { return a.second.first < b.second.first; });
+  updateGapMap(node, dfsIndex, state.gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
+
+  std::vector<uint64_t> invertedBlocksVec(state.invertedBlocks.begin(), state.invertedBlocks.end());
+  std::sort(invertedBlocksVec.begin(), invertedBlocksVec.end());
+  for (const auto& blockId : invertedBlocksVec) {
+    uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
+    uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
+    invertGapMap(state.gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
+  }
+
+  bool useJump = true;
+  std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges;
+  if (useJump) {
+    newSyncmerRanges = computeNewSyncmerRangesJump(node, dfsIndex, state.blockSequences, 
+                                                    state.blockExistsDelayed, state.blockStrandDelayed, 
+                                                    globalCoords, state.gapMap, localMutationRanges, 
+                                                    blockOnSyncmersChangeRecord);
+  } else {
+    newSyncmerRanges = computeNewSyncmerRangesWalk(node, dfsIndex, state.blockSequences, 
+                                                    state.blockExistsDelayed, state.blockStrandDelayed, 
+                                                    globalCoords, state.gapMap, localMutationRanges, 
+                                                    blockOnSyncmersChangeRecord);
+  }
+
+  // Processing syncmers
+  for (const auto& syncmerRange : newSyncmerRanges) {
+    const auto& [begCoord, endCoord, localRangeSeq, localRangeCoordToGlobalScalarCoords, localRangeCoordToBlockId, seedsToDelete] = syncmerRange;
+    if (localRangeSeq.size() >= static_cast<size_t>(indexBuilder.getK())) {
+      for (auto [hash, isReverse, isSeed, startPos] : seeding::rollingSyncmers(localRangeSeq, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getOpen(), indexBuilder.getT(), true)) {
+        auto startPosGlobal = localRangeCoordToGlobalScalarCoords[startPos];
+        auto endPosGlobal = localRangeCoordToGlobalScalarCoords[startPos + indexBuilder.getK() - 1];
+        auto curBlockId = localRangeCoordToBlockId[startPos];
+        bool wasSeed = state.refOnSyncmers[startPosGlobal].has_value();
+        if (!wasSeed && isSeed) {
+          auto it = state.refOnSyncmersMap.insert(startPosGlobal).first;
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
+          blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::ADD);
+          state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
+          state.blockOnSyncmers[curBlockId].insert(startPosGlobal);
+        } else if (wasSeed && !isSeed) {
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[startPosGlobal].value());
+          blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::DEL);
+          state.refOnSyncmers[startPosGlobal] = std::nullopt;
+          state.refOnSyncmersMap.erase(startPosGlobal);
+          state.blockOnSyncmers[curBlockId].erase(startPosGlobal);
+          if (state.blockOnSyncmers[curBlockId].empty()) {
+            state.blockOnSyncmers.erase(curBlockId);
+          }
+        } else if (wasSeed && isSeed) {
+          auto& oldSyncmer = state.refOnSyncmers[startPosGlobal].value();
+          if (oldSyncmer.hash != hash || oldSyncmer.endPos != endPosGlobal || oldSyncmer.isReverse != isReverse) {
+            refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, oldSyncmer);
+            state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
+          }
+        }
+      }
+    }
+    for (const auto& seedPosGlobal : seedsToDelete) {
+      if (state.refOnSyncmers[seedPosGlobal].has_value()) {
+        auto curBlockId = globalCoords.scalarToCoord[seedPosGlobal].primaryBlockId;
+        refOnSyncmersChangeRecord.emplace_back(seedPosGlobal, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[seedPosGlobal].value());
+        blockOnSyncmersChangeRecord.emplace_back(curBlockId, seedPosGlobal, panmapUtils::seedChangeType::DEL);
+        state.refOnSyncmers[seedPosGlobal] = std::nullopt;
+        state.refOnSyncmersMap.erase(seedPosGlobal);
+        state.blockOnSyncmers[curBlockId].erase(seedPosGlobal);
+        if (state.blockOnSyncmers[curBlockId].empty()) {
+          state.blockOnSyncmers.erase(curBlockId);
+        }
+      }
+    }
+  }
+
+  // Processing k-min-mers
+  std::vector<uint64_t> addedSeedIndices;
+  std::vector<uint64_t> deletedSeedIndices;
+  std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedIndices;
+
+  auto newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, state, dfsIndex);
+  
+  for (const auto& range : newKminmerRanges) {
+    auto curBegIt = range.first;
+    auto curEndIt = range.second;
+
+    std::vector<uint64_t> syncmerPositions;
+    for (auto it = curBegIt; it != curEndIt; ++it) {
+      syncmerPositions.push_back(*it);
+    }
+
+    for (size_t i = 0; i + indexBuilder.getL() - 1 < syncmerPositions.size(); ++i) {
+      auto indexingIt = syncmerPositions[i];
+      const auto& curRefOnSyncmer = state.refOnSyncmers[indexingIt];
+      auto& curRefOnKminmer = state.refOnKminmers[indexingIt];
+
+      if (curRefOnSyncmer.has_value()) {
+        seeding::uniqueKminmer_t uniqueKminmer;
+        uniqueKminmer.startPos = indexingIt;
+        uniqueKminmer.endPos = state.refOnSyncmers[syncmerPositions[i + indexBuilder.getL() - 1]].value().endPos;
+        uniqueKminmer.isReverse = curRefOnSyncmer.value().isReverse;
+
+        size_t combinedHash = curRefOnSyncmer.value().hash;
+        for (size_t j = 1; j < static_cast<size_t>(indexBuilder.getL()); ++j) {
+          combinedHash ^= state.refOnSyncmers[syncmerPositions[i + j]].value().hash + 0x9e3779b9 + (combinedHash << 6) + (combinedHash >> 2);
+        }
+        uniqueKminmer.hash = combinedHash;
+
+        bool substitution = curRefOnKminmer.has_value();
+
+        // Thread-safe insertion into unique k-minmers
+        uint64_t kminmerIndex;
+        {
+          tbb::spin_mutex::scoped_lock lock(uniqueKminmersMutex_);
+          auto uniqueKminmerIndexIt = kminmerToUniqueIndex.find(uniqueKminmer);
+          if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
+            uniqueKminmers.emplace_back(uniqueKminmer);
+            kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
+            kminmerIndex = uniqueKminmers.size() - 1;
+          } else {
+            kminmerIndex = uniqueKminmerIndexIt->second;
+          }
+        }
+
+        if (substitution) {
+          substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), kminmerIndex);
+        } else {
+          addedSeedIndices.push_back(kminmerIndex);
+        }
+        refOnKminmersChangeRecord.emplace_back(indexingIt, 
+            substitution ? panmapUtils::seedChangeType::SUB : panmapUtils::seedChangeType::ADD, 
+            curRefOnKminmer.value_or(0));
+        curRefOnKminmer = kminmerIndex;
+      } else {
+        if (curRefOnKminmer.has_value()) {
+          refOnKminmersChangeRecord.emplace_back(indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
+          deletedSeedIndices.push_back(curRefOnKminmer.value());
+          curRefOnKminmer = std::nullopt;
+        }
+      }
+    }
+  }
+
+  std::sort(deletedSeedIndices.begin(), deletedSeedIndices.end(), 
+            [this](const auto& a, const auto& b) { return uniqueKminmers[a].startPos < uniqueKminmers[b].startPos; });
+
+  // Track seed hash counts for this node
+  auto& curNodeCounts = nodeSeedCounts[dfsIndex];
+  
+  // Find parent's dfs index and copy counts
+  if (node->parent != nullptr) {
+    uint32_t parentDfsIndex;
+    {
+      tbb::spin_mutex::scoped_lock lock(nodeToDfsIndexMutex_);
+      auto it = nodeToDfsIndex.find(node->parent->identifier);
+      if (it != nodeToDfsIndex.end()) {
+        parentDfsIndex = it->second;
+        curNodeCounts = nodeSeedCounts[parentDfsIndex];
+      }
+    }
+  }
+
+  // Apply additions
+  for (uint64_t idx : addedSeedIndices) {
+    curNodeCounts[uniqueKminmers[idx].hash]++;
+  }
+  // Apply deletions
+  for (uint64_t idx : deletedSeedIndices) {
+    auto& count = curNodeCounts[uniqueKminmers[idx].hash];
+    count--;
+    if (count <= 0) curNodeCounts.erase(uniqueKminmers[idx].hash);
+  }
+  // Apply substitutions (old deleted, new added)
+  for (const auto& [oldIdx, newIdx] : substitutedSeedIndices) {
+    auto& oldCount = curNodeCounts[uniqueKminmers[oldIdx].hash];
+    oldCount--;
+    if (oldCount <= 0) curNodeCounts.erase(uniqueKminmers[oldIdx].hash);
+    curNodeCounts[uniqueKminmers[newIdx].hash]++;
+  }
+
+  // Revert gap map inversions (for proper state for children)
+  revertGapMapInversions(gapRunBlockInversionBacktracks, state.gapMap);
+
+  // Update delayed block states (for children)
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    state.blockExistsDelayed[blockId] = newExists;
+    state.blockStrandDelayed[blockId] = newStrand;
+  }
+
+  // Store DFS index mapping (thread-safe)
+  {
+    tbb::spin_mutex::scoped_lock lock(nodeToDfsIndexMutex_);
+    nodeToDfsIndex[node->identifier] = dfsIndex;
+  }
+
+  // Update progress
+  uint64_t processed = ++processedNodes_;
+  if (processed % 100 == 0 || processed == T->allNodes.size()) {
+    std::cout << "\rProcessed " << processed << "/" << T->allNodes.size() << " nodes" << std::flush;
+  }
+}
+
+void mgsr::mgsrIndexBuilder::buildIndexHelperParallel(
+  panmanUtils::Node *node,
+  BuildState state,  // Passed by value (each task owns its copy)
+  panmapUtils::GlobalCoords &globalCoords,
+  std::unordered_set<std::string_view>& emptyNodes,
+  uint64_t dfsIndex,
+  tbb::task_group& taskGroup
+) {
+  // Process this node
+  std::unordered_set<std::string_view> localEmptyNodes;
+  processNode(node, state, globalCoords, localEmptyNodes, dfsIndex);
+  
+  // Merge local empty nodes into shared set (thread-safe)
+  if (!localEmptyNodes.empty()) {
+    tbb::spin_mutex::scoped_lock lock(emptyNodesMutex_);
+    emptyNodes.insert(localEmptyNodes.begin(), localEmptyNodes.end());
+  }
+
+  if (node->children.empty()) {
+    return;
+  }
+
+  // Compute DFS indices for children using pre-computed subtree sizes
+  std::vector<uint64_t> childDfsIndices;
+  childDfsIndices.reserve(node->children.size());
+  uint64_t offset = dfsIndex + 1;
+  for (auto* child : node->children) {
+    childDfsIndices.push_back(offset);
+    offset += subtreeSizes_[child->identifier];
+  }
+
+  // Process children: spawn tasks for all but the last, continue with last in current task
+  for (size_t i = 0; i < node->children.size(); i++) {
+    if (i == node->children.size() - 1) {
+      // Last child: continue in current task (tail recursion optimization)
+      // Move state to avoid copy
+      buildIndexHelperParallel(node->children[i], std::move(state), globalCoords, 
+                               emptyNodes, childDfsIndices[i], taskGroup);
+    } else {
+      // Spawn new task with cloned state
+      BuildState childState = state.clone();
+      uint64_t childIdx = childDfsIndices[i];
+      panmanUtils::Node* child = node->children[i];
+      
+      taskGroup.run([this, child, childState = std::move(childState), &globalCoords, 
+                     &emptyNodes, childIdx, &taskGroup]() mutable {
+        buildIndexHelperParallel(child, std::move(childState), globalCoords, 
+                                 emptyNodes, childIdx, taskGroup);
+      });
+    }
+  }
+}
+
+void mgsr::mgsrIndexBuilder::buildIndexParallel(int numThreads) {
+  if (numThreads <= 0) {
+    numThreads = tbb::this_task_arena::max_concurrency();
+  }
+  
+  std::cout << "Building index in parallel with " << numThreads << " threads..." << std::endl;
+  
+  // Step 1: Pre-compute subtree sizes for DFS index assignment
+  std::cout << "Computing subtree sizes..." << std::endl;
+  computeSubtreeSize(T->root);
+  
+  // Step 2: Initialize state
+  panmapUtils::BlockSequences blockSequences(T);
+  panmapUtils::GlobalCoords globalCoords(blockSequences);
+  
+  BuildState initialState;
+  initialState.blockSequences = std::move(blockSequences);
+  initialState.blockExistsDelayed = initialState.blockSequences.blockExists;
+  initialState.blockStrandDelayed = initialState.blockSequences.blockStrand;
+  initialState.gapMap = {{0, globalCoords.lastScalarCoord}};
+  initialState.refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
+  initialState.refOnKminmers.resize(globalCoords.lastScalarCoord + 1);
+  
+  // Also initialize member state for k-minmer storage
+  refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
+  refOnKminmers.resize(globalCoords.lastScalarCoord + 1);
+  
+  // Step 3: Run parallel DFS
+  std::unordered_set<std::string_view> emptyNodes;
+  processedNodes_ = 0;
+  
+  tbb::task_arena arena(numThreads);
+  arena.execute([&]() {
+    tbb::task_group taskGroup;
+    buildIndexHelperParallel(T->root, std::move(initialState), globalCoords, emptyNodes, 0, taskGroup);
+    taskGroup.wait();
+  });
+  
+  std::cout << std::endl;
+  
+  // Step 4: Build index output (same as sequential)
+  size_t numNodes = T->allNodes.size();
+  
+  LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
+  
+  // Add block infos to index
+  capnp::List<BlockRange>::Builder blockRangesBuilder = liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
+  for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
+    blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
+    blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
+  }
+
+  // Add nodes to index
+  capnp::List<LiteNode>::Builder nodesBuilder = liteTreeBuilder.initLiteNodes(numNodes);
+  for (const auto& [nodeId, node] : T->allNodes) {
+    auto idx = nodeToDfsIndex[nodeId];
+    nodesBuilder[idx].setId(nodeId);
+    if (node->parent == nullptr) {
+      nodesBuilder[idx].setParentIndex(0);
+    } else {
+      nodesBuilder[idx].setParentIndex(nodeToDfsIndex[node->parent->identifier]);
+    }
+    if (emptyNodes.find(nodeId) != emptyNodes.end()) {
+      nodesBuilder[idx].setIdenticalToParent(true);
+    } else {
+      nodesBuilder[idx].setIdenticalToParent(false);
+    }
+  }
+
+  // Build struct-of-arrays format for seed changes (same as sequential)
+  std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>> nodeChanges(numNodes);
+  uint64_t totalChanges = 0;
+  uint32_t largestNodeChangeCount = 0;
+
+  // Build reverse lookup: dfsIndex -> Node*
+  std::vector<panmanUtils::Node*> dfsIndexToNode(numNodes, nullptr);
+  for (const auto& [nodeId, node] : T->allNodes) {
+    auto it = nodeToDfsIndex.find(nodeId);
+    if (it != nodeToDfsIndex.end()) {
+      dfsIndexToNode[it->second] = node;
+    }
+  }
+
+  std::cout << "Computing seed deltas..." << std::endl;
+
+  // Compute per-node deltas sequentially
+  for (size_t nodeIdx = 0; nodeIdx < numNodes; ++nodeIdx) {
+    const auto& curCounts = nodeSeedCounts[nodeIdx];
+
+    const std::unordered_map<uint64_t, int64_t>* parentCounts = nullptr;
+    panmanUtils::Node* node = dfsIndexToNode[nodeIdx];
+    if (node && node->parent != nullptr) {
+      auto parentIt = nodeToDfsIndex.find(node->parent->identifier);
+      if (parentIt != nodeToDfsIndex.end()) {
+        parentCounts = &nodeSeedCounts[parentIt->second];
+      }
+    }
+
+    auto& changes = nodeChanges[nodeIdx];
+
+    for (const auto& kv : curCounts) {
+      uint64_t hash = kv.first;
+      int64_t childCount = kv.second;
+      int64_t parentCount = 0;
+      if (parentCounts) {
+        auto it = parentCounts->find(hash);
+        if (it != parentCounts->end()) parentCount = it->second;
+      }
+      if (childCount != parentCount) changes.emplace_back(hash, parentCount, childCount);
+    }
+
+    if (parentCounts) {
+      for (const auto& kv : *parentCounts) {
+        uint64_t hash = kv.first;
+        int64_t parentCount = kv.second;
+        if (curCounts.find(hash) == curCounts.end()) changes.emplace_back(hash, parentCount, 0);
+      }
+    }
+
+    totalChanges += changes.size();
+    if (changes.size() > largestNodeChangeCount) largestNodeChangeCount = changes.size();
+    if (nodeIdx % 1000 == 0) {
+      std::cout << "\rProcessed node " << nodeIdx << "/" << numNodes << std::flush;
+    }
+  }
+  std::cout << std::endl;
+
+  // Set totals
+  indexBuilder.setTotalSeedChanges(totalChanges);
+  indexBuilder.setLargestNodeChangeCount(largestNodeChangeCount);
+
+  // Allocate flat arrays
+  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(totalChanges);
+  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(totalChanges);
+  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges);
+  auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
+
+  // Write flat arrays
+  uint32_t writeOffset = 0;
+  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
+    nodeChangeOffsetsBuilder.set(nodeIdx, writeOffset);
+    for (const auto& [hash, parentCount, childCount] : nodeChanges[nodeIdx]) {
+      seedChangeHashesBuilder.set(writeOffset, hash);
+      seedChangeParentCountsBuilder.set(writeOffset, parentCount);
+      seedChangeChildCountsBuilder.set(writeOffset, childCount);
+      writeOffset++;
+    }
+  }
+  nodeChangeOffsetsBuilder.set(numNodes, writeOffset);
+
+  // Compute and write pre-indexed genome metrics
+  auto genomeMagnitudeSquaredBuilder = indexBuilder.initGenomeMagnitudeSquared(numNodes);
+  auto genomeUniqueSeedCountBuilder = indexBuilder.initGenomeUniqueSeedCount(numNodes);
+  auto genomeTotalSeedFrequencyBuilder = indexBuilder.initGenomeTotalSeedFrequency(numNodes);
+
+  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
+    const auto& counts = nodeSeedCounts[nodeIdx];
+    double magnitudeSquared = 0.0;
+    int64_t totalFrequency = 0;
+    
+    for (const auto& [hash, count] : counts) {
+      magnitudeSquared += static_cast<double>(count) * static_cast<double>(count);
+      totalFrequency += count;
+    }
+    
+    genomeMagnitudeSquaredBuilder.set(nodeIdx, magnitudeSquared);
+    genomeUniqueSeedCountBuilder.set(nodeIdx, counts.size());
+    genomeTotalSeedFrequencyBuilder.set(nodeIdx, totalFrequency);
+  }
+
+  std::cout << "Finished building index! Total seed changes: " << totalChanges << std::endl;
 }
 
 int mgsr::open_file(const std::string& path) {
