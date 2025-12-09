@@ -12,11 +12,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
-option(OPTION_PROFILE "Enable profiling with Valgrind/Callgrind." ON)
-option(OPTION_ENABLE_FIXED_KMER "Enable optimized k-mer size implementations (8, 16, 32)." ON)
-option(OPTION_ENABLE_LTO "Enable Link Time Optimization" OFF)
-option(OPTION_ENABLE_PGO "Enable Profile-Guided Optimization" OFF)
-option(OPTION_PORTABLE "Build with maximum compatibility across x86-64 systems" ON)
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" OFF)
 
 # Set consistent compiler flags
@@ -754,28 +749,15 @@ target_link_libraries(panmap PRIVATE
 # Set compiler options based on build type
 if(OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
-elseif(OPTION_PROFILE)
-    # Add -pg flag for gprof profiling
-    target_compile_options(panmap PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
-    target_link_options(panmap PUBLIC -pg -fno-omit-frame-pointer)
-    
-    # Also enable profiling for panman_lib
-    if(TARGET panman_lib)
-        target_compile_options(panman_lib PUBLIC -g -O2 -pg -fno-omit-frame-pointer)
-        target_link_options(panman_lib PUBLIC -pg -fno-omit-frame-pointer)
-    endif()
 else()
-    target_compile_options(panmap PUBLIC -g -O3)
-    
-    # Enable Link Time Optimization if requested
-    if(OPTION_ENABLE_LTO)
-        target_compile_options(panmap PUBLIC -flto)
-        target_link_options(panmap PUBLIC -flto)
-        message(STATUS "Link Time Optimization (LTO): Enabled")
-    endif()
-    
-    # Enable vectorization explicitly
-    target_compile_options(panmap PUBLIC -ftree-vectorize)
+    target_compile_options(panmap PUBLIC 
+        -g -O3 
+        -march=native
+        -fno-omit-frame-pointer 
+        -ftree-vectorize
+        -funroll-loops
+        -fprefetch-loop-arrays
+    )
 endif()
 
 # Unit testing data
@@ -809,11 +791,7 @@ message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERS
 message(STATUS "Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "")
 message(STATUS "Optimizations:")
-message(STATUS "  Fixed k-mer optimization: ${OPTION_ENABLE_FIXED_KMER}")
 message(STATUS "  Debug mode: ${OPTION_DEBUG}")
-message(STATUS "  Profiling: ${OPTION_PROFILE}")
-message(STATUS "  Link Time Optimization: ${OPTION_ENABLE_LTO}")
-message(STATUS "  Profile-Guided Optimization: ${OPTION_ENABLE_PGO}")
 message(STATUS "")
 message(STATUS "Components:")
 message(STATUS "  Build tests: ${OPTION_BUILD_TESTS}")
