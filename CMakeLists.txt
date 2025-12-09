@@ -49,7 +49,7 @@ FetchContent_MakeAvailable(tbb)
 # Build TBB from source
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so
-    COMMAND cd ${tbb_SOURCE_DIR} && make -j
+    COMMAND ${CMAKE_COMMAND} -E env "CXXFLAGS=-Wno-changes-meaning" make -C ${tbb_SOURCE_DIR} -j compiler=gcc
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib
     COMMAND cp ${tbb_SOURCE_DIR}/build/*_release/libtbb.so* ${CMAKE_CURRENT_BINARY_DIR}/lib/
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -435,24 +435,27 @@ set_target_properties(htslib PROPERTIES
 )
 add_dependencies(htslib htslib_ext)
 
-# Build samtools using ExternalProject
+# Build samtools using ExternalProject (out-of-source build)
 set(SAMTOOLS_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/samtools_install)
+set(SAMTOOLS_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/samtools_build)
 ExternalProject_Add(samtools_ext
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools
-    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env 
-        LDFLAGS=-L/usr/local/lib
-        LD_LIBRARY_PATH=/usr/local/lib
-        sh -c "cd <SOURCE_DIR> && autoheader && autoconf && ./configure --prefix=${SAMTOOLS_INSTALL_DIR} --with-htslib=/usr/local --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic --without-curses"
-    BUILD_COMMAND ${CMAKE_COMMAND} -E env SHELL=/bin/bash make libst.a
+    BINARY_DIR ${SAMTOOLS_BUILD_DIR}
+    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E copy_directory 
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools ${SAMTOOLS_BUILD_DIR}
+    BUILD_COMMAND ${CMAKE_COMMAND} -E env 
+        LDFLAGS=-L${HTSLIB_INSTALL_DIR}/lib
+        LD_LIBRARY_PATH=${HTSLIB_INSTALL_DIR}/lib
+        CPPFLAGS=-I${HTSLIB_INSTALL_DIR}/include
+        sh -c "cd ${SAMTOOLS_BUILD_DIR} && autoheader && autoconf && ./configure --prefix=${SAMTOOLS_INSTALL_DIR} --with-htslib=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic --without-curses && make libst.a"
     INSTALL_COMMAND ""
-    BUILD_IN_SOURCE 1
+    BUILD_IN_SOURCE 0
     UPDATE_COMMAND ""
     DEPENDS htslib_ext
 )
 # Create an imported target for samtools
 add_library(samtools STATIC IMPORTED GLOBAL)
-# Build directory structure for in-source builds with ExternalProject
-set(SAMTOOLS_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/libst.a") 
+set(SAMTOOLS_LIB_PATH "${SAMTOOLS_BUILD_DIR}/libst.a") 
 set_target_properties(samtools PROPERTIES
     IMPORTED_LOCATION ${SAMTOOLS_LIB_PATH}
 )
@@ -746,7 +749,6 @@ target_link_libraries(panmap PRIVATE
     absl::flat_hash_map
     m
     pthread
-    lzma
 )
 
 # Set compiler options based on build type

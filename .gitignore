@@ -13,6 +13,11 @@ _deps
 .snakemake
 build
 external_cache
+src/3rdparty/samtools/config.h
+src/3rdparty/samtools/config.h.in
+src/3rdparty/samtools/config.log
+src/3rdparty/samtools/config.mk
+src/3rdparty/samtools/config.status
 
 # Prerequisites
 *.d

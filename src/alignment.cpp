@@ -2,7 +2,7 @@
 #include "capnp/list.h"
 #include "conversion.hpp"
 #include "htslib/sam.h"
-#include "index.capnp.h"
+#include "index_lite.capnp.h"
 #include "panman.hpp"
 #include "seeding.hpp"
 #include <algorithm>
@@ -298,8 +298,6 @@ float alignment::align(
         &seedToRefPositions,
     std::string &nodeSequence, panmanUtils::Node *node, panmanUtils::Tree *T,
     int32_t k, int32_t s, int32_t t, bool open, int32_t l,
-    ::capnp::List<SeedMutations>::Reader &perNodeSeedMutations_Reader,
-    ::capnp::List<GapMutations>::Reader &perNodeGapMutations_Reader,
     const std::string &reads1Path, const std::string &reads2Path,
     std::vector<std::vector<seeding::seed_t>> &readSeeds,
     std::vector<std::string> &readSequences,
