@@ -11,8 +11,48 @@
 #include <eigen3/Eigen/Dense>
 #include <span>
 #include <tbb/task_arena.h>
+#include <tbb/task_group.h>
+#include <tbb/concurrent_hash_map.h>
+#include <tbb/spin_mutex.h>
+#include <atomic>
 
 namespace mgsr {
+
+// ============================================================================
+// BuildState: Encapsulates all mutable state for parallel DFS traversal
+// ============================================================================
+struct BuildState {
+    // Block sequence state (mutated during traversal)
+    panmapUtils::BlockSequences blockSequences;
+    std::vector<char> blockExistsDelayed;
+    std::vector<char> blockStrandDelayed;
+    
+    // Gap and inversion tracking
+    std::map<uint64_t, uint64_t> gapMap;
+    std::unordered_set<uint64_t> invertedBlocks;
+    
+    // Syncmer state
+    std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
+    std::set<uint64_t> refOnSyncmersMap;
+    std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
+    
+    // K-minmer state
+    std::vector<std::optional<uint64_t>> refOnKminmers;
+    
+    // Default constructor
+    BuildState() = default;
+    
+    // Move constructor and assignment
+    BuildState(BuildState&&) = default;
+    BuildState& operator=(BuildState&&) = default;
+    
+    // Copy constructor for cloning
+    BuildState(const BuildState& other) = default;
+    BuildState& operator=(const BuildState&) = default;
+    
+    // Clone method for explicit copying
+    BuildState clone() const { return *this; }
+};
 
 void updateGapMapStep(
     std::map<uint64_t, uint64_t>& gapMap,
@@ -495,7 +535,7 @@ class mgsrIndexBuilder {
     // tree pointer
     panmanUtils::Tree *T;
   
-    // syncmer and k-min-mer objects
+    // syncmer and k-min-mer objects (legacy - used by sequential path)
     std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
     std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
     std::set<uint64_t> refOnSyncmersMap;
@@ -508,6 +548,17 @@ class mgsrIndexBuilder {
     
     // For tracking seed counts per node (needed for LiteIndex format)
     std::vector<std::unordered_map<uint64_t, int64_t>> nodeSeedCounts;
+    
+    // Thread-safe containers for parallel building
+    tbb::spin_mutex uniqueKminmersMutex_;
+    tbb::spin_mutex nodeToDfsIndexMutex_;
+    std::atomic<uint64_t> processedNodes_{0};
+    
+    // Pre-computed subtree sizes for DFS index assignment
+    std::unordered_map<std::string, uint64_t> subtreeSizes_;
+    
+    // Thread-safe empty nodes tracking
+    tbb::spin_mutex emptyNodesMutex_;
 
     mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer) 
       : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), k_(k), s_(s), l_(l)
@@ -523,6 +574,7 @@ class mgsrIndexBuilder {
     }
 
     void buildIndex();
+    void buildIndexParallel(int numThreads = 0);  // 0 = auto-detect
 
     void writeIndex(const std::string& path);
 
@@ -534,6 +586,10 @@ class mgsrIndexBuilder {
   private:
     int k_, s_, l_;
     
+    // Compute subtree size for a node (recursive)
+    uint64_t computeSubtreeSize(panmanUtils::Node* node);
+    
+    // Sequential DFS helper (original)
     void buildIndexHelper(
       panmanUtils::Node *node,
       std::unordered_set<std::string_view>& emptyNodes,
@@ -544,6 +600,25 @@ class mgsrIndexBuilder {
       std::map<uint64_t, uint64_t> &gapMap,
       std::unordered_set<uint64_t> &invertedBlocks,
       uint64_t &dfsIndex
+    );
+    
+    // Parallel DFS helper (new - takes state by value, no backtracking)
+    void buildIndexHelperParallel(
+      panmanUtils::Node *node,
+      BuildState state,
+      panmapUtils::GlobalCoords &globalCoords,
+      std::unordered_set<std::string_view>& emptyNodes,
+      uint64_t dfsIndex,
+      tbb::task_group& taskGroup
+    );
+    
+    // Process a single node and compute its seed counts
+    void processNode(
+      panmanUtils::Node *node,
+      BuildState& state,
+      panmapUtils::GlobalCoords &globalCoords,
+      std::unordered_set<std::string_view>& localEmptyNodes,
+      uint64_t dfsIndex
     );
 
     std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRangesJump(
@@ -570,6 +645,13 @@ class mgsrIndexBuilder {
       std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>>& blockOnSyncmersBacktracks
     );
 
+    std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> computeNewKminmerRanges(
+      std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
+      BuildState& state,
+      const uint64_t dfsIndex
+    );
+    
+    // Overload for sequential path (uses member state)
     std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> computeNewKminmerRanges(
       std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
       const uint64_t dfsIndex
