@@ -27,19 +27,9 @@
 VERSION=1.20
 
 # If we have a git clone, then check against the current tag
-<<<<<<< HEAD
 if [ -e .git ]; then
 	# If we ever get to 10.x this will need to be more liberal
 	VERSION=$(git describe --match '[0-9].[0-9]*' --dirty --always)
 fi
 
 echo "$VERSION"
-=======
-if [ -e .git ]
-then
-    # If we ever get to 10.x this will need to be more liberal
-    VERSION=`git describe --match '[0-9].[0-9]*' --dirty --always`
-fi
-
-echo $VERSION
->>>>>>> 51c34336c7623184cee291886575243682f7876c
