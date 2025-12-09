@@ -13,6 +13,7 @@
 #include <tbb/task_arena.h>
 #include <tbb/task_group.h>
 #include <tbb/concurrent_hash_map.h>
+#include <tbb/concurrent_vector.h>
 #include <tbb/spin_mutex.h>
 #include <atomic>
 
@@ -540,7 +541,8 @@ class mgsrIndexBuilder {
     std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
     std::set<uint64_t> refOnSyncmersMap;
 
-    std::vector<seeding::uniqueKminmer_t> uniqueKminmers;
+    // Use concurrent_vector for thread-safe growth without invalidating references
+    tbb::concurrent_vector<seeding::uniqueKminmer_t> uniqueKminmers;
     std::vector<std::optional<uint64_t>> refOnKminmers;
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;
 
