@@ -3942,7 +3942,7 @@ void mgsr::mgsrIndexBuilder::processNode(
                                                     blockOnSyncmersChangeRecord);
   }
 
-  // Processing syncmers
+  // Processing syncmers - matches original exactly
   for (const auto& syncmerRange : newSyncmerRanges) {
     const auto& [begCoord, endCoord, localRangeSeq, localRangeCoordToGlobalScalarCoords, localRangeCoordToBlockId, seedsToDelete] = syncmerRange;
     if (localRangeSeq.size() >= static_cast<size_t>(indexBuilder.getK())) {
@@ -3952,7 +3952,7 @@ void mgsr::mgsrIndexBuilder::processNode(
         auto curBlockId = localRangeCoordToBlockId[startPos];
         bool wasSeed = state.refOnSyncmers[startPosGlobal].has_value();
         if (!wasSeed && isSeed) {
-          auto it = state.refOnSyncmersMap.insert(startPosGlobal).first;
+          state.refOnSyncmersMap.insert(startPosGlobal);
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
           blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::ADD);
           state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
@@ -3963,67 +3963,179 @@ void mgsr::mgsrIndexBuilder::processNode(
           state.refOnSyncmers[startPosGlobal] = std::nullopt;
           state.refOnSyncmersMap.erase(startPosGlobal);
           state.blockOnSyncmers[curBlockId].erase(startPosGlobal);
-          if (state.blockOnSyncmers[curBlockId].empty()) {
-            state.blockOnSyncmers.erase(curBlockId);
+          if (state.blockOnSyncmers[localRangeCoordToBlockId[startPos]].empty()) {
+            state.blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
           }
         } else if (wasSeed && isSeed) {
-          auto& oldSyncmer = state.refOnSyncmers[startPosGlobal].value();
-          if (oldSyncmer.hash != hash || oldSyncmer.endPos != endPosGlobal || oldSyncmer.isReverse != isReverse) {
-            refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, oldSyncmer);
-            state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
-          }
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, state.refOnSyncmers[startPosGlobal].value());
+          state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
         }
       }
     }
-    for (const auto& seedPosGlobal : seedsToDelete) {
-      if (state.refOnSyncmers[seedPosGlobal].has_value()) {
-        auto curBlockId = globalCoords.scalarToCoord[seedPosGlobal].primaryBlockId;
-        refOnSyncmersChangeRecord.emplace_back(seedPosGlobal, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[seedPosGlobal].value());
-        blockOnSyncmersChangeRecord.emplace_back(curBlockId, seedPosGlobal, panmapUtils::seedChangeType::DEL);
-        state.refOnSyncmers[seedPosGlobal] = std::nullopt;
-        state.refOnSyncmersMap.erase(seedPosGlobal);
-        state.blockOnSyncmers[curBlockId].erase(seedPosGlobal);
-        if (state.blockOnSyncmers[curBlockId].empty()) {
-          state.blockOnSyncmers.erase(curBlockId);
-        }
+
+    for (uint64_t pos : seedsToDelete) {
+      if (!state.refOnSyncmers[pos].has_value()) {
+        std::cerr << "Error: refOnSyncmers[" << pos << "] is null" << std::endl;
+        std::exit(1);
+      }
+      refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[pos].value());
+      state.refOnSyncmers[pos] = std::nullopt;
+      state.refOnSyncmersMap.erase(pos);
+    }
+  }
+
+  // Handle potential syncmer deletions (matches original)
+  if (useJump) {
+    for (uint32_t pos : potentialSyncmerDeletions) {
+      if (state.refOnSyncmers[pos].has_value()) {
+        refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[pos].value());
+        state.refOnSyncmers[pos] = std::nullopt;
+        const auto blockId = globalCoords.getBlockIdFromScalar(pos);
+        state.blockOnSyncmers[blockId].erase(pos);
+        if (state.blockOnSyncmers[blockId].empty()) state.blockOnSyncmers.erase(blockId);
+        blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
+        state.refOnSyncmersMap.erase(pos);
       }
     }
   }
 
-  // Processing k-min-mers
-  std::vector<uint64_t> addedSeedIndices;
+  // Handle block mutations that delete entire blocks (matches original)
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    if (oldExists && !newExists) {
+      if (state.blockOnSyncmers.find(blockId) != state.blockOnSyncmers.end()) {
+        for (uint64_t pos : state.blockOnSyncmers[blockId]) {
+          refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[pos].value());
+          blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
+          state.refOnSyncmers[pos] = std::nullopt;
+          state.refOnSyncmersMap.erase(pos);
+        }
+        state.blockOnSyncmers.erase(blockId);
+      }
+    }
+  }
+
+  // Processing k-min-mers - matches original exactly
+  auto k = indexBuilder.getK();
+  auto l = indexBuilder.getL();
   std::vector<uint64_t> deletedSeedIndices;
+  std::vector<uint64_t> addedSeedIndices;
   std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedIndices;
 
-  auto newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, state, dfsIndex);
-  
-  for (const auto& range : newKminmerRanges) {
-    auto curBegIt = range.first;
-    auto curEndIt = range.second;
+  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = 
+      computeNewKminmerRanges(refOnSyncmersChangeRecord, state, dfsIndex);
 
-    std::vector<uint64_t> syncmerPositions;
-    for (auto it = curBegIt; it != curEndIt; ++it) {
-      syncmerPositions.push_back(*it);
+  for (size_t i = 0; i < newKminmerRanges.size(); i++) {
+    auto beg = *newKminmerRanges[i].first;
+    auto end = *newKminmerRanges[i].second;
+    if (newKminmerRanges[i].second != state.refOnSyncmersMap.end() && beg > end) {
+      std::cerr << "Error: beg (" << beg << ") > end (" << end << ") in node " << node->identifier << std::endl;
+      std::exit(1);
+    }
+    if (i != 0 && *newKminmerRanges[i-1].second > beg) {
+      std::cerr << "Error: newKminmerRanges[" << i-1 << "].second > newKminmerRanges[" << i << "].first" << std::endl;
+      std::exit(1);
+    }
+  }
+
+  for (size_t i = 0; i < newKminmerRanges.size(); i++) {
+    auto [curIt, endIt] = newKminmerRanges[i];
+    auto indexingIt = curIt;
+    size_t forwardHash = 0;
+    size_t reverseHash = 0;
+
+    std::vector<size_t> startingSyncmerHashes;
+    for (size_t j = 0; j < static_cast<size_t>(l); j++) {
+      if (curIt == state.refOnSyncmersMap.end()) {
+        break;
+      } else if (endIt != state.refOnSyncmersMap.end() && *curIt == *endIt && j != static_cast<size_t>(l) - 1) {
+        break;
+      }
+      startingSyncmerHashes.push_back(state.refOnSyncmers[*curIt].value().hash);
+      if (j != static_cast<size_t>(l) - 1) ++curIt;
+    }
+    if (startingSyncmerHashes.size() < static_cast<size_t>(l)) {
+      continue;
+    }
+    if (l == 1) {
+      auto syncmerRev = state.refOnSyncmers[*curIt].value().isReverse;
+      if (syncmerRev) {
+        forwardHash = std::numeric_limits<size_t>::max();
+        reverseHash = startingSyncmerHashes[0];
+      } else {
+        forwardHash = startingSyncmerHashes[0];
+        reverseHash = std::numeric_limits<size_t>::max();
+      }
+      if (reverseHash == forwardHash) {
+        std::cerr << "Error: syncmer hash collision detected in k-min-mer computation.\n";
+        exit(1);
+      }
+    } else {
+      for (size_t j = 0; j < static_cast<size_t>(l); j++) {
+        forwardHash = seeding::rol(forwardHash, k) ^ startingSyncmerHashes[j];
+        reverseHash = seeding::rol(reverseHash, k) ^ startingSyncmerHashes[l - j - 1];
+      }
     }
 
-    for (size_t i = 0; i + indexBuilder.getL() - 1 < syncmerPositions.size(); ++i) {
-      auto indexingIt = syncmerPositions[i];
-      const auto& curRefOnSyncmer = state.refOnSyncmers[indexingIt];
-      auto& curRefOnKminmer = state.refOnKminmers[indexingIt];
+    auto& curRefOnKminmer = state.refOnKminmers[*indexingIt];
+    if (forwardHash != reverseHash) {
+      seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, state.refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
+      bool substitution = curRefOnKminmer.has_value();
+      if (substitution) {
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer.value());
+      } else {
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
+      }
 
-      if (curRefOnSyncmer.has_value()) {
-        seeding::uniqueKminmer_t uniqueKminmer;
-        uniqueKminmer.startPos = indexingIt;
-        uniqueKminmer.endPos = state.refOnSyncmers[syncmerPositions[i + indexBuilder.getL() - 1]].value().endPos;
-        uniqueKminmer.isReverse = curRefOnSyncmer.value().isReverse;
-
-        size_t combinedHash = curRefOnSyncmer.value().hash;
-        for (size_t j = 1; j < static_cast<size_t>(indexBuilder.getL()); ++j) {
-          combinedHash ^= state.refOnSyncmers[syncmerPositions[i + j]].value().hash + 0x9e3779b9 + (combinedHash << 6) + (combinedHash >> 2);
+      // Thread-safe insertion into unique k-minmers
+      uint64_t kminmerIndex;
+      {
+        tbb::spin_mutex::scoped_lock lock(uniqueKminmersMutex_);
+        auto uniqueKminmerIndexIt = kminmerToUniqueIndex.find(uniqueKminmer);
+        if (uniqueKminmerIndexIt == kminmerToUniqueIndex.end()) {
+          uniqueKminmers.emplace_back(uniqueKminmer);
+          kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
+          kminmerIndex = uniqueKminmers.size() - 1;
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), kminmerIndex);
+          } else {
+            addedSeedIndices.push_back(kminmerIndex);
+          }
+        } else {
+          kminmerIndex = uniqueKminmerIndexIt->second;
+          if (substitution) {
+            substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), kminmerIndex);
+          } else {
+            addedSeedIndices.push_back(kminmerIndex);
+          }
         }
-        uniqueKminmer.hash = combinedHash;
+      }
+      curRefOnKminmer = kminmerIndex;
+    } else {
+      if (curRefOnKminmer.has_value()) {
+        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
+        deletedSeedIndices.push_back(curRefOnKminmer.value());
+        curRefOnKminmer = std::nullopt;
+      }
+    }
 
-        bool substitution = curRefOnKminmer.has_value();
+    if (curIt == endIt) continue;
+    
+    while (curIt != endIt) {
+      ++curIt;
+      if (curIt == state.refOnSyncmersMap.end()) break;
+      forwardHash = seeding::rol(forwardHash, k) ^ seeding::rol(state.refOnSyncmers[*indexingIt].value().hash, k * l) ^ state.refOnSyncmers[*curIt].value().hash;
+      reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(state.refOnSyncmers[*indexingIt].value().hash, k)     ^ seeding::rol(state.refOnSyncmers[*curIt].value().hash, k * (l-1));
+      ++indexingIt;
+
+      auto& curRefOnKminmer2 = state.refOnKminmers[*indexingIt];
+      if (forwardHash != reverseHash) {
+        seeding::uniqueKminmer_t uniqueKminmer{*indexingIt, state.refOnSyncmers[*curIt].value().endPos, std::min(forwardHash, reverseHash), reverseHash < forwardHash};
+        bool substitution = curRefOnKminmer2.has_value();
+        if (substitution) {
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, curRefOnKminmer2.value());
+        } else {
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
+        }
 
         // Thread-safe insertion into unique k-minmers
         uint64_t kminmerIndex;
@@ -4034,27 +4146,51 @@ void mgsr::mgsrIndexBuilder::processNode(
             uniqueKminmers.emplace_back(uniqueKminmer);
             kminmerToUniqueIndex[uniqueKminmer] = uniqueKminmers.size() - 1;
             kminmerIndex = uniqueKminmers.size() - 1;
+            if (substitution) {
+              substitutedSeedIndices.emplace_back(curRefOnKminmer2.value(), kminmerIndex);
+            } else {
+              addedSeedIndices.push_back(kminmerIndex);
+            }
           } else {
             kminmerIndex = uniqueKminmerIndexIt->second;
+            if (substitution) {
+              substitutedSeedIndices.emplace_back(curRefOnKminmer2.value(), kminmerIndex);
+            } else {
+              addedSeedIndices.push_back(kminmerIndex);
+            }
           }
         }
-
-        if (substitution) {
-          substitutedSeedIndices.emplace_back(curRefOnKminmer.value(), kminmerIndex);
-        } else {
-          addedSeedIndices.push_back(kminmerIndex);
-        }
-        refOnKminmersChangeRecord.emplace_back(indexingIt, 
-            substitution ? panmapUtils::seedChangeType::SUB : panmapUtils::seedChangeType::ADD, 
-            curRefOnKminmer.value_or(0));
-        curRefOnKminmer = kminmerIndex;
+        curRefOnKminmer2 = kminmerIndex;
       } else {
-        if (curRefOnKminmer.has_value()) {
-          refOnKminmersChangeRecord.emplace_back(indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer.value());
-          deletedSeedIndices.push_back(curRefOnKminmer.value());
-          curRefOnKminmer = std::nullopt;
+        if (curRefOnKminmer2.has_value()) {
+          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, curRefOnKminmer2.value());
+          deletedSeedIndices.push_back(curRefOnKminmer2.value());
+          curRefOnKminmer2 = std::nullopt;
         }
       }
+    }
+  }
+
+  // Handle end-of-range k-minmer deletions (matches original)
+  if (!newKminmerRanges.empty() && newKminmerRanges.back().second == state.refOnSyncmersMap.end()) {
+    auto delIt = newKminmerRanges.back().second;
+    for (size_t j = 0; j < static_cast<size_t>(l) - 1; j++) {
+      --delIt;
+      if (state.refOnKminmers[*delIt].has_value()) {
+        refOnKminmersChangeRecord.emplace_back(*delIt, panmapUtils::seedChangeType::DEL, state.refOnKminmers[*delIt].value());
+        deletedSeedIndices.push_back(state.refOnKminmers[*delIt].value());
+        state.refOnKminmers[*delIt] = std::nullopt;
+      }
+      if (delIt == state.refOnSyncmersMap.begin()) break;
+    }
+  }
+
+  // Handle deleted syncmers that still have k-minmers (matches original)
+  for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
+    if (changeType == panmapUtils::seedChangeType::DEL && state.refOnKminmers[syncmerPos].has_value()) {
+      refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, state.refOnKminmers[syncmerPos].value());
+      deletedSeedIndices.push_back(state.refOnKminmers[syncmerPos].value());
+      state.refOnKminmers[syncmerPos] = std::nullopt;
     }
   }
 
@@ -4066,14 +4202,10 @@ void mgsr::mgsrIndexBuilder::processNode(
   
   // Find parent's dfs index and copy counts
   if (node->parent != nullptr) {
-    uint32_t parentDfsIndex;
-    {
-      tbb::spin_mutex::scoped_lock lock(nodeToDfsIndexMutex_);
-      auto it = nodeToDfsIndex.find(node->parent->identifier);
-      if (it != nodeToDfsIndex.end()) {
-        parentDfsIndex = it->second;
-        curNodeCounts = nodeSeedCounts[parentDfsIndex];
-      }
+    tbb::spin_mutex::scoped_lock lock(nodeToDfsIndexMutex_);
+    auto it = nodeToDfsIndex.find(node->parent->identifier);
+    if (it != nodeToDfsIndex.end()) {
+      curNodeCounts = nodeSeedCounts[it->second];
     }
   }
 
@@ -4157,13 +4289,14 @@ void mgsr::mgsrIndexBuilder::buildIndexHelperParallel(
                                emptyNodes, childDfsIndices[i], taskGroup);
     } else {
       // Spawn new task with cloned state
-      BuildState childState = state.clone();
+      // Use shared_ptr to work around TBB 2019's const functor requirement
+      auto childStatePtr = std::make_shared<BuildState>(state.clone());
       uint64_t childIdx = childDfsIndices[i];
       panmanUtils::Node* child = node->children[i];
       
-      taskGroup.run([this, child, childState = std::move(childState), &globalCoords, 
-                     &emptyNodes, childIdx, &taskGroup]() mutable {
-        buildIndexHelperParallel(child, std::move(childState), globalCoords, 
+      taskGroup.run([this, child, childStatePtr, &globalCoords, 
+                     &emptyNodes, childIdx, &taskGroup]() {
+        buildIndexHelperParallel(child, std::move(*childStatePtr), globalCoords, 
                                  emptyNodes, childIdx, taskGroup);
       });
     }
