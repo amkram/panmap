@@ -240,7 +240,11 @@ bool buildIndex(const Config& cfg) {
     }
     
     mgsr::mgsrIndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false);
-    builder.buildIndex();
+    if (cfg.threads > 1) {
+        builder.buildIndexParallel(cfg.threads);
+    } else {
+        builder.buildIndex();
+    }
     builder.writeIndex(cfg.index);
     
     logging::msg("Index built with k={}, s={}, l={}", cfg.k, cfg.s, cfg.l);
@@ -564,7 +568,14 @@ int main(int argc, char** argv) {
     }
     
     // Set defaults
-    if (cfg.index.empty()) cfg.index = cfg.panman + ".idx";
+    // If index not explicitly set, derive from output prefix if set, otherwise from panman
+    if (cfg.index.empty()) {
+        if (!cfg.output.empty()) {
+            cfg.index = cfg.output + ".idx";
+        } else {
+            cfg.index = cfg.panman + ".idx";
+        }
+    }
     // Only set default output if we're not in dump mode (dump modes handle their own output)
     if (cfg.output.empty() && !cfg.dumpRandomNode && cfg.dumpNodeId.empty()) {
         // Derive output prefix from reads filename (without path and common extensions)
