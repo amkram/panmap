@@ -33,7 +33,7 @@
 #include "panman.hpp"
 #include "placement.hpp"
 #include "panmap_utils.hpp"
-#include "mgsr.hpp"
+#include "index_single_mode.hpp"
 #include "zstd_compression.hpp"
 #include "genotyping.hpp"
 #include "conversion.hpp"
@@ -239,7 +239,7 @@ bool buildIndex(const Config& cfg) {
         return false;
     }
     
-    mgsr::mgsrIndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false);
+    index_single_mode::IndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false);
     if (cfg.threads > 1) {
         builder.buildIndexParallel(cfg.threads);
     } else {

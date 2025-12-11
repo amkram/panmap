@@ -32,7 +32,7 @@
 #include "panmanUtils.hpp"
 #include "../seeding.hpp"
 #include "../placement.hpp"
-#include "../mgsr.hpp"
+#include "../index_single_mode.hpp"
 #include "../panmap_utils.hpp"
 #include "../zstd_compression.hpp"
 #include "../index_utils.hpp"
@@ -294,7 +294,7 @@ BOOST_AUTO_TEST_CASE(test_index_genome_seeds_match_direct_extraction) {
     std::string indexPath = "data/test_seed_validation.pmi";
     
     // Build index
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
@@ -501,7 +501,7 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
     // ========================================================================
     // STEP 4: Build index and traverse using delta accumulation
     // ========================================================================
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
@@ -682,7 +682,7 @@ BOOST_AUTO_TEST_CASE(test_reads_from_truth_genome_place_to_truth_node) {
     BOOST_REQUIRE(!reads.empty());
     
     // Build index
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
@@ -857,7 +857,7 @@ BOOST_AUTO_TEST_CASE(test_incremental_traversal_matches_direct_at_every_node) {
     double readMagnitude = std::sqrt(readMagnitudeSquared);
     
     // Build index
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
@@ -1006,7 +1006,7 @@ BOOST_AUTO_TEST_CASE(test_index_build_and_parameters) {
     int s = 8;
     int l = 1;
     
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
     builder.buildIndex();
     
     BOOST_TEST(builder.getK() == k);
@@ -1024,7 +1024,7 @@ BOOST_AUTO_TEST_CASE(test_index_write_and_read) {
     
     // Build and write
     {
-        mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+        index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
         builder.buildIndex();
         builder.writeIndex(indexPath);
     }
@@ -1084,7 +1084,7 @@ BOOST_AUTO_TEST_CASE(test_lite_tree_initialization) {
     
     // Build and write index
     {
-        mgsr::mgsrIndexBuilder builder(T, 15, 8, 0, 1, false);
+        index_single_mode::IndexBuilder builder(T, 15, 8, 0, 1, false);
         builder.buildIndex();
         builder.writeIndex(indexPath);
     }
@@ -1134,7 +1134,7 @@ BOOST_AUTO_TEST_CASE(test_resolve_node_id) {
     std::string indexPath = "data/test_rsv_resolve.pmi";
     
     {
-        mgsr::mgsrIndexBuilder builder(T, 15, 8, 0, 1, false);
+        index_single_mode::IndexBuilder builder(T, 15, 8, 0, 1, false);
         builder.buildIndex();
         builder.writeIndex(indexPath);
     }
@@ -1189,7 +1189,7 @@ BOOST_AUTO_TEST_CASE(test_index_dfs_state_matches_genome) {
     std::string indexPath = "data/test_index_dfs_state.pmi";
     
     // Build index
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
@@ -1325,7 +1325,7 @@ BOOST_AUTO_TEST_CASE(test_placement_bfs_metrics_match_truth) {
     std::string indexPath = "data/test_placement_bfs.pmi";
     
     // Build index
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, l, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
@@ -1451,7 +1451,7 @@ BOOST_AUTO_TEST_CASE(test_placement_bfs_metrics_match_truth) {
 BOOST_AUTO_TEST_CASE(test_node_change_offsets_structure) {
     std::string indexPath = "data/test_offsets_structure.pmi";
     
-    mgsr::mgsrIndexBuilder builder(T, 15, 8, 0, 1, false);
+    index_single_mode::IndexBuilder builder(T, 15, 8, 0, 1, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
@@ -1502,7 +1502,7 @@ BOOST_AUTO_TEST_CASE(test_seed_change_parent_child_consistency) {
     const int s = 8;
     std::string indexPath = "data/test_parent_child.pmi";
     
-    mgsr::mgsrIndexBuilder builder(T, k, s, 0, 1, false);
+    index_single_mode::IndexBuilder builder(T, k, s, 0, 1, false);
     builder.buildIndex();
     builder.writeIndex(indexPath);
     
