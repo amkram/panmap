@@ -547,7 +547,7 @@ set(PANMAP_SOURCES_MAIN
     src/conversion.cpp
     src/panmap_utils.cpp
     src/genotyping.cpp
-    src/mgsr.cpp
+    src/index_single_mode.cpp
     src/alignment.cpp
     src/placement.cpp
     src/seeding.cpp
@@ -634,7 +634,7 @@ if(OPTION_BUILD_TESTS)
         src/test/correctness_tests.cpp
         src/seeding.cpp
         src/placement.cpp
-        src/mgsr.cpp
+        src/index_single_mode.cpp
         src/panmap_utils.cpp
         src/zstd_compression.cpp
         src/index_utils.cpp
