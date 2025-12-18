@@ -58,7 +58,13 @@ uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64
 
 int open_file(const std::string& path);
 
-void extractReadSequences(const std::string& readPath1, const std::string& readPath2, const std::string& ampliconDepthPath, std::vector<std::vector<std::string>>& readSequences);
+void extractReadSequences(
+  const std::string& readPath1,
+  const std::string& readPath2,
+  const std::string& ampliconDepthPath,
+  std::vector<std::vector<std::string>>& readSequences,
+  std::vector<std::vector<std::string>>& readNames
+);
 
 
 enum RefSeedmerExistStatus : uint8_t {
@@ -580,6 +586,9 @@ struct ModifiedReadInfo {
 
 class ThreadsManager {
   public:
+    std::string prefix;
+
+
     size_t numThreads;
     MgsrLiteTree* liteTree;
 
@@ -636,7 +645,7 @@ class ThreadsManager {
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(MgsrLiteTree* liteTree,  size_t numThreads, uint32_t maskReads, bool progressBar, bool lowMemory) : liteTree(liteTree), numThreads(numThreads), maskReads(maskReads), progressBar(progressBar), lowMemory(lowMemory) {
+    ThreadsManager(MgsrLiteTree* liteTree, const std::string& prefix, size_t numThreads, uint32_t maskReads, bool progressBar, bool lowMemory) : liteTree(liteTree), prefix(prefix), numThreads(numThreads), maskReads(maskReads), progressBar(progressBar), lowMemory(lowMemory) {
       threadRanges.resize(numThreads);
       readMinichainsInitialized.resize(numThreads);
       readMinichainsAdded.resize(numThreads);
@@ -684,6 +693,8 @@ class ThreadsManager {
       absl::flat_hash_map<size_t, uint32_t>& refKminmers,
       size_t& dfsIndex
     );
+
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode);
 
 };
 
@@ -858,7 +869,13 @@ class mgsrPlacer {
     bool identicalReadScores(const std::string& node1, const std::string& node2, bool fast_mode = false) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
-    
+
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode);
+    void assignReadsHelper(
+      mgsr::MgsrLiteNode* node,
+      std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
+      std::unordered_set<size_t>& mpsReadSet
+    );
 
 
 

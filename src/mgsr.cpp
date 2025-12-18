@@ -1354,7 +1354,8 @@ void mgsr::extractReadSequences(
   const std::string& readPath1,
   const std::string& readPath2,
   const std::string& ampliconDepthPath,
-  std::vector<std::vector<std::string>>& readSequences
+  std::vector<std::vector<std::string>>& readSequences,
+  std::vector<std::vector<std::string>>& readNames
 ) {
   std::unordered_map<std::string, std::string_view> readIdToPrimerId;
   std::unordered_map<std::string, size_t> primerIdToGroupId;
@@ -1394,8 +1395,10 @@ void mgsr::extractReadSequences(
       }
     }
     readSequences.resize(primerIdToGroupId.size() + 1);
+    readNames.resize(primerIdToGroupId.size() + 1);
   } else {
     readSequences.resize(1);
+    readNames.resize(1);
   }
 
   FILE *fp;
@@ -1412,9 +1415,11 @@ void mgsr::extractReadSequences(
     auto readIdToPrimerIdIt = readIdToPrimerId.find(readIdentifier);
     if (readIdToPrimerIdIt == readIdToPrimerId.end()) {
       readSequences.back().push_back(seq->seq.s);
+      readNames.back().push_back(seq->name.s);
     } else {
       size_t groupId = primerIdToGroupId[std::string(readIdToPrimerIdIt->second)];
       readSequences[groupId].push_back(seq->seq.s);
+      readNames[groupId].push_back(seq->name.s);
     }
   }
   if (readPath2.size() > 0) {
@@ -1436,9 +1441,11 @@ void mgsr::extractReadSequences(
       auto readIdToPrimerIdIt = readIdToPrimerId.find(readIdentifier);
       if (readIdToPrimerIdIt == readIdToPrimerId.end()) {
         readSequences.back().push_back(seq->seq.s);
+        readNames.back().push_back(seq->name.s);
       } else {
         size_t groupId = primerIdToGroupId[std::string(readIdToPrimerIdIt->second)];
         readSequences[groupId].push_back(seq->seq.s);
+        readNames[groupId].push_back(seq->name.s);
       }
     }
 
@@ -1675,8 +1682,10 @@ void mgsr::ThreadsManager::initializeQueryData(
   bool fast_mode
 ) {
   std::cerr << "Processing query reads... k=" << k << ", s=" << s << ", l=" << l << ", t=" << t << ", openSyncmer=" << openSyncmer << std::endl;
+  
   std::vector<std::vector<std::string>> readSequencesByGroup;
-  extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup);
+  std::vector<std::vector<std::string>> readNamesByGroup;
+  extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup, readNamesByGroup);
   size_t rawReadsSize = 0;
   for (const auto& groupReads : readSequencesByGroup) {
     rawReadsSize += groupReads.size();
@@ -1685,6 +1694,17 @@ void mgsr::ThreadsManager::initializeQueryData(
   size_t numMaskReads = 0;
   size_t numMaskSeeds = 0;
 
+
+  std::ofstream indicesToNamesOut(prefix + ".read_indices_to_names.tsv");
+  size_t curReadIndex = 0;
+  for (size_t groupId = 0; groupId < readSequencesByGroup.size(); ++groupId) {
+    const auto& readNames = readNamesByGroup[groupId];
+    for (size_t i = 0; i < readNames.size(); ++i) {
+      indicesToNamesOut << curReadIndex << "\t" << readNames[i] << "\n";
+      ++curReadIndex;
+    }
+  }
+  indicesToNamesOut.close();
 
   std::vector<std::vector<mgsr::Read>> readsByGroup(readSequencesByGroup.size());
   std::vector<std::vector<std::vector<size_t>>> readSeedmersDuplicatesIndexByGroup(readSequencesByGroup.size());
@@ -6048,6 +6068,136 @@ void mgsr::mgsrPlacer::scoreNodes(const std::unordered_map<size_t, uint32_t>& se
   size_t curNodeSumEPPRawScore = 0;
   mgsr::MgsrLiteNode* processingNode = nullptr;
   scoreNodesHelper(liteTree->root, processingNode, numDuplicates, readWEPPWeights, readScores, curNodeSumRawScore, curNodeSumEPPRawScore, curNodeSumWEPPScore);
+}
+
+void mgsr::mgsrPlacer::assignReadsHelper(
+  mgsr::MgsrLiteNode* node,
+  std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
+  std::unordered_set<size_t>& mpsReadSet
+) {
+  const auto& curNodeScoreDeltas = node->readScoreDeltas[threadId];
+  
+  std::vector<std::pair<uint32_t, bool>> mpsReadSetBacktrack;
+  mpsReadSetBacktrack.reserve(curNodeScoreDeltas.size());
+
+  for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
+    const auto& curRead = reads[readIndex];
+    auto curMaxScore = curRead.maxScore;
+
+    if (curMaxScore == 0) continue;
+
+    auto readIt = mpsReadSet.find(readIndex);
+    if (scoreDelta == curMaxScore) {
+      if (readIt == mpsReadSet.end()) {
+        mpsReadSet.insert(readIndex);
+        mpsReadSetBacktrack.emplace_back(readIndex, false);
+
+      }
+    } else {
+      if (readIt != mpsReadSet.end()) {
+        mpsReadSet.erase(readIt);
+        mpsReadSetBacktrack.emplace_back(readIndex, true);
+      }
+    }
+  }
+
+  if (!mpsReadSet.empty()) {
+    assignedReadsByNode[node].insert(assignedReadsByNode[node].end(), mpsReadSet.begin(), mpsReadSet.end());
+  }
+
+  for (auto child : node->collapsedChildren) {
+    assignReadsHelper(child, assignedReadsByNode, mpsReadSet);
+  }
+
+  for (const auto& [readIndex, erased] : mpsReadSetBacktrack) {
+    if (erased) {
+      mpsReadSet.insert(readIndex);
+    } else {
+      mpsReadSet.erase(readIndex);
+    }
+  }
+}
+
+void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode) {
+  std::unordered_set<size_t> mpsReadSet;
+  assignReadsHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
+}
+
+void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode) {
+  std::vector<std::unordered_map<MgsrLiteNode*, std::vector<size_t>>> assignedReadsByNodePerThread(threadRanges.size());
+
+  // Assign reads per thread
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+    for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+      auto [start, end] = threadRanges[i];
+    
+      std::span<mgsr::Read> curThreadReads(reads.data() + start, end - start);
+      mgsr::mgsrPlacer curThreadPlacer(liteTree, *this, lowMemory, i);
+      curThreadPlacer.reads = curThreadReads;
+
+      curThreadPlacer.assignReads(assignedReadsByNodePerThread[i]);
+    }
+  });
+
+  // Collect all unique nodes
+  std::unordered_set<MgsrLiteNode*> allNodesAssigned;
+  for (const auto& threadMap : assignedReadsByNodePerThread) {
+    for (const auto& [node, _] : threadMap) {
+      allNodesAssigned.insert(node);
+    }
+  }
+
+  // Convert to vector for parallel iteration
+  std::vector<MgsrLiteNode*> nodeAssignedList(allNodesAssigned.begin(), allNodesAssigned.end());
+  
+  // Pre-allocate the result map
+  for (MgsrLiteNode* node : nodeAssignedList) {
+    assignedReadsByNode[node];
+  }
+
+  // Parallel merge and sort
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, nodeAssignedList.size()), [&](const tbb::blocked_range<size_t>& range) {
+    for (size_t i = range.begin(); i != range.end(); ++i) {
+      MgsrLiteNode* node = nodeAssignedList[i];
+      auto& mergedVec = assignedReadsByNode[node];
+      
+      // Calculate total size and reserve
+      size_t totalSize = 0;
+      for (size_t threadId = 0; threadId < assignedReadsByNodePerThread.size(); ++threadId) {
+        const auto& threadMap = assignedReadsByNodePerThread[threadId];
+        auto it = threadMap.find(node);
+        if (it != threadMap.end()) {
+          size_t threadReadStart = threadRanges[threadId].first;
+          for (size_t localIndex : it->second) {
+            size_t readIndex = threadReadStart + localIndex;
+            totalSize += readSeedmersDuplicatesIndex[readIndex].size();
+          }
+        }
+      }
+      mergedVec.reserve(totalSize);
+      
+      // Merge from all threads, converting local indices to global
+      for (size_t threadId = 0; threadId < assignedReadsByNodePerThread.size(); ++threadId) {
+        const auto& threadMap = assignedReadsByNodePerThread[threadId];
+        auto it = threadMap.find(node);
+        if (it != threadMap.end()) {
+          size_t threadReadStart = threadRanges[threadId].first;
+          for (size_t localIndex : it->second) {
+            size_t readIndex = threadReadStart + localIndex;
+            for (const auto rawReadIndex : readSeedmersDuplicatesIndex[readIndex]) {
+              mergedVec.push_back(rawReadIndex);
+            }
+          }
+        }
+      }
+      
+      // Sort the merged global indices
+      std::sort(mergedVec.begin(), mergedVec.end());
+    }
+  });  
+  
+
+
 }
 
 void mgsr::ThreadsManager::scoreNodesMultithreaded() {

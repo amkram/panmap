@@ -752,6 +752,7 @@ int main(int argc, char *argv[]) {
         ("mgsr-open", "Use open syncmers")
         ("no-progress", "Disable progress bars")
         ("discard", po::value<double>()->default_value(0.5), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
+        ("filter-and-assign", "Filter and assign reads to nodes without running EM")
         ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
         ("read-scores", "Use read scores to score nodes")
         ("seed-scores", "Use seed scores instead of read scores to score nodes")
@@ -792,6 +793,7 @@ int main(int argc, char *argv[]) {
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
         ("true-abundance", po::value<std::string>(), "Path to true abundance TSV for comparison")
+        ("sketch-seeds", po::value<std::string>(), "sketch seeds for <str>")
     ;
 
     // Hidden options for positional arguments
@@ -1155,6 +1157,7 @@ int main(int argc, char *argv[]) {
       liteTree.initialize(indexReader, numThreads, lowMemory, true);
       liteTree.debugNodeID = vm["debug-node-id"].as<std::string>();
 
+      bool filterAndAssign = vm.count("filter-and-assign") > 0;
       uint32_t maskReads = vm.count("mask-reads") ? vm["mask-reads"].as<uint32_t>() : 0;
       uint32_t maskSeeds = vm.count("mask-reads") ? vm["mask-seeds"].as<uint32_t>() : 0;
       std::string ampliconDepthPath = vm.count("amplicon-depth") ? vm["amplicon-depth"].as<std::string>() : "";
@@ -1163,18 +1166,18 @@ int main(int argc, char *argv[]) {
       
       bool progressBar = true;
       if (vm.count("no-progress")) progressBar = false;
-      mgsr::ThreadsManager threadsManager(&liteTree, numThreads, maskReads, progressBar, lowMemory);
+      mgsr::ThreadsManager threadsManager(&liteTree, prefix, numThreads, maskReads, progressBar, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
       threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency);
 
 
       size_t overlap_coefficients_threshold = vm["overlap-coefficients"].as<size_t>();
-      if (overlap_coefficients_threshold == 0 && !vm.count("read-scores")) {
+      if (overlap_coefficients_threshold == 0 && !vm.count("read-scores") && !filterAndAssign) {
         std::cerr << "Error: Either --overlap-coefficients > 0 or --read-scores must be specified for EM." << std::endl;
         exit(1);
       }
-      if (overlap_coefficients_threshold > 0) {
+      if (overlap_coefficients_threshold > 0 && !filterAndAssign) {
         auto start_time_computeOverlapCoefficients = std::chrono::high_resolution_clock::now();
         mgsr::mgsrPlacer placer(&liteTree, threadsManager, lowMemory, 0);
         auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
@@ -1296,6 +1299,7 @@ int main(int argc, char *argv[]) {
         }
       }
 
+
       std::cout << num_unmapped << " reads unmapped... " << std::endl;
       std::cout << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
       std::cout << threadsManager.reads.size() - num_unmapped - num_discarded << " reads remain for node scoring and EM... " << std::endl;
@@ -1304,6 +1308,25 @@ int main(int argc, char *argv[]) {
         std::cerr << "No reads remain for node scoring and EM after discarding low-score reads... Exiting... " << std::endl;
         exit(0);
       }
+
+      // Remove score updates of unmapped reads
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+        for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+          auto [start, end] = threadsManager.threadRanges[i];
+          std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
+
+          for (auto [_, node] : liteTree.allLiteNodes) {
+            auto& curThreadNodeScoreDeltas = node->readScoreDeltas[i];
+            curThreadNodeScoreDeltas.erase(
+              std::remove_if(curThreadNodeScoreDeltas.begin(), curThreadNodeScoreDeltas.end(),
+                [&curThreadReads](const mgsr::readScoreDelta& delta) {
+                  return curThreadReads[delta.readIndex].maxScore == 0;
+                }),
+              curThreadNodeScoreDeltas.end()
+            );
+          }
+        }
+      });
 
 
       if (vm.count("read-scores")) {
@@ -1326,6 +1349,30 @@ int main(int argc, char *argv[]) {
         readScoresOut << std::endl;
       }
       readScoresOut.close();
+
+      if (filterAndAssign) {
+        std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
+        threadsManager.assignReads(assignedReadsByNode);
+
+        std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
+        for (auto& [node, readIndices] : assignedReadsByNode) {
+          assignedReadsOut << node->identifier;
+          for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+            assignedReadsOut << "," << identicalNodeId;
+          }
+          assignedReadsOut << "\t" << readIndices.size() << "\t";
+          std::sort(readIndices.begin(), readIndices.end());
+          for (size_t i = 0; i < readIndices.size(); ++i) {
+            assignedReadsOut << readIndices[i];
+            if (i != readIndices.size() - 1) {
+              assignedReadsOut << ",";
+            }
+          }
+          assignedReadsOut << "\n";
+        }
+        assignedReadsOut.close();
+        exit(0);
+      }
 
 
 
