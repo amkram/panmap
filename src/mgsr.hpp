@@ -66,6 +66,8 @@ void extractReadSequences(
   std::vector<std::vector<std::string>>& readNames
 );
 
+double getDust(const std::string& seq, int windowSize=64);
+
 
 enum RefSeedmerExistStatus : uint8_t {
   EXIST_UNIQUE,
@@ -654,7 +656,16 @@ class ThreadsManager {
     }
 
     void initializeMGSRIndex(MGSRIndex::Reader indexReader);
-    void initializeQueryData(const std::string& readPath1, const std::string& readPath2, uint32_t maskSeeds, const std::string& ampliconDepthPath, double maskReadsRelativeFrequency, double maskSeedsRelativeFrequency, bool fast_mode = false);
+    void initializeQueryData(
+      const std::string& readPath1,
+      const std::string& readPath2,
+      uint32_t maskSeeds,
+      const std::string& ampliconDepthPath,
+      double maskReadsRelativeFrequency,
+      double maskSeedsRelativeFrequency,
+      double dustThreshold,
+      bool fast_mode = false
+    );
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void printStats();

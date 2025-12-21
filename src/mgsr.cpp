@@ -1672,6 +1672,72 @@ void mgsr::mgsrPlacer::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   openSyncmer = indexReader.getOpen();
 }
 
+constexpr int KMER_LENGTH = 3;
+constexpr int NUM_POSSIBLE_KMERS = 1 << (KMER_LENGTH * 2);
+constexpr int KMER_BITMASK = NUM_POSSIBLE_KMERS - 1;
+
+const std::vector<unsigned char> BASE_MAP = []() {
+  std::vector<unsigned char> table(256, 4);
+  table['A'] = table['a'] = 0;
+  table['C'] = table['c'] = 1;
+  table['G'] = table['g'] = 2;
+  table['T'] = table['t'] = 3;
+  return table;
+}();
+
+
+double mgsr::getDust(const std::string& seq, int windowSize) {
+  if (windowSize < KMER_LENGTH) {
+    std::cerr << "Error: windowSize must be greater than or equal to " << KMER_LENGTH << std::endl;
+    exit(1);
+  }
+
+  std::vector<size_t> kmerCounts(NUM_POSSIBLE_KMERS, 0);
+  std::vector<size_t> windowKmers(windowSize);
+
+  long long currentScore = 0;
+  long long maxScore = 0;
+  int currentKmer = 0;
+  int validBaseCount = -KMER_LENGTH;
+
+  for (unsigned char base : seq) {
+    unsigned char encodedBase = BASE_MAP[base];
+
+    if (encodedBase > 3) continue; // ignore Ns
+
+    currentKmer = (currentKmer << 2 | encodedBase) & KMER_BITMASK;
+
+    if (++validBaseCount < 0) continue; // not enough bases to form a kmer
+
+    int windowPosition = validBaseCount % windowSize;
+
+    if (validBaseCount >= windowSize) {
+      int outgoingKmer = windowKmers[windowPosition];
+      if (kmerCounts[outgoingKmer] > 0) {
+        currentScore -= --kmerCounts[outgoingKmer];
+      }
+
+      currentScore += kmerCounts[currentKmer]++;
+
+      maxScore = std::max(maxScore, currentScore);
+    } else {
+      currentScore += kmerCounts[currentKmer]++;
+    }
+
+    windowKmers[windowPosition] = currentKmer;
+  }
+
+  int numKmers = validBaseCount + 1;
+
+  if (validBaseCount >= windowSize) {
+    return (200.0 * maxScore) / (windowSize * (windowSize-1));
+  } else if (numKmers > 1) {
+    return (200.0 * currentScore) / (validBaseCount * (validBaseCount+1));
+  } else {
+    return 0.0;
+  }
+}
+
 void mgsr::ThreadsManager::initializeQueryData(
   const std::string& readPath1,
   const std::string& readPath2,
@@ -1679,6 +1745,7 @@ void mgsr::ThreadsManager::initializeQueryData(
   const std::string& ampliconDepthPath,
   double maskReadsRelativeFrequency,
   double maskSeedsRelativeFrequency,
+  double dustThreshold,
   bool fast_mode
 ) {
   std::cerr << "Processing query reads... k=" << k << ", s=" << s << ", l=" << l << ", t=" << t << ", openSyncmer=" << openSyncmer << std::endl;
@@ -1686,10 +1753,38 @@ void mgsr::ThreadsManager::initializeQueryData(
   std::vector<std::vector<std::string>> readSequencesByGroup;
   std::vector<std::vector<std::string>> readNamesByGroup;
   extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup, readNamesByGroup);
+
   size_t rawReadsSize = 0;
   for (const auto& groupReads : readSequencesByGroup) {
     rawReadsSize += groupReads.size();
   }
+
+  std::vector<std::vector<double>> readDustByGroup;
+  if (dustThreshold < 100) {
+    readDustByGroup.resize(readSequencesByGroup.size());
+    for (size_t i = 0; i < readSequencesByGroup.size(); ++i) {
+      readDustByGroup[i].resize(readSequencesByGroup[i].size());
+    }
+    
+    std::vector<std::pair<size_t, size_t>> indices;
+    indices.reserve(rawReadsSize);
+    for (size_t i = 0; i < readSequencesByGroup.size(); ++i) {
+      for (size_t j = 0; j < readSequencesByGroup[i].size(); ++j) {
+        indices.emplace_back(i, j);
+      }
+    }
+    
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, indices.size()),
+      [&](const tbb::blocked_range<size_t>& range) {
+        for (size_t k = range.begin(); k != range.end(); ++k) {
+          auto [i, j] = indices[k];
+          readDustByGroup[i][j] = mgsr::getDust(readSequencesByGroup[i][j], 64);
+        }
+      });
+  }
+
+
+  size_t numLowComplexityRawReads = 0;
   size_t originalReadsSize = 0;
   size_t numMaskReads = 0;
   size_t numMaskSeeds = 0;
@@ -1699,9 +1794,17 @@ void mgsr::ThreadsManager::initializeQueryData(
   size_t curReadIndex = 0;
   for (size_t groupId = 0; groupId < readSequencesByGroup.size(); ++groupId) {
     const auto& readNames = readNamesByGroup[groupId];
-    for (size_t i = 0; i < readNames.size(); ++i) {
-      indicesToNamesOut << curReadIndex << "\t" << readNames[i] << "\n";
-      ++curReadIndex;
+    if (dustThreshold == 100) {
+      for (size_t i = 0; i < readNames.size(); ++i) {
+        indicesToNamesOut << curReadIndex << "\t" << readNames[i] << "\n";
+        ++curReadIndex;
+      }
+    } else {
+      const auto& readDust = readDustByGroup[groupId];
+      for (size_t i = 0; i < readNames.size(); ++i) {
+        indicesToNamesOut << curReadIndex << "\t" << readNames[i] << "\t" << readDust[i] << "\t" << (readDust[i] <= dustThreshold ? "1" : "0") << "\n";
+        ++curReadIndex;
+      }
     }
   }
   indicesToNamesOut.close();
@@ -1714,12 +1817,19 @@ void mgsr::ThreadsManager::initializeQueryData(
     auto& curReads = readsByGroup[groupId];
     auto& curReadSeedmersDuplicatesIndex = readSeedmersDuplicatesIndexByGroup[groupId];
     const auto& readSequences = readSequencesByGroup[groupId];
+    const auto& readDust = dustThreshold < 100 ? readDustByGroup[groupId] : std::vector<double>();
     if (readSequences.empty()) continue;
     std::unordered_map<std::string_view, std::vector<size_t>> seqToIndex;
     for (size_t i = 0; i < readSequences.size(); ++i) {
-      seqToIndex[readSequences[i]].push_back(curSeqIndex);
+      double curDust = dustThreshold < 100 ? readDust[i] : 0;
+      if (curDust == 0 || curDust <= dustThreshold) {
+        seqToIndex[readSequences[i]].push_back(curSeqIndex);
+      } else {
+        numLowComplexityRawReads++;
+      }
       ++curSeqIndex;
     }
+    if (seqToIndex.empty()) continue;
     std::vector<std::pair<std::string_view, std::vector<size_t>>> seqToIndexVec(seqToIndex.size());
     size_t seqToIndexVecIndex = 0;
     for (auto& [seq, index] : seqToIndex) {
@@ -2087,7 +2197,8 @@ void mgsr::ThreadsManager::initializeQueryData(
   numThreads = threadsToUse;
   liteTree->numThreads = threadsToUse;
 
-  std::cerr << "Collapsed " << rawReadsSize << " raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
+  std::cerr << "Discarded " << numLowComplexityRawReads << " low complexity raw reads" << std::endl;
+  std::cerr << "Collapsed " << rawReadsSize - numLowComplexityRawReads << " filtered raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
   if (maskReads > 0 || maskReadsRelativeFrequency > 0) {
     std::cerr << "Mask-reads " << (maskReads > 0 ? maskReads : maskReadsRelativeFrequency) << " turned on: " << numMaskReads << " reads containing low coverage kminmers will be skipped during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;

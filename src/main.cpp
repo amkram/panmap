@@ -751,6 +751,7 @@ int main(int argc, char *argv[]) {
         ("mgsr-t", po::value<int>()->default_value(0), "Offset for syncmer selection")
         ("mgsr-open", "Use open syncmers")
         ("no-progress", "Disable progress bars")
+        ("dust", po::value<double>()->default_value(100), "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")
         ("discard", po::value<double>()->default_value(0.5), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
         ("filter-and-assign", "Filter and assign reads to nodes without running EM")
         ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
@@ -1169,7 +1170,13 @@ int main(int argc, char *argv[]) {
       mgsr::ThreadsManager threadsManager(&liteTree, prefix, numThreads, maskReads, progressBar, lowMemory);
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
-      threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency);
+
+      double dust_threshold = vm["dust"].as<double>();
+      if (dust_threshold > 100) {
+        std::cerr << "Error: --dust must be <= 100" << std::endl;
+        exit(1);
+      }
+      threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency, dust_threshold);
 
 
       size_t overlap_coefficients_threshold = vm["overlap-coefficients"].as<size_t>();
@@ -1207,7 +1214,6 @@ int main(int argc, char *argv[]) {
       // of << collapsedNewick;
       // of.close();
 
-      // liteTree.collapseEmptyNodes(true);
 
 
       if (vm.count("read-seed-scores")) {
