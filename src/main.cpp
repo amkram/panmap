@@ -1488,10 +1488,14 @@ int main(int argc, char *argv[]) {
       abundanceOutput.close();
 
       std::vector<std::vector<size_t>> assignedReadsIndices(indices.size());
+      std::vector<size_t> readIndexOffset(threadsManager.reads.size(), 0);
+      for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+        readIndexOffset[i] = i;
+      }
       for (size_t i = 0; i < indices.size(); ++i) {
         size_t index = indices[i];
         const auto& nodeId = squareEM.nodes[index];
-        auto curNodeScores = threadsManager.getScoresAtNode(nodeId);
+        auto curNodeScores = threadsManager.getScoresAtNode(nodeId, readIndexOffset);
         for (size_t j = 0; j < curNodeScores.size(); ++j) {
           const auto& curRead = threadsManager.reads[j];
           if (curRead.maxScore != 0 && curNodeScores[j] == curRead.maxScore) {

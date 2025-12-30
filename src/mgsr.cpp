@@ -6386,78 +6386,6 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   }
 
 
-  if (liteTree->debugNodeID != "") {
-    const auto& debugNodeID = liteTree->debugNodeID;
-    std::ofstream debugNodeEPPReadsInfo("debug_node_epp_reads_info.tsv");
-    std::vector<uint32_t> debugNodeScore = getScoresAtNode(debugNodeID);
-    uint32_t smallestEPP = std::numeric_limits<uint32_t>::max();
-    for (size_t i = 0; i < reads.size(); ++i) {
-      const auto& curRead = reads[i];
-      if (curRead.maxScore == 0) continue;
-      if (debugNodeScore[i] == curRead.maxScore) {
-        debugNodeEPPReadsInfo << i << "\t" << readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << readWEPPWeights[i] << std::endl;
-        if (curRead.epp < smallestEPP) {
-          smallestEPP = curRead.epp;
-        }
-      }
-    }
-    debugNodeEPPReadsInfo.close();
-
-    std::vector<uint32_t> minEPPReads;
-    for (size_t i = 0; i < reads.size(); ++i) {
-      const auto& curRead = reads[i];
-      if (curRead.maxScore == 0) continue;
-      if (debugNodeScore[i] == curRead.maxScore && curRead.epp == smallestEPP) {
-        minEPPReads.push_back(i);
-      }
-    }
-
-    std::unordered_map<mgsr::MgsrLiteNode*, std::unordered_set<uint32_t>> nodeToMinEPPReads;
-    for (const auto& readIdx : minEPPReads) {
-      const auto& curRead = reads[readIdx];
-      for (const auto& eppRange : curRead.eppNodeRanges) {
-        auto curNode = eppRange.startNode;
-        const auto endNode = eppRange.endNode;
-        const bool endNodeInclusive = eppRange.endNodeInclusive;
-        while (true) {
-          if (!endNodeInclusive && curNode == endNode) {
-            break;
-          }
-
-          if (selectedNodes.find(curNode) == selectedNodes.end()) {
-            nodeToMinEPPReads[curNode].insert(readIdx);
-          }
-
-          if (endNodeInclusive && curNode == endNode) {
-            break;
-          }
-
-          curNode = curNode->nextNodeDfsCollapsed;
-        }
-      }
-    }
-
-    std::ofstream minEPPNodes("debug_node_min_epp_nodes.tsv");
-    minEPPNodes << "NodeID";
-    for (const auto& readIdx : minEPPReads) {
-      minEPPNodes << "\tRead_" << readIdx;
-    }
-    minEPPNodes << std::endl;
-    for (const auto& [node, readSet] : nodeToMinEPPReads) {
-      minEPPNodes << node->identifier;
-      for (const auto& readIdx : minEPPReads) {
-        if (readSet.find(readIdx) != readSet.end()) {
-          minEPPNodes << "\t1";
-        } else {
-          minEPPNodes << "\t0";
-        }
-      }
-      minEPPNodes << std::endl;
-    }
-    minEPPNodes.close();
-  }
-
-
   std::unordered_set<uint32_t> activeReads;
   activeReads.reserve(reads.size());
   for (size_t i = 0; i < reads.size(); ++i) {
@@ -6484,6 +6412,10 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     }
   }
 
+  std::vector<size_t> readIndexOffset(this->reads.size(), 0);
+  for (size_t i = 0; i < this->reads.size(); ++i) {
+    readIndexOffset[i] = i;
+  }
 
   selectedNodes.clear();
   while (true) {
@@ -6497,7 +6429,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     if (selectedNodes.size() >= 300) break;
 
 
-    std::vector<uint32_t> curTopNodeScore = getScoresAtNode(topWEPPNode->identifier);
+    std::vector<uint32_t> curTopNodeScore = getScoresAtNode(topWEPPNode->identifier, readIndexOffset);
 
     std::vector<uint32_t> readsToSubtract;
     for (size_t i = 0; i < reads.size(); ++i) {
@@ -7558,17 +7490,13 @@ void mgsr::ThreadsManager::computeKminmerCoverage() {
 }
 
 
-std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId) const {
+std::vector<uint32_t> mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, const std::vector<size_t>& readIndexOffset) const {
   std::vector<uint32_t> curNodeScores(reads.size(), 0);
-  getScoresAtNode(nodeId, curNodeScores);
+  getScoresAtNode(nodeId, curNodeScores, readIndexOffset);
   return curNodeScores;
 }
 
-void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
-  if (curNodeScores.size() != reads.size()) {
-    curNodeScores.resize(reads.size(), 0);
-  }
-
+void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores, const std::vector<size_t>& readIndexOffset) const {
   MgsrLiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
   // Get the path from root the current node
@@ -7588,13 +7516,13 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
         for (const auto& scoreDelta : curNodeThreadScoreDeltasLowMemory) {
           const auto [trailingDelta, readIndex, numTrailing, currentScoreDelta] = scoreDelta;
           if (reads[threadReadStart + readIndex].maxScore == 0) continue;
-          curNodeScores[threadReadStart + readIndex] += currentScoreDelta;
+          curNodeScores[readIndexOffset[threadReadStart + readIndex]] += currentScoreDelta;
           for (size_t i = 0; i < numTrailing; ++i) {
             int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
             // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply the trailing delta
             if (curDecodedTrailingDelta > -8) {
               if (reads[threadReadStart + readIndex + i + 1].maxScore == 0) continue;
-              curNodeScores[threadReadStart + readIndex + i + 1] += currentScoreDelta + curDecodedTrailingDelta;
+              curNodeScores[readIndexOffset[threadReadStart + readIndex + i + 1]] += currentScoreDelta + curDecodedTrailingDelta;
             }
           }
         }
@@ -7602,7 +7530,7 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
         const auto& curNodeThreadScoreDeltas = node->readScoreDeltas[threadId];
         for (const auto& scoreDelta : curNodeThreadScoreDeltas) {
           if (reads[threadReadStart + scoreDelta.readIndex].maxScore == 0) continue;
-          curNodeScores[threadReadStart + scoreDelta.readIndex] = scoreDelta.scoreDelta;
+          curNodeScores[readIndexOffset[threadReadStart + scoreDelta.readIndex]] = scoreDelta.scoreDelta;
         }
       }
     }
@@ -7667,12 +7595,22 @@ mgsr::squareEM::squareEM(
     }
   }
 
-  std::vector<std::vector<uint32_t>> scoreMatrix(probableNodes.size(), std::vector<uint32_t>(numReads, 0));
+  std::vector<size_t> readIndexOffset(numReads, 0);
+  size_t numSigReads = 0;
+  for (size_t i = 0; i < numReads; ++i) {
+    if (reads[i].maxScore > 0) {
+      readIndexOffset[i] = numSigReads;
+      ++numSigReads;
+    }
+  }
+  std::cout << "Number of significant reads: " << numSigReads << std::endl;
+
+  std::vector<std::vector<uint32_t>> scoreMatrix(probableNodes.size(), std::vector<uint32_t>(numSigReads, 0));
   tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
     const auto& range = threadRanges[threadIdx];
     for (size_t i = range.first; i < range.second; ++i) {
       auto selectedNode = probableNodes[i];
-      threadsManager.getScoresAtNode(selectedNode->identifier, scoreMatrix[i]);
+      threadsManager.getScoresAtNode(selectedNode->identifier, scoreMatrix[i], readIndexOffset);
     }
   });
   
@@ -7708,7 +7646,7 @@ mgsr::squareEM::squareEM(
   }
 
   nodes.resize(scoresToNodeIds.size());
-  probs.resize(threadsManager.numPassedReads, scoresToNodeIds.size());
+  probs.resize(numSigReads, scoresToNodeIds.size());
   std::vector<std::pair<std::vector<uint32_t>, std::vector<std::string_view>>> scoresToNodeIdsVector(scoresToNodeIds.size());
   size_t scoresToNodeIdsVecIndex = 0;
   for (auto& [scores, nodeIds] : scoresToNodeIds) {
@@ -7735,12 +7673,9 @@ mgsr::squareEM::squareEM(
     for (size_t i = range.first; i < range.second; ++i) {
     const auto& [scores, nodeIds] = scoresToNodeIdsVector[i];
     nodes[i] = nodeIds[0];
-    size_t passedReadIndex = 0;
-    for (size_t j = 0; j < numReads; ++j) {
-      if (reads[j].readType != mgsr::ReadType::PASS) continue;
-      probs(passedReadIndex, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
-        ++passedReadIndex;
-      }
+    for (size_t j = 0; j < scores.size(); ++j) {
+      probs(j, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
+    }
     }
   });
 
@@ -7754,15 +7689,13 @@ mgsr::squareEM::squareEM(
   propsSq = Eigen::VectorXd::Zero(numNodes);
   r = Eigen::VectorXd::Zero(numNodes);
   v = Eigen::VectorXd::Zero(numNodes);
-  denoms = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
-  inverseDenoms = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
-  readDuplicates = Eigen::VectorXd::Zero(threadsManager.numPassedReads);
+  denoms = Eigen::VectorXd::Zero(numSigReads);
+  inverseDenoms = Eigen::VectorXd::Zero(numSigReads);
+  readDuplicates = Eigen::VectorXd::Zero(numSigReads);
 
-  size_t passedReadIndex = 0;
   for (size_t i = 0; i < readSeedmersDuplicatesIndex.size(); ++i) {
-    if (reads[i].readType != mgsr::ReadType::PASS) continue;
-    readDuplicates(passedReadIndex) = readSeedmersDuplicatesIndex[i].size();
-    ++passedReadIndex;
+    if (reads[i].maxScore == 0) continue;
+    readDuplicates(readIndexOffset[i]) = readSeedmersDuplicatesIndex[i].size();
   }
 
   const size_t propsChunkSize = (numNodes + numThreads - 1) / numThreads;
