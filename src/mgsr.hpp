@@ -666,8 +666,8 @@ class ThreadsManager {
       double dustThreshold,
       bool fast_mode = false
     );
-    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
-    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
+    void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores, const std::vector<size_t>& readIndexOffset) const;
+    std::vector<uint32_t> getScoresAtNode(const std::string& nodeId, const std::vector<size_t>& readIndexOffset) const;
     void printStats();
 
     void correctNodeScoresAfterSelection(
