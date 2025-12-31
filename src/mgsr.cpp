@@ -672,7 +672,97 @@ void mgsr::MgsrLiteTree::loadTrueAbundances(const std::string& trueAbundanceFile
   infile.close();
 }
 
-void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes) {
+
+void mgsr::MgsrLiteTree::fillFamilyIndices(size_t maximumFamilies) {
+  if (maximumFamilies == 0) return;
+
+  std::stack<MgsrLiteNode*> traversal;
+  std::stack<MgsrLiteNode*> postOrder;
+
+  traversal.push(root);
+  while (!traversal.empty()) {
+    MgsrLiteNode* node = traversal.top();
+    traversal.pop();
+    postOrder.push(node);
+
+    for (MgsrLiteNode* child : node->children)
+      traversal.push(child);
+  }
+
+  while (!postOrder.empty()) {
+    MgsrLiteNode* node = postOrder.top();
+    postOrder.pop();
+
+    bool childOverMaximum = false;
+    for (MgsrLiteNode* child : node->children) {
+      if (child->overMaximumFamilies) {
+        childOverMaximum = true;
+        break;
+      }
+    }
+
+    if (childOverMaximum) {
+      node->overMaximumFamilies = true;
+      continue;
+    }
+
+    for (MgsrLiteNode* child : node->children)
+      node->familyIndices.insert(
+        child->familyIndices.begin(),
+        child->familyIndices.end()
+      );
+
+    if (node->familyIndices.size() > maximumFamilies) {
+      node->overMaximumFamilies = true;
+      node->familyIndices.clear();
+    }
+  }
+}
+
+void mgsr::MgsrLiteTree::initialize(
+  MGSRIndex::Reader indexReader,
+  const std::string& taxonomicMetadataPath,
+  size_t maximumFamilies,
+  size_t numThreads,
+  bool lowMemory,
+  bool collapseIdenticalNodes
+) {
+  std::unordered_map<std::string, int> sampleToFamilyIndex;
+  if (taxonomicMetadataPath != "") {
+    std::cerr << "Starting to read in taxonomic metadata from " << taxonomicMetadataPath << std::endl;
+    std::ifstream infile(taxonomicMetadataPath);
+    if (!infile.is_open()) {
+      std::cerr << "Error opening taxonomic metadata file: " << taxonomicMetadataPath << std::endl;
+      std::exit(1);
+    }
+    std::string line;
+    std::getline(infile, line);
+    while (std::getline(infile, line)) {
+      std::istringstream iss(line);
+      std::string sampleId;
+      iss >> sampleId;
+      
+      std::string token;
+      for (int i = 0; i < 3; ++i)
+        iss >> token;
+      
+      std::string family;
+      iss >> family;
+
+      if (family == ".") continue;
+      
+      if (familyToIndex.find(family) == familyToIndex.end()) {
+        familyToIndex[family] = families.size();
+        families.push_back(family);
+      }
+      
+      sampleToFamilyIndex[sampleId] = familyToIndex[family];
+    }
+    infile.close();
+
+    std::cerr << "Number of unique families: " << families.size() << std::endl;
+  }
+
   std::cerr << "Starting to initialize MgsrLiteTree from index..." << std::endl;
   this->numThreads = numThreads;
   this->lowMemory = lowMemory;
@@ -763,6 +853,12 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
     auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new MgsrLiteNode(nodeIdentifier, nullptr, {}, i));
     if (inserted) {
       it->second->initializeMutationData(seedDeltas[i], gapRunDeltas[i], invertedBlocks[i], seedInfos, numThreads, lowMemory);
+      if (taxonomicMetadataPath != "") {
+        auto familyIndexIt = sampleToFamilyIndex.find(nodeIdentifier);
+        if (familyIndexIt != sampleToFamilyIndex.end()) {
+          it->second->familyIndices.insert(familyIndexIt->second);
+        }
+      }
       it->second->sumWEPPScoresByThread.resize(numThreads);
       it->second->sumRawScoresByThread.resize(numThreads, 0);
       it->second->sumEPPRawScoresByThread.resize(numThreads, 0);
@@ -793,6 +889,10 @@ void mgsr::MgsrLiteTree::initialize(MGSRIndex::Reader indexReader, size_t numThr
   root = allLiteNodes[liteNodesReader[0].getId()];
   lastNodeDFS = allLiteNodes[liteNodesReader[liteNodesReader.size() - 1].getId()];
   lastNodeDFSCollapsed = lastNodeDFS;
+
+  if (taxonomicMetadataPath != "") {
+    fillFamilyIndices(maximumFamilies);
+  }
 
   if (collapseIdenticalNodes) {
     for (auto node : emptyNodesToRemove) {
@@ -6194,8 +6294,9 @@ void mgsr::mgsrPlacer::assignReadsHelper(
   for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
     const auto& curRead = reads[readIndex];
     auto curMaxScore = curRead.maxScore;
+    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
 
-    if (curMaxScore == 0) continue;
+    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
 
     auto readIt = mpsReadSet.find(readIndex);
     if (scoreDelta == curMaxScore) {
@@ -6229,12 +6330,42 @@ void mgsr::mgsrPlacer::assignReadsHelper(
   }
 }
 
-void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode) {
+void mgsr::mgsrPlacer::checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies) {
+  const auto& curNodeScoreDeltas = node->readScoreDeltas[threadId];
+  
+  for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
+    auto& curRead = reads[readIndex];
+    auto curMaxScore = curRead.maxScore;
+    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+
+
+    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+
+    if (scoreDelta == curMaxScore) {
+      bool exceeded = node->overMaximumFamilies;
+      if (!exceeded) {
+        curRead.familyIndices.insert(node->familyIndices.begin(), node->familyIndices.end());
+        exceeded = curRead.familyIndices.size() > maximumFamilies;
+      }
+      if (exceeded) {
+        curRead.overMaximumFamilies = true;
+        curRead.familyIndices.clear();
+      }
+    }
+  }
+
+  for (auto child : node->collapsedChildren) {
+    checkFamilyIndices(child, maximumFamilies);
+  }
+}
+
+void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies) {
   std::unordered_set<size_t> mpsReadSet;
+  checkFamilyIndices(liteTree->root, maximumFamilies);
   assignReadsHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
 }
 
-void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode) {
+void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies) {
   std::vector<std::unordered_map<MgsrLiteNode*, std::vector<size_t>>> assignedReadsByNodePerThread(threadRanges.size());
 
   // Assign reads per thread
@@ -6246,7 +6377,7 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
       mgsr::mgsrPlacer curThreadPlacer(liteTree, *this, lowMemory, i);
       curThreadPlacer.reads = curThreadReads;
 
-      curThreadPlacer.assignReads(assignedReadsByNodePerThread[i]);
+      curThreadPlacer.assignReads(assignedReadsByNodePerThread[i], maximumFamilies);
     }
   });
 

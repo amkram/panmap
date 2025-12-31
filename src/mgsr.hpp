@@ -281,6 +281,9 @@ public:
 
   size_t ocRank = std::numeric_limits<size_t>::max();
 
+  std::unordered_set<int> familyIndices;
+  bool overMaximumFamilies = false;
+
   std::vector<KahanSum> sumWEPPScoresByThread;
   std::vector<size_t> sumRawScoresByThread; 
   std::vector<size_t> sumEPPRawScoresByThread;
@@ -343,6 +346,9 @@ public:
   std::unordered_set<MgsrLiteNode*> detachedNodes;
   std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
 
+  std::vector<std::string> families;
+  std::unordered_map<std::string, int> familyToIndex;
+
   std::string debugNodeID = "";
   std::unordered_map<std::string, double> trueAbundances;
   
@@ -366,11 +372,13 @@ public:
   }
   
   void cleanup();
-  void initialize(MGSRIndex::Reader indexReader, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
+  void initialize(MGSRIndex::Reader indexReader, const std::string& taxonomicMetadataPath, size_t maximumFamilies, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
   void collapseEmptyNodes(bool ignoreGapRunDeltas);
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
+
+  void fillFamilyIndices(size_t maximumFamilies);
 
   std::unordered_map<size_t, int32_t> getSeedsAtNode(MgsrLiteNode* node, bool useCollapsed=true) const;
 
@@ -444,6 +452,10 @@ class Read {
     ReadType readType = ReadType::PASS;
     int32_t maxScore = 0;
     bool maxScoreRev;
+
+    std::unordered_set<int> familyIndices;
+    bool overMaximumFamilies = false;
+
     int32_t epp = 0;
     int32_t numForwardMatching = 0;
     int32_t numReverseMatching = 0;
@@ -705,7 +717,7 @@ class ThreadsManager {
       size_t& dfsIndex
     );
 
-    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode);
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies);
 
 };
 
@@ -881,12 +893,13 @@ class mgsrPlacer {
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
 
-    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode);
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies);
     void assignReadsHelper(
       mgsr::MgsrLiteNode* node,
       std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
       std::unordered_set<size_t>& mpsReadSet
     );
+    void checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies);
 
 
 
