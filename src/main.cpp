@@ -754,6 +754,8 @@ int main(int argc, char *argv[]) {
         ("dust", po::value<double>()->default_value(100), "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")
         ("discard", po::value<double>()->default_value(0.5), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
         ("filter-and-assign", "Filter and assign reads to nodes without running EM")
+        ("taxonomic-metadata", po::value<std::string>(), "Path to taxonomic metadata TSV file")
+        ("maximum-families", po::value<size_t>()->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided")
         ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
         ("read-scores", "Use read scores to score nodes")
         ("seed-scores", "Use seed scores instead of read scores to score nodes")
@@ -998,7 +1000,7 @@ int main(int argc, char *argv[]) {
       bool lowMemory = vm.count("low-memory") > 0;
       
       mgsr::MgsrLiteTree T;
-      T.initialize(indexReader, numThreads, lowMemory, true);
+      T.initialize(indexReader, "", 0, numThreads, lowMemory, true);
 
       if (vm.count("dump-node-cluster") || vm.count("dump-node-cluster-leaves")) {
         if (!vm.count("mgsr-index")) {
@@ -1142,6 +1144,16 @@ int main(int argc, char *argv[]) {
 
     if (vm.count("mgsr-index") && !reads1.empty()) {
       std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
+      std::string taxonomicMetadataPath = vm.count("taxonomic-metadata") ? vm["taxonomic-metadata"].as<std::string>() : "";
+      size_t maximumFamilies = taxonomicMetadataPath == "" ? 0 : vm["maximum-families"].as<size_t>();
+      
+      bool filterAndAssign = vm.count("filter-and-assign") > 0;
+      uint32_t maskReads = vm.count("mask-reads") ? vm["mask-reads"].as<uint32_t>() : 0;
+      uint32_t maskSeeds = vm.count("mask-reads") ? vm["mask-seeds"].as<uint32_t>() : 0;
+      std::string ampliconDepthPath = vm.count("amplicon-depth") ? vm["amplicon-depth"].as<std::string>() : "";
+      double maskReadsRelativeFrequency = vm["mask-reads-relative-frequency"].as<double>();
+      double maskSeedsRelativeFrequency = vm["mask-seeds-relative-frequency"].as<double>();
+      
       int fd = mgsr::open_file(mgsr_index_path);
       ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
       ::capnp::PackedFdMessageReader reader(fd, readerOptions);
@@ -1155,15 +1167,11 @@ int main(int argc, char *argv[]) {
         std::string trueAbundancePath = vm["true-abundance"].as<std::string>();
         liteTree.loadTrueAbundances(trueAbundancePath);
       }
-      liteTree.initialize(indexReader, numThreads, lowMemory, true);
+      liteTree.initialize(indexReader, taxonomicMetadataPath, maximumFamilies, numThreads, lowMemory, true);
+
       liteTree.debugNodeID = vm["debug-node-id"].as<std::string>();
 
-      bool filterAndAssign = vm.count("filter-and-assign") > 0;
-      uint32_t maskReads = vm.count("mask-reads") ? vm["mask-reads"].as<uint32_t>() : 0;
-      uint32_t maskSeeds = vm.count("mask-reads") ? vm["mask-seeds"].as<uint32_t>() : 0;
-      std::string ampliconDepthPath = vm.count("amplicon-depth") ? vm["amplicon-depth"].as<std::string>() : "";
-      double maskReadsRelativeFrequency = vm["mask-reads-relative-frequency"].as<double>();
-      double maskSeedsRelativeFrequency = vm["mask-seeds-relative-frequency"].as<double>();
+
       
       bool progressBar = true;
       if (vm.count("no-progress")) progressBar = false;
@@ -1339,26 +1347,10 @@ int main(int argc, char *argv[]) {
         threadsManager.scoreNodesMultithreaded();
       }
 
-      std::ofstream readScoresOut(prefix + ".read_scores_info.tsv");
-      readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tRawReadsIndices" << std::endl;
-      for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
-        const auto& curRead = threadsManager.reads[i];
-        if (curRead.maxScore == 0) continue;
-        readScoresOut << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
-        for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
-          if (j == 0) {
-            readScoresOut << threadsManager.readSeedmersDuplicatesIndex[i][j];
-          } else {
-            readScoresOut << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
-          }
-        }
-        readScoresOut << std::endl;
-      }
-      readScoresOut.close();
 
       if (filterAndAssign) {
         std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
-        threadsManager.assignReads(assignedReadsByNode);
+        threadsManager.assignReads(assignedReadsByNode, maximumFamilies);
 
         std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
         for (auto& [node, readIndices] : assignedReadsByNode) {
@@ -1377,6 +1369,26 @@ int main(int argc, char *argv[]) {
           assignedReadsOut << "\n";
         }
         assignedReadsOut.close();
+      }
+
+      std::ofstream readScoresOut(prefix + ".read_scores_info.tsv");
+      readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tOverMaximumFamilies\tRawReadsIndices" << std::endl;
+      for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+        const auto& curRead = threadsManager.reads[i];
+        if (curRead.maxScore == 0) continue;
+        readScoresOut << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << curRead.overMaximumFamilies << "\t";
+        for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
+          if (j == 0) {
+            readScoresOut << threadsManager.readSeedmersDuplicatesIndex[i][j];
+          } else {
+            readScoresOut << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+          }
+        }
+        readScoresOut << std::endl;
+      }
+      readScoresOut.close();
+
+      if (filterAndAssign) {
         exit(0);
       }
 
