@@ -129,8 +129,8 @@ struct RSVPanmanFixture {
     std::string truthNodeId;
     
     RSVPanmanFixture() {
-        panmanPath = "data/rsv_4K.panman";
-        truthGenomePath = "data/MZ515733.1.fa";
+        panmanPath = "src/test/data/rsv_4K.panman";
+        truthGenomePath = "src/test/data/MZ515733.1.fa";
         truthNodeId = "MZ515733.1";
         
         // Load the panman
@@ -291,7 +291,7 @@ BOOST_AUTO_TEST_CASE(test_index_genome_seeds_match_direct_extraction) {
     const int k = 15;
     const int s = 8;
     const int l = 1;
-    std::string indexPath = "data/test_seed_validation.pmi";
+    std::string indexPath = "/tmp/test_seed_validation.pmi";
     
     // Build index
     index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
@@ -421,7 +421,7 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
     const int l = 1;
     const int readLength = 150;
     const int numReads = 200;
-    std::string indexPath = "data/test_placement_validation.pmi";
+    std::string indexPath = "/tmp/test_placement_validation.pmi";
     
     // ========================================================================
     // STEP 1: Generate reads and extract seeds
@@ -675,7 +675,7 @@ BOOST_AUTO_TEST_CASE(test_reads_from_truth_genome_place_to_truth_node) {
     const int l = 1;
     const int readLength = 150;
     const int numReads = 100;
-    std::string indexPath = "data/test_placement_accuracy.pmi";
+    std::string indexPath = "/tmp/test_placement_accuracy.pmi";
     
     // Generate reads from truth genome
     auto reads = generateReads(truthGenome, readLength, numReads, 999);
@@ -830,7 +830,7 @@ BOOST_AUTO_TEST_CASE(test_incremental_traversal_matches_direct_at_every_node) {
     const int l = 1;
     const int readLength = 150;
     const int numReads = 100;
-    std::string indexPath = "data/test_delta_validation.pmi";
+    std::string indexPath = "/tmp/test_delta_validation.pmi";
     
     // Generate reads from truth genome
     auto reads = generateReads(truthGenome, readLength, numReads, 777);
@@ -1016,7 +1016,7 @@ BOOST_AUTO_TEST_CASE(test_index_build_and_parameters) {
 
 BOOST_AUTO_TEST_CASE(test_index_write_and_read) {
     // Build, write, and read back an index
-    std::string indexPath = "data/test_rsv_index.pmi";
+    std::string indexPath = "/tmp/test_rsv_index.pmi";
     
     int k = 15;
     int s = 8;
@@ -1080,7 +1080,7 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_FIXTURE_TEST_SUITE(PlacementIntegrationTests, RSVPanmanFixture)
 
 BOOST_AUTO_TEST_CASE(test_lite_tree_initialization) {
-    std::string indexPath = "data/test_rsv_lite.pmi";
+    std::string indexPath = "/tmp/test_rsv_lite.pmi";
     
     // Build and write index
     {
@@ -1131,7 +1131,7 @@ BOOST_AUTO_TEST_CASE(test_lite_tree_initialization) {
 }
 
 BOOST_AUTO_TEST_CASE(test_resolve_node_id) {
-    std::string indexPath = "data/test_rsv_resolve.pmi";
+    std::string indexPath = "/tmp/test_rsv_resolve.pmi";
     
     {
         index_single_mode::IndexBuilder builder(T, 15, 8, 0, 1, false);
@@ -1186,7 +1186,7 @@ BOOST_AUTO_TEST_CASE(test_index_dfs_state_matches_genome) {
     const int k = 15;
     const int s = 8;
     const int l = 1;
-    std::string indexPath = "data/test_index_dfs_state.pmi";
+    std::string indexPath = "/tmp/test_index_dfs_state.pmi";
     
     // Build index
     index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
@@ -1322,7 +1322,7 @@ BOOST_AUTO_TEST_CASE(test_placement_bfs_metrics_match_truth) {
     const int l = 1;
     const int readLength = 150;
     const int numReads = 100;
-    std::string indexPath = "data/test_placement_bfs.pmi";
+    std::string indexPath = "/tmp/test_placement_bfs.pmi";
     
     // Build index
     index_single_mode::IndexBuilder builder(T, k, s, 0, l, false);
@@ -1449,7 +1449,7 @@ BOOST_AUTO_TEST_CASE(test_placement_bfs_metrics_match_truth) {
  * Test offset structure integrity
  */
 BOOST_AUTO_TEST_CASE(test_node_change_offsets_structure) {
-    std::string indexPath = "data/test_offsets_structure.pmi";
+    std::string indexPath = "/tmp/test_offsets_structure.pmi";
     
     index_single_mode::IndexBuilder builder(T, 15, 8, 0, 1, false);
     builder.buildIndex();
@@ -1500,7 +1500,7 @@ BOOST_AUTO_TEST_CASE(test_node_change_offsets_structure) {
 BOOST_AUTO_TEST_CASE(test_seed_change_parent_child_consistency) {
     const int k = 15;
     const int s = 8;
-    std::string indexPath = "data/test_parent_child.pmi";
+    std::string indexPath = "/tmp/test_parent_child.pmi";
     
     index_single_mode::IndexBuilder builder(T, k, s, 0, 1, false);
     builder.buildIndex();

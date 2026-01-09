@@ -63,3 +63,14 @@ workflow_output
 src/3rdparty/minimap2/minimap2
 *.pico
 src/3rdparty/samtools/htslib-1.20/test/*
+src/3rdparty/samtools/htslib-1.20/annot-tsv
+src/3rdparty/samtools/htslib-1.20/bgzip
+src/3rdparty/samtools/htslib-1.20/config.log
+src/3rdparty/samtools/htslib-1.20/config.mk
+src/3rdparty/samtools/htslib-1.20/config.status
+src/3rdparty/samtools/htslib-1.20/config_vars.h
+src/3rdparty/samtools/htslib-1.20/hts-object-files
+src/3rdparty/samtools/htslib-1.20/htsfile
+src/3rdparty/samtools/htslib-1.20/htslib-uninstalled.pc
+src/3rdparty/samtools/htslib-1.20/tabix
+src/3rdparty/samtools/htslib-1.20/version.h

@@ -70,6 +70,26 @@ class LiteNode {
     float hitsScore = 0.0f;
     float rawSeedMatchScore = 0.0f;
     float jaccardPresenceScore = 0.0f;
+    float containmentScore = 0.0f;
+    float weightedContainmentScore = 0.0f;
+    float logRawScore = 0.0f;  // Log-scaled, coverage-robust metric
+    float logCosineScore = 0.0f;  // Log-scaled cosine similarity
+    float adjCosineScore = 0.0f;  // N-adjusted cosine (penalizes incomplete genomes)
+    float adjRawScore = 0.0f;     // N-adjusted RAW (penalizes incomplete genomes)
+    float idfCosineScore = 0.0f;  // IDF-weighted cosine (upweights rare seeds)
+    float covCosineScore = 0.0f;  // Coverage-weighted cosine (penalizes singletons & over-rep)
+    float capCosineScore = 0.0f;  // Capped cosine (caps read freqs at 100)
+    float capLogCosineScore = 0.0f;  // Capped log cosine (caps read freqs at 100 before log)
+    float sigCosineScore = 0.0f;  // Sigmoid-scaled cosine (adaptive to median seed freq)
+    
+    // Metric components for diagnostics (only populated when topPlacements > 0)
+    int64_t jaccardNumerator = 0;
+    int64_t weightedJaccardNumerator = 0;
+    double cosineNumerator = 0.0;
+    size_t presenceIntersectionCount = 0;
+    double genomeMagnitudeSquared = 0.0;
+    size_t genomeUniqueSeedCount = 0;
+    int64_t genomeTotalSeedFrequency = 0;
 };
 
 class LiteTree {

@@ -342,5 +342,6 @@ void LiteTree::initialize(::LiteTree::Reader liteTreeReader) {
 
   root = allLiteNodes[liteNodesReader[0].getId()];
 }
+
 //end of namespace panmapUtils
 }
