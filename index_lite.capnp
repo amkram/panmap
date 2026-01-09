@@ -41,4 +41,10 @@ struct LiteIndex {
   nodeChangeOffsets @14 :List(UInt32);  # Size = numNodes + 1
   seedChangeParentCounts @15 :List(Int64);
   seedChangeChildCounts @16 :List(Int64);
+  
+  # IDF (Inverse Document Frequency) data for seed weighting
+  # Seeds that appear in fewer genomes are more informative
+  totalLeafGenomes @17 :UInt32;           # Total number of leaf genomes (N for IDF)
+  idfSeedHashes @18 :List(UInt64);        # Unique seed hashes (sorted)
+  idfGenomeCounts @19 :List(UInt32);      # Number of genomes containing each seed (parallel array)
 }

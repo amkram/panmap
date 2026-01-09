@@ -53,6 +53,28 @@ inline bool isHomopolymer(std::string_view kmer) {
                        [firstBaseLower](char c){ return std::tolower(c) == firstBaseLower; });
 }
 
+// Helper to check if a k-mer is low-complexity (dominated by one or two bases)
+// Returns true if >80% of the k-mer is a single nucleotide, or >90% is two nucleotides
+inline bool isLowComplexity(std::string_view kmer, double threshold = 0.80) {
+    if (kmer.length() < 2) return true;
+    
+    int counts[4] = {0, 0, 0, 0};  // A, C, G, T
+    for (char c : kmer) {
+        switch (std::tolower(c)) {
+            case 'a': counts[0]++; break;
+            case 'c': counts[1]++; break;
+            case 'g': counts[2]++; break;
+            case 't': counts[3]++; break;
+        }
+    }
+    
+    // Find max count
+    int maxCount = std::max({counts[0], counts[1], counts[2], counts[3]});
+    double maxFraction = static_cast<double>(maxCount) / kmer.length();
+    
+    return maxFraction >= threshold;
+}
+
 // Helper to check if a k-mer is its own reverse complement
 inline bool isReverseComplementPalindrome(std::string_view kmer) {
     if (kmer.empty()) {

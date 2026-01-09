@@ -1,0 +1,1460 @@
+from pathlib import Path
+import hashlib, os, re
+
+# ============================================================================
+# SCHEDULER OPTIMIZATION FOR LARGE DAGs
+# ============================================================================
+# With 100+ replicates × multiple parameter combos, DAG has 100K+ jobs.
+# Use greedy scheduler (faster job selection) and reduce DAG recalculation.
+# Run with: snakemake -j32 --scheduler greedy --rerun-incomplete
+# ============================================================================
+
+MEM = {
+    "rsv_4K":     {"index": 2000,  "place": 1000,  "sim": 1000},
+    "sars_20000": {"index": 8000,  "place": 4000,  "sim": 2000},
+    "tb_400":     {"index": 67000, "place": 16000, "sim": 6000},
+}
+MEM_DEFAULT = {"index": 32000, "place": 16000, "sim": 8000, "align": 4000}
+
+PANGENOMES = {
+    "rsv_4K":     {"path": "panmans/rsv_4K.panman",     "size": 15000},
+    "sars_20000": {"path": "panmans/sars_20000.panman", "size": 30000},
+    "tb_400":   {"path": "panmans/tb_400.panman",     "size": 4400000},
+}
+
+K_VALUES = config.get("k_values", [27, 35, 48, 64])
+S_VALUES = config.get("s_values", [8])
+L_VALUES = config.get("l_values", [1])
+COVERAGES = config.get("coverages", [0.5, 1, 10, 100])
+MUT_RATES = config.get("mutation_rates", [0.0001, 0.0005, 0.001])
+REPLICATES = config.get("replicates", 100)
+READ_LEN = config.get("read_length", 150)
+EXPERIMENTS = []
+
+for i, (pan, info) in enumerate(PANGENOMES.items()):
+    for k in K_VALUES:
+        for s in S_VALUES:
+            for l in L_VALUES:
+                for mut in MUT_RATES:
+                    EXPERIMENTS.append({
+                        "id": f"exp{len(EXPERIMENTS)}",
+                        "pan": pan,
+                        "path": info["path"],
+                        "size": info["size"],
+                        "k": k, "s": s, "l": l,
+                        "mut": mut,
+                        "itag": f"k{k}_s{s}_l{l}",
+                        "tag": f"k{k}_s{s}_l{l}_mut{mut}",
+                        "reads": [int(info["size"] * c / READ_LEN) for c in COVERAGES],
+                    })
+
+EXP = {e["id"]: e for e in EXPERIMENTS}
+INDEX_KEYS = list({(e["pan"], e["itag"]) for e in EXPERIMENTS})
+
+READS = [(e["id"], e["pan"], e["tag"], c, n, r)
+         for e in EXPERIMENTS
+         for c, n in zip(COVERAGES, e["reads"])
+         for r in range(REPLICATES)]
+
+def get_mem(wildcards, stage):
+    """Get memory for a pangenome stage."""
+    return MEM.get(wildcards.pan, {}).get(stage, MEM_DEFAULT.get(stage, 8000))
+
+def seed_from_str(s):
+    """Deterministic seed from string."""
+    return int(hashlib.md5(s.encode()).hexdigest()[:8], 16) % (2**31 - 1)
+
+def parse_tag(tag, key):
+    """Extract parameter from tag string."""
+    m = re.search(rf"{key}(\d+\.?\d*)", tag)
+    return m.group(1) if m else "0"
+
+OUT = Path("workflow_output")
+
+def idx_dir(pan, itag):
+    return OUT / "indexes" / pan / itag
+
+def exp_dir(eid, pan, tag):
+    return OUT / "experiments" / eid / pan / tag
+
+METRICS = ["raw", "jaccard", "cosine", "weighted_jaccard"]
+
+wildcard_constraints:
+    pan = "|".join(PANGENOMES.keys()),
+    eid = r"exp\d+",
+    rep = r"\d+",
+    cov = r"[\d.]+",
+    n = r"\d+",
+    metric = "|".join(METRICS),
+    k = "|".join(str(k) for k in K_VALUES),
+    s = "|".join(str(s) for s in S_VALUES),
+    l = "|".join(str(l) for l in L_VALUES),
+
+localrules: all, experiments_summary, clean, clean_reads
+
+rule all:
+    input:
+        # Indexes
+        expand(str(OUT / "indexes/{pan}/{itag}/index.pmi"), zip,
+               pan=[p for p,t in INDEX_KEYS], itag=[t for p,t in INDEX_KEYS]),
+        # Reports
+        expand(str(OUT / "reports/{name}.tsv"),
+               name=["experiments_summary", "placements", "accuracy"]),
+        # Plots (per-pangenome, per-metric, per-k, per-s, per-l)
+        expand(str(OUT / "plots/{pan}/{metric}/k{k}_s{s}_l{l}/accuracy_by_coverage.png"),
+               pan=PANGENOMES.keys(), metric=METRICS, k=K_VALUES, s=S_VALUES, l=L_VALUES),
+        # Runtime and memory plots (per-metric, per-k, per-s, per-l)
+        expand(str(OUT / "plots/{pan}/{metric}/k{k}_s{s}_l{l}/runtime.png"),
+               pan=PANGENOMES.keys(), metric=METRICS, k=K_VALUES, s=S_VALUES, l=L_VALUES),
+        expand(str(OUT / "plots/{pan}/{metric}/k{k}_s{s}_l{l}/memory.png"),
+               pan=PANGENOMES.keys(), metric=METRICS, k=K_VALUES, s=S_VALUES, l=L_VALUES),
+        # Runtime and memory by k (per-metric, per-s, per-l)
+        expand(str(OUT / "plots/{pan}/{metric}/s{s}_l{l}/runtime_by_k.png"),
+               pan=PANGENOMES.keys(), metric=METRICS, s=S_VALUES, l=L_VALUES),
+        expand(str(OUT / "plots/{pan}/{metric}/s{s}_l{l}/memory_by_k.png"),
+               pan=PANGENOMES.keys(), metric=METRICS, s=S_VALUES, l=L_VALUES),
+        # Index stats by k (per-pangenome, per-s, per-l)
+        expand(str(OUT / "plots/{pan}/s{s}_l{l}/index_time_by_k.png"), pan=PANGENOMES.keys(), s=S_VALUES, l=L_VALUES),
+        expand(str(OUT / "plots/{pan}/s{s}_l{l}/index_memory_by_k.png"), pan=PANGENOMES.keys(), s=S_VALUES, l=L_VALUES),
+        expand(str(OUT / "plots/{pan}/s{s}_l{l}/index_size_by_k.png"), pan=PANGENOMES.keys(), s=S_VALUES, l=L_VALUES),
+        expand(str(OUT / "plots/{pan}/s{s}_l{l}/index_seeds_by_k.png"), pan=PANGENOMES.keys(), s=S_VALUES, l=L_VALUES),
+        # Heatmaps per metric (aggregated across k, s, l)
+        expand(str(OUT / "plots/{pan}/{metric}/accuracy_heatmap.png"),
+               pan=PANGENOMES.keys(), metric=METRICS),
+        # Metric comparison (all metrics in one plot)
+        expand(str(OUT / "plots/{pan}/metric_comparison.png"), pan=PANGENOMES.keys()),
+
+rule index:
+    """Build k-mer index for a pangenome with specific parameters."""
+    input:
+        bin = "build/bin/panmap",
+        pan = lambda wc: PANGENOMES[wc.pan]["path"],
+    output:
+        idx = OUT / "indexes/{pan}/{itag}/index.pmi",
+        mm  = OUT / "indexes/{pan}/{itag}/{pan}.panman.mm",
+        log = OUT / "indexes/{pan}/{itag}/time.log",
+        out = OUT / "indexes/{pan}/{itag}/panmap.log",
+    params:
+        k = lambda wc: parse_tag(wc.itag, "k"),
+        s = lambda wc: parse_tag(wc.itag, "s"),
+        l = lambda wc: parse_tag(wc.itag, "l"),
+    threads: 1
+    priority: 100  # Highest - must complete before simulations
+    resources:
+        mem_mb = lambda wc: get_mem(wc, "index"),
+        # Named resources for per-pangenome concurrency control
+        index_rsv_4K = lambda wc: 1 if wc.pan == "rsv_4K" else 0,
+        index_sars_20000 = lambda wc: 1 if wc.pan == "sars_20000" else 0,
+        index_tb_400 = lambda wc: 1 if wc.pan == "tb_400" else 0,
+    shell:
+        """
+        mkdir -p $(dirname {output.idx})
+        TMP=$(mktemp -d) && trap "rm -rf $TMP" EXIT
+        /usr/bin/time -v {input.bin} {input.pan} \
+            -k {params.k} -s {params.s} -l {params.l} \
+            -i "$TMP/idx.pmi" --stop index -f > {output.out} 2> {output.log}
+        mv "$TMP/idx.pmi" {output.idx}
+        cp {input.pan}.mm {output.mm} 2>/dev/null || touch {output.mm}
+        """
+
+rule dump_random_node:
+    """Extract a random reference node from the pangenome."""
+    input:
+        bin = "build/bin/panmap",
+        pan = lambda wc: PANGENOMES[wc.pan]["path"],
+    output:
+        fa = OUT / "random_nodes/{pan}/rep{rep}/node.fa",
+    params:
+        seed = lambda wc: seed_from_str(f"{wc.pan}_rep{wc.rep}"),
+    threads: 1
+    priority: 50  # High - unblocks simulations
+    resources:
+        mem_mb = lambda wc: get_mem(wc, "sim"),
+        dump_rsv_4K = lambda wc: 1 if wc.pan == "rsv_4K" else 0,
+        dump_sars_20000 = lambda wc: 1 if wc.pan == "sars_20000" else 0,
+    shell:
+        """
+        set -euo pipefail
+        OUTDIR="$(realpath $(dirname {output.fa}))"
+        mkdir -p "$OUTDIR"
+        BIN="$(realpath {input.bin})"
+        PAN="$(realpath {input.pan})"
+        TMP=$(mktemp -d) && trap "rm -rf $TMP" EXIT
+        cd "$TMP"
+        cp "$PAN" t.panman
+        "$BIN" t.panman --dump-random-node --seed {params.seed} >/dev/null
+        mv t.panman.random.*.fa "$OUTDIR/node.fa"
+        """
+
+rule simulate_and_place:
+    """Simulate reads and immediately place them, deleting reads after placement.
+    
+    This combined rule ensures reads are deleted immediately after use to prevent
+    disk space exhaustion. TB at 100x coverage generates ~2GB per replicate.
+    
+    wgsim handles both mutation injection and read simulation:
+    - `-h` haplotype mode (all mutations homozygous, appropriate for haploid genomes)
+    - `-r` sets mutation rate (we use experiment's mut rate)
+    - `-R` sets fraction of mutations that are indels (default 0.15)
+    - `-e` sets sequencing error rate (0.00109 = NovaSeq-like)
+    """
+    input:
+        bin  = "build/bin/panmap",
+        pan  = lambda wc: EXP[wc.eid]["path"],
+        idx  = lambda wc: idx_dir(wc.pan, EXP[wc.eid]["itag"]) / "index.pmi",
+        fa   = lambda wc: OUT / f"random_nodes/{wc.pan}/rep{wc.rep}/node.fa",
+    output:
+        tsv  = OUT / "experiments/{eid}/{pan}/{tag}/place/cov{cov}_{n}_rep{rep}.tsv",
+        log  = OUT / "experiments/{eid}/{pan}/{tag}/place/cov{cov}_{n}_rep{rep}.log",
+        meta = OUT / "experiments/{eid}/{pan}/{tag}/reads/cov{cov}_{n}_rep{rep}.meta",
+        muts = OUT / "experiments/{eid}/{pan}/{tag}/reads/cov{cov}_{n}_rep{rep}.mutations",
+    params:
+        mut  = lambda wc: EXP[wc.eid]["mut"],
+        seed = lambda wc: seed_from_str(f"{wc.eid}_{wc.cov}_{wc.n}_{wc.rep}"),
+    threads: 1
+    priority: 10
+    resources:
+        mem_mb = lambda wc: get_mem(wc, "place"),  # Use placement memory (higher)
+        place_rsv_4K = lambda wc: 1 if wc.pan == "rsv_4K" else 0,
+        place_sars_20000 = lambda wc: 1 if wc.pan == "sars_20000" else 0,
+        place_tb_400 = lambda wc: 1 if wc.pan == "tb_400" else 0,
+    shell:
+        """
+        set -euo pipefail
+        
+        READS_DIR=$(dirname {output.meta})
+        PLACE_DIR=$(dirname {output.tsv})
+        mkdir -p "$READS_DIR" "$PLACE_DIR"
+        
+        # Temp files for reads (deleted at end of this job)
+        R1="$READS_DIR/cov{wildcards.cov}_{wildcards.n}_rep{wildcards.rep}_R1.fq"
+        R2="$READS_DIR/cov{wildcards.cov}_{wildcards.n}_rep{wildcards.rep}_R2.fq"
+        
+        # Get node name from fasta header
+        node=$(head -1 {input.fa} | tr -d '>')
+        
+        # Step 1: Simulate reads with wgsim
+        wgsim \
+            -h \
+            -r {params.mut} \
+            -R 0.15 \
+            -e 0.00109 \
+            -d 500 -s 50 \
+            -N {wildcards.n} \
+            -1 150 -2 150 \
+            -S {params.seed} \
+            {input.fa} \
+            "$R1" "$R2" \
+            2> {output.muts}
+        
+        # Create metadata file with true node info
+        echo -e "eid={wildcards.eid}\\tcov={wildcards.cov}\\treads={wildcards.n}\\tmut={params.mut}\\ttrue_node=$node" > {output.meta}
+        
+        # Step 2: Place reads
+        TMP=$(mktemp -d) && trap "rm -rf $TMP; rm -f $R1 $R2" EXIT
+        /usr/bin/time -v {input.bin} {input.pan} "$R1" "$R2" \
+            --output "$TMP/out" -t {threads} --stop place -i {input.idx} 2> {output.log}
+        mv "$TMP/out.placement.tsv" {output.tsv}
+        
+        # Step 3: Delete reads immediately (trap also ensures cleanup on failure)
+        rm -f "$R1" "$R2"
+        """
+
+# =============================================================================
+# ACCURACY EVALUATION  
+# =============================================================================
+rule evaluate_accuracy:
+    """Compare placed node to true node using minimap2."""
+    input:
+        bin   = "build/bin/panmap",
+        pan   = lambda wc: EXP[wc.eid]["path"],
+        place = OUT / "experiments/{eid}/{pan}/{tag}/place/cov{cov}_{n}_rep{rep}.tsv",
+        meta  = OUT / "experiments/{eid}/{pan}/{tag}/reads/cov{cov}_{n}_rep{rep}.meta",
+    output:
+        acc = OUT / "experiments/{eid}/{pan}/{tag}/accuracy/cov{cov}_{n}_rep{rep}.tsv",
+    threads: 1
+    resources:
+        mem_mb = MEM_DEFAULT["align"], 
+    run:
+        import subprocess
+        Path(output.acc).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Parse metadata
+        meta = {}
+        for kv in Path(input.meta).read_text().strip().split("\t"):
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                meta[k] = v
+        true_node = meta.get("true_node", "unknown")
+        
+        # Parse placements
+        placements = {}
+        for line in Path(input.place).read_text().strip().split("\n")[1:]:
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                placements[parts[0]] = parts[3]
+        
+        # Evaluate each metric
+        with open(output.acc, "w") as out:
+            out.write("metric\ttrue_node\tplaced_node\tsnps\tindels\ttotal\n")
+            for metric in ["raw", "jaccard", "cosine", "weighted_jaccard"]:
+                placed = placements.get(metric, "")
+                if not placed or placed == true_node:
+                    out.write(f"{metric}\t{true_node}\t{placed}\t0\t0\t0\n")
+                else:
+                    # Quick alignment to count differences
+                    tmpdir = Path(output.acc).parent / "tmp"
+                    tmpdir.mkdir(exist_ok=True)
+                    tfa, pfa = tmpdir / "true.fa", tmpdir / "placed.fa"
+                    subprocess.run([input.bin, input.pan, "--dump-sequence", true_node, "-o", str(tfa)],
+                                   capture_output=True)
+                    subprocess.run([input.bin, input.pan, "--dump-sequence", placed, "-o", str(pfa)],
+                                   capture_output=True)
+                    result = subprocess.run(["minimap2", "-cx", "asm20", "--cs", str(tfa), str(pfa)],
+                                            capture_output=True, text=True)
+                    snps = indels = 0
+                    for line in result.stdout.split("\n"):
+                        if "\t" in line:
+                            # Count variants from cs tag
+                            snps = line.count("*")
+                            indels = line.count("+") + line.count("-")
+                            break
+                    out.write(f"{metric}\t{true_node}\t{placed}\t{snps}\t{indels}\t{snps+indels}\n")
+
+# =============================================================================
+# SUMMARY RULES
+# =============================================================================
+rule experiments_summary:
+    """Generate summary of experiment configurations."""
+    output:
+        OUT / "reports/experiments_summary.tsv",
+    run:
+        Path(output[0]).parent.mkdir(parents=True, exist_ok=True)
+        with open(output[0], "w") as f:
+            f.write("id\tpan\tk\ts\tl\tmut\n")
+            for e in EXPERIMENTS:
+                f.write(f"{e['id']}\t{e['pan']}\t{e['k']}\t{e['s']}\t{e['l']}\t{e['mut']}\n")
+
+rule placements_summary:
+    """Aggregate all placement results."""
+    input:
+        expand(str(OUT / "experiments/{eid}/{pan}/{tag}/place/cov{cov}_{n}_rep{rep}.tsv"),
+               zip,
+               eid=[r[0] for r in READS],
+               pan=[r[1] for r in READS],
+               tag=[r[2] for r in READS],
+               cov=[r[3] for r in READS],
+               n=[r[4] for r in READS],
+               rep=[r[5] for r in READS]),
+    output:
+        OUT / "reports/placements.tsv",
+    resources:
+        mem_mb = 2000,
+    run:
+        Path(output[0]).parent.mkdir(parents=True, exist_ok=True)
+        with open(output[0], "w") as out:
+            out.write("eid\tpan\ttag\tcov\treads\trep\tmetric\tscore\tnode\n")
+            for eid, pan, tag, cov, n, rep in READS:
+                pf = exp_dir(eid, pan, tag) / f"place/cov{cov}_{n}_rep{rep}.tsv"
+                if pf.exists():
+                    for line in pf.read_text().strip().split("\n")[1:]:
+                        p = line.split("\t")
+                        if len(p) >= 4:
+                            out.write(f"{eid}\t{pan}\t{tag}\t{cov}\t{n}\t{rep}\t{p[0]}\t{p[1]}\t{p[3]}\n")
+
+rule accuracy_summary:
+    """Aggregate all accuracy results."""
+    input:
+        expand(str(OUT / "experiments/{eid}/{pan}/{tag}/accuracy/cov{cov}_{n}_rep{rep}.tsv"),
+               zip,
+               eid=[r[0] for r in READS],
+               pan=[r[1] for r in READS],
+               tag=[r[2] for r in READS],
+               cov=[r[3] for r in READS],
+               n=[r[4] for r in READS],
+               rep=[r[5] for r in READS]),
+    output:
+        OUT / "reports/accuracy.tsv",
+    resources:
+        mem_mb = 2000,
+    run:
+        Path(output[0]).parent.mkdir(parents=True, exist_ok=True)
+        with open(output[0], "w") as out:
+            out.write("eid\tpan\ttag\tcov\treads\trep\tmetric\ttrue\tplaced\tsnps\tindels\ttotal\n")
+            for eid, pan, tag, cov, n, rep in READS:
+                af = exp_dir(eid, pan, tag) / f"accuracy/cov{cov}_{n}_rep{rep}.tsv"
+                if af.exists():
+                    for line in af.read_text().strip().split("\n")[1:]:
+                        p = line.split("\t")
+                        if len(p) >= 6:
+                            joined = "\t".join(p)
+                            out.write(f"{eid}\t{pan}\t{tag}\t{cov}\t{n}\t{rep}\t{joined}\n")
+
+# =============================================================================
+# PLOTTING
+# =============================================================================
+
+# Pangenome display names for plot titles
+PAN_DISPLAY_NAMES = {
+    "rsv_4K": "RSV (4k genomes)",
+    "sars_20000": "SARS-CoV-2 (20k genomes)",
+    "tb_400": "TB (400 genomes)",
+}
+
+rule plot_accuracy_by_coverage:
+    """Plot placement accuracy histogram - proportion of samples by distance from expected genome."""
+    input:
+        acc = OUT / "reports/accuracy.tsv",
+        exp = OUT / "reports/experiments_summary.tsv",
+    output:
+        png = OUT / "plots/{pan}/{metric}/k{k}_s{s}_l{l}/accuracy_by_coverage.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+        import numpy as np
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        df = pd.read_csv(input.acc, sep="\t")
+        exp_df = pd.read_csv(input.exp, sep="\t")
+        
+        # Merge to get mutation rate and k, s, l info
+        df = df.merge(exp_df[["id", "mut", "k", "s", "l"]], left_on="eid", right_on="id", how="left")
+        df = df[df["pan"] == wildcards.pan]
+        # Filter by the specific metric
+        df = df[df["metric"] == wildcards.metric]
+        # Filter by the specific k, s, l values
+        df = df[df["k"] == int(wildcards.k)]
+        df = df[df["s"] == int(wildcards.s)]
+        df = df[df["l"] == int(wildcards.l)]
+        
+        metric_display = wildcards.metric.replace("_", " ").title()
+        params_display = f"k={wildcards.k}, s={wildcards.s}, l={wildcards.l}"
+        
+        if df.empty:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            ax.text(0.5, 0.5, f"No data for {wildcards.pan} - {metric_display} - {params_display}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            # Bin the total distance: 0, 1, 2, 3, 4, 5, >5
+            def bin_distance(x):
+                if x > 5:
+                    return ">5"
+                return str(int(x))
+            
+            df["dist_bin"] = df["total"].apply(bin_distance)
+            
+            # Get unique reads and mutation rates, sorted
+            reads_sorted = sorted(df["reads"].unique())
+            muts_sorted = sorted(df["mut"].unique())
+            
+            # Get genome size for this pangenome to calculate expected mutations
+            genome_size = PANGENOMES.get(wildcards.pan, {}).get("size", 15000)
+            
+            # Create category labels with actual values
+            categories = []
+            for r in reads_sorted:
+                for m in muts_sorted:
+                    # Calculate expected mutations from mutation rate * genome size
+                    expected_muts = int(round(m * genome_size))
+                    # Get the coverage for this read count
+                    cov_val = df[df["reads"] == r]["cov"].iloc[0] if len(df[df["reads"] == r]) > 0 else 0
+                    categories.append((r, m, f"{r} reads ({cov_val}x), {expected_muts} muts"))
+            
+            # Create color gradient (light to dark) for each category
+            n_cats = len(categories)
+            base_colors = plt.cm.cool(np.linspace(0.2, 0.9, n_cats))
+            
+            # Calculate proportions for each category and distance bin
+            dist_bins = ["0", "1", "2", "3", "4", "5", ">5"]
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            bar_width = 0.8 / n_cats
+            x = np.arange(len(dist_bins))
+            
+            for i, (r, m, label) in enumerate(categories):
+                cat_df = df[(df["reads"] == r) & (df["mut"] == m)]
+                if cat_df.empty:
+                    continue
+                
+                # Calculate proportion in each bin
+                total_count = len(cat_df)
+                proportions = []
+                for b in dist_bins:
+                    count = len(cat_df[cat_df["dist_bin"] == b])
+                    proportions.append(count / total_count if total_count > 0 else 0)
+                
+                offset = (i - n_cats/2 + 0.5) * bar_width
+                ax.bar(x + offset, proportions, bar_width, label=label, color=base_colors[i], 
+                       edgecolor="white", linewidth=0.5)
+            
+            ax.set_xlabel("Dist. from expected genome (# SNPs + Indels)", fontsize=11)
+            ax.set_ylabel("Proportion of samples", fontsize=11)
+            pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+            ax.set_title(f"Placement accuracy ({metric_display}, {params_display}), {pan_name}", fontsize=12)
+            ax.set_xticks(x)
+            ax.set_xticklabels(dist_bins)
+            ax.set_ylim(0, 1.05)
+            ax.set_xlim(-0.5, len(dist_bins) - 0.5)
+            
+            # Add replicate count annotation
+            ax.text(0.98, 0.98, f"{REPLICATES} replicates per category",
+                   transform=ax.transAxes, ha="right", va="top", fontsize=9,
+                   bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+            
+            # Legend outside plot
+            ax.legend(loc="upper right", fontsize=8, framealpha=0.9)
+            ax.grid(True, alpha=0.3, axis="y", linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_runtime:
+    """Plot runtime vs read depth with error bars, split by mutation rate."""
+    input:
+        place_logs = lambda wc: [str(exp_dir(r[0], r[1], r[2]) / f"place/cov{r[3]}_{r[4]}_rep{r[5]}.log")
+                                  for r in READS if r[1] == wc.pan],
+        exp = OUT / "reports/experiments_summary.tsv",
+    output:
+        png = OUT / "plots/{pan}/{metric}/k{k}_s{s}_l{l}/runtime.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        exp_df = pd.read_csv(input.exp, sep="\t")
+        
+        # Filter experiments by pangenome and k, s, l values
+        exp_filtered = exp_df[(exp_df["pan"] == wildcards.pan) & 
+                              (exp_df["k"] == int(wildcards.k)) &
+                              (exp_df["s"] == int(wildcards.s)) &
+                              (exp_df["l"] == int(wildcards.l))]
+        valid_eids = set(exp_filtered["id"].tolist())
+        
+        # Parse runtime from placement logs
+        runtimes = []
+        for log_path in input.place_logs:
+            log_file = Path(log_path)
+            if not log_file.exists():
+                continue
+            
+            # Extract eid from path
+            path_parts = str(log_file).split("/")
+            eid = None
+            for part in path_parts:
+                if part.startswith("exp"):
+                    eid = part
+                    break
+            
+            if eid not in valid_eids:
+                continue
+            
+            # Get mutation rate for this experiment
+            exp_row = exp_filtered[exp_filtered["id"] == eid]
+            if exp_row.empty:
+                continue
+            mut = exp_row["mut"].iloc[0]
+            
+            # Find cov and reads from filename
+            fname = log_file.stem
+            match = re.match(r"cov([\d.]+)_(\d+)_rep(\d+)", fname)
+            if not match:
+                continue
+            cov = float(match.group(1))
+            reads = int(match.group(2))
+            rep = int(match.group(3))
+            
+            # Parse elapsed time from /usr/bin/time -v output
+            try:
+                content = log_file.read_text()
+                time_match = re.search(r"Elapsed \(wall clock\) time.*?: (\d+):(\d+\.\d+)", content)
+                if time_match:
+                    mins = int(time_match.group(1))
+                    secs = float(time_match.group(2))
+                    runtime = mins * 60 + secs
+                    runtimes.append({"cov": cov, "reads": reads, "rep": rep, "runtime": runtime, "mut": mut})
+            except:
+                continue
+        
+        metric_display = wildcards.metric.replace("_", " ").title()
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        params_display = f"k={wildcards.k}, s={wildcards.s}, l={wildcards.l}"
+        
+        if not runtimes:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No runtime data for {wildcards.pan} {params_display}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            df = pd.DataFrame(runtimes)
+            muts_sorted = sorted(df["mut"].unique())
+            genome_size = PANGENOMES.get(wildcards.pan, {}).get("size", 15000)
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            # Colors and markers for different mutation rates
+            colors = ["#888888", "#555555", "#000000"]
+            markers = ["o", "s", "^"]
+            
+            for i, mut in enumerate(muts_sorted):
+                mut_df = df[df["mut"] == mut]
+                grouped = mut_df.groupby("reads")["runtime"].agg(["mean", "std", "count"]).reset_index()
+                grouped = grouped.sort_values("reads")
+                
+                # Create x-axis labels
+                x = np.arange(len(grouped))
+                x_labels = []
+                for _, row in grouped.iterrows():
+                    reads = int(row["reads"])
+                    cov_val = mut_df[mut_df["reads"] == reads]["cov"].iloc[0] if len(mut_df[mut_df["reads"] == reads]) > 0 else 0
+                    x_labels.append(f"{reads} reads\n({cov_val}x depth)")
+                
+                expected_muts = int(round(mut * genome_size))
+                color = colors[i % len(colors)]
+                marker = markers[i % len(markers)]
+                
+                ax.errorbar(x, grouped["mean"], yerr=grouped["std"],
+                           fmt=f"{marker}-", color=color, capsize=5, markersize=6,
+                           linewidth=1.5, label=f"{expected_muts} mutations")
+            
+            ax.set_xlabel("Read Depth", fontsize=11)
+            ax.set_ylabel("Runtime (s)", fontsize=11)
+            ax.set_title(f"{pan_name} Runtime ({metric_display}, {params_display})", fontsize=12)
+            ax.set_xticks(x)
+            ax.set_xticklabels(x_labels, fontsize=9)
+            ax.set_ylim(bottom=0)
+            ax.legend(loc="upper right", fontsize=9)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_memory:
+    """Plot peak memory vs read depth with error bars, split by mutation rate."""
+    input:
+        place_logs = lambda wc: [str(exp_dir(r[0], r[1], r[2]) / f"place/cov{r[3]}_{r[4]}_rep{r[5]}.log")
+                                  for r in READS if r[1] == wc.pan],
+        exp = OUT / "reports/experiments_summary.tsv",
+    output:
+        png = OUT / "plots/{pan}/{metric}/k{k}_s{s}_l{l}/memory.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        exp_df = pd.read_csv(input.exp, sep="\t")
+        
+        # Filter experiments by pangenome and k, s, l values
+        exp_filtered = exp_df[(exp_df["pan"] == wildcards.pan) & 
+                              (exp_df["k"] == int(wildcards.k)) &
+                              (exp_df["s"] == int(wildcards.s)) &
+                              (exp_df["l"] == int(wildcards.l))]
+        valid_eids = set(exp_filtered["id"].tolist())
+        
+        # Parse memory from placement logs
+        memories = []
+        for log_path in input.place_logs:
+            log_file = Path(log_path)
+            if not log_file.exists():
+                continue
+            
+            # Extract eid from path
+            path_parts = str(log_file).split("/")
+            eid = None
+            for part in path_parts:
+                if part.startswith("exp"):
+                    eid = part
+                    break
+            
+            if eid not in valid_eids:
+                continue
+            
+            # Get mutation rate for this experiment
+            exp_row = exp_filtered[exp_filtered["id"] == eid]
+            if exp_row.empty:
+                continue
+            mut = exp_row["mut"].iloc[0]
+            
+            # Find cov and reads from filename
+            fname = log_file.stem
+            match = re.match(r"cov([\d.]+)_(\d+)_rep(\d+)", fname)
+            if not match:
+                continue
+            cov = float(match.group(1))
+            reads = int(match.group(2))
+            rep = int(match.group(3))
+            
+            # Parse peak memory from /usr/bin/time -v output
+            try:
+                content = log_file.read_text()
+                # Maximum resident set size (kbytes)
+                mem_match = re.search(r"Maximum resident set size \(kbytes\): (\d+)", content)
+                if mem_match:
+                    mem_kb = int(mem_match.group(1))
+                    mem_mb = mem_kb / 1024  # Convert to MB
+                    memories.append({"cov": cov, "reads": reads, "rep": rep, "memory_mb": mem_mb, "mut": mut})
+            except:
+                continue
+        
+        metric_display = wildcards.metric.replace("_", " ").title()
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        params_display = f"k={wildcards.k}, s={wildcards.s}, l={wildcards.l}"
+        
+        if not memories:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No memory data for {wildcards.pan} {params_display}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            df = pd.DataFrame(memories)
+            muts_sorted = sorted(df["mut"].unique())
+            genome_size = PANGENOMES.get(wildcards.pan, {}).get("size", 15000)
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            # Colors and markers for different mutation rates
+            colors = ["#888888", "#555555", "#000000"]
+            markers = ["o", "s", "^"]
+            
+            for i, mut in enumerate(muts_sorted):
+                mut_df = df[df["mut"] == mut]
+                grouped = mut_df.groupby("reads")["memory_mb"].agg(["mean", "std", "count"]).reset_index()
+                grouped = grouped.sort_values("reads")
+                
+                # Create x-axis labels
+                x = np.arange(len(grouped))
+                x_labels = []
+                for _, row in grouped.iterrows():
+                    reads = int(row["reads"])
+                    cov_val = mut_df[mut_df["reads"] == reads]["cov"].iloc[0] if len(mut_df[mut_df["reads"] == reads]) > 0 else 0
+                    x_labels.append(f"{reads} reads\n({cov_val}x depth)")
+                
+                expected_muts = int(round(mut * genome_size))
+                color = colors[i % len(colors)]
+                marker = markers[i % len(markers)]
+                
+                ax.errorbar(x, grouped["mean"], yerr=grouped["std"],
+                           fmt=f"{marker}-", color=color, capsize=5, markersize=6,
+                           linewidth=1.5, label=f"{expected_muts} mutations")
+            
+            ax.set_xlabel("Read Depth", fontsize=11)
+            ax.set_ylabel("Peak Memory (MB)", fontsize=11)
+            ax.set_title(f"{pan_name} Memory ({metric_display}, {params_display})", fontsize=12)
+            ax.set_xticks(x)
+            ax.set_xticklabels(x_labels, fontsize=9)
+            ax.set_ylim(bottom=0)
+            ax.legend(loc="upper right", fontsize=9)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_runtime_by_k:
+    """Plot runtime vs k-mer size with error bars, split by mutation rate."""
+    input:
+        place_logs = lambda wc: [str(exp_dir(r[0], r[1], r[2]) / f"place/cov{r[3]}_{r[4]}_rep{r[5]}.log")
+                                  for r in READS if r[1] == wc.pan],
+        exp = OUT / "reports/experiments_summary.tsv",
+    output:
+        png = OUT / "plots/{pan}/{metric}/s{s}_l{l}/runtime_by_k.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        exp_df = pd.read_csv(input.exp, sep="\t")
+        
+        # Filter experiments by pangenome and s, l values
+        exp_filtered = exp_df[(exp_df["pan"] == wildcards.pan) &
+                              (exp_df["s"] == int(wildcards.s)) &
+                              (exp_df["l"] == int(wildcards.l))]
+        
+        # Parse runtime from placement logs
+        runtimes = []
+        for log_path in input.place_logs:
+            log_file = Path(log_path)
+            if not log_file.exists():
+                continue
+            
+            # Extract eid from path
+            path_parts = str(log_file).split("/")
+            eid = None
+            for part in path_parts:
+                if part.startswith("exp"):
+                    eid = part
+                    break
+            
+            # Get k and mutation rate for this experiment
+            exp_row = exp_filtered[exp_filtered["id"] == eid]
+            if exp_row.empty:
+                continue
+            k_val = exp_row["k"].iloc[0]
+            mut = exp_row["mut"].iloc[0]
+            
+            # Find cov and reads from filename
+            fname = log_file.stem
+            match = re.match(r"cov([\d.]+)_(\d+)_rep(\d+)", fname)
+            if not match:
+                continue
+            cov = float(match.group(1))
+            reads = int(match.group(2))
+            rep = int(match.group(3))
+            
+            # Parse elapsed time from /usr/bin/time -v output
+            try:
+                content = log_file.read_text()
+                time_match = re.search(r"Elapsed \(wall clock\) time.*?: (\d+):(\d+\.\d+)", content)
+                if time_match:
+                    mins = int(time_match.group(1))
+                    secs = float(time_match.group(2))
+                    runtime = mins * 60 + secs
+                    runtimes.append({"k": k_val, "cov": cov, "reads": reads, "rep": rep, "runtime": runtime, "mut": mut})
+            except:
+                continue
+        
+        metric_display = wildcards.metric.replace("_", " ").title()
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        params_display = f"s={wildcards.s}, l={wildcards.l}"
+        
+        if not runtimes:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No runtime data for {wildcards.pan} {params_display}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            df = pd.DataFrame(runtimes)
+            muts_sorted = sorted(df["mut"].unique())
+            genome_size = PANGENOMES.get(wildcards.pan, {}).get("size", 15000)
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            # Colors and markers for different mutation rates
+            colors = ["#888888", "#555555", "#000000"]
+            markers = ["o", "s", "^"]
+            
+            k_values_sorted = sorted(df["k"].unique())
+            
+            for i, mut in enumerate(muts_sorted):
+                mut_df = df[df["mut"] == mut]
+                grouped = mut_df.groupby("k")["runtime"].agg(["mean", "std", "count"]).reset_index()
+                grouped = grouped.sort_values("k")
+                
+                expected_muts = int(round(mut * genome_size))
+                color = colors[i % len(colors)]
+                marker = markers[i % len(markers)]
+                
+                ax.errorbar(grouped["k"], grouped["mean"], yerr=grouped["std"],
+                           fmt=f"{marker}-", color=color, capsize=5, markersize=6,
+                           linewidth=1.5, label=f"{expected_muts} mutations")
+            
+            ax.set_xlabel("k-mer Size", fontsize=11)
+            ax.set_ylabel("Runtime (s)", fontsize=11)
+            ax.set_title(f"{pan_name} Runtime by k ({metric_display}, {params_display})", fontsize=12)
+            ax.set_xticks(k_values_sorted)
+            ax.set_ylim(bottom=0)
+            ax.legend(loc="upper right", fontsize=9)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_memory_by_k:
+    """Plot peak memory vs k-mer size with error bars, split by mutation rate."""
+    input:
+        place_logs = lambda wc: [str(exp_dir(r[0], r[1], r[2]) / f"place/cov{r[3]}_{r[4]}_rep{r[5]}.log")
+                                  for r in READS if r[1] == wc.pan],
+        exp = OUT / "reports/experiments_summary.tsv",
+    output:
+        png = OUT / "plots/{pan}/{metric}/s{s}_l{l}/memory_by_k.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        exp_df = pd.read_csv(input.exp, sep="\t")
+        
+        # Filter experiments by pangenome and s, l values
+        exp_filtered = exp_df[(exp_df["pan"] == wildcards.pan) &
+                              (exp_df["s"] == int(wildcards.s)) &
+                              (exp_df["l"] == int(wildcards.l))]
+        
+        # Parse memory from placement logs
+        memories = []
+        for log_path in input.place_logs:
+            log_file = Path(log_path)
+            if not log_file.exists():
+                continue
+            
+            # Extract eid from path
+            path_parts = str(log_file).split("/")
+            eid = None
+            for part in path_parts:
+                if part.startswith("exp"):
+                    eid = part
+                    break
+            
+            # Get k and mutation rate for this experiment
+            exp_row = exp_filtered[exp_filtered["id"] == eid]
+            if exp_row.empty:
+                continue
+            k_val = exp_row["k"].iloc[0]
+            mut = exp_row["mut"].iloc[0]
+            
+            # Find cov and reads from filename
+            fname = log_file.stem
+            match = re.match(r"cov([\d.]+)_(\d+)_rep(\d+)", fname)
+            if not match:
+                continue
+            cov = float(match.group(1))
+            reads = int(match.group(2))
+            rep = int(match.group(3))
+            
+            # Parse peak memory from /usr/bin/time -v output
+            try:
+                content = log_file.read_text()
+                mem_match = re.search(r"Maximum resident set size \(kbytes\): (\d+)", content)
+                if mem_match:
+                    mem_kb = int(mem_match.group(1))
+                    mem_mb = mem_kb / 1024
+                    memories.append({"k": k_val, "cov": cov, "reads": reads, "rep": rep, "memory_mb": mem_mb, "mut": mut})
+            except:
+                continue
+        
+        metric_display = wildcards.metric.replace("_", " ").title()
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        params_display = f"s={wildcards.s}, l={wildcards.l}"
+        
+        if not memories:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No memory data for {wildcards.pan} {params_display}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            df = pd.DataFrame(memories)
+            muts_sorted = sorted(df["mut"].unique())
+            genome_size = PANGENOMES.get(wildcards.pan, {}).get("size", 15000)
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            # Colors and markers for different mutation rates
+            colors = ["#888888", "#555555", "#000000"]
+            markers = ["o", "s", "^"]
+            
+            k_values_sorted = sorted(df["k"].unique())
+            
+            for i, mut in enumerate(muts_sorted):
+                mut_df = df[df["mut"] == mut]
+                grouped = mut_df.groupby("k")["memory_mb"].agg(["mean", "std", "count"]).reset_index()
+                grouped = grouped.sort_values("k")
+                
+                expected_muts = int(round(mut * genome_size))
+                color = colors[i % len(colors)]
+                marker = markers[i % len(markers)]
+                
+                ax.errorbar(grouped["k"], grouped["mean"], yerr=grouped["std"],
+                           fmt=f"{marker}-", color=color, capsize=5, markersize=6,
+                           linewidth=1.5, label=f"{expected_muts} mutations")
+            
+            ax.set_xlabel("k-mer Size", fontsize=11)
+            ax.set_ylabel("Peak Memory (MB)", fontsize=11)
+            ax.set_title(f"{pan_name} Memory by k ({metric_display}, {params_display})", fontsize=12)
+            ax.set_xticks(k_values_sorted)
+            ax.set_ylim(bottom=0)
+            ax.legend(loc="upper right", fontsize=9)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_accuracy_heatmap:
+    """Plot heatmap of accuracy across k and coverage."""
+    input:
+        acc = OUT / "reports/accuracy.tsv",
+        exp = OUT / "reports/experiments_summary.tsv",
+    output:
+        png = OUT / "plots/{pan}/{metric}/accuracy_heatmap.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        df = pd.read_csv(input.acc, sep="\t")
+        exp_df = pd.read_csv(input.exp, sep="\t")
+        
+        df = df.merge(exp_df[["id", "k", "s", "l"]], left_on="eid", right_on="id", how="left")
+        df = df[df["pan"] == wildcards.pan]
+        df = df[df["metric"] == wildcards.metric]
+        
+        metric_display = wildcards.metric.replace("_", " ").title()
+        
+        if df.empty:
+            fig, ax = plt.subplots(figsize=(10, 8))
+            ax.text(0.5, 0.5, f"No data for {wildcards.pan} - {metric_display}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            df["exact_match"] = (df["total"] == 0).astype(int)
+            
+            # Create pivot table: k vs coverage
+            pivot = df.pivot_table(values="exact_match", index="k", columns="cov", aggfunc="mean")
+            
+            fig, ax = plt.subplots(figsize=(10, 8))
+            im = ax.imshow(pivot.values, cmap="RdYlGn", aspect="auto", vmin=0, vmax=1)
+            
+            ax.set_xticks(range(len(pivot.columns)))
+            ax.set_xticklabels([f"{c}X" for c in pivot.columns])
+            ax.set_yticks(range(len(pivot.index)))
+            ax.set_yticklabels([f"k={k}" for k in pivot.index])
+            
+            # Add text annotations
+            for i in range(len(pivot.index)):
+                for j in range(len(pivot.columns)):
+                    val = pivot.values[i, j]
+                    if not np.isnan(val):
+                        ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                               color="white" if val < 0.5 else "black", fontsize=10)
+            
+            plt.colorbar(im, ax=ax, label="Exact Match Rate")
+            ax.set_xlabel("Coverage", fontsize=12)
+            ax.set_ylabel("k-mer Size", fontsize=12)
+            pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+            ax.set_title(f"Accuracy Heatmap ({metric_display}) - {pan_name}", fontsize=14)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_metric_comparison:
+    """Compare all metrics with grouped bar chart by distance."""
+    input:
+        acc = OUT / "reports/accuracy.tsv",
+    output:
+        png = OUT / "plots/{pan}/metric_comparison.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import numpy as np
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        df = pd.read_csv(input.acc, sep="\t")
+        df = df[df["pan"] == wildcards.pan]
+        
+        if df.empty:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.text(0.5, 0.5, f"No data for {wildcards.pan}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            # Bin distances
+            def bin_distance(x):
+                if x > 5:
+                    return ">5"
+                return str(int(x))
+            
+            df["dist_bin"] = df["total"].apply(bin_distance)
+            dist_bins = ["0", "1", "2", "3", "4", "5", ">5"]
+            metrics = ["raw", "jaccard", "cosine", "weighted_jaccard"]
+            colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            bar_width = 0.8 / len(metrics)
+            x = np.arange(len(dist_bins))
+            
+            for i, (metric, color) in enumerate(zip(metrics, colors)):
+                m_df = df[df["metric"] == metric]
+                total_count = len(m_df)
+                proportions = []
+                for b in dist_bins:
+                    count = len(m_df[m_df["dist_bin"] == b])
+                    proportions.append(count / total_count if total_count > 0 else 0)
+                
+                offset = (i - len(metrics)/2 + 0.5) * bar_width
+                ax.bar(x + offset, proportions, bar_width, label=metric.replace("_", " ").title(), 
+                       color=color, edgecolor="white", linewidth=0.5)
+            
+            ax.set_xlabel("Dist. from expected genome (# SNPs + Indels)", fontsize=11)
+            ax.set_ylabel("Proportion of samples", fontsize=11)
+            pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+            ax.set_title(f"Metric Comparison, {pan_name}", fontsize=12)
+            ax.set_xticks(x)
+            ax.set_xticklabels(dist_bins)
+            ax.set_ylim(0, 1.05)
+            ax.legend(loc="upper right", fontsize=9)
+            ax.grid(True, alpha=0.3, axis="y", linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+# =============================================================================
+# INDEX STATS PLOTS
+# =============================================================================
+rule plot_index_time_by_k:
+    """Plot index build time vs k-mer size."""
+    input:
+        logs = lambda wc: [str(OUT / f"indexes/{wc.pan}/{itag}/time.log")
+                           for pan, itag in INDEX_KEYS 
+                           if pan == wc.pan and f"_s{wc.s}_" in itag and f"_l{wc.l}" in itag],
+    output:
+        png = OUT / "plots/{pan}/s{s}_l{l}/index_time_by_k.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Parse runtime from index logs
+        data = []
+        for log_path in input.logs:
+            log_file = Path(log_path)
+            if not log_file.exists():
+                continue
+            
+            # Extract k from path (itag like k11_s4_l1)
+            itag = log_file.parent.name
+            k_match = re.search(r"k(\d+)", itag)
+            s_match = re.search(r"s(\d+)", itag)
+            if not k_match:
+                continue
+            k_val = int(k_match.group(1))
+            s_val = int(s_match.group(1)) if s_match else 0
+            
+            try:
+                content = log_file.read_text()
+                time_match = re.search(r"Elapsed \(wall clock\) time.*?: (\d+):(\d+\.\d+)", content)
+                if time_match:
+                    mins = int(time_match.group(1))
+                    secs = float(time_match.group(2))
+                    runtime = mins * 60 + secs
+                    data.append({"k": k_val, "s": s_val, "time": runtime})
+            except:
+                continue
+        
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        
+        if not data:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No index time data for {wildcards.pan}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            import pandas as pd
+            df = pd.DataFrame(data).sort_values("k")
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            ax.plot(df["k"], df["time"], "o-", color="#1f77b4",
+                   markersize=8, linewidth=2)
+            
+            ax.set_xlabel("k-mer Size", fontsize=11)
+            ax.set_ylabel("Index Build Time (s)", fontsize=11)
+            ax.set_title(f"{pan_name} Index Build Time by k (s={wildcards.s}, l={wildcards.l})", fontsize=12)
+            ax.set_xticks(sorted(df["k"].unique()))
+            ax.set_ylim(bottom=0)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_index_memory_by_k:
+    """Plot index build peak memory vs k-mer size."""
+    input:
+        logs = lambda wc: [str(OUT / f"indexes/{wc.pan}/{itag}/time.log")
+                           for pan, itag in INDEX_KEYS 
+                           if pan == wc.pan and f"_s{wc.s}_" in itag and f"_l{wc.l}" in itag],
+    output:
+        png = OUT / "plots/{pan}/s{s}_l{l}/index_memory_by_k.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Parse memory from index logs
+        data = []
+        for log_path in input.logs:
+            log_file = Path(log_path)
+            if not log_file.exists():
+                continue
+            
+            # Extract k from path
+            itag = log_file.parent.name
+            k_match = re.search(r"k(\d+)", itag)
+            s_match = re.search(r"s(\d+)", itag)
+            if not k_match:
+                continue
+            k_val = int(k_match.group(1))
+            s_val = int(s_match.group(1)) if s_match else 0
+            
+            try:
+                content = log_file.read_text()
+                mem_match = re.search(r"Maximum resident set size \(kbytes\): (\d+)", content)
+                if mem_match:
+                    mem_kb = int(mem_match.group(1))
+                    mem_mb = mem_kb / 1024
+                    data.append({"k": k_val, "s": s_val, "memory_mb": mem_mb})
+            except:
+                continue
+        
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        
+        if not data:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No index memory data for {wildcards.pan}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            import pandas as pd
+            df = pd.DataFrame(data).sort_values("k")
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            ax.plot(df["k"], df["memory_mb"], "o-", color="#1f77b4",
+                   markersize=8, linewidth=2)
+            
+            ax.set_xlabel("k-mer Size", fontsize=11)
+            ax.set_ylabel("Peak Memory (MB)", fontsize=11)
+            ax.set_title(f"{pan_name} Index Build Memory by k (s={wildcards.s}, l={wildcards.l})", fontsize=12)
+            ax.set_xticks(sorted(df["k"].unique()))
+            ax.set_ylim(bottom=0)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_index_size_by_k:
+    """Plot index file size vs k-mer size."""
+    input:
+        indexes = lambda wc: [str(OUT / f"indexes/{wc.pan}/{itag}/index.pmi")
+                              for pan, itag in INDEX_KEYS 
+                              if pan == wc.pan and f"_s{wc.s}_" in itag and f"_l{wc.l}" in itag],
+    output:
+        png = OUT / "plots/{pan}/s{s}_l{l}/index_size_by_k.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        import os
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Get file sizes
+        data = []
+        for idx_path in input.indexes:
+            idx_file = Path(idx_path)
+            if not idx_file.exists():
+                continue
+            
+            # Extract k from path
+            itag = idx_file.parent.name
+            k_match = re.search(r"k(\d+)", itag)
+            s_match = re.search(r"s(\d+)", itag)
+            if not k_match:
+                continue
+            k_val = int(k_match.group(1))
+            s_val = int(s_match.group(1)) if s_match else 0
+            
+            size_bytes = os.path.getsize(idx_path)
+            size_mb = size_bytes / (1024 * 1024)
+            data.append({"k": k_val, "s": s_val, "size_mb": size_mb})
+        
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        
+        if not data:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No index size data for {wildcards.pan}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            import pandas as pd
+            df = pd.DataFrame(data).sort_values("k")
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            ax.plot(df["k"], df["size_mb"], "o-", color="#1f77b4",
+                   markersize=8, linewidth=2)
+            
+            ax.set_xlabel("k-mer Size", fontsize=11)
+            ax.set_ylabel("Index Size (MB)", fontsize=11)
+            ax.set_title(f"{pan_name} Index Size by k (s={wildcards.s}, l={wildcards.l})", fontsize=12)
+            ax.set_xticks(sorted(df["k"].unique()))
+            ax.set_ylim(bottom=0)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+rule plot_index_seeds_by_k:
+    """Plot total indexed seed count vs k-mer size."""
+    input:
+        # Use index.pmi as input (always exists), then look for panmap.log optionally
+        idxs = lambda wc: [str(OUT / f"indexes/{wc.pan}/{itag}/index.pmi")
+                           for pan, itag in INDEX_KEYS 
+                           if pan == wc.pan and f"_s{wc.s}_" in itag and f"_l{wc.l}" in itag],
+    output:
+        png = OUT / "plots/{pan}/s{s}_l{l}/index_seeds_by_k.png",
+    resources:
+        mem_mb = 2000,
+    run:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import re
+        import os
+        
+        Path(output.png).parent.mkdir(parents=True, exist_ok=True)
+        
+        data = []
+        for idx_path in input.idxs:
+            idx_file = Path(idx_path)
+            if not idx_file.exists():
+                continue
+            
+            # Extract k from path
+            itag = idx_file.parent.name
+            k_match = re.search(r"k(\d+)", itag)
+            s_match = re.search(r"s(\d+)", itag)
+            if not k_match:
+                continue
+            k_val = int(k_match.group(1))
+            s_val = int(s_match.group(1)) if s_match else 0
+            
+            # Try to find seed count from panmap.log
+            log_file = idx_file.parent / "panmap.log"
+            seed_count = None
+            estimated = False
+            
+            if log_file.exists():
+                try:
+                    content = log_file.read_text()
+                    seed_match = re.search(r"Total seed changes:\s*(\d+)", content)
+                    if seed_match:
+                        seed_count = int(seed_match.group(1))
+                except:
+                    pass
+            
+            # Fallback: estimate from index file size
+            if seed_count is None:
+                size_bytes = os.path.getsize(idx_file)
+                # Rough estimate: ~16 bytes per seed entry
+                seed_count = size_bytes // 16
+                estimated = True
+            
+            data.append({"k": k_val, "s": s_val, "seeds": seed_count, "estimated": estimated})
+        
+        pan_name = PAN_DISPLAY_NAMES.get(wildcards.pan, wildcards.pan)
+        
+        if not data:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.text(0.5, 0.5, f"No seed count data for {wildcards.pan}", ha="center", va="center")
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+        else:
+            import pandas as pd
+            df = pd.DataFrame(data).sort_values("k")
+            
+            fig, ax = plt.subplots(figsize=(8, 5))
+            
+            is_estimated = df["estimated"].any()
+            
+            ax.plot(df["k"], df["seeds"] / 1e6, "o-", color="#1f77b4",
+                   markersize=8, linewidth=2)
+            
+            ax.set_xlabel("k-mer Size", fontsize=11)
+            ylabel = "Seeds (millions)" + (" (estimated)" if is_estimated else "")
+            ax.set_ylabel(ylabel, fontsize=11)
+            ax.set_title(f"{pan_name} Indexed Seeds by k (s={wildcards.s}, l={wildcards.l})", fontsize=12)
+            ax.set_xticks(sorted(df["k"].unique()))
+            ax.set_ylim(bottom=0)
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.set_axisbelow(True)
+            
+            plt.tight_layout()
+            plt.savefig(output.png, dpi=150, bbox_inches="tight")
+            plt.close()
+
+# =============================================================================
+# UTILITY
+# =============================================================================
+rule clean:
+    """Remove all generated files."""
+    shell:
+        "rm -rf workflow_output .snakemake"
+
+rule clean_reads:
+    """Delete all FASTQ read files to free disk space.
+    
+    This removes the large .fq files while preserving:
+    - .meta files (contains true node info for evaluation)
+    - .mutations files (wgsim mutation log for reproducibility)
+    - placement results (.tsv, .log)
+    - accuracy results
+    
+    Run with: snakemake clean_reads
+    """
+    shell:
+        """
+        echo "Finding .fq files to delete..."
+        count=$(find {OUT}/experiments -name "*.fq" 2>/dev/null | wc -l)
+        size=$(du -sh {OUT}/experiments/*/*/reads/ 2>/dev/null | awk '{{sum+=$1}} END {{print sum}}' || echo "unknown")
+        echo "Found $count .fq files"
+        find {OUT}/experiments -name "*.fq" -delete
+        echo "Deleted $count .fq files"
+        df -h /
+        """

@@ -417,7 +417,7 @@ add_custom_target(minimap2_target
 set(HTSLIB_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/htslib_install)
 ExternalProject_Add(htslib_ext
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20
-    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl
+    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-libdeflate
     BUILD_COMMAND make -j
     INSTALL_COMMAND make install
     BUILD_IN_SOURCE 1 # htslib needs to be built in source
@@ -439,7 +439,7 @@ ExternalProject_Add(samtools_ext
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E copy_directory 
         ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools ${SAMTOOLS_BUILD_DIR}
     BUILD_COMMAND ${CMAKE_COMMAND} -E env 
-        LDFLAGS=-L${HTSLIB_INSTALL_DIR}/lib
+        "LDFLAGS=-L${HTSLIB_INSTALL_DIR}/lib -lz -lpthread"
         LD_LIBRARY_PATH=${HTSLIB_INSTALL_DIR}/lib
         CPPFLAGS=-I${HTSLIB_INSTALL_DIR}/include
         sh -c "cd ${SAMTOOLS_BUILD_DIR} && autoheader && autoconf && ./configure --prefix=${SAMTOOLS_INSTALL_DIR} --with-htslib=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic --without-curses && make libst.a"

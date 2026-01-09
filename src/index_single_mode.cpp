@@ -16,6 +16,123 @@
 #include <stack>
 #include <bitset>
 #include <chrono>
+#include <atomic>
+#include <mutex>
+#include <iomanip>
+
+// Size statistics for optimization
+namespace {
+  struct SizeStats {
+    std::atomic<uint64_t> localRangeSeqTotal{0};
+    std::atomic<uint64_t> localRangeSeqMax{0};
+    std::atomic<uint64_t> localRangeSeqCount{0};
+    std::atomic<uint64_t> seedsToDeleteTotal{0};
+    std::atomic<uint64_t> seedsToDeleteMax{0};
+    std::atomic<uint64_t> newSyncmerRangesTotal{0};
+    std::atomic<uint64_t> newSyncmerRangesMax{0};
+    std::atomic<uint64_t> refOnSyncmersChangeRecordTotal{0};
+    std::atomic<uint64_t> refOnSyncmersChangeRecordMax{0};
+    std::atomic<uint64_t> blockOnSyncmersChangeRecordTotal{0};
+    std::atomic<uint64_t> blockOnSyncmersChangeRecordMax{0};
+    std::atomic<uint64_t> localMutationRangesTotal{0};
+    std::atomic<uint64_t> localMutationRangesMax{0};
+    std::atomic<uint64_t> gapRunUpdatesTotal{0};
+    std::atomic<uint64_t> gapRunUpdatesMax{0};
+    std::atomic<uint64_t> gapMapSizeTotal{0};
+    std::atomic<uint64_t> gapMapSizeMax{0};
+    std::atomic<uint64_t> refOnSyncmersMapSizeTotal{0};
+    std::atomic<uint64_t> refOnSyncmersMapSizeMax{0};
+    std::atomic<uint64_t> nodeCount{0};
+    
+    void updateMax(std::atomic<uint64_t>& maxVal, uint64_t newVal) {
+      uint64_t current = maxVal.load();
+      while (newVal > current && !maxVal.compare_exchange_weak(current, newVal)) {}
+    }
+    
+    void print() {
+      if (nodeCount == 0) return;
+      std::cerr << "\n=== SIZE STATISTICS ===" << std::endl;
+      std::cerr << "Nodes processed: " << nodeCount << std::endl;
+      std::cerr << "localRangeSeq: avg=" << (localRangeSeqTotal/std::max(1UL, localRangeSeqCount.load())) << " max=" << localRangeSeqMax << std::endl;
+      std::cerr << "seedsToDelete: avg=" << (seedsToDeleteTotal/nodeCount) << " max=" << seedsToDeleteMax << std::endl;
+      std::cerr << "newSyncmerRanges: avg=" << (newSyncmerRangesTotal/nodeCount) << " max=" << newSyncmerRangesMax << std::endl;
+      std::cerr << "refOnSyncmersChangeRecord: avg=" << (refOnSyncmersChangeRecordTotal/nodeCount) << " max=" << refOnSyncmersChangeRecordMax << std::endl;
+      std::cerr << "blockOnSyncmersChangeRecord: avg=" << (blockOnSyncmersChangeRecordTotal/nodeCount) << " max=" << blockOnSyncmersChangeRecordMax << std::endl;
+      std::cerr << "localMutationRanges: avg=" << (localMutationRangesTotal/nodeCount) << " max=" << localMutationRangesMax << std::endl;
+      std::cerr << "gapRunUpdates: avg=" << (gapRunUpdatesTotal/nodeCount) << " max=" << gapRunUpdatesMax << std::endl;
+      std::cerr << "gapMap size: avg=" << (gapMapSizeTotal/nodeCount) << " max=" << gapMapSizeMax << std::endl;
+      std::cerr << "refOnSyncmersMap size: avg=" << (refOnSyncmersMapSizeTotal/nodeCount) << " max=" << refOnSyncmersMapSizeMax << std::endl;
+      std::cerr << "======================\n" << std::endl;
+    }
+  };
+  
+  SizeStats g_stats;
+  
+  // Parallelization instrumentation
+  struct ParallelStats {
+    std::atomic<uint64_t> nodesInParallelSubtrees{0};   // Nodes processed by spawned workers
+    std::atomic<uint64_t> nodesInSequentialPaths{0};    // Nodes on main thread only
+    std::atomic<uint64_t> cloneTimeNs{0};               // Time spent cloning state
+    std::atomic<uint64_t> processNodeTimeNs{0};         // Time in processNode()
+    std::atomic<uint64_t> parallelChildrenTotal{0};     // Sum of children at fork points
+    std::atomic<uint64_t> workersSpawnedTotal{0};       // Total workers across all forks
+    std::atomic<uint64_t> maxForkDepth{0};              // Deepest nested fork
+    std::atomic<uint64_t> subtreeSizesProcessedParallel{0}; // Sum of subtree sizes in parallel
+    std::atomic<uint64_t> forksByDepth[16]{};           // Histogram of fork depths
+    
+    void updateMax(std::atomic<uint64_t>& maxVal, uint64_t newVal) {
+      uint64_t current = maxVal.load();
+      while (newVal > current && !maxVal.compare_exchange_weak(current, newVal)) {}
+    }
+    
+    void recordFork(size_t depth, size_t numChildren, size_t numWorkers, size_t totalSubtreeSize) {
+      if (depth < 16) forksByDepth[depth].fetch_add(1, std::memory_order_relaxed);
+      updateMax(maxForkDepth, depth);
+      parallelChildrenTotal.fetch_add(numChildren, std::memory_order_relaxed);
+      workersSpawnedTotal.fetch_add(numWorkers, std::memory_order_relaxed);
+      subtreeSizesProcessedParallel.fetch_add(totalSubtreeSize, std::memory_order_relaxed);
+    }
+    
+    void print(uint64_t totalNodes, uint64_t totalForks, uint64_t wallTimeMs) {
+      std::cout << "\n=== Parallelization Analysis ===" << std::endl;
+      
+      double parallelPct = 100.0 * subtreeSizesProcessedParallel / std::max(1UL, totalNodes);
+      std::cout << "Nodes in parallel subtrees: " << subtreeSizesProcessedParallel 
+                << " (" << std::fixed << std::setprecision(1) << parallelPct << "% of tree)" << std::endl;
+      
+      if (totalForks > 0) {
+        std::cout << "Avg children per fork: " << (parallelChildrenTotal / totalForks) << std::endl;
+        std::cout << "Avg workers per fork: " << (workersSpawnedTotal / totalForks) << std::endl;
+      }
+      std::cout << "Max fork depth: " << maxForkDepth << std::endl;
+      
+      std::cout << "Fork depth distribution: ";
+      for (int i = 0; i < 16 && forksByDepth[i] > 0; i++) {
+        std::cout << "d" << i << ":" << forksByDepth[i] << " ";
+      }
+      std::cout << std::endl;
+      
+      if (cloneTimeNs > 0) {
+        double cloneTimeSec = cloneTimeNs / 1e9;
+        double clonePct = 100.0 * cloneTimeSec / (wallTimeMs / 1000.0);
+        std::cout << "Clone overhead: " << std::setprecision(2) << cloneTimeSec 
+                  << "s (" << clonePct << "% of wall time)" << std::endl;
+      }
+      
+      // Theoretical speedup analysis
+      double sequentialFraction = 1.0 - (parallelPct / 100.0);
+      std::cout << "Amdahl's Law prediction (sequential fraction=" << std::setprecision(3) << sequentialFraction << "):" << std::endl;
+      for (int t : {4, 8, 16, 32, 48}) {
+        double speedup = 1.0 / (sequentialFraction + (1.0 - sequentialFraction) / t);
+        std::cout << "  " << t << " threads: max " << std::setprecision(2) << speedup << "x speedup" << std::endl;
+      }
+      
+      std::cout << "================================\n" << std::endl;
+    }
+  };
+  
+  ParallelStats g_parallelStats;
+}
 
 static void compareBruteForceBuild(
   panmanUtils::Tree *T,
@@ -25,10 +142,10 @@ static void compareBruteForceBuild(
   const std::map<uint64_t, uint64_t>& gapMap,
   const std::map<uint64_t, uint64_t>& degapCoordIndex,
   const std::map<uint64_t, uint64_t>& regapCoordIndex,
-  const std::vector<std::optional<seeding::rsyncmer_t>>& refOnSyncmers,
-  const std::set<uint64_t>& refOnSyncmersMap,
+  const index_single_mode::SyncmerMap& refOnSyncmers,
+  const index_single_mode::SyncmerSet& refOnSyncmersMap,
   const std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers,
-  const std::vector<std::optional<uint64_t>>& refOnKminmers,
+  const index_single_mode::KminmerMap& refOnKminmers,
   const std::vector<seeding::uniqueKminmer_t>& uniqueKminmers,
   const std::unordered_map<seeding::uniqueKminmer_t, uint64_t>& kminmerToUniqueIndex,
   int k, int s, int t, int l, bool open
@@ -278,11 +395,11 @@ static void compareBruteForceBuild(
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForceRevcomp = seeding::rollingSyncmers(seeding::revcomp(ungappedSequence), k, s, open, t, false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersDynamic;
-  for (size_t i = 0; i < refOnSyncmers.size(); i++) {
-    if (refOnSyncmers[i].has_value()) {
-      const auto& [hash, endPos, isReverse] = refOnSyncmers[i].value();
-      syncmersDynamic.emplace_back(std::make_tuple(hash, isReverse, true, index_single_mode::degapGlobal(i, degapCoordIndex)));
-    }
+  for (const auto& [pos, syncmer] : refOnSyncmers) {
+    const auto& hash = syncmer.hash;
+    const auto& endPos = syncmer.endPos;
+    const auto& isReverse = syncmer.isReverse;
+    syncmersDynamic.emplace_back(std::make_tuple(hash, isReverse, true, index_single_mode::degapGlobal(pos, degapCoordIndex)));
   }
 
   if (syncmersBruteForce.size() != syncmersBruteForceRevcomp.size()) {
@@ -1100,7 +1217,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
   const std::map<uint64_t, uint64_t>& gapMap,
   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
   std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>>& blockOnSyncmersChangeRecord,
-  const std::vector<std::optional<seeding::rsyncmer_t>>& refOnSyncmers,
+  const SyncmerMap& refOnSyncmers,
   std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers
 ) {
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges;
@@ -1112,9 +1229,21 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
   const std::vector<char>& blockStrand = blockSequences.blockStrand;
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
-  std::sort(localMutationRanges.begin(), localMutationRanges.end(), [&globalCoords, &blockStrand](const auto& a, const auto& b) {
-    return globalCoords.getScalarFromCoord(a.first, blockStrand[a.first.primaryBlockId]) < globalCoords.getScalarFromCoord(b.first, blockStrand[b.first.primaryBlockId]);
-  });
+  // Schwartzian transform: compute scalar coords once, sort by them
+  if (localMutationRanges.size() > 1) {
+    std::vector<std::pair<int64_t, size_t>> sortKeys;
+    sortKeys.reserve(localMutationRanges.size());
+    for (size_t i = 0; i < localMutationRanges.size(); ++i) {
+      sortKeys.emplace_back(globalCoords.getScalarFromCoord(localMutationRanges[i].first, blockStrand[localMutationRanges[i].first.primaryBlockId]), i);
+    }
+    std::sort(sortKeys.begin(), sortKeys.end());
+    std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> sortedRanges;
+    sortedRanges.reserve(localMutationRanges.size());
+    for (const auto& [key, idx] : sortKeys) {
+      sortedRanges.push_back(std::move(localMutationRanges[idx]));
+    }
+    localMutationRanges = std::move(sortedRanges);
+  }
 
   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> mergedLocalMutationRanges{localMutationRanges.front()};
   for (size_t i = 1; i < localMutationRanges.size(); ++i) {
@@ -1307,10 +1436,20 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
     std::vector<uint64_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
     std::vector<uint64_t>& seedsToDelete = syncmerRange.seedsToDelete;
     std::vector<uint64_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
-    localRangeSeq = "";
-    std::vector<uint64_t>().swap(localRangeCoordToGlobalScalarCoords);
-    std::vector<uint64_t>().swap(seedsToDelete);
-    std::vector<uint64_t>().swap(localRangeCoordToBlockId);
+    
+    // Estimate size from coordinate range (profiled avg=84-111, max=25530)
+    const auto begScalar = globalCoords.getScalarFromCoord(curCoord, blockStrand[curCoord.primaryBlockId]);
+    const auto endScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
+    const size_t estimatedSize = (endScalar > begScalar) ? (endScalar - begScalar + 1) : 128;
+    
+    // Clear and reserve for better performance (avoids repeated allocations)
+    localRangeSeq.clear();
+    localRangeSeq.reserve(estimatedSize);
+    localRangeCoordToGlobalScalarCoords.clear();
+    localRangeCoordToGlobalScalarCoords.reserve(estimatedSize);
+    seedsToDelete.clear();
+    localRangeCoordToBlockId.clear();
+    localRangeCoordToBlockId.reserve(estimatedSize);
     while (true) {
       if (!blockExists[curCoord.primaryBlockId]) {
         if (curCoord.primaryBlockId == curEndCoord.primaryBlockId) {
@@ -1327,7 +1466,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         localRangeSeq += curNuc;
         localRangeCoordToGlobalScalarCoords.push_back(curScalarCoord);
         localRangeCoordToBlockId.push_back(curCoord.primaryBlockId);
-      } else if (refOnSyncmers[curScalarCoord].has_value()) {
+      } else if (refOnSyncmers.contains(curScalarCoord)) {
         blockOnSyncmers[curCoord.primaryBlockId].erase(curScalarCoord);
         if (blockOnSyncmers[curCoord.primaryBlockId].empty()) blockOnSyncmers.erase(curCoord.primaryBlockId);
         blockOnSyncmersChangeRecord.emplace_back(curCoord.primaryBlockId, curScalarCoord, panmapUtils::seedChangeType::DEL);
@@ -1339,7 +1478,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
 
     if (i == newSyncmerRanges.size() - 1 && offsetsToDelete != -1) {
       for (size_t j = localRangeSeq.size() - endOffset - offsetsToDelete; j < localRangeSeq.size(); j++) {
-        if (refOnSyncmers[localRangeCoordToGlobalScalarCoords[j]].has_value()) {
+        if (refOnSyncmers.contains(localRangeCoordToGlobalScalarCoords[j])) {
           auto curScalarCoord = localRangeCoordToGlobalScalarCoords[j];
           auto curBlockId = localRangeCoordToBlockId[j];
           blockOnSyncmers[curBlockId].erase(curScalarCoord);
@@ -1363,8 +1502,10 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
   const std::map<uint64_t, uint64_t>& gapMap,
   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
   std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>>& blockOnSyncmersChangeRecord,
-  const std::vector<std::optional<seeding::rsyncmer_t>>& refOnSyncmers,
-  std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers
+  const SyncmerMap& refOnSyncmers,
+  std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers,
+  uint64_t firstNonGapScalar,
+  uint64_t lastNonGapScalar
 ) {
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges;
   if (localMutationRanges.empty()) {
@@ -1375,9 +1516,21 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
   const std::vector<char>& blockStrand = blockSequences.blockStrand;
   const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
-  std::sort(localMutationRanges.begin(), localMutationRanges.end(), [&globalCoords, &blockStrand](const auto& a, const auto& b) {
-    return globalCoords.getScalarFromCoord(a.first, blockStrand[a.first.primaryBlockId]) < globalCoords.getScalarFromCoord(b.first, blockStrand[b.first.primaryBlockId]);
-  });
+  // Schwartzian transform: compute scalar coords once, sort by them
+  if (localMutationRanges.size() > 1) {
+    std::vector<std::pair<int64_t, size_t>> sortKeys;
+    sortKeys.reserve(localMutationRanges.size());
+    for (size_t i = 0; i < localMutationRanges.size(); ++i) {
+      sortKeys.emplace_back(globalCoords.getScalarFromCoord(localMutationRanges[i].first, blockStrand[localMutationRanges[i].first.primaryBlockId]), i);
+    }
+    std::sort(sortKeys.begin(), sortKeys.end());
+    std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> sortedRanges;
+    sortedRanges.reserve(localMutationRanges.size());
+    for (const auto& [key, idx] : sortKeys) {
+      sortedRanges.push_back(std::move(localMutationRanges[idx]));
+    }
+    localMutationRanges = std::move(sortedRanges);
+  }
 
   std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>> mergedLocalMutationRanges{localMutationRanges.front()};
   for (size_t i = 1; i < localMutationRanges.size(); ++i) {
@@ -1600,10 +1753,21 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
     std::vector<uint64_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
     std::vector<uint64_t>& seedsToDelete = syncmerRange.seedsToDelete;
     std::vector<uint64_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
-    localRangeSeq = "";
-    std::vector<uint64_t>().swap(localRangeCoordToGlobalScalarCoords);
-    std::vector<uint64_t>().swap(seedsToDelete);
-    std::vector<uint64_t>().swap(localRangeCoordToBlockId);
+    
+    // Pre-calculate expected range size for reservations
+    const size_t estimatedSize = (curEndCoordScalar > curCoordScalar) ? 
+                                  (curEndCoordScalar - curCoordScalar + 1) : 256;
+    
+    // Clear and reserve instead of swap (avoids allocation/deallocation)
+    localRangeSeq.clear();
+    localRangeSeq.reserve(estimatedSize);
+    localRangeCoordToGlobalScalarCoords.clear();
+    localRangeCoordToGlobalScalarCoords.reserve(estimatedSize);
+    seedsToDelete.clear();
+    // seedsToDelete is typically small, no need to reserve
+    localRangeCoordToBlockId.clear();
+    localRangeCoordToBlockId.reserve(estimatedSize);
+    
     bool recomputeBlock = false;
     bool recomputeInProgress = false;
     while (true) {
@@ -1641,11 +1805,17 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         localRangeSeq += curNuc;
         localRangeCoordToGlobalScalarCoords.push_back(curCoordScalar);
         localRangeCoordToBlockId.push_back(curCoord.primaryBlockId);
-      } else if (refOnSyncmers[curCoordScalar].has_value()) {
-        blockOnSyncmers[curCoord.primaryBlockId].erase(curCoordScalar);
-        if (blockOnSyncmers[curCoord.primaryBlockId].empty()) blockOnSyncmers.erase(curCoord.primaryBlockId);
-        blockOnSyncmersChangeRecord.emplace_back(curCoord.primaryBlockId, curCoordScalar, panmapUtils::seedChangeType::DEL);
-        seedsToDelete.push_back(curCoordScalar);
+      } else if (refOnSyncmers.contains(curCoordScalar)) {
+        // Only delete seeds that are INSIDE the genome extent (not in flank regions)
+        // Flank regions are before firstNonGapScalar or after lastNonGapScalar
+        // Seeds in flank regions are "missing data" not "true gaps"
+        if (curCoordScalar >= firstNonGapScalar && curCoordScalar <= lastNonGapScalar) {
+          blockOnSyncmers[curCoord.primaryBlockId].erase(curCoordScalar);
+          if (blockOnSyncmers[curCoord.primaryBlockId].empty()) blockOnSyncmers.erase(curCoord.primaryBlockId);
+          blockOnSyncmersChangeRecord.emplace_back(curCoord.primaryBlockId, curCoordScalar, panmapUtils::seedChangeType::DEL);
+          seedsToDelete.push_back(curCoordScalar);
+        }
+        // If outside extent, the seed is inherited from parent (no deletion)
       }
       if (curCoordScalar == curEndCoordScalar)  {
         break;
@@ -1690,13 +1860,16 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
 
     if (i == newSyncmerRanges.size() - 1 && offsetsToDelete != -1) {
       for (size_t j = localRangeSeq.size() - endOffset - offsetsToDelete; j < localRangeSeq.size(); j++) {
-        if (refOnSyncmers[localRangeCoordToGlobalScalarCoords[j]].has_value()) {
+        if (refOnSyncmers.contains(localRangeCoordToGlobalScalarCoords[j])) {
           auto curGlobalScalarCoord = localRangeCoordToGlobalScalarCoords[j];
-          auto curBlockId = localRangeCoordToBlockId[j];
-          blockOnSyncmers[curBlockId].erase(curGlobalScalarCoord);
-          if (blockOnSyncmers[curBlockId].empty()) blockOnSyncmers.erase(curBlockId);
-          blockOnSyncmersChangeRecord.emplace_back(curBlockId, curGlobalScalarCoord, panmapUtils::seedChangeType::DEL);
-          seedsToDelete.push_back(localRangeCoordToGlobalScalarCoords[j]);
+          // Only delete seeds that are INSIDE the genome extent (not in flank regions)
+          if (curGlobalScalarCoord >= firstNonGapScalar && curGlobalScalarCoord <= lastNonGapScalar) {
+            auto curBlockId = localRangeCoordToBlockId[j];
+            blockOnSyncmers[curBlockId].erase(curGlobalScalarCoord);
+            if (blockOnSyncmers[curBlockId].empty()) blockOnSyncmers.erase(curBlockId);
+            blockOnSyncmersChangeRecord.emplace_back(curBlockId, curGlobalScalarCoord, panmapUtils::seedChangeType::DEL);
+            seedsToDelete.push_back(localRangeCoordToGlobalScalarCoords[j]);
+          }
         }
       }
     }
@@ -1705,11 +1878,11 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
   return newSyncmerRanges;
 }
 
-std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> index_single_mode::IndexBuilder::computeNewKminmerRanges(
+std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> index_single_mode::IndexBuilder::computeNewKminmerRanges(
   std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
   const uint64_t dfsIndex
 ) {
-  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges;
+  std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> newKminmerRanges;
   auto l = indexBuilder.getL();
   if (refOnSyncmersMap.size() < l) {
     // no k-min-mers to compute, erase all k-min-mers
@@ -1741,7 +1914,7 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
   int64_t syncmerChangeIndex = 0;
   while (syncmerChangeIndex < refOnSyncmersChangeRecord.size()) {
     const auto& [syncmerPos, changeType, rsyncmer] = refOnSyncmersChangeRecord[syncmerChangeIndex];
-    std::set<uint64_t>::iterator curBegIt, curEndIt;
+    index_single_mode::SyncmerSet::iterator curBegIt, curEndIt;
     if (changeType == panmapUtils::seedChangeType::DEL) {
       if (syncmerPos < *refOnSyncmersMap.begin()) {
         syncmerChangeIndex++;
@@ -1848,12 +2021,12 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
 }
 
 // Overload for parallel building that uses BuildState instead of member variables
-std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> index_single_mode::IndexBuilder::computeNewKminmerRanges(
+std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> index_single_mode::IndexBuilder::computeNewKminmerRanges(
   std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
   BuildState& state,
   const uint64_t dfsIndex
 ) {
-  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges;
+  std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> newKminmerRanges;
   auto l = indexBuilder.getL();
   if (state.refOnSyncmersMap.size() < static_cast<size_t>(l)) {
     return newKminmerRanges;
@@ -1882,7 +2055,7 @@ std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator
   int64_t syncmerChangeIndex = 0;
   while (syncmerChangeIndex < static_cast<int64_t>(refOnSyncmersChangeRecord.size())) {
     const auto& [syncmerPos, changeType, rsyncmer] = refOnSyncmersChangeRecord[syncmerChangeIndex];
-    std::set<uint64_t>::iterator curBegIt, curEndIt;
+    index_single_mode::SyncmerSet::iterator curBegIt, curEndIt;
     if (changeType == panmapUtils::seedChangeType::DEL) {
       if (syncmerPos < *state.refOnSyncmersMap.begin()) {
         syncmerChangeIndex++;
@@ -2023,10 +2196,14 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
     invertGapMap(gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
+  // Compute genome extent from gapMap for flank masking
+  auto [firstNonGapScalar, lastNonGapScalar] = computeExtentFromGapMap(gapMap, globalCoords.lastScalarCoord);
+
   // Compute new syncmer ranges
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges = 
       computeNewSyncmerRangesJump(node, dfsIndex, blockSequences, blockExistsDelayed, blockStrandDelayed, 
-                                   globalCoords, gapMap, localMutationRanges, blockOnSyncmersChangeRecord, refOnSyncmers, blockOnSyncmers);
+                                   globalCoords, gapMap, localMutationRanges, blockOnSyncmersChangeRecord, refOnSyncmers, blockOnSyncmers,
+                                   firstNonGapScalar, lastNonGapScalar);
 
   // Process syncmers
   for (const auto& syncmerRange : newSyncmerRanges) {
@@ -2036,7 +2213,7 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
         auto startPosGlobal = localRangeCoordToGlobalScalarCoords[startPos];
         auto endPosGlobal = localRangeCoordToGlobalScalarCoords[startPos + indexBuilder.getK() - 1];
         auto curBlockId = localRangeCoordToBlockId[startPos];
-        bool wasSeed = refOnSyncmers[startPosGlobal].has_value();
+        bool wasSeed = refOnSyncmers.contains(startPosGlobal);
         if (!wasSeed && isSeed) {
           refOnSyncmersMap.insert(startPosGlobal);
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
@@ -2044,22 +2221,22 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
           blockOnSyncmers[curBlockId].insert(startPosGlobal);
         } else if (wasSeed && !isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, refOnSyncmers[startPosGlobal].value());
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(startPosGlobal));
           blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::DEL);
-          refOnSyncmers[startPosGlobal] = std::nullopt;
+          refOnSyncmers.erase(startPosGlobal);
           refOnSyncmersMap.erase(startPosGlobal);
           blockOnSyncmers[curBlockId].erase(startPosGlobal);
           if (blockOnSyncmers[curBlockId].empty()) blockOnSyncmers.erase(curBlockId);
         } else if (wasSeed && isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, refOnSyncmers[startPosGlobal].value());
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, refOnSyncmers.at(startPosGlobal));
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
         }
       }
     }
     for (uint64_t pos : seedsToDelete) {
-      if (refOnSyncmers[pos].has_value()) {
-        refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
-        refOnSyncmers[pos] = std::nullopt;
+      if (refOnSyncmers.contains(pos)) {
+        refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
+        refOnSyncmers.erase(pos);
         refOnSyncmersMap.erase(pos);
       }
     }
@@ -2067,9 +2244,9 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
 
   // Handle potential syncmer deletions
   for (uint32_t pos : potentialSyncmerDeletions) {
-    if (refOnSyncmers[pos].has_value()) {
-      refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
-      refOnSyncmers[pos] = std::nullopt;
+    if (refOnSyncmers.contains(pos)) {
+      refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
+      refOnSyncmers.erase(pos);
       const auto blockId = globalCoords.getBlockIdFromScalar(pos);
       blockOnSyncmers[blockId].erase(pos);
       if (blockOnSyncmers[blockId].empty()) blockOnSyncmers.erase(blockId);
@@ -2083,8 +2260,8 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
     if (oldExists && !newExists) {
       if (blockOnSyncmers.find(blockId) != blockOnSyncmers.end()) {
         for (uint64_t pos : blockOnSyncmers[blockId]) {
-          refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
-          refOnSyncmers[pos] = std::nullopt;
+          refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
+          refOnSyncmers.erase(pos);
           refOnSyncmersMap.erase(pos);
         }
         blockOnSyncmers.erase(blockId);
@@ -2099,7 +2276,7 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
   std::vector<uint64_t> addedSeedHashes;
   std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedHashes;
 
-  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = 
+  std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> newKminmerRanges = 
       computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
@@ -2112,13 +2289,13 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
     for (size_t j = 0; j < static_cast<size_t>(l); j++) {
       if (curIt == refOnSyncmersMap.end()) break;
       else if (endIt != refOnSyncmersMap.end() && *curIt == *endIt && j != static_cast<size_t>(l) - 1) break;
-      startingSyncmerHashes.push_back(refOnSyncmers[*curIt].value().hash);
+      startingSyncmerHashes.push_back(refOnSyncmers.at(*curIt).hash);
       if (j != static_cast<size_t>(l) - 1) ++curIt;
     }
     if (startingSyncmerHashes.size() < static_cast<size_t>(l)) continue;
 
     if (l == 1) {
-      auto syncmerRev = refOnSyncmers[*curIt].value().isReverse;
+      auto syncmerRev = refOnSyncmers.at(*curIt).isReverse;
       if (syncmerRev) {
         forwardHash = std::numeric_limits<size_t>::max();
         reverseHash = startingSyncmerHashes[0];
@@ -2133,21 +2310,23 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
       }
     }
 
-    auto& curRefOnKminmer = refOnKminmers[*indexingIt];
+    uint64_t indexingPos = *indexingIt;
     uint64_t newHash = std::min(forwardHash, reverseHash);
     if (forwardHash != reverseHash) {
-      bool substitution = curRefOnKminmer.has_value();
+      auto existingIt = refOnKminmers.find(indexingPos);
+      bool substitution = (existingIt != refOnKminmers.end());
       if (substitution) {
-        uint64_t oldHash = curRefOnKminmer.value();
+        uint64_t oldHash = existingIt->second;
         substitutedSeedHashes.emplace_back(oldHash, newHash);
       } else {
         addedSeedHashes.push_back(newHash);
       }
-      curRefOnKminmer = newHash;
+      refOnKminmers[indexingPos] = newHash;
     } else {
-      if (curRefOnKminmer.has_value()) {
-        deletedSeedHashes.push_back(curRefOnKminmer.value());
-        curRefOnKminmer = std::nullopt;
+      auto existingItDel = refOnKminmers.find(indexingPos);
+      if (existingItDel != refOnKminmers.end()) {
+        deletedSeedHashes.push_back(existingItDel->second);
+        refOnKminmers.erase(existingItDel);
       }
     }
 
@@ -2156,24 +2335,26 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
     while (curIt != endIt) {
       ++curIt;
       if (curIt == refOnSyncmersMap.end()) break;
-      forwardHash = seeding::rol(forwardHash, k) ^ seeding::rol(refOnSyncmers[*indexingIt].value().hash, k * l) ^ refOnSyncmers[*curIt].value().hash;
-      reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(refOnSyncmers[*indexingIt].value().hash, k) ^ seeding::rol(refOnSyncmers[*curIt].value().hash, k * (l-1));
+      forwardHash = seeding::rol(forwardHash, k) ^ seeding::rol(refOnSyncmers.at(*indexingIt).hash, k * l) ^ refOnSyncmers.at(*curIt).hash;
+      reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(refOnSyncmers.at(*indexingIt).hash, k) ^ seeding::rol(refOnSyncmers.at(*curIt).hash, k * (l-1));
       ++indexingIt;
 
-      auto& curRefOnKminmer2 = refOnKminmers[*indexingIt];
+      uint64_t indexingPos2 = *indexingIt;
       uint64_t newHash2 = std::min(forwardHash, reverseHash);
       if (forwardHash != reverseHash) {
-        bool substitution = curRefOnKminmer2.has_value();
+        auto existingIt2 = refOnKminmers.find(indexingPos2);
+        bool substitution = (existingIt2 != refOnKminmers.end());
         if (substitution) {
-          substitutedSeedHashes.emplace_back(curRefOnKminmer2.value(), newHash2);
+          substitutedSeedHashes.emplace_back(existingIt2->second, newHash2);
         } else {
           addedSeedHashes.push_back(newHash2);
         }
-        curRefOnKminmer2 = newHash2;
+        refOnKminmers[indexingPos2] = newHash2;
       } else {
-        if (curRefOnKminmer2.has_value()) {
-          deletedSeedHashes.push_back(curRefOnKminmer2.value());
-          curRefOnKminmer2 = std::nullopt;
+        auto existingIt2Del = refOnKminmers.find(indexingPos2);
+        if (existingIt2Del != refOnKminmers.end()) {
+          deletedSeedHashes.push_back(existingIt2Del->second);
+          refOnKminmers.erase(existingIt2Del);
         }
       }
     }
@@ -2184,9 +2365,10 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
     auto delIt = newKminmerRanges.back().second;
     for (size_t j = 0; j < static_cast<size_t>(l) - 1; j++) {
       --delIt;
-      if (refOnKminmers[*delIt].has_value()) {
-        deletedSeedHashes.push_back(refOnKminmers[*delIt].value());
-        refOnKminmers[*delIt] = std::nullopt;
+      auto existingIt = refOnKminmers.find(*delIt);
+      if (existingIt != refOnKminmers.end()) {
+        deletedSeedHashes.push_back(existingIt->second);
+        refOnKminmers.erase(existingIt);
       }
       if (delIt == refOnSyncmersMap.begin()) break;
     }
@@ -2194,9 +2376,12 @@ void index_single_mode::IndexBuilder::processSingleNodeNoBacktrack(
 
   // Handle deleted syncmers that still have k-minmers
   for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
-    if (changeType == panmapUtils::seedChangeType::DEL && refOnKminmers[syncmerPos].has_value()) {
-      deletedSeedHashes.push_back(refOnKminmers[syncmerPos].value());
-      refOnKminmers[syncmerPos] = std::nullopt;
+    if (changeType == panmapUtils::seedChangeType::DEL) {
+      auto existingIt = refOnKminmers.find(syncmerPos);
+      if (existingIt != refOnKminmers.end()) {
+        deletedSeedHashes.push_back(existingIt->second);
+        refOnKminmers.erase(existingIt);
+      }
     }
   }
 
@@ -2300,10 +2485,13 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   //   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
   // }
 
+  // Compute genome extent from gapMap for flank masking
+  auto [firstNonGapScalar, lastNonGapScalar] = computeExtentFromGapMap(gapMap, globalCoords.lastScalarCoord);
+
   bool useJump = true;
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges;
   if (useJump) {
-    newSyncmerRanges = computeNewSyncmerRangesJump(node, dfsIndex, blockSequences,  blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, localMutationRanges, blockOnSyncmersChangeRecord, refOnSyncmers, blockOnSyncmers);
+    newSyncmerRanges = computeNewSyncmerRangesJump(node, dfsIndex, blockSequences,  blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, localMutationRanges, blockOnSyncmersChangeRecord, refOnSyncmers, blockOnSyncmers, firstNonGapScalar, lastNonGapScalar);
   } else {
     newSyncmerRanges = computeNewSyncmerRangesWalk(node, dfsIndex, blockSequences,  blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, localMutationRanges, blockOnSyncmersChangeRecord, refOnSyncmers, blockOnSyncmers);
   }
@@ -2316,7 +2504,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
         auto startPosGlobal = localRangeCoordToGlobalScalarCoords[startPos];
         auto endPosGlobal = localRangeCoordToGlobalScalarCoords[startPos + indexBuilder.getK() - 1];
         auto curBlockId = localRangeCoordToBlockId[startPos];
-        bool wasSeed = refOnSyncmers[startPosGlobal].has_value();
+        bool wasSeed = refOnSyncmers.contains(startPosGlobal);
         if (!wasSeed && isSeed) {
           auto it = refOnSyncmersMap.insert(startPosGlobal).first;
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
@@ -2324,28 +2512,28 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
           blockOnSyncmers[curBlockId].insert(startPosGlobal);
         } else if (wasSeed && !isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, refOnSyncmers[startPosGlobal].value());
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(startPosGlobal));
           blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::DEL);
-          refOnSyncmers[startPosGlobal] = std::nullopt;
+          refOnSyncmers.erase(startPosGlobal);
           refOnSyncmersMap.erase(startPosGlobal);
           blockOnSyncmers[curBlockId].erase(startPosGlobal);
           if (blockOnSyncmers[localRangeCoordToBlockId[startPos]].empty()) {
             blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
           }
         } else if (wasSeed && isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, refOnSyncmers[startPosGlobal].value());
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, refOnSyncmers.at(startPosGlobal));
           refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
         }
       }
     }
 
     for (uint64_t pos : seedsToDelete) {
-      if (!refOnSyncmers[pos].has_value()) {
+      if (!refOnSyncmers.contains(pos)) {
         std::cerr << "Error: refOnSyncmers[" << pos << "] is null" << std::endl;
         std::exit(1);
       }
-      refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
-      refOnSyncmers[pos] = std::nullopt;
+      refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
+      refOnSyncmers.erase(pos);
       refOnSyncmersMap.erase(pos);
       // blockOnSyncmers and blockOnSyncmersChangeRecord are updated in computeNewSyncmerRanges()
     }
@@ -2353,9 +2541,9 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
 
   if (useJump) {
     for (uint32_t pos : potentialSyncmerDeletions) {
-      if (refOnSyncmers[pos].has_value()) {
-        refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
-        refOnSyncmers[pos] = std::nullopt;
+      if (refOnSyncmers.contains(pos)) {
+        refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
+        refOnSyncmers.erase(pos);
         const auto blockId = globalCoords.getBlockIdFromScalar(pos);
         blockOnSyncmers[blockId].erase(pos);
         if (blockOnSyncmers[blockId].empty()) blockOnSyncmers.erase(blockId);
@@ -2370,10 +2558,10 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     if (oldExists && !newExists) {
       if (blockOnSyncmers.find(blockId) != blockOnSyncmers.end()) {
         for (uint64_t pos : blockOnSyncmers[blockId]) {
-          refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
+          refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
           blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
 
-          refOnSyncmers[pos] = std::nullopt;
+          refOnSyncmers.erase(pos);
           refOnSyncmersMap.erase(pos);
         }
         blockOnSyncmers.erase(blockId);
@@ -2382,7 +2570,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   }
 
   // processing k-min-mers
-  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
+  std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
     auto beg = *newKminmerRanges[i].first;
@@ -2417,14 +2605,14 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
       } else if (endIt != refOnSyncmersMap.end() && *curIt == *endIt && j != l - 1) {
         break;
       }
-      startingSyncmerHashes.push_back(refOnSyncmers[*curIt].value().hash);
+      startingSyncmerHashes.push_back(refOnSyncmers.at(*curIt).hash);
       if (j != l - 1) ++curIt;
     }
     if (startingSyncmerHashes.size() < l) {
       continue;
     }
     if (l == 1) {
-      auto syncmerRev = refOnSyncmers[*curIt].value().isReverse;
+      auto syncmerRev = refOnSyncmers.at(*curIt).isReverse;
       if (syncmerRev) {
         forwardHash = std::numeric_limits<size_t>::max();
         reverseHash = startingSyncmerHashes[0];
@@ -2443,26 +2631,26 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
       }
     }
 
-    auto& curRefOnKminmer = refOnKminmers[*indexingIt];
+    uint64_t indexingPos = *indexingIt;
     uint64_t newHash = std::min(forwardHash, reverseHash);
     if (forwardHash != reverseHash) {
-      bool substitution = curRefOnKminmer.has_value();
+      bool substitution = refOnKminmers.contains(indexingPos);
       if (substitution) {
-        uint64_t oldHash = curRefOnKminmer.value();
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, oldHash);
+        uint64_t oldHash = refOnKminmers.at(indexingPos);
+        refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::SUB, oldHash);
         substitutedSeedHashes.emplace_back(oldHash, newHash);
       } else {
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
+        refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
         addedSeedHashes.push_back(newHash);
       }
-      // Store hash directly instead of index
-      curRefOnKminmer = newHash;
+      // Store hash directly
+      refOnKminmers[indexingPos] = newHash;
     } else {
-      if (curRefOnKminmer.has_value()) {
-        uint64_t oldHash = curRefOnKminmer.value();
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, oldHash);
+      if (refOnKminmers.contains(indexingPos)) {
+        uint64_t oldHash = refOnKminmers.at(indexingPos);
+        refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::DEL, oldHash);
         deletedSeedHashes.push_back(oldHash);
-        curRefOnKminmer = std::nullopt;
+        refOnKminmers.erase(indexingPos);
       }
     }
 
@@ -2471,29 +2659,29 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     while (curIt != endIt) {
       ++curIt;
       if (curIt == refOnSyncmersMap.end()) break;
-      forwardHash = seeding::rol(forwardHash, k) ^ seeding::rol(refOnSyncmers[*indexingIt].value().hash, k * l) ^ refOnSyncmers[*curIt].value().hash;
-      reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(refOnSyncmers[*indexingIt].value().hash, k)     ^ seeding::rol(refOnSyncmers[*curIt].value().hash, k * (l-1));
+      forwardHash = seeding::rol(forwardHash, k) ^ seeding::rol(refOnSyncmers.at(*indexingIt).hash, k * l) ^ refOnSyncmers.at(*curIt).hash;
+      reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(refOnSyncmers.at(*indexingIt).hash, k)     ^ seeding::rol(refOnSyncmers.at(*curIt).hash, k * (l-1));
       ++indexingIt;
 
-      auto& curRefOnKminmer = refOnKminmers[*indexingIt];
+      uint64_t indexingPos2 = *indexingIt;
       uint64_t newHash2 = std::min(forwardHash, reverseHash);
       if (forwardHash != reverseHash) {
-        bool substitution = curRefOnKminmer.has_value();
+        bool substitution = refOnKminmers.contains(indexingPos2);
         if (substitution) {
-          uint64_t oldHash = curRefOnKminmer.value();
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, oldHash);
+          uint64_t oldHash = refOnKminmers.at(indexingPos2);
+          refOnKminmersChangeRecord.emplace_back(indexingPos2, panmapUtils::seedChangeType::SUB, oldHash);
           substitutedSeedHashes.emplace_back(oldHash, newHash2);
         } else {
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
+          refOnKminmersChangeRecord.emplace_back(indexingPos2, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
           addedSeedHashes.push_back(newHash2);
         }
-        curRefOnKminmer = newHash2;
+        refOnKminmers[indexingPos2] = newHash2;
       } else {
-        if (curRefOnKminmer.has_value()) {
-          uint64_t oldHash = curRefOnKminmer.value();
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, oldHash);
+        if (refOnKminmers.contains(indexingPos2)) {
+          uint64_t oldHash = refOnKminmers.at(indexingPos2);
+          refOnKminmersChangeRecord.emplace_back(indexingPos2, panmapUtils::seedChangeType::DEL, oldHash);
           deletedSeedHashes.push_back(oldHash);
-          curRefOnKminmer = std::nullopt;
+          refOnKminmers.erase(indexingPos2);
         }
       }
     }
@@ -2502,21 +2690,22 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     auto delIt = newKminmerRanges.back().second;
     for (size_t j = 0; j < l - 1; j++) {
       --delIt;
-      if (refOnKminmers[*delIt].has_value()) {
-        uint64_t oldHash = refOnKminmers[*delIt].value();
-        refOnKminmersChangeRecord.emplace_back(*delIt, panmapUtils::seedChangeType::DEL, oldHash);
+      uint64_t delPos = *delIt;
+      if (refOnKminmers.contains(delPos)) {
+        uint64_t oldHash = refOnKminmers.at(delPos);
+        refOnKminmersChangeRecord.emplace_back(delPos, panmapUtils::seedChangeType::DEL, oldHash);
         deletedSeedHashes.push_back(oldHash);
-        refOnKminmers[*delIt] = std::nullopt;
+        refOnKminmers.erase(delPos);
       }
       if (delIt == refOnSyncmersMap.begin()) break;
     }
   }
   for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
-    if (changeType == panmapUtils::seedChangeType::DEL && refOnKminmers[syncmerPos].has_value()) {
-      uint64_t oldHash = refOnKminmers[syncmerPos].value();
+    if (changeType == panmapUtils::seedChangeType::DEL && refOnKminmers.contains(syncmerPos)) {
+      uint64_t oldHash = refOnKminmers.at(syncmerPos);
       refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, oldHash);
       deletedSeedHashes.push_back(oldHash);
-      refOnKminmers[syncmerPos] = std::nullopt;
+      refOnKminmers.erase(syncmerPos);
     }
   }
 
@@ -2594,8 +2783,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   for (const auto& [pos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
     if (changeType == panmapUtils::seedChangeType::ADD) {
       // Was added... need to delete
-
-      refOnSyncmers[pos] = std::nullopt;
+      refOnSyncmers.erase(pos);
       refOnSyncmersMap.erase(pos);
     } else {
       // was deleted or replaced... need to restore
@@ -2616,11 +2804,11 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     }
   }
 
-  for (const auto& [pos, changeType, kminmerIndex] : refOnKminmersChangeRecord) {
+  for (const auto& [pos, changeType, kminmerHash] : refOnKminmersChangeRecord) {
     if (changeType == panmapUtils::seedChangeType::ADD) {
-      refOnKminmers[pos] = std::nullopt;
+      refOnKminmers.erase(pos);
     } else {
-      refOnKminmers[pos] = kminmerIndex;
+      refOnKminmers[pos] = kminmerHash;
     }
   }
 }
@@ -2629,8 +2817,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
 void index_single_mode::IndexBuilder::buildIndex() {
   panmapUtils::BlockSequences blockSequences(T);
   panmapUtils::GlobalCoords globalCoords(blockSequences);
-  refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
-  refOnKminmers.resize(globalCoords.lastScalarCoord + 1);
+  // Note: refOnSyncmers and refOnKminmers are now sparse maps, no resize needed
 
   std::vector<char> blockExistsDelayed = blockSequences.blockExists;
   std::vector<char> blockStrandDelayed = blockSequences.blockStrand;
@@ -2783,7 +2970,7 @@ void index_single_mode::IndexBuilder::buildIndex() {
   std::cout << "Finished building index! Total seed changes: " << totalChanges << std::endl;
 }
 
-void index_single_mode::IndexBuilder::writeIndex(const std::string& path) {
+void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads) {
   std::cout << "Serializing index..." << std::endl;
   
   // Serialize Cap'n Proto message to flat array
@@ -2804,7 +2991,7 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path) {
   std::cout << "Writing ZSTD-compressed index to " << path << " (" << dataSize << " bytes uncompressed)..." << std::endl;
   
   // Use ZSTD compression to write
-  if (!panmap_zstd::compressToFile(data, dataSize, path, 3, 0)) {
+  if (!panmap_zstd::compressToFile(data, dataSize, path, 3, numThreads)) {
     std::cerr << "Error: failed to write compressed index to " << path << std::endl;
     std::exit(1);
   }
@@ -2831,7 +3018,8 @@ void index_single_mode::IndexBuilder::processNode(
   panmapUtils::GlobalCoords &globalCoords,
   std::unordered_set<std::string_view>& localEmptyNodes,
   uint64_t dfsIndex,
-  BacktrackInfo* backtrackInfo
+  BacktrackInfo* backtrackInfo,
+  bool skipNodeChanges
 ) {
   // Local storage if backtrackInfo is null
   std::vector<std::tuple<uint32_t, bool, bool, bool, bool>> localBlockMutationRecord;
@@ -2842,6 +3030,7 @@ void index_single_mode::IndexBuilder::processNode(
   std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>> localBlockOnSyncmersChangeRecord;
   std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, uint64_t>> localRefOnKminmersChangeRecord;
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> localGapRunBlockInversionBacktracks;
+  std::vector<std::pair<uint64_t, int64_t>> localRunningCountChanges;
 
   // References to use
   auto& blockMutationRecord = backtrackInfo ? backtrackInfo->blockMutationRecord : localBlockMutationRecord;
@@ -2852,6 +3041,7 @@ void index_single_mode::IndexBuilder::processNode(
   auto& blockOnSyncmersChangeRecord = backtrackInfo ? backtrackInfo->blockOnSyncmersChangeRecord : localBlockOnSyncmersChangeRecord;
   auto& refOnKminmersChangeRecord = backtrackInfo ? backtrackInfo->refOnKminmersChangeRecord : localRefOnKminmersChangeRecord;
   auto& gapRunBlockInversionBacktracks = backtrackInfo ? backtrackInfo->gapRunBlockInversionBacktracks : localGapRunBlockInversionBacktracks;
+  auto& runningCountChanges = backtrackInfo ? backtrackInfo->runningCountChanges : localRunningCountChanges;
 
   if (backtrackInfo) {
       backtrackInfo->clear();
@@ -2874,8 +3064,11 @@ void index_single_mode::IndexBuilder::processNode(
   blockMutationRecord.reserve(node->blockMutation.size());
   nucMutationRecord.reserve(node->nucMutation.size() * 6);
   potentialSyncmerDeletions.reserve(node->nucMutation.size() * 6);
-  localMutationRanges.reserve(node->blockMutation.size() + node->nucMutation.size() * 6);
-  gapRunUpdates.reserve(node->nucMutation.size() * 6 + node->blockMutation.size() * 10);
+  localMutationRanges.reserve(std::max(size_t(32), node->blockMutation.size() + node->nucMutation.size() * 6));
+  gapRunUpdates.reserve(std::max(size_t(64), node->nucMutation.size() * 6 + node->blockMutation.size() * 10));
+  // Reserve for change records - these can be large
+  refOnSyncmersChangeRecord.reserve(128);  // avg is 76-153
+  blockOnSyncmersChangeRecord.reserve(128);  // avg is 66-112
   
   applyMutations(node, dfsIndex, state.blockSequences, state.invertedBlocks, globalCoords, 
                  localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, 
@@ -2900,13 +3093,57 @@ void index_single_mode::IndexBuilder::processNode(
     invertGapMap(state.gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
+  // Update genome extent from gapMap - used to determine flank regions
+  // Save previous extent for backtracking
+  if (backtrackInfo) {
+    backtrackInfo->prevFirstNonGapScalar = state.firstNonGapScalar;
+    backtrackInfo->prevLastNonGapScalar = state.lastNonGapScalar;
+  }
+  auto [newFirstNonGap, newLastNonGap] = computeExtentFromGapMap(state.gapMap, globalCoords.lastScalarCoord);
+  
+  // Debug: log extent changes for nodes we care about
+  static bool debugFlankMasking = (std::getenv("DEBUG_FLANK_MASKING") != nullptr);
+  if (debugFlankMasking) {
+    if (state.firstNonGapScalar != newFirstNonGap || state.lastNonGapScalar != newLastNonGap) {
+      std::cerr << "[FLANK] Node " << node->identifier << " (dfs=" << dfsIndex << "): "
+                << "extent [" << state.firstNonGapScalar << "," << state.lastNonGapScalar << "] -> "
+                << "[" << newFirstNonGap << "," << newLastNonGap << "]" << std::endl;
+    }
+  }
+  
+  state.firstNonGapScalar = newFirstNonGap;
+  state.lastNonGapScalar = newLastNonGap;
+  
+  // Compute hard mask boundaries relative to each genome's extent
+  // Seeds in hard-masked regions are completely ignored (no adds, no deletes)
+  // Seeds in flank regions (between hard mask and extent) have deletions skipped (imputed)
+  const int flankMaskBp = getFlankMaskBp();
+  
+  // Hard mask is relative to the genome's extent (first/last N bp of actual sequence)
+  // Not relative to global scalar coordinates
+  const uint64_t hardMaskStart = state.firstNonGapScalar + static_cast<uint64_t>(flankMaskBp);
+  const uint64_t hardMaskEnd = state.lastNonGapScalar >= static_cast<uint64_t>(flankMaskBp) 
+                                ? state.lastNonGapScalar - flankMaskBp 
+                                : state.firstNonGapScalar;
+  
+  // Debug logging for specific nodes
+  static bool debugMasking = (std::getenv("DEBUG_MASK") != nullptr);
+  if (debugMasking && (node->identifier.find("node_9981") != std::string::npos || 
+                        node->identifier.find("node_11963") != std::string::npos ||
+                        node->identifier.find("node_11964") != std::string::npos)) {
+    std::cerr << "[MASK-DEBUG] " << node->identifier << " extent=[" << state.firstNonGapScalar 
+              << "," << state.lastNonGapScalar << "] hardMask=[" << hardMaskStart << "," << hardMaskEnd 
+              << "] flankMaskBp=" << flankMaskBp << std::endl;
+  }
+
   bool useJump = true;
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges;
   if (useJump) {
     newSyncmerRanges = computeNewSyncmerRangesJump(node, dfsIndex, state.blockSequences, 
                                                     state.blockExistsDelayed, state.blockStrandDelayed, 
                                                     globalCoords, state.gapMap, localMutationRanges, 
-                                                    blockOnSyncmersChangeRecord, state.refOnSyncmers, state.blockOnSyncmers);
+                                                    blockOnSyncmersChangeRecord, state.refOnSyncmers, state.blockOnSyncmers,
+                                                    state.firstNonGapScalar, state.lastNonGapScalar);
   } else {
     newSyncmerRanges = computeNewSyncmerRangesWalk(node, dfsIndex, state.blockSequences, 
                                                     state.blockExistsDelayed, state.blockStrandDelayed, 
@@ -2914,7 +3151,9 @@ void index_single_mode::IndexBuilder::processNode(
                                                     blockOnSyncmersChangeRecord, state.refOnSyncmers, state.blockOnSyncmers);
   }
 
-  // Processing syncmers - matches original exactly
+  // Processing syncmers with dual masking:
+  // 1. HARD MASK: First/last flankMaskBp positions - completely ignore all seeds
+  // 2. FLANK IMPUTATION: Between hard mask and genome extent - skip deletions (impute seeds)
   for (const auto& syncmerRange : newSyncmerRanges) {
     const auto& [begCoord, endCoord, localRangeSeq, localRangeCoordToGlobalScalarCoords, localRangeCoordToBlockId, seedsToDelete] = syncmerRange;
     if (localRangeSeq.size() >= static_cast<size_t>(indexBuilder.getK())) {
@@ -2922,7 +3161,19 @@ void index_single_mode::IndexBuilder::processNode(
         auto startPosGlobal = localRangeCoordToGlobalScalarCoords[startPos];
         auto endPosGlobal = localRangeCoordToGlobalScalarCoords[startPos + indexBuilder.getK() - 1];
         auto curBlockId = localRangeCoordToBlockId[startPos];
-        bool wasSeed = state.refOnSyncmers[startPosGlobal].has_value();
+        bool wasSeed = state.refOnSyncmers.contains(startPosGlobal);
+        
+        // Check masking conditions:
+        // 1. Hard mask: position < hardMaskStart OR position > hardMaskEnd
+        bool isHardMasked = (startPosGlobal < hardMaskStart || startPosGlobal > hardMaskEnd);
+        // 2. Flank imputation: position outside genome extent but not hard-masked
+        bool isInFlank = !isHardMasked && (startPosGlobal < state.firstNonGapScalar || startPosGlobal > state.lastNonGapScalar);
+        
+        // Hard-masked: skip ALL seed operations (adds and deletes)
+        if (isHardMasked) {
+          continue;
+        }
+        
         if (!wasSeed && isSeed) {
           state.refOnSyncmersMap.insert(startPosGlobal);
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
@@ -2930,28 +3181,48 @@ void index_single_mode::IndexBuilder::processNode(
           state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
           state.blockOnSyncmers[curBlockId].insert(startPosGlobal);
         } else if (wasSeed && !isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[startPosGlobal].value());
+          // FLANK IMPUTATION: Skip seed deletion if position is in a flank region
+          // (before first non-gap or after last non-gap, but not hard-masked).
+          // This imputes seeds in truncated genome regions to prevent false negatives.
+          if (isInFlank) {
+            // Skip this deletion - keep the seed imputed
+            continue;
+          }
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, state.refOnSyncmers.at(startPosGlobal));
           blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::DEL);
-          state.refOnSyncmers[startPosGlobal] = std::nullopt;
+          state.refOnSyncmers.erase(startPosGlobal);
           state.refOnSyncmersMap.erase(startPosGlobal);
           state.blockOnSyncmers[curBlockId].erase(startPosGlobal);
           if (state.blockOnSyncmers[localRangeCoordToBlockId[startPos]].empty()) {
             state.blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
           }
         } else if (wasSeed && isSeed) {
-          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, state.refOnSyncmers[startPosGlobal].value());
+          refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, state.refOnSyncmers.at(startPosGlobal));
           state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
         }
       }
     }
 
     for (uint64_t pos : seedsToDelete) {
-      if (!state.refOnSyncmers[pos].has_value()) {
+      // Check masking conditions
+      bool isHardMasked = (pos < hardMaskStart || pos > hardMaskEnd);
+      bool isInFlank = !isHardMasked && (pos < state.firstNonGapScalar || pos > state.lastNonGapScalar);
+      
+      // Hard-masked: skip deletion
+      if (isHardMasked) {
+        continue;
+      }
+      // Flank imputation: skip deletion
+      if (isInFlank) {
+        continue;
+      }
+      
+      if (!state.refOnSyncmers.contains(pos)) {
         std::cerr << "Error: refOnSyncmers[" << pos << "] is null" << std::endl;
         std::exit(1);
       }
-      refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[pos].value());
-      state.refOnSyncmers[pos] = std::nullopt;
+      refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers.at(pos));
+      state.refOnSyncmers.erase(pos);
       state.refOnSyncmersMap.erase(pos);
     }
   }
@@ -2959,9 +3230,17 @@ void index_single_mode::IndexBuilder::processNode(
   // Handle potential syncmer deletions (matches original)
   if (useJump) {
     for (uint32_t pos : potentialSyncmerDeletions) {
-      if (state.refOnSyncmers[pos].has_value()) {
-        refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[pos].value());
-        state.refOnSyncmers[pos] = std::nullopt;
+      if (state.refOnSyncmers.contains(pos)) {
+        // Check masking conditions
+        bool isHardMasked = (pos < hardMaskStart || pos > hardMaskEnd);
+        bool isInFlank = !isHardMasked && (pos < state.firstNonGapScalar || pos > state.lastNonGapScalar);
+        
+        // Hard-masked or flank: skip deletion
+        if (isHardMasked || isInFlank) {
+          continue;
+        }
+        refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers.at(pos));
+        state.refOnSyncmers.erase(pos);
         const auto blockId = globalCoords.getBlockIdFromScalar(pos);
         state.blockOnSyncmers[blockId].erase(pos);
         if (state.blockOnSyncmers[blockId].empty()) state.blockOnSyncmers.erase(blockId);
@@ -2975,13 +3254,31 @@ void index_single_mode::IndexBuilder::processNode(
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     if (oldExists && !newExists) {
       if (state.blockOnSyncmers.find(blockId) != state.blockOnSyncmers.end()) {
+        std::vector<uint64_t> positionsToKeep;
         for (uint64_t pos : state.blockOnSyncmers[blockId]) {
-          refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers[pos].value());
+          // Check masking conditions
+          bool isHardMasked = (pos < hardMaskStart || pos > hardMaskEnd);
+          bool isInFlank = !isHardMasked && (pos < state.firstNonGapScalar || pos > state.lastNonGapScalar);
+          
+          // Hard-masked or flank: skip deletion (keep position)
+          if (isHardMasked || isInFlank) {
+            positionsToKeep.push_back(pos);
+            continue;
+          }
+          refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers.at(pos));
           blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
-          state.refOnSyncmers[pos] = std::nullopt;
+          state.refOnSyncmers.erase(pos);
           state.refOnSyncmersMap.erase(pos);
         }
-        state.blockOnSyncmers.erase(blockId);
+        if (positionsToKeep.empty()) {
+          state.blockOnSyncmers.erase(blockId);
+        } else {
+          // Keep only the masked/flank positions
+          state.blockOnSyncmers[blockId].clear();
+          for (uint64_t pos : positionsToKeep) {
+            state.blockOnSyncmers[blockId].insert(pos);
+          }
+        }
       }
     }
   }
@@ -2994,7 +3291,7 @@ void index_single_mode::IndexBuilder::processNode(
   std::vector<uint64_t> addedSeedHashes;
   std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedHashes; // <oldHash, newHash>
 
-  std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges = 
+  std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> newKminmerRanges = 
       computeNewKminmerRanges(refOnSyncmersChangeRecord, state, dfsIndex);
 
   for (size_t i = 0; i < newKminmerRanges.size(); i++) {
@@ -3023,14 +3320,14 @@ void index_single_mode::IndexBuilder::processNode(
       } else if (endIt != state.refOnSyncmersMap.end() && *curIt == *endIt && j != static_cast<size_t>(l) - 1) {
         break;
       }
-      startingSyncmerHashes.push_back(state.refOnSyncmers[*curIt].value().hash);
+      startingSyncmerHashes.push_back(state.refOnSyncmers.at(*curIt).hash);
       if (j != static_cast<size_t>(l) - 1) ++curIt;
     }
     if (startingSyncmerHashes.size() < static_cast<size_t>(l)) {
       continue;
     }
     if (l == 1) {
-      auto syncmerRev = state.refOnSyncmers[*curIt].value().isReverse;
+      auto syncmerRev = state.refOnSyncmers.at(*curIt).isReverse;
       if (syncmerRev) {
         forwardHash = std::numeric_limits<size_t>::max();
         reverseHash = startingSyncmerHashes[0];
@@ -3049,27 +3346,29 @@ void index_single_mode::IndexBuilder::processNode(
       }
     }
 
-    auto& curRefOnKminmer = state.refOnKminmers[*indexingIt];
+    uint64_t indexingPos = *indexingIt;
     uint64_t newHash = std::min(forwardHash, reverseHash);
     if (forwardHash != reverseHash) {
-      bool substitution = curRefOnKminmer.has_value();
+      auto existingIt = state.refOnKminmers.find(indexingPos);
+      bool substitution = (existingIt != state.refOnKminmers.end());
       if (substitution) {
         // Get old hash from stored value and add to substitution list
-        uint64_t oldHash = curRefOnKminmer.value(); // This is now the hash, not index
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, oldHash);
+        uint64_t oldHash = existingIt->second;
+        refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::SUB, oldHash);
         substitutedSeedHashes.emplace_back(oldHash, newHash);
       } else {
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
+        refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
         addedSeedHashes.push_back(newHash);
       }
       // Store hash directly instead of index
-      curRefOnKminmer = newHash;
+      state.refOnKminmers[indexingPos] = newHash;
     } else {
-      if (curRefOnKminmer.has_value()) {
-        uint64_t oldHash = curRefOnKminmer.value();
-        refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, oldHash);
+      auto existingIt = state.refOnKminmers.find(indexingPos);
+      if (existingIt != state.refOnKminmers.end()) {
+        uint64_t oldHash = existingIt->second;
+        refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::DEL, oldHash);
         deletedSeedHashes.push_back(oldHash);
-        curRefOnKminmer = std::nullopt;
+        state.refOnKminmers.erase(existingIt);
       }
     }
 
@@ -3078,30 +3377,32 @@ void index_single_mode::IndexBuilder::processNode(
     while (curIt != endIt) {
       ++curIt;
       if (curIt == state.refOnSyncmersMap.end()) break;
-      forwardHash = seeding::rol(forwardHash, k) ^ seeding::rol(state.refOnSyncmers[*indexingIt].value().hash, k * l) ^ state.refOnSyncmers[*curIt].value().hash;
-      reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(state.refOnSyncmers[*indexingIt].value().hash, k)     ^ seeding::rol(state.refOnSyncmers[*curIt].value().hash, k * (l-1));
+      forwardHash = seeding::rol(forwardHash, k) ^ seeding::rol(state.refOnSyncmers.at(*indexingIt).hash, k * l) ^ state.refOnSyncmers.at(*curIt).hash;
+      reverseHash = seeding::ror(reverseHash, k) ^ seeding::ror(state.refOnSyncmers.at(*indexingIt).hash, k)     ^ seeding::rol(state.refOnSyncmers.at(*curIt).hash, k * (l-1));
       ++indexingIt;
 
-      auto& curRefOnKminmer2 = state.refOnKminmers[*indexingIt];
+      uint64_t indexingPos2 = *indexingIt;
       uint64_t newHash2 = std::min(forwardHash, reverseHash);
       if (forwardHash != reverseHash) {
-        bool substitution = curRefOnKminmer2.has_value();
+        auto existingIt2 = state.refOnKminmers.find(indexingPos2);
+        bool substitution = (existingIt2 != state.refOnKminmers.end());
         if (substitution) {
-          uint64_t oldHash = curRefOnKminmer2.value();
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::SUB, oldHash);
+          uint64_t oldHash = existingIt2->second;
+          refOnKminmersChangeRecord.emplace_back(indexingPos2, panmapUtils::seedChangeType::SUB, oldHash);
           substitutedSeedHashes.emplace_back(oldHash, newHash2);
         } else {
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
+          refOnKminmersChangeRecord.emplace_back(indexingPos2, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
           addedSeedHashes.push_back(newHash2);
         }
         // Store hash directly
-        curRefOnKminmer2 = newHash2;
+        state.refOnKminmers[indexingPos2] = newHash2;
       } else {
-        if (curRefOnKminmer2.has_value()) {
-          uint64_t oldHash = curRefOnKminmer2.value();
-          refOnKminmersChangeRecord.emplace_back(*indexingIt, panmapUtils::seedChangeType::DEL, oldHash);
+        auto existingIt2 = state.refOnKminmers.find(indexingPos2);
+        if (existingIt2 != state.refOnKminmers.end()) {
+          uint64_t oldHash = existingIt2->second;
+          refOnKminmersChangeRecord.emplace_back(indexingPos2, panmapUtils::seedChangeType::DEL, oldHash);
           deletedSeedHashes.push_back(oldHash);
-          curRefOnKminmer2 = std::nullopt;
+          state.refOnKminmers.erase(existingIt2);
         }
       }
     }
@@ -3112,11 +3413,12 @@ void index_single_mode::IndexBuilder::processNode(
     auto delIt = newKminmerRanges.back().second;
     for (size_t j = 0; j < static_cast<size_t>(l) - 1; j++) {
       --delIt;
-      if (state.refOnKminmers[*delIt].has_value()) {
-        uint64_t oldHash = state.refOnKminmers[*delIt].value();
+      auto existingIt = state.refOnKminmers.find(*delIt);
+      if (existingIt != state.refOnKminmers.end()) {
+        uint64_t oldHash = existingIt->second;
         refOnKminmersChangeRecord.emplace_back(*delIt, panmapUtils::seedChangeType::DEL, oldHash);
         deletedSeedHashes.push_back(oldHash);
-        state.refOnKminmers[*delIt] = std::nullopt;
+        state.refOnKminmers.erase(existingIt);
       }
       if (delIt == state.refOnSyncmersMap.begin()) break;
     }
@@ -3124,22 +3426,147 @@ void index_single_mode::IndexBuilder::processNode(
 
   // Handle deleted syncmers that still have k-minmers (matches original)
   for (const auto& [syncmerPos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
-    if (changeType == panmapUtils::seedChangeType::DEL && state.refOnKminmers[syncmerPos].has_value()) {
-      uint64_t oldHash = state.refOnKminmers[syncmerPos].value();
-      refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, oldHash);
-      deletedSeedHashes.push_back(oldHash);
-      state.refOnKminmers[syncmerPos] = std::nullopt;
+    if (changeType == panmapUtils::seedChangeType::DEL) {
+      auto existingIt = state.refOnKminmers.find(syncmerPos);
+      if (existingIt != state.refOnKminmers.end()) {
+        uint64_t oldHash = existingIt->second;
+        refOnKminmersChangeRecord.emplace_back(syncmerPos, panmapUtils::seedChangeType::DEL, oldHash);
+        deletedSeedHashes.push_back(oldHash);
+        state.refOnKminmers.erase(existingIt);
+      }
     }
   }
 
   // No sorting needed - we're using hashes directly, not positions
 
-  // Store seed deltas for this node (NO COPYING from parent!)
-  // nodeSeedDeltas is a shared_ptr so all clones share the same storage
-  auto& curDelta = (*state.nodeSeedDeltas)[dfsIndex];
-  curDelta.addedHashes = std::move(addedSeedHashes);
-  curDelta.deletedHashes = std::move(deletedSeedHashes);
-  curDelta.substitutedHashes = std::move(substitutedSeedHashes);
+  // Collect size statistics for optimization
+  {
+    g_stats.nodeCount++;
+    
+    // Aggregate seedsToDelete across all syncmer ranges
+    uint64_t totalSeedsToDelete = 0;
+    uint64_t maxLocalRangeSeq = 0;
+    for (const auto& sr : newSyncmerRanges) {
+      totalSeedsToDelete += sr.seedsToDelete.size();
+      g_stats.localRangeSeqTotal += sr.localRangeSeq.size();
+      g_stats.localRangeSeqCount++;
+      if (sr.localRangeSeq.size() > maxLocalRangeSeq) maxLocalRangeSeq = sr.localRangeSeq.size();
+    }
+    g_stats.updateMax(g_stats.localRangeSeqMax, maxLocalRangeSeq);
+    g_stats.seedsToDeleteTotal += totalSeedsToDelete;
+    g_stats.updateMax(g_stats.seedsToDeleteMax, totalSeedsToDelete);
+    
+    g_stats.newSyncmerRangesTotal += newSyncmerRanges.size();
+    g_stats.updateMax(g_stats.newSyncmerRangesMax, newSyncmerRanges.size());
+    
+    g_stats.refOnSyncmersChangeRecordTotal += refOnSyncmersChangeRecord.size();
+    g_stats.updateMax(g_stats.refOnSyncmersChangeRecordMax, refOnSyncmersChangeRecord.size());
+    
+    g_stats.blockOnSyncmersChangeRecordTotal += blockOnSyncmersChangeRecord.size();
+    g_stats.updateMax(g_stats.blockOnSyncmersChangeRecordMax, blockOnSyncmersChangeRecord.size());
+    
+    g_stats.localMutationRangesTotal += localMutationRanges.size();
+    g_stats.updateMax(g_stats.localMutationRangesMax, localMutationRanges.size());
+    
+    g_stats.gapRunUpdatesTotal += gapRunUpdates.size();
+    g_stats.updateMax(g_stats.gapRunUpdatesMax, gapRunUpdates.size());
+    
+    g_stats.gapMapSizeTotal += state.gapMap.size();
+    g_stats.updateMax(g_stats.gapMapSizeMax, state.gapMap.size());
+    
+    g_stats.refOnSyncmersMapSizeTotal += state.refOnSyncmersMap.size();
+    g_stats.updateMax(g_stats.refOnSyncmersMapSizeMax, state.refOnSyncmersMap.size());
+  }
+
+  // Compute node changes directly using running counts
+  // This combines what was previously a separate post-traversal pass
+  // Skip if we're just walking a path to set up state (path nodes already processed)
+  if (!skipNodeChanges) {
+    auto& changes = (*state.nodeChanges)[dfsIndex];
+    
+    // Collect all hashes that are modified at this node
+    std::unordered_set<uint64_t> modifiedHashes;
+    modifiedHashes.reserve(addedSeedHashes.size() + deletedSeedHashes.size() + 
+                           substitutedSeedHashes.size() * 2);
+    
+    for (uint64_t hash : addedSeedHashes) modifiedHashes.insert(hash);
+    for (uint64_t hash : deletedSeedHashes) modifiedHashes.insert(hash);
+    for (const auto& [oldHash, newHash] : substitutedSeedHashes) {
+      modifiedHashes.insert(oldHash);
+      modifiedHashes.insert(newHash);
+    }
+    
+    // Record parent counts BEFORE applying changes
+    std::unordered_map<uint64_t, int64_t> parentCounts;
+    parentCounts.reserve(modifiedHashes.size());
+    for (uint64_t hash : modifiedHashes) {
+      auto it = state.runningCounts.find(hash);
+      parentCounts[hash] = (it != state.runningCounts.end()) ? it->second : 0;
+    }
+    
+    // Apply changes to running counts and record for backtracking
+    for (uint64_t hash : addedSeedHashes) {
+      state.runningCounts[hash]++;
+      runningCountChanges.emplace_back(hash, +1);
+    }
+    for (uint64_t hash : deletedSeedHashes) {
+      auto it = state.runningCounts.find(hash);
+      if (it != state.runningCounts.end()) {
+        it->second--;
+        if (it->second <= 0) state.runningCounts.erase(it);
+      }
+      runningCountChanges.emplace_back(hash, -1);
+    }
+    for (const auto& [oldHash, newHash] : substitutedSeedHashes) {
+      // Delete old
+      auto oldIt = state.runningCounts.find(oldHash);
+      if (oldIt != state.runningCounts.end()) {
+        oldIt->second--;
+        if (oldIt->second <= 0) state.runningCounts.erase(oldIt);
+      }
+      runningCountChanges.emplace_back(oldHash, -1);
+      // Add new
+      state.runningCounts[newHash]++;
+      runningCountChanges.emplace_back(newHash, +1);
+    }
+    
+    // Compare parent vs child counts to compute changes
+    for (uint64_t hash : modifiedHashes) {
+      int64_t parentCount = parentCounts[hash];
+      int64_t childCount = 0;
+      auto it = state.runningCounts.find(hash);
+      if (it != state.runningCounts.end()) childCount = it->second;
+      
+      if (parentCount != childCount) {
+        changes.emplace_back(hash, parentCount, childCount);
+      }
+    }
+  } else {
+    // Even when skipping nodeChanges, we still need to update runningCounts
+    // for correct state during subtree traversal
+    for (uint64_t hash : addedSeedHashes) {
+      state.runningCounts[hash]++;
+      runningCountChanges.emplace_back(hash, +1);
+    }
+    for (uint64_t hash : deletedSeedHashes) {
+      auto it = state.runningCounts.find(hash);
+      if (it != state.runningCounts.end()) {
+        it->second--;
+        if (it->second <= 0) state.runningCounts.erase(it);
+      }
+      runningCountChanges.emplace_back(hash, -1);
+    }
+    for (const auto& [oldHash, newHash] : substitutedSeedHashes) {
+      auto oldIt = state.runningCounts.find(oldHash);
+      if (oldIt != state.runningCounts.end()) {
+        oldIt->second--;
+        if (oldIt->second <= 0) state.runningCounts.erase(oldIt);
+      }
+      runningCountChanges.emplace_back(oldHash, -1);
+      state.runningCounts[newHash]++;
+      runningCountChanges.emplace_back(newHash, +1);
+    }
+  }
 
   // Revert gap map inversions (for proper state for children)
   revertGapMapInversions(gapRunBlockInversionBacktracks, state.gapMap);
@@ -3152,10 +3579,61 @@ void index_single_mode::IndexBuilder::processNode(
 
   // nodeToDfsIndex is pre-computed, no need to update here
 
-  // Update progress
+  // Compute genome metrics from runningCounts (only when we own this node)
+  if (!skipNodeChanges && state.genomeMagnitudeSquared) {
+    double magnitudeSquared = 0.0;
+    int64_t totalFrequency = 0;
+    for (const auto& [hash, count] : state.runningCounts) {
+      magnitudeSquared += static_cast<double>(count) * static_cast<double>(count);
+      totalFrequency += count;
+    }
+    (*state.genomeMagnitudeSquared)[dfsIndex] = magnitudeSquared;
+    (*state.genomeUniqueSeedCount)[dfsIndex] = state.runningCounts.size();
+    (*state.genomeTotalSeedFrequency)[dfsIndex] = totalFrequency;
+    
+    // IDF collection: For leaf nodes, record which seeds they contain
+    // A node is a leaf if it has no children
+    if (state.isLeafNode && node->children.empty()) {
+      (*state.isLeafNode)[dfsIndex] = true;
+      
+      // If we have IDF tracking, collect seeds for this leaf
+      if (state.leafSeedGenomeCounts) {
+        for (const auto& [hash, count] : state.runningCounts) {
+          if (count > 0) {
+            (*state.leafSeedGenomeCounts)[hash]++;
+          }
+        }
+      }
+    }
+  }
+
+  // Update progress with instrumentation stats
+  // Only count nodes where we actually computed nodeChanges (not path traversal duplicates)
+  if (skipNodeChanges) return;
+  
   uint64_t processed = ++processedNodes_;
-  if (processed % 100 == 0 || processed == T->allNodes.size()) {
-    std::cout << "\rProcessed " << processed << "/" << T->allNodes.size() << " nodes" << std::flush;
+  uint64_t totalNodes = T->allNodes.size();
+  
+  // Log progress every 1000 nodes or every 2 seconds, whichever comes first
+  auto now = std::chrono::steady_clock::now();
+  bool shouldLog = (processed % 1000 == 0) || (processed == totalNodes);
+  if (!shouldLog && processed > 100) {
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastProgressLog_).count();
+    shouldLog = (elapsed >= 2000);
+  }
+  
+  if (shouldLog) {
+    auto elapsedSinceStart = std::chrono::duration_cast<std::chrono::milliseconds>(now - buildStartTime_).count();
+    double nodesPerSec = (elapsedSinceStart > 0) ? (processed * 1000.0 / elapsedSinceStart) : 0;
+    
+    lastProgressLog_ = now;
+    uint64_t totalClones = totalClonesCreated_.load(std::memory_order_relaxed);
+    
+    double pct = 100.0 * processed / totalNodes;
+    std::cout << "\r[" << std::fixed << std::setprecision(1) << pct << "%] " 
+              << processed << "/" << totalNodes << " (" << std::setprecision(0) << nodesPerSec << " n/s) | "
+              << "chunks:" << totalClones
+              << "          " << std::flush;
   }
 }
 
@@ -3200,7 +3678,7 @@ void index_single_mode::IndexBuilder::backtrackNode(
   for (const auto& [pos, changeType, rsyncmer] : backtrackInfo.refOnSyncmersChangeRecord) {
     if (changeType == panmapUtils::seedChangeType::ADD) {
       // Was added... need to delete
-      state.refOnSyncmers[pos] = std::nullopt;
+      state.refOnSyncmers.erase(pos);
       state.refOnSyncmersMap.erase(pos);
     } else {
       // Was deleted or replaced... need to restore
@@ -3225,11 +3703,33 @@ void index_single_mode::IndexBuilder::backtrackNode(
   // Revert k-minmer changes
   for (const auto& [pos, changeType, kminmerHash] : backtrackInfo.refOnKminmersChangeRecord) {
     if (changeType == panmapUtils::seedChangeType::ADD) {
-      state.refOnKminmers[pos] = std::nullopt;
+      state.refOnKminmers.erase(pos);
     } else {
       state.refOnKminmers[pos] = kminmerHash;
     }
   }
+  
+  // Revert running count changes (in reverse order)
+  for (auto it = backtrackInfo.runningCountChanges.rbegin(); 
+       it != backtrackInfo.runningCountChanges.rend(); ++it) {
+    const auto& [hash, delta] = *it;
+    // Undo by applying the opposite delta
+    if (delta > 0) {
+      // Was added, need to decrement
+      auto countIt = state.runningCounts.find(hash);
+      if (countIt != state.runningCounts.end()) {
+        countIt->second--;
+        if (countIt->second <= 0) state.runningCounts.erase(countIt);
+      }
+    } else {
+      // Was deleted, need to increment
+      state.runningCounts[hash]++;
+    }
+  }
+  
+  // Revert genome extent
+  state.firstNonGapScalar = backtrackInfo.prevFirstNonGapScalar;
+  state.lastNonGapScalar = backtrackInfo.prevLastNonGapScalar;
 }
 
 // Sequential helper for processing a subtree (uses backtracking like original buildIndexHelper)
@@ -3275,7 +3775,8 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
   std::unordered_set<std::string_view>& localEmptyNodes,
   uint64_t dfsIndex,
   tbb::spin_mutex& emptyNodesMutex,
-  size_t parallelThreshold  // Only parallelize if combined subtree size >= this
+  size_t parallelThreshold,  // Only parallelize if combined subtree size >= this
+  size_t depth  // Current recursion depth for instrumentation
 ) {
   // Always record changes for backtracking - needed to restore state for siblings
   BacktrackInfo nodeBacktrackInfo;
@@ -3295,29 +3796,33 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
     // Parallelize if:
     // 1. More than one child (fork point)
     // 2. Combined subtree size is large enough
-    // 3. At least 2 children have reasonably sized subtrees
+    // 3. At least one child has a reasonably sized subtree (worth spawning a task for)
+    //    AND the remaining subtree is also worth processing in parallel
     bool shouldParallelize = false;
     if (numChildren > 1 && totalChildSubtreeSize >= parallelThreshold) {
-      size_t nonTrivialChildren = 0;
-      size_t minSubtreeForParallel = std::max(size_t(50), parallelThreshold / 8);
+      // Find the two largest subtrees
+      size_t largest = 0, secondLargest = 0;
       for (auto* child : node->children) {
-        if (subtreeSizes_[child->identifier] >= minSubtreeForParallel) {
-          nonTrivialChildren++;
+        size_t sz = subtreeSizes_[child->identifier];
+        if (sz > largest) {
+          secondLargest = largest;
+          largest = sz;
+        } else if (sz > secondLargest) {
+          secondLargest = sz;
         }
       }
-      shouldParallelize = (nonTrivialChildren >= 2);
+      // Parallelize if the second largest subtree is worth spawning a task for
+      // Use a lower threshold: 1/64 of total nodes or 100, whichever is larger
+      size_t minSubtreeForParallel = std::max(size_t(100), parallelThreshold / 64);
+      shouldParallelize = (secondLargest >= minSubtreeForParallel);
     }
     
     if (shouldParallelize) {
-      // Parallel processing at this fork point
-      // Clone state for each child except the last (which reuses current state)
-      std::vector<std::shared_ptr<BuildState>> childStates;
-      std::vector<std::unordered_set<std::string_view>> childEmptyNodes;
+      // TBB limits concurrent tasks to numThreads automatically
+      // Each task clones state, but only numThreads clones exist at once
+      // No need for explicit slot counting - TBB's scheduler handles it
       
-      childStates.reserve(numChildren - 1);
-      childEmptyNodes.resize(numChildren);
-      
-      // Prepare child offsets
+      // Prepare child offsets for DFS indexing
       std::vector<uint64_t> childOffsets;
       childOffsets.reserve(numChildren);
       uint64_t offset = dfsIndex + 1;
@@ -3326,7 +3831,6 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
         offset += subtreeSizes_[child->identifier];
       }
       
-      // Clone states for all children except last
       // Sort children by subtree size descending so largest subtrees start first
       std::vector<size_t> childOrder(numChildren);
       std::iota(childOrder.begin(), childOrder.end(), 0);
@@ -3334,52 +3838,122 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
         return subtreeSizes_[node->children[a]->identifier] > subtreeSizes_[node->children[b]->identifier];
       });
       
-      for (size_t i = 0; i + 1 < numChildren; i++) {
-        auto clonedState = std::make_shared<BuildState>(state);
-        // Share the nodeSeedDeltas storage (it's already a shared_ptr)
-        clonedState->nodeSeedDeltas = state.nodeSeedDeltas;
-        childStates.push_back(clonedState);
+      // Find how many children are worth parallelizing (subtree >= minSubtreeForParallel)
+      size_t minSubtreeForParallel = std::max(size_t(100), parallelThreshold / 64);
+      size_t numWorthParallelizing = 0;
+      for (size_t i = 0; i < numChildren; i++) {
+        size_t childIdx = childOrder[i];
+        if (subtreeSizes_[node->children[childIdx]->identifier] >= minSubtreeForParallel) {
+          numWorthParallelizing++;
+        } else {
+          break;  // Already sorted descending, rest are smaller
+        }
       }
       
-      // Process children in parallel (in order of decreasing subtree size)
-      tbb::task_group taskGroup;
-      
-      for (size_t i = 0; i + 1 < numChildren; i++) {
-        size_t childIdx_order = childOrder[i];
-        auto* child = node->children[childIdx_order];
-        uint64_t childDfsIdx = childOffsets[childIdx_order];
-        auto& childState = *childStates[i];
-        auto& childEmpty = childEmptyNodes[childIdx_order];
+      // Need at least 2 children worth parallelizing (one runs on current thread)
+      if (numWorthParallelizing >= 2) {
+        // Spawn one task per large child (instead of worker pool)
+        // Each task acquires its own slot, processes subtree, releases slot
+        // This allows nested forks to reuse freed slots
+        std::vector<std::unordered_set<std::string_view>> childEmptyNodes(numChildren);
         
-        taskGroup.run([this, child, &childState, &globalCoords, &childEmpty, childDfsIdx, 
-                       &emptyNodesMutex, parallelThreshold]() {
-          processSubtreeParallel(child, childState, globalCoords, childEmpty, childDfsIdx, 
-                                 emptyNodesMutex, parallelThreshold);
-        });
+        // Update instrumentation
+        parallelForkPoints_.fetch_add(1, std::memory_order_relaxed);
+        g_parallelStats.recordFork(depth, numWorthParallelizing, 
+                                   static_cast<int>(numWorthParallelizing - 1),
+                                   totalChildSubtreeSize);
+        
+        tbb::task_group taskGroup;
+        
+        // Spawn tasks for children that can run in parallel
+        // Main thread will process one child, so spawn tasks for the others
+        for (size_t i = 1; i < numWorthParallelizing; i++) {
+          size_t childIdx = childOrder[i];
+          auto* child = node->children[childIdx];
+          uint64_t childDfsIdx = childOffsets[childIdx];
+          
+          taskGroup.run([this, child, childIdx, childDfsIdx, &state, 
+                         &childEmptyNodes, &globalCoords, &emptyNodesMutex, 
+                         parallelThreshold, depth]() {
+            // Track clone for instrumentation
+            activeClones_.fetch_add(1, std::memory_order_relaxed);
+            totalClonesCreated_.fetch_add(1, std::memory_order_relaxed);
+            
+            // Update peak clones
+            int newCount = activeClones_.load(std::memory_order_relaxed);
+            int oldPeak = peakActiveClones_.load(std::memory_order_relaxed);
+            while (newCount > oldPeak && 
+                   !peakActiveClones_.compare_exchange_weak(oldPeak, newCount, std::memory_order_relaxed)) {}
+            
+            // Clone state for this child
+            auto cloneStart = std::chrono::high_resolution_clock::now();
+            BuildState childState(state);
+            childState.nodeChanges = state.nodeChanges;  // Share nodeChanges storage
+            auto cloneEnd = std::chrono::high_resolution_clock::now();
+            g_parallelStats.cloneTimeNs.fetch_add(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(cloneEnd - cloneStart).count(),
+                std::memory_order_relaxed);
+            
+            processSubtreeParallel(child, childState, globalCoords, 
+                                   childEmptyNodes[childIdx], childDfsIdx,
+                                   emptyNodesMutex, parallelThreshold, depth + 1);
+            
+            // Release clone tracking
+            activeClones_.fetch_sub(1, std::memory_order_relaxed);
+          });
+        }
+        
+        // Main thread processes the first (largest) child with a clone
+        {
+          size_t childIdx = childOrder[0];
+          auto* child = node->children[childIdx];
+          uint64_t childDfsIdx = childOffsets[childIdx];
+          
+          auto cloneStart = std::chrono::high_resolution_clock::now();
+          BuildState childState(state);
+          childState.nodeChanges = state.nodeChanges;  // Share nodeChanges storage
+          auto cloneEnd = std::chrono::high_resolution_clock::now();
+          g_parallelStats.cloneTimeNs.fetch_add(
+              std::chrono::duration_cast<std::chrono::nanoseconds>(cloneEnd - cloneStart).count(),
+              std::memory_order_relaxed);
+          
+          processSubtreeParallel(child, childState, globalCoords,
+                                 childEmptyNodes[childIdx], childDfsIdx,
+                                 emptyNodesMutex, parallelThreshold, depth + 1);
+        }
+        
+        taskGroup.wait();
+        
+        // Process remaining small children sequentially (no cloning, use backtracking)
+        for (size_t i = numWorthParallelizing; i < numChildren; i++) {
+          size_t childIdx = childOrder[i];
+          auto* child = node->children[childIdx];
+          uint64_t childDfsIdx = childOffsets[childIdx];
+          processSubtreeParallel(child, state, globalCoords, childEmptyNodes[childIdx],
+                                 childDfsIdx, emptyNodesMutex, parallelThreshold, depth + 1);
+        }
+        
+        // Merge empty nodes from all children
+        for (auto& childEmpty : childEmptyNodes) {
+          localEmptyNodes.insert(childEmpty.begin(), childEmpty.end());
+        }
+        
+        // Backtrack and return - we've handled all children
+        backtrackNode(state, nodeBacktrackInfo);
+        return;
       }
-      
-      // Process the smallest subtree (last in sorted order) using current state
-      size_t lastChildIdx_order = childOrder.back();
-      auto* lastChild = node->children[lastChildIdx_order];
-      uint64_t lastChildDfsIdx = childOffsets[lastChildIdx_order];
-      processSubtreeParallel(lastChild, state, globalCoords, childEmptyNodes[lastChildIdx_order], 
-                             lastChildDfsIdx, emptyNodesMutex, parallelThreshold);
-      
-      // Wait for all parallel tasks to complete
-      taskGroup.wait();
-      
-      // Merge empty nodes from all children
-      for (auto& childEmpty : childEmptyNodes) {
-        localEmptyNodes.insert(childEmpty.begin(), childEmpty.end());
-      }
-    } else {
+      // Fall through to sequential processing if not enough children to parallelize
+      sequentialFallbacks_.fetch_add(1, std::memory_order_relaxed);
+    }
+    
+    {
       // Sequential processing - subtrees too small to benefit from parallelism
       uint64_t offset = dfsIndex + 1;
       for (auto* child : node->children) {
         uint64_t childIdx = offset;
         offset += subtreeSizes_[child->identifier];
         processSubtreeParallel(child, state, globalCoords, localEmptyNodes, childIdx, 
-                               emptyNodesMutex, parallelThreshold);
+                               emptyNodesMutex, parallelThreshold, depth + 1);
       }
     }
   }
@@ -3394,27 +3968,34 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     numThreads = tbb::this_task_arena::max_concurrency();
   }
   
-  // If single-threaded or tree is too small, use sequential
-  if (numThreads == 1 || T->root->children.empty()) {
-    std::cout << "Using sequential build (threads=" << numThreads << ")" << std::endl;
+  // Handle empty tree case
+  if (T->root->children.empty()) {
+    std::cout << "Using sequential build (empty tree)" << std::endl;
     buildIndex();
     return;
   }
-
+  
   std::cout << "Building index in parallel with " << numThreads << " threads..." << std::endl;
+  
+  // Reset instrumentation stats
+  processedNodes_.store(0, std::memory_order_relaxed);
+  totalClonesCreated_.store(0, std::memory_order_relaxed);
+  buildStartTime_ = std::chrono::steady_clock::now();
+  lastProgressLog_ = buildStartTime_;
   
   auto startTotal = std::chrono::high_resolution_clock::now();
   
   // Initialize state (same as sequential buildIndex)
   panmapUtils::BlockSequences blockSequences(T);
   panmapUtils::GlobalCoords globalCoords(blockSequences);
-  refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
-  refOnKminmers.resize(globalCoords.lastScalarCoord + 1);
 
   // Step 1: Pre-compute subtree sizes
   computeSubtreeSize(T->root);
 
-  // Step 2: Compute DFS indices for all nodes (needed for nodeSeedDeltas mapping)
+  size_t totalNodes = T->allNodes.size();
+  std::cout << "Tree has " << totalNodes << " nodes" << std::endl;
+
+  // Step 2: Compute DFS indices for all nodes
   uint64_t dfsCounter = 0;
   std::function<void(panmanUtils::Node*)> computeDfsIndices = [&](panmanUtils::Node* node) {
     nodeToDfsIndex[node->identifier] = dfsCounter++;
@@ -3424,182 +4005,203 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   };
   computeDfsIndices(T->root);
 
-  // Step 3: Create initial BuildState
-  BuildState state;
-  state.blockSequences = std::move(blockSequences);
-  state.blockExistsDelayed = state.blockSequences.blockExists;
-  state.blockStrandDelayed = state.blockSequences.blockStrand;
-  state.gapMap = std::map<uint64_t, uint64_t>{{0, globalCoords.lastScalarCoord}};
-  state.refOnSyncmers.resize(globalCoords.lastScalarCoord + 1);
-  state.refOnKminmers.resize(globalCoords.lastScalarCoord + 1);
-  // Initialize nodeSeedDeltas - stores only changes at each node (NO full counts!)
-  state.nodeSeedDeltas = std::make_shared<std::vector<NodeSeedDelta>>(T->allNodes.size());
+  // Step 3: Collect nodes in DFS order and divide into N equal chunks
+  // Simple approach: each chunk owns a contiguous range of DFS indices
+  std::vector<panmanUtils::Node*> dfsOrder(totalNodes);
+  std::function<void(panmanUtils::Node*, uint64_t&)> collectDfsOrder = [&](panmanUtils::Node* node, uint64_t& idx) {
+    dfsOrder[idx++] = node;
+    for (auto* child : node->children) {
+      collectDfsOrder(child, idx);
+    }
+  };
+  {
+    uint64_t idx = 0;
+    collectDfsOrder(T->root, idx);
+  }
+  
+  // Divide into N chunks (excluding root which we process separately)
+  size_t numChunks = static_cast<size_t>(numThreads);
+  size_t nodesPerChunk = (totalNodes - 1 + numChunks - 1) / numChunks;  // Ceiling division, -1 for root
+  
+  struct ChunkInfo {
+    uint64_t startDfs;  // First DFS index this chunk owns (inclusive)
+    uint64_t endDfs;    // Last DFS index this chunk owns (exclusive)
+  };
+  
+  std::vector<ChunkInfo> chunks;
+  for (size_t i = 0; i < numChunks; i++) {
+    uint64_t start = 1 + i * nodesPerChunk;  // +1 to skip root
+    uint64_t end = std::min(start + nodesPerChunk, static_cast<uint64_t>(totalNodes));
+    if (start < totalNodes) {
+      chunks.push_back({start, end});
+    }
+  }
+  
+  std::cout << "Partitioned into " << chunks.size() << " chunks of ~" 
+            << nodesPerChunk << " nodes each" << std::endl;
 
-  // Step 4: Calculate parallelization threshold
-  // Lower threshold = more parallelism but more cloning overhead
-  // Higher threshold = less parallelism but less overhead
-  // Target: create enough parallel tasks for good load balancing without excessive cloning
-  size_t totalNodes = T->allNodes.size();
-  size_t parallelThreshold = std::max(size_t(50), totalNodes / (numThreads * 8));
-  std::cout << "Tree has " << totalNodes << " nodes, parallel threshold set to " << parallelThreshold << std::endl;
+  // Step 4: Create template BuildState 
+  BuildState templateState;
+  templateState.blockSequences = std::move(blockSequences);
+  templateState.blockExistsDelayed = templateState.blockSequences.blockExists;
+  templateState.blockStrandDelayed = templateState.blockSequences.blockStrand;
+  templateState.gapMap = std::map<uint64_t, uint64_t>{{0, globalCoords.lastScalarCoord}};
+  // nodeChanges will be set up next
 
-  // Step 5: Process tree using dynamic parallelization
-  std::unordered_set<std::string_view> emptyNodes;
-  tbb::spin_mutex emptyNodesMutex;
+  // Step 5: Process root node to establish initial state
+  std::unordered_set<std::string_view> rootEmptyNodes;
+  BacktrackInfo rootBacktrackInfo;
+  // Create shared storage for nodeChanges and genome metrics
+  templateState.nodeChanges = std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>(totalNodes);
+  templateState.genomeMagnitudeSquared = std::make_shared<std::vector<double>>(totalNodes);
+  templateState.genomeUniqueSeedCount = std::make_shared<std::vector<uint64_t>>(totalNodes);
+  templateState.genomeTotalSeedFrequency = std::make_shared<std::vector<int64_t>>(totalNodes);
+  templateState.isLeafNode = std::make_shared<std::vector<bool>>(totalNodes, false);
+  // Note: leafSeedGenomeCounts will be set per-chunk below
+  processNode(T->root, templateState, globalCoords, rootEmptyNodes, 0, &rootBacktrackInfo);
+
+  // Step 6: Make N copies upfront, each walks to its range start then processes its range
+  std::vector<std::unordered_set<std::string_view>> chunkEmptyNodes(chunks.size());
+  
+  // Per-chunk IDF maps - each chunk collects IDF data independently, merged at end
+  std::vector<std::unordered_map<uint64_t, uint32_t>> chunkIdfMaps(chunks.size());
+  
+  // Shared storage - each node slot is written by exactly one chunk
+  auto sharedNodeChanges = std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>(totalNodes);
+  auto sharedGenomeMagnitudeSquared = templateState.genomeMagnitudeSquared;  // Already created, share it
+  auto sharedGenomeUniqueSeedCount = templateState.genomeUniqueSeedCount;
+  auto sharedIsLeafNode = templateState.isLeafNode;
+  auto sharedGenomeTotalSeedFrequency = templateState.genomeTotalSeedFrequency;
+  
+  // Root was already processed
+  (*sharedNodeChanges)[0] = std::move((*templateState.nodeChanges)[0]);
   
   auto startDfs = std::chrono::high_resolution_clock::now();
   
-  // Use tbb::task_arena to ensure we're using the right number of threads
   tbb::task_arena arena(numThreads);
   arena.execute([&]() {
-    processSubtreeParallel(T->root, state, globalCoords, emptyNodes, 0, emptyNodesMutex, parallelThreshold);
+    tbb::parallel_for(size_t(0), chunks.size(),
+      [&](size_t i) {
+        const ChunkInfo& chunk = chunks[i];
+        
+        // Clone state from template (after root was processed)
+        BuildState chunkState(templateState);
+        chunkState.nodeChanges = sharedNodeChanges;  // Write to shared storage
+        chunkState.isLeafNode = sharedIsLeafNode;    // Share leaf tracking
+        // Set per-chunk IDF map
+        chunkState.leafSeedGenomeCounts = std::make_shared<std::unordered_map<uint64_t, uint32_t>>();
+        // Genome metrics are already shared via templateState copy
+        
+        totalClonesCreated_.fetch_add(1, std::memory_order_relaxed);
+        
+        // We need to walk from root to our first node, then DFS through our range
+        // Key insight: nodes 0..startDfs-1 are ancestors or earlier siblings we must walk through
+        // We do a DFS but only compute nodeChanges for nodes in our range [startDfs, endDfs)
+        
+        // Lambda to do DFS with range checking
+        std::function<void(panmanUtils::Node*, uint64_t)> processDfsRange = 
+          [&](panmanUtils::Node* node, uint64_t dfsIdx) {
+            bool inMyRange = (dfsIdx >= chunk.startDfs && dfsIdx < chunk.endDfs);
+            
+            BacktrackInfo backtrack;
+            // Process this node - compute nodeChanges only if in our range
+            processNode(node, chunkState, globalCoords, chunkEmptyNodes[i], 
+                        dfsIdx, &backtrack, !inMyRange);
+            
+            // Recurse into children if any of them might be in our range
+            if (!node->children.empty()) {
+              uint64_t childDfs = dfsIdx + 1;
+              for (auto* child : node->children) {
+                uint64_t childSubtreeEnd = childDfs + subtreeSizes_[child->identifier];
+                // Only recurse if this subtree overlaps with our range
+                if (childDfs < chunk.endDfs && childSubtreeEnd > chunk.startDfs) {
+                  processDfsRange(child, childDfs);
+                }
+                childDfs = childSubtreeEnd;
+              }
+            }
+            
+            // Backtrack
+            backtrackNode(chunkState, backtrack);
+          };
+        
+        // Start DFS from root's children (root already processed)
+        uint64_t childDfs = 1;
+        for (auto* child : T->root->children) {
+          uint64_t childSubtreeEnd = childDfs + subtreeSizes_[child->identifier];
+          // Only process this subtree if it overlaps with our range
+          if (childDfs < chunk.endDfs && childSubtreeEnd > chunk.startDfs) {
+            processDfsRange(child, childDfs);
+          }
+          childDfs = childSubtreeEnd;
+        }
+        
+        // Save chunk's IDF map for merging after parallel section
+        chunkIdfMaps[i] = std::move(*chunkState.leafSeedGenomeCounts);
+      }
+    );
   });
   
   auto endDfs = std::chrono::high_resolution_clock::now();
   auto dfsDurationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endDfs - startDfs).count();
-  std::cout << "DFS processing completed in " << dfsDurationMs << " ms" << std::endl;
-
-  // Step 6: Compute node changes directly from deltas using a single DFS pass
-  // Instead of building full counts for all nodes, we walk the tree once
-  // maintaining a running count and computing changes on-the-fly
-  std::cout << "Computing seed changes from deltas (single pass)..." << std::endl;
   
-  size_t numNodes = T->allNodes.size();
-  std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>> nodeChanges(numNodes);
-  std::atomic<uint64_t> totalChanges{0};
-  std::atomic<uint32_t> largestNodeChangeCount{0};
+  // Use shared nodeChanges
+  auto& nodeChanges = *sharedNodeChanges;
   
-  // Use iterative DFS with explicit stack to avoid recursion overhead
-  // Stack entries: (node, phase) where phase 0 = enter, 1 = process children done
-  struct DfsEntry {
-    panmanUtils::Node* node;
-    size_t childIndex;  // Which child we're processing next
-  };
+  // Merge empty nodes from all chunks
+  std::unordered_set<std::string_view> emptyNodes = std::move(rootEmptyNodes);
+  for (auto& chunkEmpty : chunkEmptyNodes) {
+    emptyNodes.insert(chunkEmpty.begin(), chunkEmpty.end());
+  }
   
-  std::vector<DfsEntry> stack;
-  stack.reserve(100);  // Reasonable initial depth
+  // Merge IDF maps from all chunks
+  std::unordered_map<uint64_t, uint32_t> mergedIdfMap;
+  uint32_t totalLeafGenomes = 0;
+  for (size_t i = 0; i < totalNodes; i++) {
+    if ((*sharedIsLeafNode)[i]) totalLeafGenomes++;
+  }
   
-  // Running count - we modify this as we traverse
-  std::unordered_map<uint64_t, int64_t> runningCounts;
+  // Reserve space for merging
+  size_t estimatedSeeds = 0;
+  for (const auto& chunkMap : chunkIdfMaps) {
+    estimatedSeeds += chunkMap.size();
+  }
+  mergedIdfMap.reserve(estimatedSeeds);
   
-  stack.push_back({T->root, 0});
-  
-  while (!stack.empty()) {
-    auto& entry = stack.back();
-    panmanUtils::Node* node = entry.node;
-    uint64_t nodeIdx = nodeToDfsIndex[node->identifier];
-    
-    if (entry.childIndex == 0) {
-      // First visit to this node - apply delta and compute changes
-      const auto& delta = (*state.nodeSeedDeltas)[nodeIdx];
-      auto& changes = nodeChanges[nodeIdx];
-      
-      // Track which hashes are modified at this node
-      std::unordered_set<uint64_t> modifiedHashes;
-      
-      // Collect all modified hashes first
-      for (uint64_t hash : delta.addedHashes) {
-        modifiedHashes.insert(hash);
-      }
-      for (uint64_t hash : delta.deletedHashes) {
-        modifiedHashes.insert(hash);
-      }
-      for (const auto& [oldHash, newHash] : delta.substitutedHashes) {
-        modifiedHashes.insert(oldHash);
-        modifiedHashes.insert(newHash);
-      }
-      
-      // Record parent counts for all modified hashes BEFORE applying delta
-      std::unordered_map<uint64_t, int64_t> parentCounts;
-      for (uint64_t hash : modifiedHashes) {
-        auto it = runningCounts.find(hash);
-        parentCounts[hash] = (it != runningCounts.end()) ? it->second : 0;
-      }
-      
-      // Apply all delta changes to running counts
-      for (uint64_t hash : delta.addedHashes) {
-        runningCounts[hash]++;
-      }
-      for (uint64_t hash : delta.deletedHashes) {
-        auto it = runningCounts.find(hash);
-        if (it != runningCounts.end()) {
-          it->second--;
-          if (it->second <= 0) runningCounts.erase(it);
-        }
-      }
-      for (const auto& [oldHash, newHash] : delta.substitutedHashes) {
-        // Delete old
-        auto oldIt = runningCounts.find(oldHash);
-        if (oldIt != runningCounts.end()) {
-          oldIt->second--;
-          if (oldIt->second <= 0) runningCounts.erase(oldIt);
-        }
-        // Add new
-        runningCounts[newHash]++;
-      }
-      
-      // Now compare final child counts with parent counts for each modified hash
-      for (uint64_t hash : modifiedHashes) {
-        int64_t parentCount = parentCounts[hash];
-        int64_t childCount = 0;
-        auto it = runningCounts.find(hash);
-        if (it != runningCounts.end()) childCount = it->second;
-        
-        if (parentCount != childCount) {
-          changes.emplace_back(hash, parentCount, childCount);
-        }
-      }
-      
-      totalChanges += changes.size();
-      uint32_t localSize = changes.size();
-      uint32_t prevMax = largestNodeChangeCount.load();
-      while (prevMax < localSize && !largestNodeChangeCount.compare_exchange_weak(prevMax, localSize)) {}
-    }
-    
-    // Process children
-    if (entry.childIndex < node->children.size()) {
-      panmanUtils::Node* child = node->children[entry.childIndex];
-      entry.childIndex++;
-      stack.push_back({child, 0});
-    } else {
-      // All children done - backtrack (undo delta)
-      const auto& delta = (*state.nodeSeedDeltas)[nodeIdx];
-      
-      // Undo substitutions (in reverse: undo add new, then undo delete old)
-      for (auto it = delta.substitutedHashes.rbegin(); it != delta.substitutedHashes.rend(); ++it) {
-        const auto& [oldHash, newHash] = *it;
-        // Undo add new
-        auto newIt = runningCounts.find(newHash);
-        if (newIt != runningCounts.end()) {
-          newIt->second--;
-          if (newIt->second <= 0) runningCounts.erase(newIt);
-        }
-        // Undo delete old
-        runningCounts[oldHash]++;
-      }
-      
-      // Undo deletions (re-add)
-      for (auto it = delta.deletedHashes.rbegin(); it != delta.deletedHashes.rend(); ++it) {
-        runningCounts[*it]++;
-      }
-      
-      // Undo additions (re-delete)
-      for (auto it = delta.addedHashes.rbegin(); it != delta.addedHashes.rend(); ++it) {
-        auto countIt = runningCounts.find(*it);
-        if (countIt != runningCounts.end()) {
-          countIt->second--;
-          if (countIt->second <= 0) runningCounts.erase(countIt);
-        }
-      }
-      
-      stack.pop_back();
+  // Merge counts
+  for (auto& chunkMap : chunkIdfMaps) {
+    for (const auto& [hash, count] : chunkMap) {
+      mergedIdfMap[hash] += count;
     }
   }
   
-  // Free delta storage - no longer needed
-  state.nodeSeedDeltas.reset();
+  std::cout << "IDF: " << totalLeafGenomes << " leaf genomes, " 
+            << mergedIdfMap.size() << " unique seeds" << std::endl;
   
-  std::cout << "Processed " << numNodes << " nodes" << std::endl;
+  // Print summary
+  uint64_t finalNodes = processedNodes_.load();
+  double finalNodesPerSec = (dfsDurationMs > 0) ? (finalNodes * 1000.0 / dfsDurationMs) : 0;
+  
+  std::cout << std::endl;
+  std::cout << "=== Parallel Build Summary ===" << std::endl;
+  std::cout << "  Nodes processed: " << finalNodes << " (" << std::fixed << std::setprecision(0) << finalNodesPerSec << " nodes/sec)" << std::endl;
+  std::cout << "  DFS time: " << dfsDurationMs << " ms" << std::endl;
+  std::cout << "  Chunks: " << chunks.size() << ", clones: " << totalClonesCreated_.load() << std::endl;
+  std::cout << "===============================" << std::endl;
+
+  // nodeChanges were computed during processNode calls - now use them for index building
+  size_t numNodes = T->allNodes.size();
+  
+  // Compute totals for index building
+  uint64_t totalChanges = 0;
+  uint32_t largestNodeChangeCount = 0;
+  for (size_t i = 0; i < numNodes; i++) {
+    uint32_t localSize = static_cast<uint32_t>(nodeChanges[i].size());
+    totalChanges += localSize;
+    if (localSize > largestNodeChangeCount) largestNodeChangeCount = localSize;
+  }
+  
+  std::cout << "Total seed changes: " << totalChanges << ", max per node: " << largestNodeChangeCount << std::endl;
 
   // Step 7: Build index output
   LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
@@ -3622,18 +4224,21 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     nodesBuilder[idx].setIdenticalToParent(emptyNodes.find(nodeId) != emptyNodes.end());
   }
 
-  std::cout << "\nFinished building index! Total seed changes: " << totalChanges.load() << std::endl;
+  std::cout << "\nFinished building index! Total seed changes: " << totalChanges << std::endl;
+
+  auto serializeStart = std::chrono::high_resolution_clock::now();
 
   // Set totals
-  indexBuilder.setTotalSeedChanges(totalChanges.load());
-  indexBuilder.setLargestNodeChangeCount(largestNodeChangeCount.load());
+  indexBuilder.setTotalSeedChanges(totalChanges);
+  indexBuilder.setLargestNodeChangeCount(largestNodeChangeCount);
 
   // Allocate and write flat arrays (sequential - Cap'n Proto builders aren't thread-safe)
-  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(totalChanges.load());
-  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(totalChanges.load());
-  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges.load());
+  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(totalChanges);
+  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(totalChanges);
+  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
 
+  std::cout << "Writing seed changes to index..." << std::endl;
   uint32_t writeOffset = 0;
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     nodeChangeOffsetsBuilder.set(nodeIdx, writeOffset);
@@ -3645,34 +4250,58 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     }
   }
   nodeChangeOffsetsBuilder.set(numNodes, writeOffset);
+  
+  auto serializeEnd = std::chrono::high_resolution_clock::now();
+  auto serializeMs = std::chrono::duration_cast<std::chrono::milliseconds>(serializeEnd - serializeStart).count();
+  std::cout << "Wrote seed changes in " << serializeMs << " ms" << std::endl;
 
-  // Compute genome metrics IN PARALLEL
+  // Copy pre-computed genome metrics to index builders
+  std::cout << "Writing genome metrics..." << std::endl;
+  auto metricsStart = std::chrono::high_resolution_clock::now();
   auto genomeMagnitudeSquaredBuilder = indexBuilder.initGenomeMagnitudeSquared(numNodes);
   auto genomeUniqueSeedCountBuilder = indexBuilder.initGenomeUniqueSeedCount(numNodes);
   auto genomeTotalSeedFrequencyBuilder = indexBuilder.initGenomeTotalSeedFrequency(numNodes);
 
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes),
-    [&](const tbb::blocked_range<size_t>& range) {
-      for (size_t nodeIdx = range.begin(); nodeIdx != range.end(); ++nodeIdx) {
-        const auto& counts = nodeSeedCounts[nodeIdx];
-        double magnitudeSquared = 0.0;
-        int64_t totalFrequency = 0;
-        
-        for (const auto& [hash, count] : counts) {
-          magnitudeSquared += static_cast<double>(count) * static_cast<double>(count);
-          totalFrequency += count;
-        }
-        
-        genomeMagnitudeSquaredBuilder.set(nodeIdx, magnitudeSquared);
-        genomeUniqueSeedCountBuilder.set(nodeIdx, counts.size());
-        genomeTotalSeedFrequencyBuilder.set(nodeIdx, totalFrequency);
-      }
-    }, tbb::auto_partitioner());
+  // Metrics were computed during main DFS - just copy them
+  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
+    genomeMagnitudeSquaredBuilder.set(nodeIdx, (*sharedGenomeMagnitudeSquared)[nodeIdx]);
+    genomeUniqueSeedCountBuilder.set(nodeIdx, (*sharedGenomeUniqueSeedCount)[nodeIdx]);
+    genomeTotalSeedFrequencyBuilder.set(nodeIdx, (*sharedGenomeTotalSeedFrequency)[nodeIdx]);
+  }
+
+  auto metricsEnd = std::chrono::high_resolution_clock::now();
+  auto metricsMs = std::chrono::duration_cast<std::chrono::milliseconds>(metricsEnd - metricsStart).count();
+  std::cout << "Wrote genome metrics in " << metricsMs << " ms" << std::endl;
+
+  // Write IDF data for seed weighting
+  std::cout << "Writing IDF data..." << std::endl;
+  auto idfStart = std::chrono::high_resolution_clock::now();
+  
+  // Sort seeds by hash for binary search at load time
+  std::vector<std::pair<uint64_t, uint32_t>> sortedIdf(mergedIdfMap.begin(), mergedIdfMap.end());
+  std::sort(sortedIdf.begin(), sortedIdf.end(), 
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+  
+  indexBuilder.setTotalLeafGenomes(totalLeafGenomes);
+  auto idfHashesBuilder = indexBuilder.initIdfSeedHashes(sortedIdf.size());
+  auto idfCountsBuilder = indexBuilder.initIdfGenomeCounts(sortedIdf.size());
+  
+  for (size_t i = 0; i < sortedIdf.size(); i++) {
+    idfHashesBuilder.set(i, sortedIdf[i].first);
+    idfCountsBuilder.set(i, sortedIdf[i].second);
+  }
+  
+  auto idfEnd = std::chrono::high_resolution_clock::now();
+  auto idfMs = std::chrono::duration_cast<std::chrono::milliseconds>(idfEnd - idfStart).count();
+  std::cout << "Wrote IDF data (" << sortedIdf.size() << " unique seeds) in " << idfMs << " ms" << std::endl;
 
   auto endTotal = std::chrono::high_resolution_clock::now();
   auto totalDurationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTotal - startTotal).count();
   
   std::cout << "Total parallel build time: " << totalDurationMs << " ms" << std::endl;
+  
+  // Print size statistics for optimization
+  g_stats.print();
 }
 
 int index_single_mode::open_file(const std::string& path) {

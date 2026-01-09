@@ -25,7 +25,7 @@ constexpr uint32_t SEGMENTED_MAGIC = 0x54535A50;  // "PZST" in little-endian
  * File format: [Header][SegmentTable][Segment0][Segment1]...[SegmentN]
  * 
  * @param segments Vector of (data pointer, size) pairs
- * @param outputPath Output file path (.pmi extension)
+ * @param outputPath Output file path (.idx extension)
  * @param compressionLevel ZSTD compression level (1-22, default 3 for speed)
  * @param numThreads Number of compression threads (0 = auto-detect)
  * @return true on success
@@ -87,7 +87,7 @@ bool isSegmentedZstd(const std::string& inputPath);
  * 
  * @param inputData Raw message data
  * @param inputSize Size of input data
- * @param outputPath Output file path (.pmi extension)
+ * @param outputPath Output file path (.idx extension)
  * @param compressionLevel ZSTD compression level (1-22, default 3 for speed)
  * @param numThreads Number of compression threads (0 = auto-detect)
  * @param frameSize Size of each seekable frame in bytes (default 4MB for good parallelism)
