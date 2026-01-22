@@ -766,6 +766,10 @@ int main(int argc, char *argv[]) {
         ("mask-reads-relative-frequency", po::value<double>()->default_value(0.0), "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")
         ("mask-seeds-relative-frequency", po::value<double>()->default_value(0.0), "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
 
+        ("em-convergence-threshold", po::value<double>()->default_value(0.00001), "EM converges when likelihood difference is less than <double> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
+        ("em-delta-threshold", po::value<double>()->default_value(0), "EM converges when maximum proportion change is less than <double> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
+        ("em-maximum-iterations", po::value<uint32_t>()->default_value(1000), "EM maximum iterations")
+
         ("low-memory", "Use low memory mode")
     ;
 
@@ -1457,12 +1461,15 @@ int main(int argc, char *argv[]) {
       }
       scoresOutExtra.close();
 
-      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, overlap_coefficients_threshold, vm.count("read-scores") > 0);
+      double em_convergence_threshold = vm["em-convergence-threshold"].as<double>();
+      double em_delta_threshold = vm["em-delta-threshold"].as<double>();
+      uint32_t em_maximum_iterations = vm["em-maximum-iterations"].as<uint32_t>();
+      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, overlap_coefficients_threshold, em_convergence_threshold, em_delta_threshold, em_maximum_iterations, vm.count("read-scores") > 0);
       liteTree.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
       for (size_t i = 0; i < 5; ++i) {
-        squareEM.runSquareEM(1000);
+        squareEM.runSquareEM();
         std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
         bool removed = squareEM.removeLowPropNodes();
         std::cout << squareEM.nodes.size() << std::endl;

@@ -4332,7 +4332,7 @@ void mgsr::squareEM::resetIteration() {
   curIteration = 0;
 }
 
-void mgsr::squareEM::runSquareEM(uint64_t maximumIterations) {
+void mgsr::squareEM::runSquareEM() {
   resetIteration();
   invTotalWeight = 1.0 / readDuplicates.array().sum();
   while (curIteration < maximumIterations) {
@@ -4364,16 +4364,20 @@ void mgsr::squareEM::runSquareEM(uint64_t maximumIterations) {
       llh = llh2;
     }
 
-    // std::cout << "\rEM iteration " << curIteration << " difference: " << std::fixed << std::setprecision(8) << difference << std::flush;
-    // if (abs(difference) < 0.00001 || curIteration >= maximumIterations) {
-    //   break;
-    // }
-    double max_change = (props - props0).array().abs().maxCoeff();
-    std::cout << "\rEM iteration " << curIteration << " max_change: " << std::fixed << std::setprecision(8) << max_change << std::flush;
+    if (maxChangeThreshold == 0) {
+      std::cout << "\rEM iteration " << curIteration << " difference: " << std::fixed << std::setprecision(8) << difference << std::flush;
+      if (abs(difference) < eta || curIteration >= maximumIterations) {
+        break;
+      }
+    } else {
+      double max_change = (props - props0).array().abs().maxCoeff();
+      std::cout << "\rEM iteration " << curIteration << " max_change: " << std::fixed << std::setprecision(8) << max_change << std::flush;
 
-    if (max_change < maxChangeThreshold || curIteration >= maximumIterations) {
-      break;
+      if (max_change < maxChangeThreshold || curIteration >= maximumIterations) {
+        break;
+      }
     }
+
 
     ++curIteration;
   }
@@ -7680,8 +7684,14 @@ mgsr::squareEM::squareEM(
   mgsr::MgsrLiteTree& liteTree,
   const std::string& prefix,
   size_t overlapCoefficientCutoff,
+  double em_convergence_threshold,
+  double em_delta_threshold,
+  uint32_t em_maximum_iterations,
   bool useReadWeightedScores
 ) {
+  this->eta = em_convergence_threshold;
+  this->maxChangeThreshold = em_delta_threshold;
+  this->maximumIterations = em_maximum_iterations;
   this->prefix = prefix;
   numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
 

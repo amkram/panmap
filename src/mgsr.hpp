@@ -964,8 +964,9 @@ class squareEM {
 
 
     // Input parameters... hardcoded for now
-    double eta = 0.00001;
-    double maxChangeThreshold = 0.0001;
+    double eta;
+    double maxChangeThreshold;
+    uint32_t maximumIterations;
     double propThresholdToRemove = 0.005;
     double errorRate = 0.005;
 
@@ -977,11 +978,14 @@ class squareEM {
       MgsrLiteTree& liteTree,
       const std::string& prefix,
       size_t overlapCoefficientCutoff,
+      double em_convergence_threshold,
+      double em_delta_threshold,
+      uint32_t em_maximum_iterations,
       bool useReadWeightedScores
     );
 
 
-    void runSquareEM(uint64_t maximumIterations);
+    void runSquareEM();
     bool removeLowPropNodes();
 
   private:
