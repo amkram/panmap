@@ -1455,7 +1455,8 @@ void mgsr::extractReadSequences(
   const std::string& readPath2,
   const std::string& ampliconDepthPath,
   std::vector<std::vector<std::string>>& readSequences,
-  std::vector<std::vector<std::string>>& readNames
+  std::vector<std::vector<std::string>>& readNames,
+  uint32_t maskReadsEnds
 ) {
   std::unordered_map<std::string, std::string_view> readIdToPrimerId;
   std::unordered_map<std::string, size_t> primerIdToGroupId;
@@ -1512,14 +1513,22 @@ void mgsr::extractReadSequences(
   int line;
   while ((line = kseq_read(seq)) >= 0) {
     std::string readIdentifier = seq->name.s;
+    std::string readSequence = seq->seq.s;
+    if (maskReadsEnds > 0) {
+      if (readSequence.size() > 2 * maskReadsEnds) {
+        readSequence = readSequence.substr(maskReadsEnds, readSequence.size() - 2 * maskReadsEnds);
+      } else {
+        readSequence = "";
+      }
+    }
     auto readIdToPrimerIdIt = readIdToPrimerId.find(readIdentifier);
     if (readIdToPrimerIdIt == readIdToPrimerId.end()) {
-      readSequences.back().push_back(seq->seq.s);
-      readNames.back().push_back(seq->name.s);
+      readSequences.back().push_back(readSequence);
+      readNames.back().push_back(readIdentifier);
     } else {
       size_t groupId = primerIdToGroupId[std::string(readIdToPrimerIdIt->second)];
-      readSequences[groupId].push_back(seq->seq.s);
-      readNames[groupId].push_back(seq->name.s);
+      readSequences[groupId].push_back(readSequence);
+      readNames[groupId].push_back(readIdentifier);
     }
   }
   if (readPath2.size() > 0) {
@@ -1538,14 +1547,22 @@ void mgsr::extractReadSequences(
     line = 0;
     while ((line = kseq_read(seq)) >= 0) {
       std::string readIdentifier = seq->name.s;
+      std::string readSequence = seq->seq.s;
+      if (maskReadsEnds > 0) {
+        if (readSequence.size() > 2 * maskReadsEnds) {
+          readSequence = readSequence.substr(maskReadsEnds, readSequence.size() - 2 * maskReadsEnds);
+        } else {
+          readSequence = "";
+        }
+      }
       auto readIdToPrimerIdIt = readIdToPrimerId.find(readIdentifier);
       if (readIdToPrimerIdIt == readIdToPrimerId.end()) {
-        readSequences.back().push_back(seq->seq.s);
-        readNames.back().push_back(seq->name.s);
+        readSequences.back().push_back(readSequence);
+        readNames.back().push_back(readIdentifier);
       } else {
         size_t groupId = primerIdToGroupId[std::string(readIdToPrimerIdIt->second)];
-        readSequences[groupId].push_back(seq->seq.s);
-        readNames[groupId].push_back(seq->name.s);
+        readSequences[groupId].push_back(readSequence);
+        readNames[groupId].push_back(readIdentifier);
       }
     }
 
@@ -1846,13 +1863,14 @@ void mgsr::ThreadsManager::initializeQueryData(
   double maskReadsRelativeFrequency,
   double maskSeedsRelativeFrequency,
   double dustThreshold,
+  uint32_t maskReadsEnds,
   bool fast_mode
 ) {
   std::cerr << "Processing query reads... k=" << k << ", s=" << s << ", l=" << l << ", t=" << t << ", openSyncmer=" << openSyncmer << std::endl;
   
   std::vector<std::vector<std::string>> readSequencesByGroup;
   std::vector<std::vector<std::string>> readNamesByGroup;
-  extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup, readNamesByGroup);
+  extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup, readNamesByGroup, maskReadsEnds);
 
   size_t rawReadsSize = 0;
   for (const auto& groupReads : readSequencesByGroup) {

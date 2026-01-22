@@ -63,7 +63,8 @@ void extractReadSequences(
   const std::string& readPath2,
   const std::string& ampliconDepthPath,
   std::vector<std::vector<std::string>>& readSequences,
-  std::vector<std::vector<std::string>>& readNames
+  std::vector<std::vector<std::string>>& readNames,
+  uint32_t maskReadsEnds
 );
 
 double getDust(const std::string& seq, int windowSize=64);
@@ -676,6 +677,7 @@ class ThreadsManager {
       double maskReadsRelativeFrequency,
       double maskSeedsRelativeFrequency,
       double dustThreshold,
+      uint32_t maskReadsEnds,
       bool fast_mode = false
     );
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores, const std::vector<size_t>& readIndexOffset) const;

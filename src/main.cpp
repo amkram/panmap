@@ -753,6 +753,7 @@ int main(int argc, char *argv[]) {
         ("no-progress", "Disable progress bars")
         ("dust", po::value<double>()->default_value(100), "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")
         ("discard", po::value<double>()->default_value(0.5), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
+        ("mask-read-ends", po::value<uint32_t>()->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
         ("filter-and-assign", "Filter and assign reads to nodes without running EM")
         ("taxonomic-metadata", po::value<std::string>(), "Path to taxonomic metadata TSV file")
         ("maximum-families", po::value<size_t>()->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided")
@@ -1183,12 +1184,13 @@ int main(int argc, char *argv[]) {
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
 
+      uint32_t maskReadsEnds = vm["mask-read-ends"].as<uint32_t>();
       double dust_threshold = vm["dust"].as<double>();
       if (dust_threshold > 100) {
         std::cerr << "Error: --dust must be <= 100" << std::endl;
         exit(1);
       }
-      threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency, dust_threshold);
+      threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency, dust_threshold, maskReadsEnds);
 
 
       size_t overlap_coefficients_threshold = vm["overlap-coefficients"].as<size_t>();
