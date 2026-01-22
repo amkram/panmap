@@ -4,6 +4,7 @@
 #include <boost/iostreams/filter/lzma.hpp>
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/algorithm/string.hpp>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -1696,7 +1697,17 @@ int main(int argc, char *argv[]) {
     }
 
     if (vm.count("dump-sequences")) {
-      auto nodeIDs = vm["dump-sequences"].as<std::vector<std::string>>();
+      std::vector<std::string> nodeIDs;
+      auto nodeID_groups = vm["dump-sequences"].as<std::vector<std::string>>();
+
+      for (const auto& nodeID_group : nodeID_groups) {
+        std::vector<std::string> nodeID_group_parts;
+        boost::split(nodeID_group_parts, nodeID_group, boost::is_any_of(" "), boost::token_compress_on);
+        for (const auto& nodeID : nodeID_group_parts) {
+          nodeIDs.push_back(nodeID);
+        }
+      }
+
       std::vector<uint32_t> numsnps;
       if (vm.count("simulate-snps")) {
         numsnps = vm["simulate-snps"].as<std::vector<uint32_t>>();
