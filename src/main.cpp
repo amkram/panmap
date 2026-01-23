@@ -1702,15 +1702,14 @@ int main(int argc, char *argv[]) {
 
       std::cerr << "Node ID groups: " << nodeID_groups.size() << std::endl;
       for (size_t i = 0; i < nodeID_groups.size(); i++) {
-        std::cerr << "Node ID group " << i << " size: " << nodeID_groups[i].size() << std::endl;
-      }
-      for (const auto& nodeID_group : nodeID_groups) {
+        const auto& nodeID_group = nodeID_groups[i];
         std::vector<std::string> nodeID_group_parts;
         boost::split(nodeID_group_parts, nodeID_group, boost::is_any_of(" "), boost::token_compress_on);
         for (const auto& nodeID : nodeID_group_parts) {
           nodeIDs.push_back(nodeID);
           std::cerr << "Node ID " << nodeID << " added to dump sequences" << std::endl;
         }
+        std::cerr << "Node ID group " << i << " size: " << nodeID_group_parts.size() << std::endl;
       }
 
       std::vector<uint32_t> numsnps;
