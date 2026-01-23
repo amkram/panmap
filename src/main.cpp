@@ -1700,6 +1700,10 @@ int main(int argc, char *argv[]) {
       std::vector<std::string> nodeIDs;
       auto nodeID_groups = vm["dump-sequences"].as<std::vector<std::string>>();
 
+      std::cerr << "Node ID groups: " << nodeID_groups.size() << std::endl;
+      for (size_t i = 0; i < nodeID_groups.size(); i++) {
+        std::cerr << "Node ID group " << i << " size: " << nodeID_groups[i].size() << std::endl;
+      }
       for (const auto& nodeID_group : nodeID_groups) {
         std::vector<std::string> nodeID_group_parts;
         boost::split(nodeID_group_parts, nodeID_group, boost::is_any_of(" "), boost::token_compress_on);
