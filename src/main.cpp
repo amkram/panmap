@@ -1717,6 +1717,8 @@ int main(int argc, char *argv[]) {
         }
       }
 
+      std::string outputFileName = prefix + ".dump-sequences.fa";
+      std::ofstream outFile(outputFileName);
       for (size_t i = 0; i < nodeIDs.size(); i++) {
         const auto& nodeID = nodeIDs[i];
         uint32_t numsnp = (numsnps.empty() ? 0 : numsnps[i]);
@@ -1728,11 +1730,6 @@ int main(int argc, char *argv[]) {
         std::string sequence = panmapUtils::getStringFromReference(&T, nodeID, false);
         std::vector<std::tuple<char, char, uint32_t>> snpRecords;
         panmapUtils::simulateSNPsOnSequence(sequence, snpRecords, numsnp, rng);
-        std::string nodeIDClean = nodeID;
-        std::replace(nodeIDClean.begin(), nodeIDClean.end(), '/', '_');
-        std::replace(nodeIDClean.begin(), nodeIDClean.end(), '|', '_');
-        std::string outputFileName = prefix + "." + nodeIDClean + "." + std::to_string(numsnp) + "snps.fa";
-        std::ofstream outFile(outputFileName);
 
         if (outFile.is_open()) {
           outFile << ">" << nodeID << " ";
@@ -1743,13 +1740,13 @@ int main(int argc, char *argv[]) {
           for (size_t i = 0; i < sequence.size(); i += 80) {
             outFile << sequence.substr(i, 80) << "\n";
           }
-          outFile.close();
           msg("Sequence for node {} with {} SNPs written to {}", nodeID, numsnp, outputFileName);
         } else {
           err("Failed to open file {} for writing", outputFileName);
           return 1;
         }
       }
+      outFile.close();
       exit(0);
     }
 
