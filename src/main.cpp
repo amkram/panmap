@@ -1705,6 +1705,7 @@ int main(int argc, char *argv[]) {
         boost::split(nodeID_group_parts, nodeID_group, boost::is_any_of(" "), boost::token_compress_on);
         for (const auto& nodeID : nodeID_group_parts) {
           nodeIDs.push_back(nodeID);
+          std::cerr << "Node ID " << nodeID << " added to dump sequences" << std::endl;
         }
       }
 
@@ -1724,6 +1725,7 @@ int main(int argc, char *argv[]) {
         uint32_t numsnp = (numsnps.empty() ? 0 : numsnps[i]);
         if (T.allNodes.find(nodeID) == T.allNodes.end()) {
           err("Node ID {} not found in the tree", nodeID);
+          std::cerr << "Node ID " << nodeID << " not found in the tree" << std::endl;
           return 1;
         }
 
