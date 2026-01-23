@@ -7756,12 +7756,18 @@ mgsr::squareEM::squareEM(
 
   std::vector<size_t> readIndexOffset(numReads, 0);
   size_t numSigReads = 0;
+  // for (size_t i = 0; i < numReads; ++i) {
+  //   if (reads[i].maxScore > 0) {
+  //     readIndexOffset[i] = numSigReads;
+  //     ++numSigReads;
+  //   }
+  // }
+
   for (size_t i = 0; i < numReads; ++i) {
-    if (reads[i].maxScore > 0) {
-      readIndexOffset[i] = numSigReads;
-      ++numSigReads;
-    }
+    readIndexOffset[i] = numSigReads;
+    ++numSigReads;
   }
+  
   std::cout << "Number of significant reads: " << numSigReads << std::endl;
 
   std::vector<std::vector<uint32_t>> scoreMatrix(probableNodes.size(), std::vector<uint32_t>(numSigReads, 0));
