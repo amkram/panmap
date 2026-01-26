@@ -757,6 +757,12 @@ static void applyMutations (
       const char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
 
       if (oldNuc == newNuc) continue;
+      
+      // N imputation: Skip XX->N mutations during indexing
+      // When a node has 'N' (ambiguous base), we treat it as inheriting the parent's base
+      // This effectively imputes the N with the ancestral value for syncmer computation
+      if (newNuc == 'N') continue;
+      
       blockSequences.setSequenceBase(pos, newNuc);
       nucMutationRecord.emplace_back(pos, oldNuc, newNuc);
 

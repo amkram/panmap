@@ -149,19 +149,80 @@ struct BacktrackInfo {
   }
 };
 
-// Compute genome extent from gapMap
-// Returns (firstNonGapScalar, lastNonGapScalar)
-// If genome is all gaps, returns (UINT64_MAX, 0)
+// Compute genome extent from gapMap with flank masking
+// Returns (firstNonGapScalar, lastNonGapScalar) after masking flankSize non-gap bases from each end
+// flankSize: number of non-gap bases to skip at each end (default 250)
+// If genome is all gaps or too short, returns (UINT64_MAX, 0)
 inline std::pair<uint64_t, uint64_t> computeExtentFromGapMap(
     const std::map<uint64_t, uint64_t>& gapMap,
-    uint64_t lastScalarCoord) {
+    uint64_t lastScalarCoord,
+    uint64_t flankSize = 250) {
+  
+  // Helper lambda: count non-gap bases and find position after skipping 'count' non-gap bases from 'start' going forward
+  auto findPositionAfterNonGaps = [&](uint64_t start, uint64_t count) -> uint64_t {
+    uint64_t nonGapCount = 0;
+    uint64_t pos = start;
+    
+    while (pos <= lastScalarCoord && nonGapCount < count) {
+      // Check if current position is in a gap
+      auto it = gapMap.upper_bound(pos);
+      if (it != gapMap.begin()) {
+        --it;
+        // it now points to the gap run that starts at or before pos
+        if (it->second >= pos) {
+          // pos is inside this gap run, skip to end of gap
+          pos = it->second + 1;
+          continue;
+        }
+      }
+      // pos is not in a gap
+      nonGapCount++;
+      if (nonGapCount >= count) {
+        return pos;
+      }
+      pos++;
+    }
+    
+    // Not enough non-gap bases
+    return UINT64_MAX;
+  };
+  
+  // Helper lambda: find position after skipping 'count' non-gap bases going backward from 'start'
+  auto findPositionBeforeNonGaps = [&](uint64_t start, uint64_t count) -> uint64_t {
+    uint64_t nonGapCount = 0;
+    int64_t pos = static_cast<int64_t>(start);
+    
+    while (pos >= 0 && nonGapCount < count) {
+      // Check if current position is in a gap
+      auto it = gapMap.upper_bound(static_cast<uint64_t>(pos));
+      if (it != gapMap.begin()) {
+        --it;
+        // it now points to the gap run that starts at or before pos
+        if (it->second >= static_cast<uint64_t>(pos)) {
+          // pos is inside this gap run, skip to start of gap - 1
+          pos = static_cast<int64_t>(it->first) - 1;
+          continue;
+        }
+      }
+      // pos is not in a gap
+      nonGapCount++;
+      if (nonGapCount >= count) {
+        return static_cast<uint64_t>(pos);
+      }
+      pos--;
+    }
+    
+    // Not enough non-gap bases
+    return 0;
+  };
+  
+  // Find initial extent (first and last non-gap positions)
   uint64_t firstNonGap = 0;
   uint64_t lastNonGap = lastScalarCoord;
   
   // Check for leading gap run (starts at position 0)
   auto it = gapMap.find(0);
   if (it != gapMap.end()) {
-    // There's a gap run starting at 0
     if (it->second >= lastScalarCoord) {
       // Entire genome is gaps
       return {UINT64_MAX, 0};
@@ -175,6 +236,20 @@ inline std::pair<uint64_t, uint64_t> computeExtentFromGapMap(
     if (lastIt->second == lastScalarCoord) {
       lastNonGap = lastIt->first - 1;
     }
+  }
+  
+  // Now apply flank masking: skip flankSize non-gap bases from each end
+  if (flankSize > 0) {
+    uint64_t maskedFirst = findPositionAfterNonGaps(firstNonGap, flankSize);
+    uint64_t maskedLast = findPositionBeforeNonGaps(lastNonGap, flankSize);
+    
+    // Check if genome is too short after masking
+    if (maskedFirst == UINT64_MAX || maskedLast == 0 || maskedFirst > maskedLast) {
+      return {UINT64_MAX, 0};
+    }
+    
+    firstNonGap = maskedFirst;
+    lastNonGap = maskedLast;
   }
   
   return {firstNonGap, lastNonGap};

@@ -2791,6 +2791,102 @@ void placeLite(PlacementResult &result,
         }
         placementsFile << "\n";
         
+        // Log Raw score
+        placementsFile << "log_raw\t" << std::fixed << std::setprecision(6) << result.bestLogRawScore << "\t\t";
+        if (!result.tiedLogRawNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedLogRawNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedLogRawNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestLogRawNodeId;
+        }
+        placementsFile << "\n";
+        
+        // Log Cosine score
+        placementsFile << "log_cosine\t" << std::fixed << std::setprecision(6) << result.bestLogCosineScore << "\t\t";
+        if (!result.tiedLogCosineNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedLogCosineNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedLogCosineNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestLogCosineNodeId;
+        }
+        placementsFile << "\n";
+        
+        // IDF Cosine score
+        placementsFile << "idf_cosine\t" << std::fixed << std::setprecision(6) << result.bestIdfCosineScore << "\t\t";
+        if (!result.tiedIdfCosineNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedIdfCosineNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedIdfCosineNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestIdfCosineNodeId;
+        }
+        placementsFile << "\n";
+        
+        // Coverage Cosine score
+        placementsFile << "cov_cosine\t" << std::fixed << std::setprecision(6) << result.bestCovCosineScore << "\t\t";
+        if (!result.tiedCovCosineNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedCovCosineNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedCovCosineNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestCovCosineNodeId;
+        }
+        placementsFile << "\n";
+        
+        // Cap Cosine score
+        placementsFile << "cap_cosine\t" << std::fixed << std::setprecision(6) << result.bestCapCosineScore << "\t\t";
+        if (!result.tiedCapCosineNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedCapCosineNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedCapCosineNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestCapCosineNodeId;
+        }
+        placementsFile << "\n";
+        
+        // Cap Log Cosine score
+        placementsFile << "cap_log_cosine\t" << std::fixed << std::setprecision(6) << result.bestCapLogCosineScore << "\t\t";
+        if (!result.tiedCapLogCosineNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedCapLogCosineNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedCapLogCosineNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestCapLogCosineNodeId;
+        }
+        placementsFile << "\n";
+        
+        // Containment score
+        placementsFile << "containment\t" << std::fixed << std::setprecision(6) << result.bestContainmentScore << "\t\t";
+        if (!result.tiedContainmentNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedContainmentNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedContainmentNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestContainmentNodeId;
+        }
+        placementsFile << "\n";
+        
+        // Weighted Containment score
+        placementsFile << "weighted_containment\t" << std::fixed << std::setprecision(6) << result.bestWeightedContainmentScore << "\t\t";
+        if (!result.tiedWeightedContainmentNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedWeightedContainmentNodeIndices.size(); ++i) {
+                if (i > 0) placementsFile << ",";
+                placementsFile << liteTree->resolveNodeId(result.tiedWeightedContainmentNodeIndices[i]);
+            }
+        } else {
+            placementsFile << result.bestWeightedContainmentNodeId;
+        }
+        placementsFile << "\n";
+        
         placementsFile.close();
         logging::info("Wrote placement results to {}", placementsFilePath);
     } else {
