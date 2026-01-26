@@ -74,3 +74,8 @@ src/3rdparty/samtools/htslib-1.20/htsfile
 src/3rdparty/samtools/htslib-1.20/htslib-uninstalled.pc
 src/3rdparty/samtools/htslib-1.20/tabix
 src/3rdparty/samtools/htslib-1.20/version.h
+
+# htslib build artifacts
+src/3rdparty/samtools/htslib-1.20/**/*.pico
+src/3rdparty/samtools/htslib-1.20/cram/*.pico
+src/3rdparty/samtools/htslib-1.20/htscodecs/**/*.pico
