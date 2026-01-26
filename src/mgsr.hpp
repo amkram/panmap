@@ -983,7 +983,8 @@ class squareEM {
       double em_convergence_threshold,
       double em_delta_threshold,
       uint32_t em_maximum_iterations,
-      bool useReadWeightedScores
+      bool useReadWeightedScores,
+      bool emLeavesOnly
     );
 
 
