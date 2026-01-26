@@ -771,6 +771,7 @@ int main(int argc, char *argv[]) {
         ("em-convergence-threshold", po::value<double>()->default_value(0.00001), "EM converges when likelihood difference is less than <double> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
         ("em-delta-threshold", po::value<double>()->default_value(0), "EM converges when maximum proportion change is less than <double> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
         ("em-maximum-iterations", po::value<uint32_t>()->default_value(1000), "EM maximum iterations")
+        ("em-leaves-only", "Only run EM on leaf (sample) nodes")
 
         ("low-memory", "Use low memory mode")
     ;
@@ -1308,6 +1309,24 @@ int main(int argc, char *argv[]) {
       auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
+
+      std::ofstream readScoresOut_unfiltered(prefix + ".read_scores_info.unfiltered.tsv");
+      readScoresOut_unfiltered << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tRawReadsIndices" << std::endl;
+      for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+        const auto& curRead = threadsManager.reads[i];
+        if (curRead.maxScore == 0) continue;
+        readScoresOut_unfiltered << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
+        for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
+          if (j == 0) {
+            readScoresOut_unfiltered << threadsManager.readSeedmersDuplicatesIndex[i][j];
+          } else {
+            readScoresOut_unfiltered << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+          }
+        }
+        readScoresOut_unfiltered << std::endl;
+      }
+      readScoresOut_unfiltered.close();
+
       double discard_threshold = vm["discard"].as<double>();
       size_t num_discarded = 0;
       size_t num_unmapped = 0;
@@ -1467,7 +1486,7 @@ int main(int argc, char *argv[]) {
       double em_convergence_threshold = vm["em-convergence-threshold"].as<double>();
       double em_delta_threshold = vm["em-delta-threshold"].as<double>();
       uint32_t em_maximum_iterations = vm["em-maximum-iterations"].as<uint32_t>();
-      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, overlap_coefficients_threshold, em_convergence_threshold, em_delta_threshold, em_maximum_iterations, vm.count("read-scores") > 0);
+      mgsr::squareEM squareEM(threadsManager, liteTree, prefix, overlap_coefficients_threshold, em_convergence_threshold, em_delta_threshold, em_maximum_iterations, vm.count("read-scores") > 0, vm.count("em-leaves-only") > 0);
       liteTree.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
       
       auto start_time_squareEM = std::chrono::high_resolution_clock::now();
