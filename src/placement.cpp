@@ -33,52 +33,29 @@
 
 namespace {
 
-// Perfect shuffle for interleaving paired-end reads
-template <typename T>
-void perfect_shuffle(std::vector<T>& v) {
-  const size_t n = v.size();
-  if (n < 2) return;
-  
-  std::vector<T> canvas(n);
-  for (size_t i = 0; i < n / 2; i++) {
-    canvas[i*2] = std::move(v[i]);
-    canvas[i*2+1] = std::move(v[i + n/2]);
-  }
-  v = std::move(canvas);
-}
-
-// Rotate left helper (same as in seeding.hpp)
-inline size_t rol64(size_t h, size_t r) { return (h << r) | (h >> (64-r)); }
-
 // Compute the canonical hash of a homopolymer k-mer (all same base)
 // Returns the min of forward and reverse complement hash
 inline size_t computeHomopolymerHash(char base, int k) {
-    // ntHash-like magic constants for each base
-    static const size_t A_VAL = 0x3c8bfbb395c60474;
-    static const size_t C_VAL = 0x3193c18562a02b4c;
-    static const size_t G_VAL = 0x20323ed082572324;
-    static const size_t T_VAL = 0x295549f54be24456;
-    
-    size_t baseVal;
-    size_t compVal; // Complement base value
+    size_t baseVal = seeding::chash(base);
+    size_t compVal;
     switch (base) {
-        case 'A': case 'a': baseVal = A_VAL; compVal = T_VAL; break;
-        case 'C': case 'c': baseVal = C_VAL; compVal = G_VAL; break;
-        case 'G': case 'g': baseVal = G_VAL; compVal = C_VAL; break;
-        case 'T': case 't': baseVal = T_VAL; compVal = A_VAL; break;
+        case 'A': case 'a': compVal = seeding::chash('T'); break;
+        case 'C': case 'c': compVal = seeding::chash('G'); break;
+        case 'G': case 'g': compVal = seeding::chash('C'); break;
+        case 'T': case 't': compVal = seeding::chash('A'); break;
         default: return 0;
     }
     
     // Forward hash: XOR of rol(val, k-1), rol(val, k-2), ..., rol(val, 0)
     size_t fHash = 0;
     for (int i = 0; i < k; i++) {
-        fHash ^= rol64(baseVal, k - i - 1);
+        fHash ^= seeding::rol(baseVal, k - i - 1);
     }
     
     // Reverse complement hash: same formula but with complement base
     size_t rHash = 0;
     for (int i = 0; i < k; i++) {
-        rHash ^= rol64(compVal, k - i - 1);
+        rHash ^= seeding::rol(compVal, k - i - 1);
     }
     
     // Return canonical (minimum) hash
@@ -146,7 +123,7 @@ void extractReadSequences(const std::string& readPath1, const std::string& readP
     }
     
     //Shuffle reads together, so that pairs are next to each other
-    perfect_shuffle(readSequences);
+    seeding::perfect_shuffle(readSequences);
   }
 }
 
@@ -197,9 +174,9 @@ void extractFullFastqData(const std::string& readPath1, const std::string& readP
     }
     
     // Shuffle reads together, so that pairs are next to each other
-    perfect_shuffle(readSequences);
-    perfect_shuffle(readQuals);
-    perfect_shuffle(readNames);
+    seeding::perfect_shuffle(readSequences);
+    seeding::perfect_shuffle(readQuals);
+    seeding::perfect_shuffle(readNames);
   }
 }
 
@@ -509,496 +486,45 @@ using ::panmanUtils::Tree;
 // Forward declarations
 class PlacementResult;
 
-
-
-/**
- * @brief Update Jaccard similarity score for a node
- * 
- * @param nodeId The node ID being evaluated
- * @param jaccardScore The Jaccard similarity score
- * @param node Pointer to the LiteNode (optional, for storing score on node)
- */
-void PlacementResult::updateJaccardScore(uint32_t nodeIndex, double jaccardScore, panmapUtils::LiteNode* node) {
-    // LOCK-FREE: Store score on node + update thread-local best
-    if (node) {
-        node->jaccardScore = static_cast<float>(jaccardScore);
-    }
-    
-    // Update thread-local best (no locks needed!)
-    double tolerance = std::max(bestJaccardScore * 0.0001, 1e-9);
-    if (jaccardScore > bestJaccardScore + tolerance) {
-        bestJaccardScore = jaccardScore;
-        bestJaccardNodeIndex = nodeIndex;
-        tiedJaccardNodeIndices.clear();
-        tiedJaccardNodeIndices.push_back(nodeIndex);
-    } else if (jaccardScore >= bestJaccardScore - tolerance && jaccardScore > 0) {
-        if (tiedJaccardNodeIndices.empty() || tiedJaccardNodeIndices.back() != bestJaccardNodeIndex) {
-            tiedJaccardNodeIndices.push_back(bestJaccardNodeIndex);
-        }
-        if (nodeIndex != bestJaccardNodeIndex) {
-            tiedJaccardNodeIndices.push_back(nodeIndex);
-        }
-    }
+// Macro to generate score update functions - reduces ~370 lines of repetitive code to ~30 lines
+// Each function: stores score on node, updates best score/index, tracks ties
+#define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices) \
+void PlacementResult::FuncName(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) { \
+    if (node) { \
+        node->nodeScoreField = static_cast<float>(score); \
+    } \
+    double tolerance = std::max(bestScore * 0.0001, 1e-9); \
+    if (score > bestScore + tolerance) { \
+        bestScore = score; \
+        bestNodeIndex = nodeIndex; \
+        tiedIndices.clear(); \
+        tiedIndices.push_back(nodeIndex); \
+    } else if (score >= bestScore - tolerance && score > 0) { \
+        if (tiedIndices.empty() || tiedIndices.back() != bestNodeIndex) { \
+            tiedIndices.push_back(bestNodeIndex); \
+        } \
+        if (nodeIndex != bestNodeIndex) { \
+            tiedIndices.push_back(nodeIndex); \
+        } \
+    } \
 }
 
-/**
- * Update the weighted Jaccard similarity score tracking
- * @param nodeId The node ID being evaluated  
- * @param weightedJaccardScore The weighted Jaccard similarity score
- * @param node Pointer to the LiteNode (optional, for storing score on node)
- */
-void PlacementResult::updateWeightedJaccardScore(uint32_t nodeIndex, double weightedJaccardScore, panmapUtils::LiteNode* node) {
-    // LOCK-FREE: Store score on node + update thread-local best
-    if (node) {
-        node->weightedJaccardScore = static_cast<float>(weightedJaccardScore);
-    }
-    
-    // Update thread-local best
-    double tolerance = std::max(bestWeightedJaccardScore * 0.0001, 1e-9);
-    if (weightedJaccardScore > bestWeightedJaccardScore + tolerance) {
-        bestWeightedJaccardScore = weightedJaccardScore;
-        bestWeightedJaccardNodeIndex = nodeIndex;
-        tiedWeightedJaccardNodeIndices.clear();
-        tiedWeightedJaccardNodeIndices.push_back(nodeIndex);
-    } else if (weightedJaccardScore >= bestWeightedJaccardScore - tolerance && weightedJaccardScore > 0) {
-        if (tiedWeightedJaccardNodeIndices.empty() || tiedWeightedJaccardNodeIndices.back() != bestWeightedJaccardNodeIndex) {
-            tiedWeightedJaccardNodeIndices.push_back(bestWeightedJaccardNodeIndex);
-        }
-        if (nodeIndex != bestWeightedJaccardNodeIndex) {
-            tiedWeightedJaccardNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
+// Generate all 13 score update functions using the macro
+DEFINE_UPDATE_SCORE_FUNC(updateRawSeedMatchScore, rawSeedMatchScore, bestRawSeedMatchScore, bestRawSeedMatchNodeIndex, tiedRawSeedMatchNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateCosineScore, cosineScore, bestCosineScore, bestCosineNodeIndex, tiedCosineNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateContainmentScore, containmentScore, bestContainmentScore, bestContainmentNodeIndex, tiedContainmentNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateWeightedContainmentScore, weightedContainmentScore, bestWeightedContainmentScore, bestWeightedContainmentNodeIndex, tiedWeightedContainmentNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateLogRawScore, logRawScore, bestLogRawScore, bestLogRawNodeIndex, tiedLogRawNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateLogCosineScore, logCosineScore, bestLogCosineScore, bestLogCosineNodeIndex, tiedLogCosineNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateAdjCosineScore, adjCosineScore, bestAdjCosineScore, bestAdjCosineNodeIndex, tiedAdjCosineNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateAdjRawScore, adjRawScore, bestAdjRawScore, bestAdjRawNodeIndex, tiedAdjRawNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateIdfCosineScore, idfCosineScore, bestIdfCosineScore, bestIdfCosineNodeIndex, tiedIdfCosineNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateCovCosineScore, covCosineScore, bestCovCosineScore, bestCovCosineNodeIndex, tiedCovCosineNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateCapCosineScore, capCosineScore, bestCapCosineScore, bestCapCosineNodeIndex, tiedCapCosineNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateCapLogCosineScore, capLogCosineScore, bestCapLogCosineScore, bestCapLogCosineNodeIndex, tiedCapLogCosineNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateSigCosineScore, sigCosineScore, bestSigCosineScore, bestSigCosineNodeIndex, tiedSigCosineNodeIndices)
 
-/**
- * @brief Update Raw Seed Match score for a node
- * 
- * @param nodeId The node ID being evaluated
- * @param score The raw seed match score (sum of read frequencies for matched seeds)
- * @param node Pointer to the LiteNode (optional, for storing score on node)
- */
-void PlacementResult::updateRawSeedMatchScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) {
-    // LOCK-FREE: Store score on node + update thread-local best
-    if (node) {
-        node->rawSeedMatchScore = static_cast<float>(score);
-    }
-    
-    // Update thread-local best with tolerance
-    double tolerance = std::max(bestRawSeedMatchScore * 0.0001, 1e-9);
-    if (score > bestRawSeedMatchScore + tolerance) {
-        bestRawSeedMatchScore = score;
-        bestRawSeedMatchNodeIndex = nodeIndex;
-        tiedRawSeedMatchNodeIndices.clear();
-        tiedRawSeedMatchNodeIndices.push_back(nodeIndex);
-    } else if (score >= bestRawSeedMatchScore - tolerance && score > 0) {
-        if (tiedRawSeedMatchNodeIndices.empty() || tiedRawSeedMatchNodeIndices.back() != bestRawSeedMatchNodeIndex) {
-            tiedRawSeedMatchNodeIndices.push_back(bestRawSeedMatchNodeIndex);
-        }
-        if (nodeIndex != bestRawSeedMatchNodeIndex) {
-            tiedRawSeedMatchNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update hits score for a node
- * 
- * @param nodeId The node ID being evaluated
- * @param hits The number of hits for this node
- * @param node Pointer to the LiteNode (optional, for storing score on node)
- */
-void PlacementResult::updateHitsScore(uint32_t nodeIndex, int64_t hits, panmapUtils::LiteNode* node) {
-    // LOCK-FREE: Store score on node + update thread-local best
-    if (node) {
-        node->hitsScore = static_cast<float>(hits);
-    }
-    
-    // Update thread-local best
-    if (hits > maxHitsInAnyGenome) {
-        maxHitsInAnyGenome = hits;
-        maxHitsNodeIndex = nodeIndex;
-        tiedMaxHitsNodeIndices.clear();
-        tiedMaxHitsNodeIndices.push_back(nodeIndex);
-    } else if (hits == maxHitsInAnyGenome && hits > 0) {
-        if (tiedMaxHitsNodeIndices.empty() || tiedMaxHitsNodeIndices.back() != maxHitsNodeIndex) {
-            tiedMaxHitsNodeIndices.push_back(maxHitsNodeIndex);
-        }
-        if (nodeIndex != maxHitsNodeIndex) {
-            tiedMaxHitsNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update Jaccard (Presence/Absence) score for a node
- * 
- * @param nodeId The node ID being evaluated
- * @param score The Jaccard score based on presence/absence of seeds
- * @param node Pointer to the LiteNode (optional, for storing score on node)
- */
-void PlacementResult::updateJaccardPresenceScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) {
-    // Store score on node first
-    if (node) {
-        node->jaccardPresenceScore = static_cast<float>(score);
-    }
-    
-    // Early exit for non-competitive scores
-    if (score <= bestJaccardPresenceScore) [[likely]] return;
-    
-    // Only update if score is better (simple best tracking, no mutex needed)
-    if (score > bestJaccardPresenceScore) {
-        bestJaccardPresenceScore = score;
-        bestJaccardPresenceNodeIndex = nodeIndex;
-    }
-}
-
-/**
- * @brief Update cosine similarity score for a node
- * 
- * @param nodeId The node ID being evaluated
- * @param cosineScore The cosine similarity score
- * @param node Pointer to the LiteNode (optional, for storing score on node)
- */
-void PlacementResult::updateCosineScore(uint32_t nodeIndex, double cosineScore, panmapUtils::LiteNode* node) {
-    // LOCK-FREE: Store score on node + update thread-local best
-    if (node) {
-        node->cosineScore = static_cast<float>(cosineScore);
-    }
-    
-    // Update thread-local best
-    double tolerance = std::max(bestCosineScore * 0.0001, 1e-9);
-    if (cosineScore > bestCosineScore + tolerance) {
-        bestCosineScore = cosineScore;
-        bestCosineNodeIndex = nodeIndex;
-        tiedCosineNodeIndices.clear();
-        tiedCosineNodeIndices.push_back(nodeIndex);
-    } else if (cosineScore >= bestCosineScore - tolerance && cosineScore > 0) {
-        if (tiedCosineNodeIndices.empty() || tiedCosineNodeIndices.back() != bestCosineNodeIndex) {
-            tiedCosineNodeIndices.push_back(bestCosineNodeIndex);
-        }
-        if (nodeIndex != bestCosineNodeIndex) {
-            tiedCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update containment index score for a node
- * 
- * Containment = |reads ∩ genome| / |reads| = presenceIntersectionCount / readUniqueSeedCount
- * This metric measures what fraction of read seeds are covered by the genome.
- * Unlike Cosine, it doesn't reward larger genomes with more seeds.
- * 
- * @param nodeIndex The node index being evaluated
- * @param containmentScore The containment index score
- * @param node Pointer to the LiteNode (optional, for storing score on node)
- */
-void PlacementResult::updateContainmentScore(uint32_t nodeIndex, double containmentScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->containmentScore = static_cast<float>(containmentScore);
-    }
-    
-    double tolerance = std::max(bestContainmentScore * 0.0001, 1e-9);
-    if (containmentScore > bestContainmentScore + tolerance) {
-        bestContainmentScore = containmentScore;
-        bestContainmentNodeIndex = nodeIndex;
-        tiedContainmentNodeIndices.clear();
-        tiedContainmentNodeIndices.push_back(nodeIndex);
-    } else if (containmentScore >= bestContainmentScore - tolerance && containmentScore > 0) {
-        if (tiedContainmentNodeIndices.empty() || tiedContainmentNodeIndices.back() != bestContainmentNodeIndex) {
-            tiedContainmentNodeIndices.push_back(bestContainmentNodeIndex);
-        }
-        if (nodeIndex != bestContainmentNodeIndex) {
-            tiedContainmentNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update weighted containment score for a node
- * 
- * Weighted Containment = Σ(readFreq for seeds in both) / Σ(readFreq for all read seeds)
- * This weights by read frequency, giving more importance to seeds seen many times.
- * 
- * @param nodeIndex The node index being evaluated
- * @param weightedContainmentScore The weighted containment score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateWeightedContainmentScore(uint32_t nodeIndex, double weightedContainmentScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->weightedContainmentScore = static_cast<float>(weightedContainmentScore);
-    }
-    
-    double tolerance = std::max(bestWeightedContainmentScore * 0.0001, 1e-9);
-    if (weightedContainmentScore > bestWeightedContainmentScore + tolerance) {
-        bestWeightedContainmentScore = weightedContainmentScore;
-        bestWeightedContainmentNodeIndex = nodeIndex;
-        tiedWeightedContainmentNodeIndices.clear();
-        tiedWeightedContainmentNodeIndices.push_back(nodeIndex);
-    } else if (weightedContainmentScore >= bestWeightedContainmentScore - tolerance && weightedContainmentScore > 0) {
-        if (tiedWeightedContainmentNodeIndices.empty() || tiedWeightedContainmentNodeIndices.back() != bestWeightedContainmentNodeIndex) {
-            tiedWeightedContainmentNodeIndices.push_back(bestWeightedContainmentNodeIndex);
-        }
-        if (nodeIndex != bestWeightedContainmentNodeIndex) {
-            tiedWeightedContainmentNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update LogRAW score for a node (log-scaled, coverage-robust)
- * 
- * LogRAW = Σ(log(1+readCount) / genomeCount) / logReadMagnitude
- * 
- * @param nodeIndex The node DFS index being evaluated
- * @param logRawScore The LogRAW score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateLogRawScore(uint32_t nodeIndex, double logRawScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->logRawScore = static_cast<float>(logRawScore);
-    }
-    
-    double tolerance = std::max(bestLogRawScore * 0.0001, 1e-9);
-    if (logRawScore > bestLogRawScore + tolerance) {
-        bestLogRawScore = logRawScore;
-        bestLogRawNodeIndex = nodeIndex;
-        tiedLogRawNodeIndices.clear();
-        tiedLogRawNodeIndices.push_back(nodeIndex);
-    } else if (logRawScore >= bestLogRawScore - tolerance && logRawScore > 0) {
-        if (tiedLogRawNodeIndices.empty() || tiedLogRawNodeIndices.back() != bestLogRawNodeIndex) {
-            tiedLogRawNodeIndices.push_back(bestLogRawNodeIndex);
-        }
-        if (nodeIndex != bestLogRawNodeIndex) {
-            tiedLogRawNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update LogCosine score for a node (log-scaled cosine similarity)
- * 
- * LogCosine = Σ(log(1+readCount) × genomeCount) / (logReadMag × genomeMag)
- * 
- * @param nodeIndex The node DFS index being evaluated
- * @param logCosineScore The LogCosine score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateLogCosineScore(uint32_t nodeIndex, double logCosineScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->logCosineScore = static_cast<float>(logCosineScore);
-    }
-    
-    double tolerance = std::max(bestLogCosineScore * 0.0001, 1e-9);
-    if (logCosineScore > bestLogCosineScore + tolerance) {
-        bestLogCosineScore = logCosineScore;
-        bestLogCosineNodeIndex = nodeIndex;
-        tiedLogCosineNodeIndices.clear();
-        tiedLogCosineNodeIndices.push_back(nodeIndex);
-    } else if (logCosineScore >= bestLogCosineScore - tolerance && logCosineScore > 0) {
-        if (tiedLogCosineNodeIndices.empty() || tiedLogCosineNodeIndices.back() != bestLogCosineNodeIndex) {
-            tiedLogCosineNodeIndices.push_back(bestLogCosineNodeIndex);
-        }
-        if (nodeIndex != bestLogCosineNodeIndex) {
-            tiedLogCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update AdjCosine score for a node (N-adjusted cosine)
- * 
- * AdjCosine = Cosine × min(1, genomeUniqueSeedCount / medianGenomeSeedCount)
- * Penalizes genomes with low seed counts (due to N's or missing data)
- * 
- * @param nodeIndex The node DFS index being evaluated
- * @param adjCosineScore The AdjCosine score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateAdjCosineScore(uint32_t nodeIndex, double adjCosineScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->adjCosineScore = static_cast<float>(adjCosineScore);
-    }
-    
-    double tolerance = std::max(bestAdjCosineScore * 0.0001, 1e-9);
-    if (adjCosineScore > bestAdjCosineScore + tolerance) {
-        bestAdjCosineScore = adjCosineScore;
-        bestAdjCosineNodeIndex = nodeIndex;
-        tiedAdjCosineNodeIndices.clear();
-        tiedAdjCosineNodeIndices.push_back(nodeIndex);
-    } else if (adjCosineScore >= bestAdjCosineScore - tolerance && adjCosineScore > 0) {
-        if (tiedAdjCosineNodeIndices.empty() || tiedAdjCosineNodeIndices.back() != bestAdjCosineNodeIndex) {
-            tiedAdjCosineNodeIndices.push_back(bestAdjCosineNodeIndex);
-        }
-        if (nodeIndex != bestAdjCosineNodeIndex) {
-            tiedAdjCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update AdjRaw score for a node (N-adjusted RAW)
- * 
- * AdjRaw = LogRaw × min(1, genomeUniqueSeedCount / medianGenomeSeedCount)
- * Penalizes genomes with low seed counts (due to N's or missing data)
- * 
- * @param nodeIndex The node DFS index being evaluated
- * @param adjRawScore The AdjRaw score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateAdjRawScore(uint32_t nodeIndex, double adjRawScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->adjRawScore = static_cast<float>(adjRawScore);
-    }
-    
-    double tolerance = std::max(bestAdjRawScore * 0.0001, 1e-9);
-    if (adjRawScore > bestAdjRawScore + tolerance) {
-        bestAdjRawScore = adjRawScore;
-        bestAdjRawNodeIndex = nodeIndex;
-        tiedAdjRawNodeIndices.clear();
-        tiedAdjRawNodeIndices.push_back(nodeIndex);
-    } else if (adjRawScore >= bestAdjRawScore - tolerance && adjRawScore > 0) {
-        if (tiedAdjRawNodeIndices.empty() || tiedAdjRawNodeIndices.back() != bestAdjRawNodeIndex) {
-            tiedAdjRawNodeIndices.push_back(bestAdjRawNodeIndex);
-        }
-        if (nodeIndex != bestAdjRawNodeIndex) {
-            tiedAdjRawNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update IDF-Cosine score tracking
- * IDF-weighted cosine similarity - upweights rare seeds
- * @param nodeIndex DFS index of the node
- * @param idfCosineScore The IDF-Cosine score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateIdfCosineScore(uint32_t nodeIndex, double idfCosineScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->idfCosineScore = static_cast<float>(idfCosineScore);
-    }
-    
-    double tolerance = std::max(bestIdfCosineScore * 0.0001, 1e-9);
-    if (idfCosineScore > bestIdfCosineScore + tolerance) {
-        bestIdfCosineScore = idfCosineScore;
-        bestIdfCosineNodeIndex = nodeIndex;
-        tiedIdfCosineNodeIndices.clear();
-        tiedIdfCosineNodeIndices.push_back(nodeIndex);
-    } else if (idfCosineScore >= bestIdfCosineScore - tolerance && idfCosineScore > 0) {
-        if (tiedIdfCosineNodeIndices.empty() || tiedIdfCosineNodeIndices.back() != bestIdfCosineNodeIndex) {
-            tiedIdfCosineNodeIndices.push_back(bestIdfCosineNodeIndex);
-        }
-        if (nodeIndex != bestIdfCosineNodeIndex) {
-            tiedIdfCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update CovCosine score tracking
- * Coverage-weighted cosine similarity - penalizes singletons and over-represented seeds
- * @param nodeIndex DFS index of the node
- * @param covCosineScore The CovCosine score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateCovCosineScore(uint32_t nodeIndex, double covCosineScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->covCosineScore = static_cast<float>(covCosineScore);
-    }
-    
-    double tolerance = std::max(bestCovCosineScore * 0.0001, 1e-9);
-    if (covCosineScore > bestCovCosineScore + tolerance) {
-        bestCovCosineScore = covCosineScore;
-        bestCovCosineNodeIndex = nodeIndex;
-        tiedCovCosineNodeIndices.clear();
-        tiedCovCosineNodeIndices.push_back(nodeIndex);
-    } else if (covCosineScore >= bestCovCosineScore - tolerance && covCosineScore > 0) {
-        if (tiedCovCosineNodeIndices.empty() || tiedCovCosineNodeIndices.back() != bestCovCosineNodeIndex) {
-            tiedCovCosineNodeIndices.push_back(bestCovCosineNodeIndex);
-        }
-        if (nodeIndex != bestCovCosineNodeIndex) {
-            tiedCovCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update CapCosine score tracking
- * Capped cosine similarity - caps read freqs at 100 to limit high-freq seed influence
- * @param nodeIndex DFS index of the node
- * @param capCosineScore The CapCosine score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateCapCosineScore(uint32_t nodeIndex, double capCosineScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->capCosineScore = static_cast<float>(capCosineScore);
-    }
-    
-    double tolerance = std::max(bestCapCosineScore * 0.0001, 1e-9);
-    if (capCosineScore > bestCapCosineScore + tolerance) {
-        bestCapCosineScore = capCosineScore;
-        bestCapCosineNodeIndex = nodeIndex;
-        tiedCapCosineNodeIndices.clear();
-        tiedCapCosineNodeIndices.push_back(nodeIndex);
-    } else if (capCosineScore >= bestCapCosineScore - tolerance && capCosineScore > 0) {
-        if (tiedCapCosineNodeIndices.empty() || tiedCapCosineNodeIndices.back() != bestCapCosineNodeIndex) {
-            tiedCapCosineNodeIndices.push_back(bestCapCosineNodeIndex);
-        }
-        if (nodeIndex != bestCapCosineNodeIndex) {
-            tiedCapCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-/**
- * @brief Update CapLogCosine score tracking
- * Capped log cosine similarity - uses log(1 + min(readCount, 100))
- * @param nodeIndex DFS index of the node
- * @param capLogCosineScore The CapLogCosine score
- * @param node Pointer to the LiteNode (optional)
- */
-void PlacementResult::updateCapLogCosineScore(uint32_t nodeIndex, double capLogCosineScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->capLogCosineScore = static_cast<float>(capLogCosineScore);
-    }
-    
-    double tolerance = std::max(bestCapLogCosineScore * 0.0001, 1e-9);
-    if (capLogCosineScore > bestCapLogCosineScore + tolerance) {
-        bestCapLogCosineScore = capLogCosineScore;
-        bestCapLogCosineNodeIndex = nodeIndex;
-        tiedCapLogCosineNodeIndices.clear();
-        tiedCapLogCosineNodeIndices.push_back(nodeIndex);
-    } else if (capLogCosineScore >= bestCapLogCosineScore - tolerance && capLogCosineScore > 0) {
-        if (tiedCapLogCosineNodeIndices.empty() || tiedCapLogCosineNodeIndices.back() != bestCapLogCosineNodeIndex) {
-            tiedCapLogCosineNodeIndices.push_back(bestCapLogCosineNodeIndex);
-        }
-        if (nodeIndex != bestCapLogCosineNodeIndex) {
-            tiedCapLogCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
-
-void PlacementResult::updateSigCosineScore(uint32_t nodeIndex, double sigCosineScore, panmapUtils::LiteNode* node) {
-    if (node) {
-        node->sigCosineScore = static_cast<float>(sigCosineScore);
-    }
-    
-    double tolerance = std::max(bestSigCosineScore * 0.0001, 1e-9);
-    if (sigCosineScore > bestSigCosineScore + tolerance) {
-        bestSigCosineScore = sigCosineScore;
-        bestSigCosineNodeIndex = nodeIndex;
-        tiedSigCosineNodeIndices.clear();
-        tiedSigCosineNodeIndices.push_back(nodeIndex);
-    } else if (sigCosineScore >= bestSigCosineScore - tolerance && sigCosineScore > 0) {
-        if (tiedSigCosineNodeIndices.empty() || tiedSigCosineNodeIndices.back() != bestSigCosineNodeIndex) {
-            tiedSigCosineNodeIndices.push_back(bestSigCosineNodeIndex);
-        }
-        if (nodeIndex != bestSigCosineNodeIndex) {
-            tiedSigCosineNodeIndices.push_back(nodeIndex);
-        }
-    }
-}
+#undef DEFINE_UPDATE_SCORE_FUNC
 
 void PlacementResult::resolveNodeIds(panmapUtils::LiteTree* liteTree) {
     // LOCK-FREE: Store score on node + update thread-local best

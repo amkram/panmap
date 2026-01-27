@@ -1,5 +1,4 @@
 #include "conversion.hpp"
-#include "alignment.hpp"
 #include "genotyping.hpp"
 #include <iostream>
 extern "C" {
@@ -291,48 +290,6 @@ void createBam(
   return;
 }
 
-// Destroys header and bamRecords
-//
-// mplpString must be freed
-void createMplp(
-  std::string &bestMatchSequence,
-  sam_hdr_t *header,
-  bam1_t **bamRecords,
-  int numBams,
-  std::string &mpileupFileName,
-  char *&mplpString) {
-
-  char *ref_string = new char[bestMatchSequence.length() + 1];
-  std::strcpy(ref_string, bestMatchSequence.c_str());
-
-  kstring_t mplp_string = KS_INITIALIZE;
-  bam_and_ref_to_mplp(header, bamRecords, numBams, ref_string,
-                      bestMatchSequence.size(), &mplp_string);
-
-  // Print out mpileup
-  if (mpileupFileName.size() > 0) {
-    std::ofstream outFile{mpileupFileName};
-
-    if (outFile.is_open()) {
-
-      outFile << mplp_string.s;
-
-      std::cerr << "Wrote mpileup data to " << mpileupFileName << std::endl;
-    } else {
-      std::cerr << "Error: failed to write to file " << mpileupFileName
-                << std::endl;
-    }
-  }
-
-  mplpString = mplp_string.s;
-
-  for (int i = 0; i < numBams; i++) {
-    bam_destroy1(bamRecords[i]);
-  }
-
-  free(bamRecords);
-}
-
 void createMplpBcf(
   std::string &prefix,
   std::string &refFileName,
@@ -393,7 +350,6 @@ void createVcfWithMutationMatrices(
   std::vector<std::vector<double>> scaled_submat =
       genotyping::scaleMutationSpectrum(mutMat, mutationRate);
   std::ofstream vcfOutFile{vcfFileName};
-  std::vector<std::string> vcfLines;
   char buffer[512];
   while (fgets(buffer, sizeof(buffer), tempFile)) {
     std::string line(buffer);
@@ -405,30 +361,4 @@ void createVcfWithMutationMatrices(
       vcfOutFile << spectrum_applied_line << "\n";
   }
   fclose(tempFile);
-}
-
-// destroys mplpString
-void createVcf(char *mplpString,
-               const genotyping::mutationMatrices &mutMat,
-               std::string &vcfFileName, bool keep_alts) {
-  // Convert c string of mpileup to ifstream
-  std::istringstream mpileipStream(mplpString);
-
-  std::ofstream vcfOutFile;
-  if (vcfFileName.size() > 0) {
-    vcfOutFile.open(vcfFileName);
-    if (vcfOutFile.is_open()) {
-
-      genotyping::printSamplePlacementVCF(mpileipStream, mutMat, keep_alts, 0,
-                                          vcfOutFile);
-
-      std::cerr << "Wrote vcf data to " << vcfFileName << std::endl;
-    } else {
-
-      std::cerr << "Error: failed to write to file " << vcfFileName
-                << std::endl;
-    }
-  }
-
-  free(mplpString);
 }

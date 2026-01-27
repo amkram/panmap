@@ -2,11 +2,6 @@
  * @file main.cpp
  * @brief Panmap - Pangenome-based sequence placement, alignment, and genotyping
  * 
- * A modern command-line interface for:
- * - Placing sequencing reads on a pangenome tree
- * - Aligning reads to the best matching reference
- * - Calling variants (genotyping)
- * 
  * Supports single-sample (isolate) and metagenomic workflows.
  */
 
@@ -55,7 +50,7 @@ namespace fs = boost::filesystem;
 constexpr const char* VERSION = "0.1.0";
 constexpr const char* PROGRAM_NAME = "panmap";
 
-// ANSI color codes for terminal output
+// ANSI codes
 namespace color {
     constexpr const char* reset = "\033[0m";
     constexpr const char* bold = "\033[1m";
@@ -67,32 +62,13 @@ namespace color {
     constexpr const char* cyan = "\033[36m";
 }
 
-// ============================================================================
-// Pipeline Stage Enum
-// ============================================================================
-
 enum class PipelineStage {
     Index,      // Build index only
     Place,      // Placement only
     Align,      // Placement + Alignment
-    Genotype,   // Placement + Alignment + Genotyping (default)
-    Full        // Full pipeline including assembly (future)
+    Genotype,   // Placement + Alignment + Genotyping
+    Full        // Full pipeline including assembly
 };
-
-std::string stageName(PipelineStage stage) {
-    switch (stage) {
-        case PipelineStage::Index: return "index";
-        case PipelineStage::Place: return "place";
-        case PipelineStage::Align: return "align";
-        case PipelineStage::Genotype: return "genotype";
-        case PipelineStage::Full: return "full";
-    }
-    return "unknown";
-}
-
-// ============================================================================
-// Configuration
-// ============================================================================
 
 struct Config {
     // Input files
@@ -121,7 +97,7 @@ struct Config {
     int s = 8;                    // syncmer s
     int l = 1;                    // l-mer size
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
-    double seedMaskFraction = 0.001; // Mask top 0.1% most frequent seeds
+    double seedMaskFraction = 0; // Mask top 0.1% most frequent seeds
     int minSeedQuality = 0;          // Min avg Phred quality for seed region (0=disabled)
     int trimStart = 0;               // Trim N bases from start of each read (primer removal)
     int trimEnd = 0;                 // Trim N bases from end of each read (primer removal)
@@ -146,10 +122,6 @@ struct Config {
     // Verbosity
     int verbosity = 1;            // 0=quiet, 1=normal, 2=verbose
 };
-
-// ============================================================================
-// Helper Classes
-// ============================================================================
 
 // Cap'n Proto reader with ZSTD decompression
 class IndexReader : public ::capnp::MessageReader {
@@ -1029,7 +1001,6 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement)
     }
     
     // Output file paths
-    std::string prefix = cfg.output;
     std::string refFileName = cfg.output + ".ref.fa";
     std::string samFileName = cfg.output + ".sam";
     std::string bamFileName = cfg.output + ".bam";

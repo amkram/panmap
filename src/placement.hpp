@@ -157,22 +157,6 @@ struct NodeMetrics {
     int64_t genomeTotalSeedFrequency = 0;  // Σ(genomeCount) for weighted Jaccard denominator
 
     // Compute final scores
-    double getJaccardScore(size_t readUniqueSeedCount) const {
-        // PRESENCE-based Jaccard: |intersection| / |union|
-        size_t genomeOnlyCount = (genomeUniqueSeedCount > presenceIntersectionCount) ? 
-            (genomeUniqueSeedCount - presenceIntersectionCount) : 0;
-        size_t totalUnion = readUniqueSeedCount + genomeOnlyCount;
-        return (totalUnion > 0) ?
-            static_cast<double>(jaccardNumerator) / totalUnion : 0.0;
-    }
-
-    double getWeightedJaccardScore(size_t totalReadSeedFrequency) const {
-        // Weighted Jaccard: Σmin(r,g) / Σmax(r,g)
-        int64_t denominator = totalReadSeedFrequency + genomeTotalSeedFrequency - weightedJaccardNumerator;
-        return (denominator > 0) ?
-            static_cast<double>(weightedJaccardNumerator) / denominator : 0.0;
-    }
-
     double getCosineScore(double readMagnitude) const {
         // Standard cosine similarity: dot(read, genome) / (||read|| * ||genome||)
         double genomeMagnitude = std::sqrt(genomeMagnitudeSquared);
@@ -180,14 +164,6 @@ struct NodeMetrics {
         double score = cosineNumerator / (readMagnitude * genomeMagnitude);
         // Clamp to [0, 1] - values slightly outside due to floating point errors
         return std::clamp(score, 0.0, 1.0);
-    }
-
-    double getPresenceJaccardScore(size_t readUniqueSeedCount) const {
-        size_t genomeOnlyCount = (genomeUniqueSeedCount > presenceIntersectionCount) ? 
-            (genomeUniqueSeedCount - presenceIntersectionCount) : 0;
-        size_t totalUnion = readUniqueSeedCount + genomeOnlyCount;
-        return (totalUnion > 0) ?
-            static_cast<double>(presenceIntersectionCount) / totalUnion : 0.0;
     }
 
     // Containment Index: |reads ∩ genome| / |reads|
@@ -409,11 +385,7 @@ struct PlacementResult {
   int64_t totalReadsProcessed = 0;
   
   // Update methods (take nodeIndex, resolve to string at end)
-  void updateHitsScore(uint32_t nodeIndex, int64_t hits, panmapUtils::LiteNode* node = nullptr);
   void updateRawSeedMatchScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
-  void updateJaccardScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
-  void updateWeightedJaccardScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
-  void updateJaccardPresenceScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
   void updateCosineScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
   void updateContainmentScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
   void updateWeightedContainmentScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);

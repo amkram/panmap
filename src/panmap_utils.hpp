@@ -7,7 +7,6 @@
 #include "logging.hpp"
 #include <string>
 #include <iostream>
-#include <random>
 #include <span>
 
 
@@ -18,38 +17,6 @@ enum seedChangeType {
   DEL,
   SUB
 };
-
-std::string seedChangeTypeToString(seedChangeType changeType);
-
-void getSequenceFromReference(
-  panmanUtils::Tree* tree,
-  std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
-  std::vector<char>& blockExists,
-  std::vector<char>& blockStrand,
-  std::unordered_map<int, int>& blockLengths,
-  std::string reference
-);
-
-std::string getStringFromSequence(
-  const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
-  const std::unordered_map<int, int>& blockLengths,
-  const std::vector<char>& blockExists,
-  const std::vector<char>& blockStrand,
-  bool aligned
-);
-
-std::string getStringFromReference(
-  panmanUtils::Tree* tree,
-  std::string reference,
-  bool aligned
-);
-
-void simulateSNPsOnSequence(
-  std::string& sequence,
-  std::vector<std::tuple<char,char, uint32_t>>& snpRecords,
-  uint32_t numsnps,
-  std::mt19937& rng
-);
 
 class LiteNode {
   public:
@@ -112,7 +79,6 @@ class LiteTree {
       }
     }
     
-    void cleanup();
     void initialize(::LiteTree::Reader liteTreeReader);
 
     uint32_t getBlockStartScalar(const uint32_t blockId) const;
@@ -377,16 +343,8 @@ struct BlockSequences {
     }
   }
 
-  int numBlocks() const {
-    return sequence.size();
-  }
-  
   const bool getBlockStrand(int blockId) const {
     return blockStrand[blockId];
-  }
-
-  const bool getBlockExists(int blockId) const {
-    return blockExists[blockId];
   }
 
   char getSequenceBase(const Coordinate& coord) const {
@@ -403,71 +361,6 @@ struct BlockSequences {
     } else {
       sequence[coord.primaryBlockId][coord.nucPosition].first = newNuc;
     }
-  }
-
-  std::string getSequenceStringByBlockId(int blockId, bool aligned) const {
-    std::string seq;
-    const auto& curBlock = sequence[blockId];
-    for (size_t i = 0; i < curBlock.size(); i++) {
-      if (blockStrand[blockId]) {
-        // Gap nucs
-        for (size_t j = 0; j < curBlock[i].second.size(); j++) {
-          if (curBlock[i].second[j] != '-') {
-            seq += curBlock[i].second[j];
-          } else if (aligned) {
-            seq += '-';
-          }
-        }
-
-        // Main nuc
-        if (curBlock[i].first != '-' && curBlock[i].first != 'x') {
-          seq += curBlock[i].first;
-        } else if (aligned && curBlock[i].first != 'x') {
-          seq += '-';
-        }
-      } else {
-        // Main nuc first
-        if (curBlock[i].first != '-' && curBlock[i].first != 'x') {
-          seq += panmanUtils::getComplementCharacter(curBlock[i].first);
-        } else if (aligned && curBlock[i].first != 'x') {
-          seq += '-';
-        }
-
-        // Gap nucs in reverse
-        for (size_t j = curBlock[i].second.size() - 1; j + 1 > 0; j--) {
-          if (curBlock[i].second[j] != '-') {
-            seq += panmanUtils::getComplementCharacter(curBlock[i].second[j]);
-          } else if (aligned) {
-            seq += '-';
-          }
-        }
-      }
-    }
-    return seq;
-  }
-
-  std::string getSequenceString(bool aligned) const {
-    std::string seq;
-    for (size_t i = 0; i < numBlocks(); i++) {
-      seq += getSequenceStringByBlockId(i, aligned);
-    }
-    return seq;
-  }
-
-  std::string getAlignedSequenceStringByBlockId(int blockId) const {
-    return getSequenceStringByBlockId(blockId, true);
-  }
-
-  std::string getUnalignedSequenceStringByBlockId(int blockId) const {
-    return getSequenceStringByBlockId(blockId, false);
-  }
-
-  std::string getAlignedSequenceString() const {
-    return getSequenceString(true);
-  }
-
-  std::string getUnalignedSequenceString() const {
-    return getSequenceString(false);
   }
 };
 
@@ -666,20 +559,6 @@ struct GlobalCoords {
 
   uint32_t getBlockIdFromScalar(uint64_t scalar) const {
     return scalarToCoord[scalar].primaryBlockId;
-  }
-
-  std::tuple<int64_t, int64_t, int64_t> getTupleFromScalar(uint64_t scalar, bool blockStrand = true) const {
-    if (scalar >= scalarToCoord.size()) {
-      std::cerr << "In getTupleFromScalar(), scalar " << scalar << " is out of range" << std::endl;
-      exit(1);
-    }
-    Coordinate forwardCoord = scalarToCoord[scalar];
-    if (blockStrand) {
-      return std::make_tuple(forwardCoord.primaryBlockId, forwardCoord.nucPosition, forwardCoord.nucGapPosition);
-    }
-
-    Coordinate reverseCoord = scalarToCoord[getBlockStartScalar(forwardCoord.primaryBlockId) + getBlockEndScalar(forwardCoord.primaryBlockId) - scalar];
-    return std::make_tuple(reverseCoord.primaryBlockId, reverseCoord.nucPosition, reverseCoord.nucGapPosition);
   }
 
  void stepRightCoordinate(std::tuple<int64_t, int64_t, int64_t> &coord) const {

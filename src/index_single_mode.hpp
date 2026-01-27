@@ -104,18 +104,6 @@ struct BuildState {
     // But copies runningCounts since each chunk needs its own copy
     BuildState(const BuildState& other) = default;
     BuildState& operator=(const BuildState&) = default;
-    
-    // Clone method for explicit copying
-    BuildState clone() const { return *this; }
-    
-    // Helper methods for sparse access
-    bool hasSyncmer(uint64_t pos) const { return refOnSyncmers.contains(pos); }
-    bool hasKminmer(uint64_t pos) const { return refOnKminmers.contains(pos); }
-    
-    // Check if a position is in the genome's valid extent (not in flank regions)
-    bool isInGenomeExtent(uint64_t scalarPos) const {
-        return scalarPos >= firstNonGapScalar && scalarPos <= lastNonGapScalar;
-    }
 };
 
 struct BacktrackInfo {
@@ -149,14 +137,14 @@ struct BacktrackInfo {
   }
 };
 
-// Compute genome extent from gapMap with flank masking
-// Returns (firstNonGapScalar, lastNonGapScalar) after masking flankSize non-gap bases from each end
-// flankSize: number of non-gap bases to skip at each end (default 250)
+// Compute genome extent from gapMap
+// Returns (firstNonGapScalar, lastNonGapScalar) - the bounds of actual sequence data
+// flankSize: number of non-gap bases to skip at each end (default 0, as masking is applied separately)
 // If genome is all gaps or too short, returns (UINT64_MAX, 0)
 inline std::pair<uint64_t, uint64_t> computeExtentFromGapMap(
     const std::map<uint64_t, uint64_t>& gapMap,
     uint64_t lastScalarCoord,
-    uint64_t flankSize = 250) {
+    uint64_t flankSize = 0) {
   
   // Helper lambda: count non-gap bases and find position after skipping 'count' non-gap bases from 'start' going forward
   auto findPositionAfterNonGaps = [&](uint64_t start, uint64_t count) -> uint64_t {
@@ -394,19 +382,6 @@ class IndexBuilder {
       uint64_t &dfsIndex
     );
     
-    // Process a single node without recursion or backtracking (for parallel path processing)
-    void processSingleNodeNoBacktrack(
-      panmanUtils::Node *node,
-      std::unordered_set<std::string_view>& emptyNodes,
-      panmapUtils::BlockSequences &blockSequences,
-      std::vector<char> &blockExistsDelayed,
-      std::vector<char> &blockStrandDelayed,
-      panmapUtils::GlobalCoords &globalCoords,
-      std::map<uint64_t, uint64_t> &gapMap,
-      std::unordered_set<uint64_t> &invertedBlocks,
-      uint64_t dfsIndex
-    );
-    
     // Sequential subtree processing (no cloning, uses passed-by-reference state)
     void processSubtreeSequential(
       panmanUtils::Node *node,
@@ -471,20 +446,6 @@ class IndexBuilder {
       std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers,
       uint64_t firstNonGapScalar = 0,
       uint64_t lastNonGapScalar = UINT64_MAX
-    );
-
-    std::vector<panmapUtils::NewSyncmerRange> computeNewSyncmerRangesWalk(
-      panmanUtils::Node* node,
-      size_t dfsIndex,
-      const panmapUtils::BlockSequences& blockSequences,
-      const std::vector<char>& blockExistsDelayed,
-      const std::vector<char>& blockStrandDelayed,
-      const panmapUtils::GlobalCoords& globalCoords,
-      const std::map<uint64_t, uint64_t>& gapMap,
-      std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
-      std::vector<std::tuple<uint64_t, uint64_t, panmapUtils::seedChangeType>>& blockOnSyncmersBacktracks,
-      const SyncmerMap& refOnSyncmers,
-      std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers
     );
 
     std::vector<std::pair<SyncmerSet::iterator, SyncmerSet::iterator>> computeNewKminmerRanges(
