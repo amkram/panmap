@@ -548,11 +548,9 @@ set(PANMAP_SOURCES_MAIN
     src/panmap_utils.cpp
     src/genotyping.cpp
     src/index_single_mode.cpp
-    src/alignment.cpp
     src/placement.cpp
     src/seeding.cpp
     src/index_utils.cpp
-    src/panman_index.cpp
     src/mm_align.c
     src/pileup.c
     src/zstd_compression.cpp
