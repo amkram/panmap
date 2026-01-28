@@ -803,7 +803,8 @@ int main(int argc, char *argv[]) {
         ("candidate-threshold", po::value<float>()->default_value(0.01f), "Placement candidate threshold proportion") 
         ("max-candidates", po::value<int>()->default_value(16), "Maximum placement candidates")
         ("true-abundance", po::value<std::string>(), "Path to true abundance TSV for comparison")
-        ("sketch-seeds", po::value<std::string>(), "sketch seeds for <str>")
+        ("sketch-seeds", "sketch seeds")
+        ("print-unfiltered-seed-scores-info", "print unfiltered seed scores info")
     ;
 
     // Hidden options for positional arguments
@@ -1186,6 +1187,7 @@ int main(int argc, char *argv[]) {
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
 
+      bool sketchSeeds = vm.count("sketch-seeds") > 0;
       uint32_t maskReadsEnds = vm["mask-read-ends"].as<uint32_t>();
       double dust_threshold = vm["dust"].as<double>();
       if (dust_threshold > 100) {
@@ -1193,7 +1195,33 @@ int main(int argc, char *argv[]) {
         exit(1);
       }
       threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency, dust_threshold, maskReadsEnds);
-
+      
+      if (sketchSeeds) {
+        std::ofstream seedsOut(prefix + ".seeds.txt");
+        for (size_t i = 0; i < threadsManager.reads.size(); i++) {
+          const auto& read = threadsManager.reads[i];
+          seedsOut << i << "\t";
+          for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
+            if (j == 0) {
+              seedsOut << threadsManager.readSeedmersDuplicatesIndex[i][j];
+            } else {
+              seedsOut << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+            }
+          }
+          seedsOut << "\t" << read.seedmersList.size() << "\t";
+          for (size_t j = 0; j < read.seedmersList.size(); j++) {
+            const auto& seedmer = read.seedmersList[j];
+            seedsOut << "(" << seedmer.begPos << "," << seedmer.endPos << "," << seedmer.hash << "," << seedmer.rev << "," << seedmer.iorder << ")";
+            if (j != read.seedmersList.size() - 1) {
+              seedsOut << " ";
+            } else {
+              seedsOut << "\n";
+            }
+          }
+        }
+        seedsOut.close();
+        exit(0);
+      }
 
       size_t overlap_coefficients_threshold = vm["overlap-coefficients"].as<size_t>();
       if (overlap_coefficients_threshold == 0 && !vm.count("read-scores") && !filterAndAssign) {
@@ -1310,22 +1338,25 @@ int main(int argc, char *argv[]) {
       std::cerr << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 
 
-      std::ofstream readScoresOut_unfiltered(prefix + ".read_scores_info.unfiltered.tsv");
-      readScoresOut_unfiltered << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tRawReadsIndices" << std::endl;
-      for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
-        const auto& curRead = threadsManager.reads[i];
-        if (curRead.maxScore == 0) continue;
-        readScoresOut_unfiltered << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
-        for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
-          if (j == 0) {
-            readScoresOut_unfiltered << threadsManager.readSeedmersDuplicatesIndex[i][j];
-          } else {
-            readScoresOut_unfiltered << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+      if (vm.count("print-unfiltered-seed-scores-info")) {
+        std::ofstream readScoresOut_unfiltered(prefix + ".read_scores_info.unfiltered.tsv");
+        readScoresOut_unfiltered << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tRawReadsIndices" << std::endl;
+        for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+          const auto& curRead = threadsManager.reads[i];
+          if (curRead.maxScore == 0) continue;
+          readScoresOut_unfiltered << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
+          for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
+            if (j == 0) {
+              readScoresOut_unfiltered << threadsManager.readSeedmersDuplicatesIndex[i][j];
+            } else {
+              readScoresOut_unfiltered << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+            }
           }
+          readScoresOut_unfiltered << std::endl;
         }
-        readScoresOut_unfiltered << std::endl;
+        readScoresOut_unfiltered.close();
       }
-      readScoresOut_unfiltered.close();
+
 
       double discard_threshold = vm["discard"].as<double>();
       size_t num_discarded = 0;
