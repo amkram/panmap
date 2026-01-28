@@ -1,5 +1,6 @@
 #include "conversion.hpp"
 #include "genotyping.hpp"
+#include "logging.hpp"
 #include <iostream>
 extern "C" {
 #include "mm_align.h"
@@ -174,9 +175,9 @@ void createSam(
                 }
             }
 
-            std::cerr << "Wrote sam data to " << samFileName << std::endl;
+            logging::info("Wrote sam data to {}", samFileName);
         } else {
-            std::cerr << "Error: failed to write to file " << samFileName << std::endl;
+            logging::err("Failed to write to file {}", samFileName);
         }
     }
     
@@ -247,12 +248,12 @@ void createBam(
   if (bamFileName.size() > 0) {
     bam_file = hts_open(bamFileName.c_str(), "wb");
     if (!bam_file) {
-      fprintf(stderr, "Error: Failed to open output BAM file.\n");
+      output::error("Failed to open output BAM file: {}", bamFileName);
       hts_close(bam_file);
     }
     // Write BAM header
     else if (sam_hdr_write(bam_file, header) < 0) {
-      fprintf(stderr, "Error: Failed to write BAM header.\n");
+      output::error("Failed to write BAM header");
     }
   }
 
@@ -271,7 +272,7 @@ void createBam(
 
       // Write to bam file
       if (bam_file && bam_write1(bam_file->fp.bgzf, bamRecords[i]) < 0) {
-        fprintf(stderr, "Error: Failed to write BAM record.\n");
+        output::error("Failed to write BAM record");
         bam_hdr_destroy(header);
         hts_close(bam_file);
       }
@@ -279,7 +280,7 @@ void createBam(
   }
 
   if (bam_file) {
-    std::cerr << "Wrote bam files to " << bamFileName << "\n";
+    logging::info("Wrote bam files to {}", bamFileName);
   }
   /// Converted to Bam
   hts_close(bam_file);

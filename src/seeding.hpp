@@ -19,7 +19,7 @@
 #include <stdio.h>
 #include <tuple>
 #include <zlib.h>
-#include <cctype> // Added for std::tolower
+#include <cctype>
 
 #include <htslib/kseq.h>
 KSEQ_INIT(int, read)
