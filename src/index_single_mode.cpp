@@ -5,6 +5,8 @@
 #include "panmanUtils.hpp"
 #include "seeding.hpp"
 #include "zstd_compression.hpp"
+#include "logging.hpp"
+#include "gap_map_utils.hpp"
 #include <fcntl.h>
 #include <unistd.h>
 #include <tbb/parallel_sort.h>
@@ -19,120 +21,6 @@
 #include <atomic>
 #include <mutex>
 #include <iomanip>
-
-// Size statistics for optimization
-namespace {
-  struct SizeStats {
-    std::atomic<uint64_t> localRangeSeqTotal{0};
-    std::atomic<uint64_t> localRangeSeqMax{0};
-    std::atomic<uint64_t> localRangeSeqCount{0};
-    std::atomic<uint64_t> seedsToDeleteTotal{0};
-    std::atomic<uint64_t> seedsToDeleteMax{0};
-    std::atomic<uint64_t> newSyncmerRangesTotal{0};
-    std::atomic<uint64_t> newSyncmerRangesMax{0};
-    std::atomic<uint64_t> refOnSyncmersChangeRecordTotal{0};
-    std::atomic<uint64_t> refOnSyncmersChangeRecordMax{0};
-    std::atomic<uint64_t> blockOnSyncmersChangeRecordTotal{0};
-    std::atomic<uint64_t> blockOnSyncmersChangeRecordMax{0};
-    std::atomic<uint64_t> localMutationRangesTotal{0};
-    std::atomic<uint64_t> localMutationRangesMax{0};
-    std::atomic<uint64_t> gapRunUpdatesTotal{0};
-    std::atomic<uint64_t> gapRunUpdatesMax{0};
-    std::atomic<uint64_t> gapMapSizeTotal{0};
-    std::atomic<uint64_t> gapMapSizeMax{0};
-    std::atomic<uint64_t> refOnSyncmersMapSizeTotal{0};
-    std::atomic<uint64_t> refOnSyncmersMapSizeMax{0};
-    std::atomic<uint64_t> nodeCount{0};
-    
-    void updateMax(std::atomic<uint64_t>& maxVal, uint64_t newVal) {
-      uint64_t current = maxVal.load();
-      while (newVal > current && !maxVal.compare_exchange_weak(current, newVal)) {}
-    }
-    
-    void print() {
-      if (nodeCount == 0) return;
-      std::cerr << "\n=== SIZE STATISTICS ===" << std::endl;
-      std::cerr << "Nodes processed: " << nodeCount << std::endl;
-      std::cerr << "localRangeSeq: avg=" << (localRangeSeqTotal/std::max(1UL, localRangeSeqCount.load())) << " max=" << localRangeSeqMax << std::endl;
-      std::cerr << "seedsToDelete: avg=" << (seedsToDeleteTotal/nodeCount) << " max=" << seedsToDeleteMax << std::endl;
-      std::cerr << "newSyncmerRanges: avg=" << (newSyncmerRangesTotal/nodeCount) << " max=" << newSyncmerRangesMax << std::endl;
-      std::cerr << "refOnSyncmersChangeRecord: avg=" << (refOnSyncmersChangeRecordTotal/nodeCount) << " max=" << refOnSyncmersChangeRecordMax << std::endl;
-      std::cerr << "blockOnSyncmersChangeRecord: avg=" << (blockOnSyncmersChangeRecordTotal/nodeCount) << " max=" << blockOnSyncmersChangeRecordMax << std::endl;
-      std::cerr << "localMutationRanges: avg=" << (localMutationRangesTotal/nodeCount) << " max=" << localMutationRangesMax << std::endl;
-      std::cerr << "gapRunUpdates: avg=" << (gapRunUpdatesTotal/nodeCount) << " max=" << gapRunUpdatesMax << std::endl;
-      std::cerr << "gapMap size: avg=" << (gapMapSizeTotal/nodeCount) << " max=" << gapMapSizeMax << std::endl;
-      std::cerr << "refOnSyncmersMap size: avg=" << (refOnSyncmersMapSizeTotal/nodeCount) << " max=" << refOnSyncmersMapSizeMax << std::endl;
-      std::cerr << "======================\n" << std::endl;
-    }
-  };
-  
-  SizeStats g_stats;
-  
-  // Parallelization instrumentation
-  struct ParallelStats {
-    std::atomic<uint64_t> nodesInParallelSubtrees{0};   // Nodes processed by spawned workers
-    std::atomic<uint64_t> nodesInSequentialPaths{0};    // Nodes on main thread only
-    std::atomic<uint64_t> cloneTimeNs{0};               // Time spent cloning state
-    std::atomic<uint64_t> processNodeTimeNs{0};         // Time in processNode()
-    std::atomic<uint64_t> parallelChildrenTotal{0};     // Sum of children at fork points
-    std::atomic<uint64_t> workersSpawnedTotal{0};       // Total workers across all forks
-    std::atomic<uint64_t> maxForkDepth{0};              // Deepest nested fork
-    std::atomic<uint64_t> subtreeSizesProcessedParallel{0}; // Sum of subtree sizes in parallel
-    std::atomic<uint64_t> forksByDepth[16]{};           // Histogram of fork depths
-    
-    void updateMax(std::atomic<uint64_t>& maxVal, uint64_t newVal) {
-      uint64_t current = maxVal.load();
-      while (newVal > current && !maxVal.compare_exchange_weak(current, newVal)) {}
-    }
-    
-    void recordFork(size_t depth, size_t numChildren, size_t numWorkers, size_t totalSubtreeSize) {
-      if (depth < 16) forksByDepth[depth].fetch_add(1, std::memory_order_relaxed);
-      updateMax(maxForkDepth, depth);
-      parallelChildrenTotal.fetch_add(numChildren, std::memory_order_relaxed);
-      workersSpawnedTotal.fetch_add(numWorkers, std::memory_order_relaxed);
-      subtreeSizesProcessedParallel.fetch_add(totalSubtreeSize, std::memory_order_relaxed);
-    }
-    
-    void print(uint64_t totalNodes, uint64_t totalForks, uint64_t wallTimeMs) {
-      std::cout << "\n=== Parallelization Analysis ===" << std::endl;
-      
-      double parallelPct = 100.0 * subtreeSizesProcessedParallel / std::max(1UL, totalNodes);
-      std::cout << "Nodes in parallel subtrees: " << subtreeSizesProcessedParallel 
-                << " (" << std::fixed << std::setprecision(1) << parallelPct << "% of tree)" << std::endl;
-      
-      if (totalForks > 0) {
-        std::cout << "Avg children per fork: " << (parallelChildrenTotal / totalForks) << std::endl;
-        std::cout << "Avg workers per fork: " << (workersSpawnedTotal / totalForks) << std::endl;
-      }
-      std::cout << "Max fork depth: " << maxForkDepth << std::endl;
-      
-      std::cout << "Fork depth distribution: ";
-      for (int i = 0; i < 16 && forksByDepth[i] > 0; i++) {
-        std::cout << "d" << i << ":" << forksByDepth[i] << " ";
-      }
-      std::cout << std::endl;
-      
-      if (cloneTimeNs > 0) {
-        double cloneTimeSec = cloneTimeNs / 1e9;
-        double clonePct = 100.0 * cloneTimeSec / (wallTimeMs / 1000.0);
-        std::cout << "Clone overhead: " << std::setprecision(2) << cloneTimeSec 
-                  << "s (" << clonePct << "% of wall time)" << std::endl;
-      }
-      
-      // Theoretical speedup analysis
-      double sequentialFraction = 1.0 - (parallelPct / 100.0);
-      std::cout << "Amdahl's Law prediction (sequential fraction=" << std::setprecision(3) << sequentialFraction << "):" << std::endl;
-      for (int t : {4, 8, 16, 32, 48}) {
-        double speedup = 1.0 / (sequentialFraction + (1.0 - sequentialFraction) / t);
-        std::cout << "  " << t << " threads: max " << std::setprecision(2) << speedup << "x speedup" << std::endl;
-      }
-      
-      std::cout << "================================\n" << std::endl;
-    }
-  };
-  
-  ParallelStats g_parallelStats;
-}
 
 
 static void applyMutations (
@@ -304,214 +192,7 @@ void index_single_mode::updateGapMapStep(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates,
   bool recordGapMapUpdates
 ) {
-  auto rightIt = gapMap.upper_bound(start);
-  auto leftIt = (rightIt == gapMap.begin()) ? gapMap.end() : std::prev(rightIt);
-
-  bool rightItExists = rightIt != gapMap.end();
-  bool leftItExists = leftIt != gapMap.end();
-
-  if (toGap) {
-    // add gap range
-    if (gapMap.empty()) {
-      gapMap[start] = end;
-      backtrack.emplace_back(true, std::make_pair(start, end));
-      if (recordGapMapUpdates) {
-        gapMapUpdates.emplace_back(false, std::make_pair(start, end));
-      }
-      return;
-    }
-    
-    decltype(rightIt) curIt;
-
-    // curIt starts outside of any range
-    if (!leftItExists || (!rightItExists && start > leftIt->second) || (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
-      if (leftItExists && start == leftIt->second + 1) {
-        // 1 base after left range and merge with left
-        curIt = leftIt;
-        backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-        curIt->second = end;
-        if (recordGapMapUpdates) {
-          gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-        }
-      } else {
-        // insert new range
-        auto tmpIt = gapMap.emplace(start, end);
-        curIt = tmpIt.first;
-        backtrack.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-        if (recordGapMapUpdates) {
-          gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-        }
-      }
-    } else {
-      curIt = leftIt;
-      if (end <= curIt->second) {
-        return;
-      }
-      backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-      curIt->second = end;
-      if (recordGapMapUpdates) {
-        gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-      }
-    }
-
-    auto nextIt = std::next(curIt);
-    while (true) {
-      if (nextIt == gapMap.end()) {
-        break;
-      }
-
-      if (nextIt->second <= curIt->second) {
-        auto tmpIt = nextIt;
-        nextIt = std::next(nextIt);
-        backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
-        if (recordGapMapUpdates) {
-          gapMapUpdates.emplace_back(true, std::make_pair(tmpIt->first, tmpIt->second));
-        }
-        gapMap.erase(tmpIt);
-      } else if (nextIt->first <= end + 1) {
-        backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-        curIt->second = nextIt->second;
-        backtrack.emplace_back(false, std::make_pair(nextIt->first, nextIt->second));
-        if (recordGapMapUpdates) {
-          gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          gapMapUpdates.emplace_back(true, std::make_pair(nextIt->first, nextIt->second));
-        }
-        gapMap.erase(nextIt);
-        break;
-      } else {
-        break;
-      }
-    }
-  } else {
-    // remove gap range
-    if (gapMap.empty() || (!leftItExists && end < rightIt->first) || (!rightItExists && start > leftIt->second)) {
-      return;
-    }
-
-    decltype(rightIt) curIt;
-    decltype(rightIt) nextIt;
-    if (!leftItExists || (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
-      // curIt starts outside of any range
-      curIt = rightIt;
-
-      if (end < curIt->first) {
-        return;
-      }
-
-      // ends within the curIt range
-      if (end <= curIt->second) {
-        if (end == curIt->second) {
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-          }
-          gapMap.erase(curIt);
-        } else {
-          gapMap[end+1] = curIt->second;
-          backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(false, std::make_pair(end+1, curIt->second));
-            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-          }
-          gapMap.erase(curIt);
-        }
-        return;
-      } else {
-        nextIt = std::next(curIt);
-        backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-        if (recordGapMapUpdates) {
-          gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-        }
-        gapMap.erase(curIt);
-      }
-      
-    } else {
-      // curIt starts inside of a range
-      curIt = leftIt;
-      
-      if (end <= curIt->second) {
-        // contained in the curIt range
-        if (start == curIt->first && end == curIt->second) {
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-          }
-          gapMap.erase(curIt);
-        } else if (start == curIt->first) {
-          gapMap[end + 1] = curIt->second;
-          backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(false, std::make_pair(end+1, curIt->second));
-            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-          }
-          gapMap.erase(curIt);
-        } else if (end == curIt->second) {
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          curIt->second = start - 1;
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          }
-        } else {
-          gapMap[end + 1] = curIt->second;
-          backtrack.emplace_back(true, std::make_pair(end+1, curIt->second));
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(false, std::make_pair(end+1, curIt->second));
-            gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, start-1));
-          }
-          curIt->second = start - 1;
-        }
-        return;
-      } else {
-        if (start == curIt->first) {
-          nextIt = std::next(curIt);
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-          }
-          gapMap.erase(curIt);
-        } else {
-          backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          curIt->second = start - 1;
-          if (recordGapMapUpdates) {
-            gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-          }
-          nextIt = std::next(curIt);
-        }
-      }
-    }
-
-    
-    while (true) {
-      if (nextIt == gapMap.end()) {
-        break;
-      }
-
-      if (nextIt->first > end) {
-        break;
-      } else if (nextIt->second <= end) {
-        auto tmpIt = nextIt;
-        nextIt = std::next(nextIt);
-        backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
-        if (recordGapMapUpdates) {
-          gapMapUpdates.emplace_back(true, std::make_pair(tmpIt->first, tmpIt->second));
-        }
-        gapMap.erase(tmpIt);
-      } else {
-        gapMap[end + 1] = nextIt->second;
-        backtrack.emplace_back(true, std::make_pair(end+1, nextIt->second));
-        backtrack.emplace_back(false, std::make_pair(nextIt->first, nextIt->second));
-        if (recordGapMapUpdates) {
-          gapMapUpdates.emplace_back(false, std::make_pair(end+1, nextIt->second));
-          gapMapUpdates.emplace_back(true, std::make_pair(nextIt->first, nextIt->second));
-        }
-        gapMap.erase(nextIt);
-        break;
-      }
-    }
-  }
+  gap_map::updateGapMapStep(gapMap, start, end, toGap, backtrack, gapMapUpdates, recordGapMapUpdates);
 }
 
 void index_single_mode::updateGapMap(
@@ -523,9 +204,8 @@ void index_single_mode::updateGapMap(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
 ) {
   for (const auto& update : updates) {
-    updateGapMapStep(gapMap, update.second.first, update.second.second, update.first, backtrack, gapMapUpdates, true);
+    gap_map::updateGapMapStep(gapMap, update.second.first, update.second.second, update.first, backtrack, gapMapUpdates, true);
   }
-
 }
 
 void index_single_mode::invertGapMap(
@@ -534,104 +214,14 @@ void index_single_mode::invertGapMap(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
 ) {
-  const auto& [start, end] = invertRange;
-
-  auto rightIt = gapMap.upper_bound(start);
-  auto leftIt = (rightIt == gapMap.begin()) ? gapMap.end() : std::prev(rightIt);
-
-  bool rightItExists = rightIt != gapMap.end();
-  bool leftItExists = leftIt != gapMap.end();
-
-  // completely inside or outside a gap range -> do nothing
-  if (
-    gapMap.empty() || // empty gap map
-    (!leftItExists && end < rightIt->first) || // completely left of first gap range
-    (!rightItExists && start > leftIt->second) // completely right of last gap range
-    // (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first) || // completely between two gap ranges
-    // (leftItExists && start >= leftIt->first && end <= leftIt->second) // completely inside a gap range
-  ) {
-    return;
-  }
-  
-  //                    gaps            beg      end
-  std::vector<std::pair<bool, std::pair<int64_t, int64_t>>> blockRuns;
-  if (!leftItExists || (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
-    // start outside of a range
-
-    if (end < rightIt->first) {
-      // completely completely between two ranges... all nucs are on.. do nothing
-      return;
-    }
-
-    auto curIt = rightIt;
-    blockRuns.emplace_back(false, std::make_pair(start, curIt->first - 1));
-    if (end <= curIt->second) {
-      blockRuns.emplace_back(true, std::make_pair(blockRuns.back().second.second + 1, end));
-    } else {
-      blockRuns.emplace_back(true, std::make_pair(blockRuns.back().second.second + 1, curIt->second));
-      curIt = std::next(curIt);
-      while (true) {
-        if (curIt == gapMap.end()) {
-          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
-          break;
-        } else if (end < curIt->first) {
-          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
-          break;
-        } else if (end > curIt->second) {
-          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
-          blockRuns.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-          curIt = std::next(curIt);
-        } else {
-          blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
-          blockRuns.emplace_back(true, std::make_pair(curIt->first, end));
-          break;
-        }
-      }
-    }
-  } else {
-    // start inside of a range
-    auto curIt = leftIt;
-    blockRuns.emplace_back(true, std::make_pair(start, curIt->second));
-    curIt = std::next(curIt);
-    while (true) {
-      if (curIt == gapMap.end()) {
-        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
-        break;
-      } else if (end < curIt->first) {
-        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, end));
-        break;
-      } else if (end > curIt->second) {
-        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
-        blockRuns.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-        curIt = std::next(curIt);
-      } else {
-        blockRuns.emplace_back(false, std::make_pair(blockRuns.back().second.second + 1, curIt->first - 1));
-        blockRuns.emplace_back(true, std::make_pair(curIt->first, end));
-        break;
-      }
-    }
-  }
-
-  int64_t curBeg = blockRuns.front().second.first;
-  for (auto it = blockRuns.rbegin(); it != blockRuns.rend(); ++it) {
-    int64_t curEnd = curBeg + (it->second.second - it->second.first);
-    updateGapMapStep(gapMap, curBeg, curEnd, it->first, backtrack, gapMapUpdates, false);
-    curBeg = curEnd + 1;
-  }
+  gap_map::invertGapMap(gapMap, invertRange, backtrack, gapMapUpdates);
 }
 
 void index_single_mode::revertGapMapInversions(
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks,
   std::map<uint64_t, uint64_t>& gapMap
 ) {
-  for (auto it = gapMapBlocksBacktracks.rbegin(); it != gapMapBlocksBacktracks.rend(); ++it) {
-    const auto& [del, range] = *it;
-    if (del) {
-      gapMap.erase(range.first);
-    } else {
-      gapMap[range.first] = range.second;
-    }
-  }
+  gap_map::revertGapMapChanges(gapMapBlocksBacktracks, gapMap);
 }
 
 
@@ -1044,7 +634,7 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
       } else {
         auto it = refOnSyncmersMap.find(syncmerPos);
         if (it == refOnSyncmersMap.end()) {
-          std::cerr << "Error: syncmer position not found in refOnSyncmersMap when computing new k-min-mer ranges.\n";
+          output::error("syncmer position not found in refOnSyncmersMap when computing new k-min-mer ranges");
           exit(1);
         }
         newKminmerRanges.emplace_back(it, it);
@@ -1112,10 +702,6 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
                 continue;
               }
             }
-            //  else {
-            //   curEndIt = refOnSyncmersMap.end();
-            //   break;
-            // }
           }
         }
         break;
@@ -1142,10 +728,6 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
                 continue;
               }
             }
-            //  else {
-            //   curEndIt = refOnSyncmersMap.end();
-            //   break;
-            // }
           }
         }
         ++curEndIt;
@@ -1186,7 +768,7 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
       } else {
         auto it = state.refOnSyncmersMap.find(syncmerPos);
         if (it == state.refOnSyncmersMap.end()) {
-          std::cerr << "Error: syncmer position not found in refOnSyncmersMap when computing new k-min-mer ranges.\n";
+          output::error("syncmer position not found in refOnSyncmersMap when computing new k-min-mer ranges");
           exit(1);
         }
         newKminmerRanges.emplace_back(it, it);
@@ -1355,13 +937,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     invertGapMap(gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
-  // // not really needed for building the index... But do need to keep it for debugging and comparing with brute force
-  // std::map<uint64_t, uint64_t> degapCoordIndex;
-  // std::map<uint64_t, uint64_t> regapCoordIndex;
-  // if (dfsIndex >= 0) {
-  //   makeCoordIndex(degapCoordIndex, regapCoordIndex, gapMap, (uint64_t)globalCoords.lastScalarCoord);
-  // }
-
   // Compute genome extent from gapMap for flank masking
   // Pass flankSize=0 - actual flank masking is applied separately
   auto [firstNonGapScalar, lastNonGapScalar] = computeExtentFromGapMap(gapMap, globalCoords.lastScalarCoord, 0);
@@ -1404,7 +979,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
 
     for (uint64_t pos : seedsToDelete) {
       if (!refOnSyncmers.contains(pos)) {
-        std::cerr << "Error: refOnSyncmers[" << pos << "] is null" << std::endl;
+        output::error("refOnSyncmers[{}] is null", pos);
         std::exit(1);
       }
       refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
@@ -1450,11 +1025,12 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     auto beg = *newKminmerRanges[i].first;
     auto end = *newKminmerRanges[i].second;
     if (newKminmerRanges[i].second != refOnSyncmersMap.end() && beg > end) {
-      std::cerr << "Error: beg (" << beg << ") > end (" << end << ") in node " << node->identifier << std::endl;
+      output::error("beg ({}) > end ({}) in node {}", beg, end, node->identifier);
       std::exit(1);
     }
     if (i != 0 && *newKminmerRanges[i-1].second > beg) {
-      std::cerr << "Error: newKminmerRanges[" << i-1 << "].second (" << *newKminmerRanges[i-1].second << ") > newKminmerRanges[" << i << "].first (" << *newKminmerRanges[i].first << ") in node " << node->identifier << std::endl;
+      output::error("newKminmerRanges[{}].second ({}) > newKminmerRanges[{}].first ({}) in node {}", 
+                   i-1, *newKminmerRanges[i-1].second, i, *newKminmerRanges[i].first, node->identifier);
       std::exit(1);
     }
   }
@@ -1495,7 +1071,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
         reverseHash = std::numeric_limits<size_t>::max();
       }
       if (reverseHash == forwardHash) {
-        std::cerr << "Error: syncmer hash collision detected in k-min-mer computation.\n";
+        output::error("syncmer hash collision detected in k-min-mer computation");
         exit(1);
       }
     } else {
@@ -1619,7 +1195,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   }
 
   nodeToDfsIndex[node->identifier] = dfsIndex;
-  std::cout << "\rdfsIndex: " << dfsIndex << std::flush;
+  output::progress(fmt::format("dfsIndex: {}", dfsIndex));
   for (panmanUtils::Node *child : node->children) {
     dfsIndex++;
     buildIndexHelper(child, emptyNodes, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
@@ -1704,12 +1280,9 @@ void index_single_mode::IndexBuilder::buildIndex() {
   std::unordered_set<std::string_view> emptyNodes;
   uint64_t dfsIndex = 0;
   buildIndexHelper(T->root, emptyNodes, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
-  std::cout << std::endl;
+  output::progress_clear();
 
   size_t numNodes = T->allNodes.size();
-
-  // NOTE: SeedInfo list is no longer populated - it was never used by lite placement.
-  // The seed hashes are stored per-node in the struct-of-arrays format below.
 
   // Add block infos to index
   capnp::List<BlockRange>::Builder blockRangesBuilder = liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
@@ -1750,7 +1323,7 @@ void index_single_mode::IndexBuilder::buildIndex() {
     }
   }
 
-  std::cout << "Computing seed deltas..." << std::endl;
+  output::step("Computing seed deltas...");
 
   // Compute per-node deltas sequentially
   for (size_t nodeIdx = 0; nodeIdx < numNodes; ++nodeIdx) {
@@ -1793,10 +1366,10 @@ void index_single_mode::IndexBuilder::buildIndex() {
     totalChanges += changes.size();
     if (changes.size() > largestNodeChangeCount) largestNodeChangeCount = changes.size();
     if (nodeIdx % 1000 == 0) {
-      std::cout << "\rProcessed node " << nodeIdx << "/" << numNodes << std::flush;
+      output::progress(fmt::format("Processed node {}/{}", nodeIdx, numNodes));
     }
   }
-  std::cout << std::endl;
+  output::progress_clear();
 
   // Set totals
   indexBuilder.setTotalSeedChanges(totalChanges);
@@ -1841,11 +1414,11 @@ void index_single_mode::IndexBuilder::buildIndex() {
     genomeTotalSeedFrequencyBuilder.set(nodeIdx, totalFrequency);
   }
 
-  std::cout << "Finished building index! Total seed changes: " << totalChanges << std::endl;
+  output::done(fmt::format("Index built ({} seed changes)", totalChanges));
 }
 
 void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads) {
-  std::cout << "Serializing index..." << std::endl;
+  output::step("Serializing index...");
   
   // Serialize Cap'n Proto message to flat array
   kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments = outMessage.getSegmentsForOutput();
@@ -1862,15 +1435,15 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
   const void* data = flatArray.begin();
   size_t dataSize = flatArray.size() * sizeof(capnp::word);
   
-  std::cout << "Writing ZSTD-compressed index to " << path << " (" << dataSize << " bytes uncompressed)..." << std::endl;
+  output::step("Writing index ({} bytes uncompressed)...", dataSize);
   
   // Use ZSTD compression to write
   if (!panmap_zstd::compressToFile(data, dataSize, path, 3, numThreads)) {
-    std::cerr << "Error: failed to write compressed index to " << path << std::endl;
+    output::error("failed to write compressed index to {}", path);
     std::exit(1);
   }
   
-  std::cout << "Index written to " << path << std::endl;
+  output::done("Index written to " + path);
 }
 
 // ============================================================================
@@ -1980,9 +1553,10 @@ void index_single_mode::IndexBuilder::processNode(
   static bool debugFlankMasking = (std::getenv("DEBUG_FLANK_MASKING") != nullptr);
   if (debugFlankMasking) {
     if (state.firstNonGapScalar != newFirstNonGap || state.lastNonGapScalar != newLastNonGap) {
-      std::cerr << "[FLANK] Node " << node->identifier << " (dfs=" << dfsIndex << "): "
-                << "extent [" << state.firstNonGapScalar << "," << state.lastNonGapScalar << "] -> "
-                << "[" << newFirstNonGap << "," << newLastNonGap << "]" << std::endl;
+      output::debug("[FLANK] Node {} (dfs={}): extent [{},{}] -> [{},{}]",
+                   node->identifier, dfsIndex, 
+                   state.firstNonGapScalar, state.lastNonGapScalar,
+                   newFirstNonGap, newLastNonGap);
     }
   }
   
@@ -2006,9 +1580,9 @@ void index_single_mode::IndexBuilder::processNode(
   if (debugMasking && (node->identifier.find("node_9981") != std::string::npos || 
                         node->identifier.find("node_11963") != std::string::npos ||
                         node->identifier.find("node_11964") != std::string::npos)) {
-    std::cerr << "[MASK-DEBUG] " << node->identifier << " extent=[" << state.firstNonGapScalar 
-              << "," << state.lastNonGapScalar << "] hardMask=[" << hardMaskStart << "," << hardMaskEnd 
-              << "] flankMaskBp=" << flankMaskBp << std::endl;
+    output::debug("[MASK-DEBUG] {} extent=[{},{}] hardMask=[{},{}] flankMaskBp={}",
+                 node->identifier, state.firstNonGapScalar, state.lastNonGapScalar,
+                 hardMaskStart, hardMaskEnd, flankMaskBp);
   }
 
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges = computeNewSyncmerRangesJump(
@@ -2045,10 +1619,6 @@ void index_single_mode::IndexBuilder::processNode(
           state.refOnSyncmers[startPosGlobal] = {hash, endPosGlobal, isReverse};
           state.blockOnSyncmers[curBlockId].insert(startPosGlobal);
         } else if (wasSeed && !isSeed) {
-          // if (isInFlank) {
-          //   // Skip this deletion - keep the seed imputed
-          //   continue;
-          // }
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::DEL, state.refOnSyncmers.at(startPosGlobal));
           blockOnSyncmersChangeRecord.emplace_back(curBlockId, startPosGlobal, panmapUtils::seedChangeType::DEL);
           state.refOnSyncmers.erase(startPosGlobal);
@@ -2073,13 +1643,9 @@ void index_single_mode::IndexBuilder::processNode(
       if (isHardMasked) {
         continue;
       }
-      // Flank imputation: skip deletion
-      // if (isInFlank) {
-      //   continue;
-      // }
       
       if (!state.refOnSyncmers.contains(pos)) {
-        std::cerr << "Error: refOnSyncmers[" << pos << "] is null" << std::endl;
+        output::error("refOnSyncmers[{}] is null", pos);
         std::exit(1);
       }
       refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, state.refOnSyncmers.at(pos));
@@ -2155,11 +1721,11 @@ void index_single_mode::IndexBuilder::processNode(
     auto beg = *newKminmerRanges[i].first;
     auto end = *newKminmerRanges[i].second;
     if (newKminmerRanges[i].second != state.refOnSyncmersMap.end() && beg > end) {
-      std::cerr << "Error: beg (" << beg << ") > end (" << end << ") in node " << node->identifier << std::endl;
+      output::error("beg ({}) > end ({}) in node {}", beg, end, node->identifier);
       std::exit(1);
     }
     if (i != 0 && *newKminmerRanges[i-1].second > beg) {
-      std::cerr << "Error: newKminmerRanges[" << i-1 << "].second > newKminmerRanges[" << i << "].first" << std::endl;
+      output::error("newKminmerRanges[{}].second > newKminmerRanges[{}].first", i-1, i);
       std::exit(1);
     }
   }
@@ -2193,7 +1759,7 @@ void index_single_mode::IndexBuilder::processNode(
         reverseHash = std::numeric_limits<size_t>::max();
       }
       if (reverseHash == forwardHash) {
-        std::cerr << "Error: syncmer hash collision detected in k-min-mer computation.\n";
+        output::error("syncmer hash collision detected in k-min-mer computation");
         exit(1);
       }
     } else {
@@ -2295,45 +1861,6 @@ void index_single_mode::IndexBuilder::processNode(
   }
 
   // No sorting needed - we're using hashes directly, not positions
-
-  // Collect size statistics for optimization
-  {
-    g_stats.nodeCount++;
-    
-    // Aggregate seedsToDelete across all syncmer ranges
-    uint64_t totalSeedsToDelete = 0;
-    uint64_t maxLocalRangeSeq = 0;
-    for (const auto& sr : newSyncmerRanges) {
-      totalSeedsToDelete += sr.seedsToDelete.size();
-      g_stats.localRangeSeqTotal += sr.localRangeSeq.size();
-      g_stats.localRangeSeqCount++;
-      if (sr.localRangeSeq.size() > maxLocalRangeSeq) maxLocalRangeSeq = sr.localRangeSeq.size();
-    }
-    g_stats.updateMax(g_stats.localRangeSeqMax, maxLocalRangeSeq);
-    g_stats.seedsToDeleteTotal += totalSeedsToDelete;
-    g_stats.updateMax(g_stats.seedsToDeleteMax, totalSeedsToDelete);
-    
-    g_stats.newSyncmerRangesTotal += newSyncmerRanges.size();
-    g_stats.updateMax(g_stats.newSyncmerRangesMax, newSyncmerRanges.size());
-    
-    g_stats.refOnSyncmersChangeRecordTotal += refOnSyncmersChangeRecord.size();
-    g_stats.updateMax(g_stats.refOnSyncmersChangeRecordMax, refOnSyncmersChangeRecord.size());
-    
-    g_stats.blockOnSyncmersChangeRecordTotal += blockOnSyncmersChangeRecord.size();
-    g_stats.updateMax(g_stats.blockOnSyncmersChangeRecordMax, blockOnSyncmersChangeRecord.size());
-    
-    g_stats.localMutationRangesTotal += localMutationRanges.size();
-    g_stats.updateMax(g_stats.localMutationRangesMax, localMutationRanges.size());
-    
-    g_stats.gapRunUpdatesTotal += gapRunUpdates.size();
-    g_stats.updateMax(g_stats.gapRunUpdatesMax, gapRunUpdates.size());
-    
-    g_stats.gapMapSizeTotal += state.gapMap.size();
-    g_stats.updateMax(g_stats.gapMapSizeMax, state.gapMap.size());
-    
-    g_stats.refOnSyncmersMapSizeTotal += state.refOnSyncmersMap.size();
-    g_stats.updateMax(g_stats.refOnSyncmersMapSizeMax, state.refOnSyncmersMap.size());
-  }
 
   // Compute node changes directly using running counts
   // This combines what was previously a separate post-traversal pass
@@ -2487,10 +2014,8 @@ void index_single_mode::IndexBuilder::processNode(
     uint64_t totalClones = totalClonesCreated_.load(std::memory_order_relaxed);
     
     double pct = 100.0 * processed / totalNodes;
-    std::cout << "\r[" << std::fixed << std::setprecision(1) << pct << "%] " 
-              << processed << "/" << totalNodes << " (" << std::setprecision(0) << nodesPerSec << " n/s) | "
-              << "chunks:" << totalClones
-              << "          " << std::flush;
+    output::progress(fmt::format("[{:.1f}%] {}/{} ({:.0f} n/s) chunks:{}", 
+                                 pct, processed, totalNodes, nodesPerSec, totalClones));
   }
 }
 
@@ -2716,9 +2241,6 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
         
         // Update instrumentation
         parallelForkPoints_.fetch_add(1, std::memory_order_relaxed);
-        g_parallelStats.recordFork(depth, numWorthParallelizing, 
-                                   static_cast<int>(numWorthParallelizing - 1),
-                                   totalChildSubtreeSize);
         
         tbb::task_group taskGroup;
         
@@ -2743,13 +2265,8 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
                    !peakActiveClones_.compare_exchange_weak(oldPeak, newCount, std::memory_order_relaxed)) {}
             
             // Clone state for this child
-            auto cloneStart = std::chrono::high_resolution_clock::now();
             BuildState childState(state);
             childState.nodeChanges = state.nodeChanges;  // Share nodeChanges storage
-            auto cloneEnd = std::chrono::high_resolution_clock::now();
-            g_parallelStats.cloneTimeNs.fetch_add(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(cloneEnd - cloneStart).count(),
-                std::memory_order_relaxed);
             
             processSubtreeParallel(child, childState, globalCoords, 
                                    childEmptyNodes[childIdx], childDfsIdx,
@@ -2766,13 +2283,8 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
           auto* child = node->children[childIdx];
           uint64_t childDfsIdx = childOffsets[childIdx];
           
-          auto cloneStart = std::chrono::high_resolution_clock::now();
           BuildState childState(state);
           childState.nodeChanges = state.nodeChanges;  // Share nodeChanges storage
-          auto cloneEnd = std::chrono::high_resolution_clock::now();
-          g_parallelStats.cloneTimeNs.fetch_add(
-              std::chrono::duration_cast<std::chrono::nanoseconds>(cloneEnd - cloneStart).count(),
-              std::memory_order_relaxed);
           
           processSubtreeParallel(child, childState, globalCoords,
                                  childEmptyNodes[childIdx], childDfsIdx,
@@ -2827,12 +2339,13 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   
   // Handle empty tree case
   if (T->root->children.empty()) {
-    std::cout << "Using sequential build (empty tree)" << std::endl;
+    output::debug("Using sequential build (empty tree)");
     buildIndex();
     return;
   }
   
-  std::cout << "Building index in parallel with " << numThreads << " threads..." << std::endl;
+  output::stage("Building index");
+  output::step("Parallel build with {} threads", numThreads);
   
   // Reset instrumentation stats
   processedNodes_.store(0, std::memory_order_relaxed);
@@ -2850,7 +2363,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   computeSubtreeSize(T->root);
 
   size_t totalNodes = T->allNodes.size();
-  std::cout << "Tree has " << totalNodes << " nodes" << std::endl;
+  output::debug("Tree has {} nodes", totalNodes);
 
   // Step 2: Compute DFS indices for all nodes
   uint64_t dfsCounter = 0;
@@ -2894,8 +2407,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     }
   }
   
-  std::cout << "Partitioned into " << chunks.size() << " chunks of ~" 
-            << nodesPerChunk << " nodes each" << std::endl;
+  output::debug("Partitioned into {} chunks of ~{} nodes each", chunks.size(), nodesPerChunk);
 
   // Step 4: Create template BuildState 
   BuildState templateState;
@@ -3032,19 +2544,15 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     }
   }
   
-  std::cout << "IDF: " << totalLeafGenomes << " leaf genomes, " 
-            << mergedIdfMap.size() << " unique seeds" << std::endl;
+  output::debug("IDF: {} leaf genomes, {} unique seeds", totalLeafGenomes, mergedIdfMap.size());
   
   // Print summary
   uint64_t finalNodes = processedNodes_.load();
   double finalNodesPerSec = (dfsDurationMs > 0) ? (finalNodes * 1000.0 / dfsDurationMs) : 0;
   
-  std::cout << std::endl;
-  std::cout << "=== Parallel Build Summary ===" << std::endl;
-  std::cout << "  Nodes processed: " << finalNodes << " (" << std::fixed << std::setprecision(0) << finalNodesPerSec << " nodes/sec)" << std::endl;
-  std::cout << "  DFS time: " << dfsDurationMs << " ms" << std::endl;
-  std::cout << "  Chunks: " << chunks.size() << ", clones: " << totalClonesCreated_.load() << std::endl;
-  std::cout << "===============================" << std::endl;
+  output::progress_clear();
+  output::debug("Build summary: {} nodes ({:.0f}/sec), {} ms, {} chunks", 
+               finalNodes, finalNodesPerSec, dfsDurationMs, chunks.size());
 
   // nodeChanges were computed during processNode calls - now use them for index building
   size_t numNodes = T->allNodes.size();
@@ -3058,7 +2566,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     if (localSize > largestNodeChangeCount) largestNodeChangeCount = localSize;
   }
   
-  std::cout << "Total seed changes: " << totalChanges << ", max per node: " << largestNodeChangeCount << std::endl;
+  output::debug("Total seed changes: {}, max per node: {}", totalChanges, largestNodeChangeCount);
 
   // Step 7: Build index output
   LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
@@ -3081,7 +2589,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     nodesBuilder[idx].setIdenticalToParent(emptyNodes.find(nodeId) != emptyNodes.end());
   }
 
-  std::cout << "\nFinished building index! Total seed changes: " << totalChanges << std::endl;
+  output::done(fmt::format("Index built ({} seed changes)", totalChanges));
 
   auto serializeStart = std::chrono::high_resolution_clock::now();
 
@@ -3095,7 +2603,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
 
-  std::cout << "Writing seed changes to index..." << std::endl;
+  output::step("Writing seed changes to index...");
   uint32_t writeOffset = 0;
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     nodeChangeOffsetsBuilder.set(nodeIdx, writeOffset);
@@ -3110,10 +2618,10 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   
   auto serializeEnd = std::chrono::high_resolution_clock::now();
   auto serializeMs = std::chrono::duration_cast<std::chrono::milliseconds>(serializeEnd - serializeStart).count();
-  std::cout << "Wrote seed changes in " << serializeMs << " ms" << std::endl;
+  output::done("Wrote seed changes", serializeMs);
 
   // Copy pre-computed genome metrics to index builders
-  std::cout << "Writing genome metrics..." << std::endl;
+  output::step("Writing genome metrics...");
   auto metricsStart = std::chrono::high_resolution_clock::now();
   auto genomeMagnitudeSquaredBuilder = indexBuilder.initGenomeMagnitudeSquared(numNodes);
   auto genomeUniqueSeedCountBuilder = indexBuilder.initGenomeUniqueSeedCount(numNodes);
@@ -3128,10 +2636,10 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
 
   auto metricsEnd = std::chrono::high_resolution_clock::now();
   auto metricsMs = std::chrono::duration_cast<std::chrono::milliseconds>(metricsEnd - metricsStart).count();
-  std::cout << "Wrote genome metrics in " << metricsMs << " ms" << std::endl;
+  output::done("Wrote genome metrics", metricsMs);
 
   // Write IDF data for seed weighting
-  std::cout << "Writing IDF data..." << std::endl;
+  output::step("Writing IDF data...");
   auto idfStart = std::chrono::high_resolution_clock::now();
   
   // Sort seeds by hash for binary search at load time
@@ -3150,13 +2658,10 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   
   auto idfEnd = std::chrono::high_resolution_clock::now();
   auto idfMs = std::chrono::duration_cast<std::chrono::milliseconds>(idfEnd - idfStart).count();
-  std::cout << "Wrote IDF data (" << sortedIdf.size() << " unique seeds) in " << idfMs << " ms" << std::endl;
+  output::done(fmt::format("Wrote IDF data ({} unique seeds)", sortedIdf.size()), idfMs);
 
   auto endTotal = std::chrono::high_resolution_clock::now();
   auto totalDurationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTotal - startTotal).count();
   
-  std::cout << "Total parallel build time: " << totalDurationMs << " ms" << std::endl;
-  
-  // Print size statistics for optimization
-  g_stats.print();
+  output::info("Total build time: {} ms", totalDurationMs);
 }

@@ -544,7 +544,6 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
     }
     state.readUniqueSeedCount = readUniqueSeedCount;
     state.totalReadSeedFrequency = totalReadSeedFrequency;
-    state.readMagnitude = readMagnitude;
     state.logReadMagnitude = logReadMagnitude;
     
     // Get seed change arrays from index
@@ -605,8 +604,7 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
         
         // Debug: show running totals after each node
         BOOST_TEST_MESSAGE("  After node " << i << ": unique=" << metrics.genomeUniqueSeedCount 
-            << " total=" << metrics.genomeTotalSeedFrequency
-            << " intersect=" << metrics.presenceIntersectionCount);
+            << " total=" << metrics.genomeTotalSeedFrequency);
     }
     
     // VERIFICATION: Manually track seed counts to verify unique count
@@ -640,15 +638,12 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
     BOOST_TEST_MESSAGE("Manual verification: unique=" << manualUniqueCount << " total=" << manualTotalFreq);
     
     // Compute final scores from accumulated metrics
-    double deltaCosine = metrics.getCosineScore(readMagnitude);
     double deltaLogRaw = metrics.getLogRawScore(logReadMagnitude);
     double deltaLogCosine = metrics.getLogCosineScore(logReadMagnitude);
     
     BOOST_TEST_MESSAGE("=== DELTA-BASED (index traversal) ===");
     BOOST_TEST_MESSAGE("  Genome unique seeds: " << metrics.genomeUniqueSeedCount);
     BOOST_TEST_MESSAGE("  Genome total freq: " << metrics.genomeTotalSeedFrequency);
-    BOOST_TEST_MESSAGE("  Intersection count: " << metrics.presenceIntersectionCount);
-    BOOST_TEST_MESSAGE("  Cosine: " << deltaCosine);
     BOOST_TEST_MESSAGE("  LogRaw: " << deltaLogRaw);
     BOOST_TEST_MESSAGE("  LogCosine: " << deltaLogCosine);
     
@@ -661,11 +656,6 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
     BOOST_TEST(metrics.genomeUniqueSeedCount >= groundTruth.genomeUniqueSeedCount,
         "Genome unique: delta=" << metrics.genomeUniqueSeedCount 
         << " truth=" << groundTruth.genomeUniqueSeedCount);
-    
-    // Intersection should be the same (reads match actual genome)
-    BOOST_TEST(metrics.presenceIntersectionCount == groundTruth.presenceIntersectionCount,
-        "Intersection: delta=" << metrics.presenceIntersectionCount 
-        << " truth=" << groundTruth.presenceIntersectionCount);
     
     // Log differences due to N-imputation
     if (metrics.genomeUniqueSeedCount > groundTruth.genomeUniqueSeedCount) {
@@ -748,7 +738,6 @@ BOOST_AUTO_TEST_CASE(test_reads_from_truth_genome_place_to_truth_node) {
     }
     state.readUniqueSeedCount = readUniqueSeedCount;
     state.totalReadSeedFrequency = totalReadSeedFrequency;
-    state.readMagnitude = readMagnitude;
     state.logReadMagnitude = logReadMagnitude;
     
     auto seedChangeHashes = indexRoot.getSeedChangeHashes();
@@ -907,7 +896,7 @@ BOOST_AUTO_TEST_CASE(test_incremental_traversal_matches_direct_at_every_node) {
     }
     state.readUniqueSeedCount = readUniqueSeedCount;
     state.totalReadSeedFrequency = totalReadSeedFrequency;
-    state.readMagnitude = readMagnitude;
+    state.logReadMagnitude = logReadMagnitude;
     
     auto seedChangeHashes = indexRoot.getSeedChangeHashes();
     auto seedChangeParentCounts = indexRoot.getSeedChangeParentCounts();
@@ -987,21 +976,17 @@ BOOST_AUTO_TEST_CASE(test_incremental_traversal_matches_direct_at_every_node) {
         auto directTruth = GroundTruthMetrics::compute(readSeeds, directGenomeSeeds);
         
         // Compute scores from delta-based metrics
-        double deltaCosine = metrics.getCosineScore(readMagnitude);
         double deltaLogRaw = metrics.getLogRawScore(logReadMagnitude);
         double deltaLogCosine = metrics.getLogCosineScore(logReadMagnitude);
-        (void)deltaCosine; (void)deltaLogRaw; (void)deltaLogCosine; // Used for debugging
+        (void)deltaLogRaw; (void)deltaLogCosine; // Used for debugging
         
-        // Verify intersection metrics match at final target node
+        // Verify genome metrics at final target node
         if (nodeId == truthNodeId) {
             BOOST_TEST_MESSAGE("Final validation at " << truthNodeId << ":");
-            BOOST_TEST_MESSAGE("  Direct intersection: " << directTruth.presenceIntersectionCount);
-            BOOST_TEST_MESSAGE("  Delta intersection: " << metrics.presenceIntersectionCount);
-            BOOST_TEST_MESSAGE("  Direct cosine: " << directTruth.cosineScore);
-            BOOST_TEST_MESSAGE("  Delta cosine: " << deltaCosine);
-            
-            // Intersection should match (reads match actual genome)
-            BOOST_TEST(metrics.presenceIntersectionCount == directTruth.presenceIntersectionCount);
+            BOOST_TEST_MESSAGE("  Direct unique seeds: " << directTruth.genomeUniqueSeedCount);
+            BOOST_TEST_MESSAGE("  Delta unique seeds: " << metrics.genomeUniqueSeedCount);
+            BOOST_TEST_MESSAGE("  LogRaw: " << deltaLogRaw);
+            BOOST_TEST_MESSAGE("  LogCosine: " << deltaLogCosine);
             
             // Log N-imputation effects
             if (metrics.genomeUniqueSeedCount > directUnique) {
@@ -1404,7 +1389,6 @@ BOOST_AUTO_TEST_CASE(test_placement_bfs_metrics_match_truth) {
     }
     state.readUniqueSeedCount = readUniqueSeedCount;
     state.totalReadSeedFrequency = totalReadSeedFrequency;
-    state.readMagnitude = readMagnitude;
     state.logReadMagnitude = logReadMagnitude;
     
     // Find target node and build path
@@ -1449,19 +1433,13 @@ BOOST_AUTO_TEST_CASE(test_placement_bfs_metrics_match_truth) {
     // Compare BFS-accumulated metrics vs ground truth
     // With N-imputation, BFS may have more seeds than direct extraction
     BOOST_TEST_MESSAGE("BFS metrics: unique=" << metrics.genomeUniqueSeedCount 
-        << " total=" << metrics.genomeTotalSeedFrequency
-        << " intersect=" << metrics.presenceIntersectionCount);
+        << " total=" << metrics.genomeTotalSeedFrequency);
     BOOST_TEST_MESSAGE("Truth: unique=" << groundTruth.genomeUniqueSeedCount 
-        << " total=" << groundTruth.genomeTotalSeedFrequency
-        << " intersect=" << groundTruth.presenceIntersectionCount);
+        << " total=" << groundTruth.genomeTotalSeedFrequency);
     
     // Index should have >= truth seeds due to N-imputation
     BOOST_TEST(metrics.genomeUniqueSeedCount >= static_cast<int64_t>(groundTruth.genomeUniqueSeedCount),
         "Unique seed count: BFS=" << metrics.genomeUniqueSeedCount << " should be >= truth=" << groundTruth.genomeUniqueSeedCount);
-    
-    // Intersection should match (reads use actual genome)
-    BOOST_TEST(metrics.presenceIntersectionCount == static_cast<int64_t>(groundTruth.presenceIntersectionCount),
-        "Intersection: BFS=" << metrics.presenceIntersectionCount << " truth=" << groundTruth.presenceIntersectionCount);
     
     // Log N-imputation effect
     if (metrics.genomeUniqueSeedCount > static_cast<int64_t>(groundTruth.genomeUniqueSeedCount)) {

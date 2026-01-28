@@ -1,4 +1,5 @@
 #include "seeding.hpp"
+#include "logging.hpp"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -238,8 +239,8 @@ void seedsFromFastq(
   kseq_t *seq;
   fp = fopen(fastqPath1.c_str(), "r");
   if (!fp) {
-    std::cerr << "Error: File " << fastqPath1 << " not found" << std::endl;
-    exit(0);
+    output::error("File {} not found", fastqPath1);
+    exit(1);
   }
   seq = kseq_init(fileno(fp));
   int line;
@@ -251,8 +252,8 @@ void seedsFromFastq(
   if (fastqPath2.size() > 0) {
     fp = fopen(fastqPath2.c_str(), "r");
     if (!fp) {
-      std::cerr << "Error: File " << fastqPath2 << " not found" << std::endl;
-      exit(0);
+      output::error("File {} not found", fastqPath2);
+      exit(1);
     }
     seq = kseq_init(fileno(fp));
 
@@ -265,10 +266,9 @@ void seedsFromFastq(
     }
 
     if (readSequences.size() != forwardReads * 2) {
-      std::cerr << "Error: File " << fastqPath2
-                << " does not contain the same number of reads as "
-                << fastqPath1 << std::endl;
-      exit(0);
+      output::error("File {} does not contain the same number of reads as {}",
+                    fastqPath2, fastqPath1);
+      exit(1);
     }
 
     // Shuffle reads together, so that pairs are next to each other

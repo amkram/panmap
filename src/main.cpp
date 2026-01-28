@@ -50,16 +50,15 @@ namespace fs = boost::filesystem;
 constexpr const char* VERSION = "0.1.0";
 constexpr const char* PROGRAM_NAME = "panmap";
 
-// ANSI codes
 namespace color {
-    constexpr const char* reset = "\033[0m";
-    constexpr const char* bold = "\033[1m";
-    constexpr const char* dim = "\033[2m";
-    constexpr const char* red = "\033[31m";
-    constexpr const char* green = "\033[32m";
-    constexpr const char* yellow = "\033[33m";
-    constexpr const char* blue = "\033[34m";
-    constexpr const char* cyan = "\033[36m";
+    inline const char* reset() { return output::style::reset(); }
+    inline const char* bold() { return output::style::bold(); }
+    inline const char* dim() { return output::style::dim(); }
+    inline const char* red() { return output::style::red(); }
+    inline const char* green() { return output::style::green(); }
+    inline const char* yellow() { return output::style::yellow(); }
+    inline const char* blue() { return output::style::blue(); }
+    inline const char* cyan() { return output::style::cyan(); }
 }
 
 enum class PipelineStage {
@@ -89,7 +88,6 @@ struct Config {
     int topN = 1;                 // Report top N placements
     bool dedupReads = false;      // Deduplicate reads before placement (for amplicon data)
     
-    // Aligner
     std::string aligner = "minimap2";
     
     // Index parameters
@@ -117,10 +115,11 @@ struct Config {
     // Diagnostic options
     int topPlacements = 0;        // Output top-N placements with all scores (0 = off)
     std::string debugNodeId;      // Output detailed metrics for this specific node
-    std::string compareNodes;     // Compare two nodes: "node1,node2" - compute metrics from scratch
     
-    // Verbosity
-    int verbosity = 1;            // 0=quiet, 1=normal, 2=verbose
+    // Output control
+    bool quiet = false;           // Minimal output (errors only)
+    bool verbose = false;         // Extra debug output
+    bool plain = false;           // Plain text output (no colors/unicode)
 };
 
 // Cap'n Proto reader with ZSTD decompression
@@ -316,340 +315,6 @@ void printNodeDiagnostics(panmapUtils::LiteNode* node,
               << "  genomeMag=" << genomeMag << "\n";
 }
 
-// ============================================================================
-// Node Comparison - Compute metrics from scratch for two nodes
-// ============================================================================
-struct NodeSeedAnalysis {
-    std::string nodeId;
-    std::string sequence;
-    absl::flat_hash_map<uint64_t, int64_t> seedCounts;  // hash -> count in genome
-    size_t uniqueSeedCount = 0;
-    int64_t totalSeedFrequency = 0;
-    double magnitudeSquared = 0.0;
-    
-    // Metrics vs reads
-    size_t intersectionCount = 0;
-    int64_t jaccardNumerator = 0;
-    int64_t weightedJaccardNumerator = 0;
-    double cosineNumerator = 0.0;
-    double rawScore = 0.0;
-};
-
-void compareNodesFromScratch(const Config& cfg, panmanUtils::Tree* T) {
-    // Parse node IDs from "node1,node2" format
-    auto commaPos = cfg.compareNodes.find(',');
-    if (commaPos == std::string::npos) {
-        logging::err("--compare-nodes requires format 'node1,node2'");
-        return;
-    }
-    std::string node1Id = cfg.compareNodes.substr(0, commaPos);
-    std::string node2Id = cfg.compareNodes.substr(commaPos + 1);
-    
-    logging::msg("=== COMPARING NODES FROM SCRATCH ===");
-    logging::msg("Node 1: {}", node1Id);
-    logging::msg("Node 2: {}", node2Id);
-    
-    // Get sequences
-    std::string seq1 = T->getStringFromReference(node1Id, false, true);
-    std::string seq2 = T->getStringFromReference(node2Id, false, true);
-    
-    if (seq1.empty()) {
-        logging::err("Node '{}' not found or has empty sequence", node1Id);
-        return;
-    }
-    if (seq2.empty()) {
-        logging::err("Node '{}' not found or has empty sequence", node2Id);
-        return;
-    }
-    
-    logging::msg("Node 1 sequence length: {} bp", seq1.size());
-    logging::msg("Node 2 sequence length: {} bp", seq2.size());
-    
-    // Compute syncmers for each genome
-    auto computeGenomeSyncmers = [&](const std::string& seq, NodeSeedAnalysis& analysis) {
-        auto syncmers = seeding::rollingSyncmers(seq, cfg.k, cfg.s, false, 0, false);
-        for (const auto& [hash, isReverse, isSyncmer, pos] : syncmers) {
-            analysis.seedCounts[hash]++;
-        }
-        for (const auto& [hash, count] : analysis.seedCounts) {
-            analysis.uniqueSeedCount++;
-            analysis.totalSeedFrequency += count;
-            analysis.magnitudeSquared += static_cast<double>(count) * count;
-        }
-    };
-    
-    NodeSeedAnalysis analysis1, analysis2;
-    analysis1.nodeId = node1Id;
-    analysis1.sequence = seq1;
-    analysis2.nodeId = node2Id;
-    analysis2.sequence = seq2;
-    
-    computeGenomeSyncmers(seq1, analysis1);
-    computeGenomeSyncmers(seq2, analysis2);
-    
-    logging::msg("Node 1 syncmers: {} unique, {} total frequency", 
-                analysis1.uniqueSeedCount, analysis1.totalSeedFrequency);
-    logging::msg("Node 2 syncmers: {} unique, {} total frequency", 
-                analysis2.uniqueSeedCount, analysis2.totalSeedFrequency);
-    
-    // Compute syncmers from reads
-    logging::msg("Computing syncmers from reads...");
-    absl::flat_hash_map<uint64_t, int64_t> readSeedCounts;
-    size_t readUniqueSeedCount = 0;
-    int64_t totalReadSeedFrequency = 0;
-    double readMagnitudeSquared = 0.0;
-    size_t totalReads = 0;
-    
-    auto processReads = [&](const std::string& path) {
-        std::ifstream file(path);
-        if (!file) return;
-        std::string line, seq;
-        int lineNum = 0;
-        while (std::getline(file, line)) {
-            lineNum++;
-            if (lineNum % 4 == 2) {  // Sequence line in FASTQ
-                seq = line;
-                auto syncmers = seeding::rollingSyncmers(seq, cfg.k, cfg.s, false, 0, false);
-                for (const auto& [hash, isReverse, isSyncmer, pos] : syncmers) {
-                    readSeedCounts[hash]++;
-                }
-                totalReads++;
-            }
-        }
-    };
-    
-    processReads(cfg.reads1);
-    if (!cfg.reads2.empty()) processReads(cfg.reads2);
-    
-    // Compute read statistics
-    for (const auto& [hash, count] : readSeedCounts) {
-        readUniqueSeedCount++;
-        totalReadSeedFrequency += count;
-        readMagnitudeSquared += static_cast<double>(count) * count;
-    }
-    double readMagnitude = std::sqrt(readMagnitudeSquared);
-    
-    logging::msg("Processed {} reads", totalReads);
-    logging::msg("Read syncmers: {} unique, {} total frequency, magnitude={:.2f}", 
-                readUniqueSeedCount, totalReadSeedFrequency, readMagnitude);
-    
-    // Compute metrics for each genome vs reads
-    auto computeMetrics = [&](NodeSeedAnalysis& analysis) {
-        for (const auto& [hash, readCount] : readSeedCounts) {
-            auto it = analysis.seedCounts.find(hash);
-            if (it != analysis.seedCounts.end()) {
-                int64_t genomeCount = it->second;
-                analysis.intersectionCount++;
-                analysis.jaccardNumerator++;  // Presence-based
-                analysis.weightedJaccardNumerator += std::min(readCount, genomeCount);
-                analysis.cosineNumerator += static_cast<double>(readCount) * genomeCount;
-                analysis.rawScore += static_cast<double>(readCount) / genomeCount;
-            }
-        }
-    };
-    
-    computeMetrics(analysis1);
-    computeMetrics(analysis2);
-    
-    // Compute final scores
-    auto computeScores = [&](const NodeSeedAnalysis& a) {
-        size_t genomeOnly = a.uniqueSeedCount - a.intersectionCount;
-        size_t totalUnion = readUniqueSeedCount + genomeOnly;
-        double jaccard = totalUnion > 0 ? static_cast<double>(a.jaccardNumerator) / totalUnion : 0.0;
-        
-        int64_t wjDenom = totalReadSeedFrequency + a.totalSeedFrequency - a.weightedJaccardNumerator;
-        double weightedJaccard = wjDenom > 0 ? static_cast<double>(a.weightedJaccardNumerator) / wjDenom : 0.0;
-        
-        double genomeMag = std::sqrt(a.magnitudeSquared);
-        double cosine = (readMagnitude > 0 && genomeMag > 0) ? 
-            a.cosineNumerator / (readMagnitude * genomeMag) : 0.0;
-        
-        return std::make_tuple(jaccard, weightedJaccard, cosine, a.rawScore);
-    };
-    
-    auto [jac1, wj1, cos1, raw1] = computeScores(analysis1);
-    auto [jac2, wj2, cos2, raw2] = computeScores(analysis2);
-    
-    // Print detailed comparison
-    std::cout << "\n========== DETAILED NODE COMPARISON ==========\n\n";
-    
-    std::cout << "GENOME STATISTICS:\n";
-    std::cout << "  " << std::setw(50) << std::left << "Metric" 
-              << std::setw(20) << std::right << node1Id.substr(0, 18)
-              << std::setw(20) << std::right << node2Id.substr(0, 18) 
-              << std::setw(15) << "Difference" << "\n";
-    std::cout << std::string(105, '-') << "\n";
-    
-    std::cout << "  " << std::setw(50) << std::left << "Sequence length (bp)"
-              << std::setw(20) << std::right << seq1.size()
-              << std::setw(20) << std::right << seq2.size()
-              << std::setw(15) << static_cast<int64_t>(seq2.size()) - static_cast<int64_t>(seq1.size()) << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Unique syncmers"
-              << std::setw(20) << std::right << analysis1.uniqueSeedCount
-              << std::setw(20) << std::right << analysis2.uniqueSeedCount
-              << std::setw(15) << static_cast<int64_t>(analysis2.uniqueSeedCount) - static_cast<int64_t>(analysis1.uniqueSeedCount) << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Total syncmer frequency"
-              << std::setw(20) << std::right << analysis1.totalSeedFrequency
-              << std::setw(20) << std::right << analysis2.totalSeedFrequency
-              << std::setw(15) << analysis2.totalSeedFrequency - analysis1.totalSeedFrequency << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Magnitude squared"
-              << std::setw(20) << std::right << std::fixed << std::setprecision(1) << analysis1.magnitudeSquared
-              << std::setw(20) << std::right << analysis2.magnitudeSquared
-              << std::setw(15) << analysis2.magnitudeSquared - analysis1.magnitudeSquared << "\n";
-    
-    std::cout << "\nREAD-GENOME INTERSECTION:\n";
-    std::cout << "  " << std::setw(50) << std::left << "Intersection count (seeds in both)"
-              << std::setw(20) << std::right << analysis1.intersectionCount
-              << std::setw(20) << std::right << analysis2.intersectionCount
-              << std::setw(15) << static_cast<int64_t>(analysis2.intersectionCount) - static_cast<int64_t>(analysis1.intersectionCount) << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Weighted Jaccard numerator (Σmin)"
-              << std::setw(20) << std::right << analysis1.weightedJaccardNumerator
-              << std::setw(20) << std::right << analysis2.weightedJaccardNumerator
-              << std::setw(15) << analysis2.weightedJaccardNumerator - analysis1.weightedJaccardNumerator << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Cosine numerator (dot product)"
-              << std::setw(20) << std::right << std::fixed << std::setprecision(0) << analysis1.cosineNumerator
-              << std::setw(20) << std::right << analysis2.cosineNumerator
-              << std::setw(15) << analysis2.cosineNumerator - analysis1.cosineNumerator << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Raw score (Σ readCount/genomeCount)"
-              << std::setw(20) << std::right << std::fixed << std::setprecision(0) << analysis1.rawScore
-              << std::setw(20) << std::right << analysis2.rawScore
-              << std::setw(15) << analysis2.rawScore - analysis1.rawScore << "\n";
-    
-    std::cout << "\nFINAL SCORES:\n";
-    std::cout << std::fixed << std::setprecision(8);
-    std::cout << "  " << std::setw(50) << std::left << "Jaccard"
-              << std::setw(20) << std::right << jac1
-              << std::setw(20) << std::right << jac2
-              << std::setw(15) << (jac1 > jac2 ? "← WINNER" : (jac2 > jac1 ? "WINNER →" : "TIE")) << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Weighted Jaccard"
-              << std::setw(20) << std::right << wj1
-              << std::setw(20) << std::right << wj2
-              << std::setw(15) << (wj1 > wj2 ? "← WINNER" : (wj2 > wj1 ? "WINNER →" : "TIE")) << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Cosine"
-              << std::setw(20) << std::right << cos1
-              << std::setw(20) << std::right << cos2
-              << std::setw(15) << (cos1 > cos2 ? "← WINNER" : (cos2 > cos1 ? "WINNER →" : "TIE")) << "\n";
-              
-    std::cout << "  " << std::setw(50) << std::left << "Raw"
-              << std::setw(20) << std::right << std::fixed << std::setprecision(0) << raw1
-              << std::setw(20) << std::right << raw2
-              << std::setw(15) << (raw1 > raw2 ? "← WINNER" : (raw2 > raw1 ? "WINNER →" : "TIE")) << "\n";
-    
-    // Analyze seed differences
-    std::cout << "\nSEED ANALYSIS:\n";
-    
-    // Seeds unique to each genome
-    size_t onlyIn1 = 0, onlyIn2 = 0, inBoth = 0;
-    for (const auto& [hash, count] : analysis1.seedCounts) {
-        if (analysis2.seedCounts.count(hash)) inBoth++;
-        else onlyIn1++;
-    }
-    for (const auto& [hash, count] : analysis2.seedCounts) {
-        if (!analysis1.seedCounts.count(hash)) onlyIn2++;
-    }
-    
-    std::cout << "  Seeds only in " << node1Id.substr(0, 30) << ": " << onlyIn1 << "\n";
-    std::cout << "  Seeds only in " << node2Id.substr(0, 30) << ": " << onlyIn2 << "\n";
-    std::cout << "  Seeds in both genomes: " << inBoth << "\n";
-    
-    // Seeds that match reads, unique to each genome
-    size_t matchOnlyIn1 = 0, matchOnlyIn2 = 0, matchInBoth = 0;
-    int64_t readFreqMatchOnlyIn1 = 0, readFreqMatchOnlyIn2 = 0;
-    
-    for (const auto& [hash, readCount] : readSeedCounts) {
-        bool in1 = analysis1.seedCounts.count(hash) > 0;
-        bool in2 = analysis2.seedCounts.count(hash) > 0;
-        if (in1 && in2) matchInBoth++;
-        else if (in1) { matchOnlyIn1++; readFreqMatchOnlyIn1 += readCount; }
-        else if (in2) { matchOnlyIn2++; readFreqMatchOnlyIn2 += readCount; }
-    }
-    
-    std::cout << "\n  Read seeds matching ONLY " << node1Id.substr(0, 30) << ": " << matchOnlyIn1 
-              << " (total read freq: " << readFreqMatchOnlyIn1 << ")\n";
-    std::cout << "  Read seeds matching ONLY " << node2Id.substr(0, 30) << ": " << matchOnlyIn2 
-              << " (total read freq: " << readFreqMatchOnlyIn2 << ")\n";
-    std::cout << "  Read seeds matching BOTH genomes: " << matchInBoth << "\n";
-    
-    // Detailed analysis of high-frequency unique seeds
-    std::cout << "\n=== HIGH-FREQUENCY UNIQUE SEED DETAILS ===\n";
-    
-    // Build hash-to-position maps from genome sequences
-    absl::flat_hash_map<uint64_t, std::vector<std::pair<int32_t, bool>>> hashToPos1, hashToPos2;
-    auto syncmers1 = seeding::rollingSyncmers(seq1, cfg.k, cfg.s, false, 0, false);
-    auto syncmers2 = seeding::rollingSyncmers(seq2, cfg.k, cfg.s, false, 0, false);
-    for (const auto& [hash, isReverse, isSyncmer, pos] : syncmers1) {
-        hashToPos1[hash].push_back({pos, isReverse});
-    }
-    for (const auto& [hash, isReverse, isSyncmer, pos] : syncmers2) {
-        hashToPos2[hash].push_back({pos, isReverse});
-    }
-    
-    // Collect unique seeds with read frequencies for node2
-    std::vector<std::tuple<uint64_t, int64_t, int64_t>> node2UniqueSeeds;  // hash, readFreq, genomeCount
-    for (const auto& [hash, readCount] : readSeedCounts) {
-        bool in1 = analysis1.seedCounts.count(hash) > 0;
-        bool in2 = analysis2.seedCounts.count(hash) > 0;
-        if (!in1 && in2) {
-            node2UniqueSeeds.push_back({hash, readCount, analysis2.seedCounts.at(hash)});
-        }
-    }
-    // Sort by read frequency descending
-    std::sort(node2UniqueSeeds.begin(), node2UniqueSeeds.end(),
-              [](const auto& a, const auto& b) { return std::get<1>(a) > std::get<1>(b); });
-    
-    std::cout << "\nSeeds unique to " << node2Id.substr(0, 30) << " that match reads (sorted by freq):\n";
-    std::cout << std::setw(8) << "ReadFreq" << "  " << std::setw(8) << "GenomeN" 
-              << "  " << std::setw(10) << "Position" << "  " << "Kmer sequence\n";
-    std::cout << std::string(90, '-') << "\n";
-    
-    for (size_t i = 0; i < std::min(node2UniqueSeeds.size(), size_t(30)); i++) {
-        auto [hash, readFreq, genomeCount] = node2UniqueSeeds[i];
-        auto& positions = hashToPos2[hash];
-        for (auto& [pos, isRev] : positions) {
-            std::string kmer = seq2.substr(pos, cfg.k);
-            std::cout << std::setw(8) << readFreq << "  " << std::setw(8) << genomeCount
-                      << "  " << std::setw(10) << pos << (isRev ? "R" : "F") << "  " << kmer << "\n";
-        }
-    }
-    
-    // Also show unique seeds for node1
-    std::vector<std::tuple<uint64_t, int64_t, int64_t>> node1UniqueSeeds;
-    for (const auto& [hash, readCount] : readSeedCounts) {
-        bool in1 = analysis1.seedCounts.count(hash) > 0;
-        bool in2 = analysis2.seedCounts.count(hash) > 0;
-        if (in1 && !in2) {
-            node1UniqueSeeds.push_back({hash, readCount, analysis1.seedCounts.at(hash)});
-        }
-    }
-    std::sort(node1UniqueSeeds.begin(), node1UniqueSeeds.end(),
-              [](const auto& a, const auto& b) { return std::get<1>(a) > std::get<1>(b); });
-    
-    std::cout << "\nSeeds unique to " << node1Id.substr(0, 30) << " that match reads (sorted by freq):\n";
-    std::cout << std::setw(8) << "ReadFreq" << "  " << std::setw(8) << "GenomeN" 
-              << "  " << std::setw(10) << "Position" << "  " << "Kmer sequence\n";
-    std::cout << std::string(90, '-') << "\n";
-    
-    for (size_t i = 0; i < std::min(node1UniqueSeeds.size(), size_t(30)); i++) {
-        auto [hash, readFreq, genomeCount] = node1UniqueSeeds[i];
-        auto& positions = hashToPos1[hash];
-        for (auto& [pos, isRev] : positions) {
-            std::string kmer = seq1.substr(pos, cfg.k);
-            std::cout << std::setw(8) << readFreq << "  " << std::setw(8) << genomeCount
-                      << "  " << std::setw(10) << pos << (isRev ? "R" : "F") << "  " << kmer << "\n";
-        }
-    }
-    
-    std::cout << "\n==============================================\n\n";
-}
-
 std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     logging::msg("Loading index...");
     IndexReader reader(cfg.index, cfg.threads);
@@ -680,167 +345,47 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     
     logging::msg("Placement complete in {}ms", elapsed.count());
     
-    // Check if any metric found a placement (RAW and Cosine are always computed)
-    if (result.bestRawSeedMatchNodeId.empty() && result.bestCosineNodeId.empty()) {
+    // Check if any metric found a placement
+    if (result.bestLogRawNodeId.empty() && result.bestLogCosineNodeId.empty()) {
         logging::warn("No placement found");
         return std::nullopt;
     }
     
-    // Report results (use RAW as primary metric now that WJ is disabled)
-    logging::msg("{}Best placement:{} {} (RAW score: {:.1f}, Cosine: {:.4f})", 
-                color::green, color::reset,
-                result.bestRawSeedMatchNodeId, 
-                result.bestRawSeedMatchScore,
-                result.bestCosineScore);
+    // Report results
+    logging::msg("{}Best placement:{} {} (LogRaw: {:.6f}, LogCosine: {:.6f})", 
+                color::green(), color::reset(),
+                result.bestLogRawNodeId, 
+                result.bestLogRawScore,
+                result.bestLogCosineScore);
     
     // Leave-one-out validation: compare to expected parent
     if (!cfg.removeNodeId.empty() && !expectedParentNode.empty()) {
-        // Compute tree distances for all metrics
-        int distWeightedJaccard = computeTreeDistance(tree, result.bestWeightedJaccardNodeId, expectedParentNode);
-        int distCosine = computeTreeDistance(tree, result.bestCosineNodeId, expectedParentNode);
-        int distJaccard = computeTreeDistance(tree, result.bestJaccardNodeId, expectedParentNode);
-        int distRaw = computeTreeDistance(tree, result.bestRawSeedMatchNodeId, expectedParentNode);
-        
-        bool correctWeightedJaccard = (result.bestWeightedJaccardNodeId == expectedParentNode);
-        bool correctCosine = (result.bestCosineNodeId == expectedParentNode);
-        bool correctJaccard = (result.bestJaccardNodeId == expectedParentNode);
-        bool correctRaw = (result.bestRawSeedMatchNodeId == expectedParentNode);
-        bool correctContainment = (result.bestContainmentNodeId == expectedParentNode);
-        bool correctWeightedContainment = (result.bestWeightedContainmentNodeId == expectedParentNode);
-        bool correctLogRaw = (result.bestLogRawNodeId == expectedParentNode);
-        bool correctLogCosine = (result.bestLogCosineNodeId == expectedParentNode);
-        bool correctAdjCosine = (result.bestAdjCosineNodeId == expectedParentNode);
-        bool correctAdjRaw = (result.bestAdjRawNodeId == expectedParentNode);
-        bool correctIdfCosine = (result.bestIdfCosineNodeId == expectedParentNode);
-        bool correctCovCosine = (result.bestCovCosineNodeId == expectedParentNode);
-        bool correctCapCosine = (result.bestCapCosineNodeId == expectedParentNode);
-        bool correctCapLogCosine = (result.bestCapLogCosineNodeId == expectedParentNode);
-        bool correctSigCosine = (result.bestSigCosineNodeId == expectedParentNode);
-        
-        int distContainment = computeTreeDistance(tree, result.bestContainmentNodeId, expectedParentNode);
-        int distWeightedContainment = computeTreeDistance(tree, result.bestWeightedContainmentNodeId, expectedParentNode);
         int distLogRaw = computeTreeDistance(tree, result.bestLogRawNodeId, expectedParentNode);
         int distLogCosine = computeTreeDistance(tree, result.bestLogCosineNodeId, expectedParentNode);
-        int distAdjCosine = computeTreeDistance(tree, result.bestAdjCosineNodeId, expectedParentNode);
-        int distAdjRaw = computeTreeDistance(tree, result.bestAdjRawNodeId, expectedParentNode);
-        int distIdfCosine = computeTreeDistance(tree, result.bestIdfCosineNodeId, expectedParentNode);
-        int distCovCosine = computeTreeDistance(tree, result.bestCovCosineNodeId, expectedParentNode);
-        int distCapCosine = computeTreeDistance(tree, result.bestCapCosineNodeId, expectedParentNode);
-        int distCapLogCosine = computeTreeDistance(tree, result.bestCapLogCosineNodeId, expectedParentNode);
-        int distSigCosine = computeTreeDistance(tree, result.bestSigCosineNodeId, expectedParentNode);
         
-        logging::msg("{}VALIDATION RESULTS:{}", color::cyan, color::reset);
+        bool correctLogRaw = (result.bestLogRawNodeId == expectedParentNode);
+        bool correctLogCosine = (result.bestLogCosineNodeId == expectedParentNode);
+        
+        logging::msg("{}VALIDATION RESULTS:{}", color::cyan(), color::reset());
         logging::msg("  Expected parent: {}", expectedParentNode);
-        logging::msg("  Weighted Jaccard: {} {} (dist: {})", 
-                    result.bestWeightedJaccardNodeId,
-                    correctWeightedJaccard ? color::green : color::yellow,
-                    correctWeightedJaccard ? "✓" : "✗",
-                    distWeightedJaccard);
-        logging::msg("  Cosine:           {} {}{} (dist: {})", 
-                    result.bestCosineNodeId,
-                    correctCosine ? color::green : color::yellow,
-                    correctCosine ? "✓" : "✗",
-                    distCosine);
-        logging::msg("  Jaccard:          {} {}{} (dist: {})", 
-                    result.bestJaccardNodeId,
-                    correctJaccard ? color::green : color::yellow,
-                    correctJaccard ? "✓" : "✗",
-                    distJaccard);
-        logging::msg("  Raw:              {} {}{} (dist: {})", 
-                    result.bestRawSeedMatchNodeId,
-                    correctRaw ? color::green : color::yellow,
-                    correctRaw ? "✓" : "✗",
-                    distRaw);
-        logging::msg("  Containment:      {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestContainmentNodeId,
-                    correctContainment ? color::green : color::yellow,
-                    correctContainment ? "✓" : "✗",
-                    distContainment,
-                    result.bestContainmentScore);
-        logging::msg("  Weighted Contain: {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestWeightedContainmentNodeId,
-                    correctWeightedContainment ? color::green : color::yellow,
-                    correctWeightedContainment ? "✓" : "✗",
-                    distWeightedContainment,
-                    result.bestWeightedContainmentScore);
-        logging::msg("  LogRAW:           {} {}{} (dist: {}, score: {:.6f})", 
+        logging::msg("  LogRAW:    {} {}{}{} (dist: {}, score: {:.6f})", 
                     result.bestLogRawNodeId,
-                    correctLogRaw ? color::green : color::yellow,
-                    correctLogRaw ? "✓" : "✗",
+                    correctLogRaw ? color::green() : color::yellow(),
+                    correctLogRaw ? output::box::check() : output::box::cross(),
+                    color::reset(),
                     distLogRaw,
                     result.bestLogRawScore);
-        logging::msg("  LogCosine:        {} {}{} (dist: {}, score: {:.6f})", 
+        logging::msg("  LogCosine: {} {}{}{} (dist: {}, score: {:.6f})", 
                     result.bestLogCosineNodeId,
-                    correctLogCosine ? color::green : color::yellow,
-                    correctLogCosine ? "✓" : "✗",
+                    correctLogCosine ? color::green() : color::yellow(),
+                    correctLogCosine ? output::box::check() : output::box::cross(),
+                    color::reset(),
                     distLogCosine,
                     result.bestLogCosineScore);
-        logging::msg("  AdjCosine:        {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestAdjCosineNodeId,
-                    correctAdjCosine ? color::green : color::yellow,
-                    correctAdjCosine ? "✓" : "✗",
-                    distAdjCosine,
-                    result.bestAdjCosineScore);
-        logging::msg("  AdjRaw:           {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestAdjRawNodeId,
-                    correctAdjRaw ? color::green : color::yellow,
-                    correctAdjRaw ? "✓" : "✗",
-                    distAdjRaw,
-                    result.bestAdjRawScore);
-        logging::msg("  IdfCosine:        {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestIdfCosineNodeId,
-                    correctIdfCosine ? color::green : color::yellow,
-                    correctIdfCosine ? "✓" : "✗",
-                    distIdfCosine,
-                    result.bestIdfCosineScore);
-        logging::msg("  CovCosine:        {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestCovCosineNodeId,
-                    correctCovCosine ? color::green : color::yellow,
-                    correctCovCosine ? "✓" : "✗",
-                    distCovCosine,
-                    result.bestCovCosineScore);
-        logging::msg("  CapCosine:        {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestCapCosineNodeId,
-                    correctCapCosine ? color::green : color::yellow,
-                    correctCapCosine ? "✓" : "✗",
-                    distCapCosine,
-                    result.bestCapCosineScore);
-        logging::msg("  CapLogCosine:     {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestCapLogCosineNodeId,
-                    correctCapLogCosine ? color::green : color::yellow,
-                    correctCapLogCosine ? "✓" : "✗",
-                    distCapLogCosine,
-                    result.bestCapLogCosineScore);
-        logging::msg("  SigCosine:        {} {}{} (dist: {}, score: {:.6f})", 
-                    result.bestSigCosineNodeId,
-                    correctSigCosine ? color::green : color::yellow,
-                    correctSigCosine ? "✓" : "✗",
-                    distSigCosine,
-                    result.bestSigCosineScore);
         
         // Print to stdout for easy parsing (TSV format)
         std::cout << "REMOVED_NODE\t" << cfg.removeNodeId << "\n";
         std::cout << "EXPECTED_PARENT\t" << expectedParentNode << "\n";
-        std::cout << "WEIGHTED_JACCARD\t" << result.bestWeightedJaccardNodeId 
-                  << "\t" << (correctWeightedJaccard ? "true" : "false") 
-                  << "\t" << distWeightedJaccard << "\n";
-        std::cout << "COSINE\t" << result.bestCosineNodeId 
-                  << "\t" << (correctCosine ? "true" : "false") 
-                  << "\t" << distCosine << "\n";
-        std::cout << "JACCARD\t" << result.bestJaccardNodeId 
-                  << "\t" << (correctJaccard ? "true" : "false") 
-                  << "\t" << distJaccard << "\n";
-        std::cout << "RAW\t" << result.bestRawSeedMatchNodeId 
-                  << "\t" << (correctRaw ? "true" : "false") 
-                  << "\t" << distRaw << "\n";
-        std::cout << "CONTAINMENT\t" << result.bestContainmentNodeId 
-                  << "\t" << (correctContainment ? "true" : "false") 
-                  << "\t" << distContainment 
-                  << "\t" << result.bestContainmentScore << "\n";
-        std::cout << "WEIGHTED_CONTAINMENT\t" << result.bestWeightedContainmentNodeId 
-                  << "\t" << (correctWeightedContainment ? "true" : "false") 
-                  << "\t" << distWeightedContainment 
-                  << "\t" << result.bestWeightedContainmentScore << "\n";
         std::cout << "LOGRAW\t" << result.bestLogRawNodeId 
                   << "\t" << (correctLogRaw ? "true" : "false") 
                   << "\t" << distLogRaw 
@@ -849,43 +394,15 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                   << "\t" << (correctLogCosine ? "true" : "false") 
                   << "\t" << distLogCosine 
                   << "\t" << result.bestLogCosineScore << "\n";
-        std::cout << "ADJCOSINE\t" << result.bestAdjCosineNodeId 
-                  << "\t" << (correctAdjCosine ? "true" : "false") 
-                  << "\t" << distAdjCosine 
-                  << "\t" << result.bestAdjCosineScore << "\n";
-        std::cout << "ADJRAW\t" << result.bestAdjRawNodeId 
-                  << "\t" << (correctAdjRaw ? "true" : "false") 
-                  << "\t" << distAdjRaw 
-                  << "\t" << result.bestAdjRawScore << "\n";
-        std::cout << "IDFCOSINE\t" << result.bestIdfCosineNodeId 
-                  << "\t" << (correctIdfCosine ? "true" : "false") 
-                  << "\t" << distIdfCosine 
-                  << "\t" << result.bestIdfCosineScore << "\n";
-        std::cout << "COVCOSINE\t" << result.bestCovCosineNodeId 
-                  << "\t" << (correctCovCosine ? "true" : "false") 
-                  << "\t" << distCovCosine 
-                  << "\t" << result.bestCovCosineScore << "\n";
-        std::cout << "CAPCOSINE\t" << result.bestCapCosineNodeId 
-                  << "\t" << (correctCapCosine ? "true" : "false") 
-                  << "\t" << distCapCosine 
-                  << "\t" << result.bestCapCosineScore << "\n";
-        std::cout << "CAPLOGCOSINE\t" << result.bestCapLogCosineNodeId 
-                  << "\t" << (correctCapLogCosine ? "true" : "false") 
-                  << "\t" << distCapLogCosine 
-                  << "\t" << result.bestCapLogCosineScore << "\n";
-        std::cout << "SIGCOSINE\t" << result.bestSigCosineNodeId 
-                  << "\t" << (correctSigCosine ? "true" : "false") 
-                  << "\t" << distSigCosine 
-                  << "\t" << result.bestSigCosineScore << "\n";
     }
     
-    // Diagnostic output: top placements with all metric components
+    // Diagnostic output: top placements
     if (cfg.topPlacements > 0 || !cfg.debugNodeId.empty()) {
         std::cout << "\n=== DIAGNOSTIC OUTPUT ===\n";
         std::cout << "Read Statistics:\n";
         std::cout << "  Unique seeds: " << result.readUniqueSeedCount << "\n";
         std::cout << "  Total seed frequency: " << result.totalReadSeedFrequency << "\n";
-        std::cout << "  Read magnitude: " << result.readMagnitude << "\n\n";
+        std::cout << "  Read magnitude (log): " << result.readMagnitude << "\n\n";
         
         // Collect all nodes with non-zero scores and sort by each metric
         std::vector<panmapUtils::LiteNode*> scoredNodes;
@@ -983,9 +500,8 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement)
     }
     
     auto* T = &tg->trees[0];
-    // Use RAW score for placement - it correctly weights by seed specificity
-    // (Jaccard/WJ fail because they treat all matching seeds equally regardless of frequency)
-    std::string nodeId = placement.bestRawSeedMatchNodeId;
+    // Use LogRaw as primary placement metric
+    std::string nodeId = placement.bestLogRawNodeId;
     
     if (nodeId.empty()) {
         logging::err("No best node ID from placement - cannot align");
@@ -1124,13 +640,13 @@ int runGenotyping(const Config& cfg) {
 // ============================================================================
 
 void printUsage() {
-    std::cout << color::bold << "panmap" << color::reset << " v" << VERSION << "\n";
+    std::cout << color::bold() << "panmap" << color::reset() << " v" << VERSION << "\n";
     std::cout << "Pangenome-based sequence placement, alignment, and genotyping\n\n";
     
-    std::cout << color::bold << "USAGE:" << color::reset << "\n";
+    std::cout << color::bold() << "USAGE:" << color::reset() << "\n";
     std::cout << "  panmap [OPTIONS] <panman> [reads1.fq] [reads2.fq]\n\n";
     
-    std::cout << color::bold << "EXAMPLES:" << color::reset << "\n";
+    std::cout << color::bold() << "EXAMPLES:" << color::reset() << "\n";
     std::cout << "  # Full pipeline (place -> align -> genotype)\n";
     std::cout << "  panmap genomes.panman reads_R1.fq reads_R2.fq -o sample1\n\n";
     
@@ -1143,13 +659,13 @@ void printUsage() {
     std::cout << "  # Metagenomic mode (report top 10 placements)\n";
     std::cout << "  panmap genomes.panman metagenome.fq --meta --top 10\n\n";
     
-    std::cout << color::bold << "PIPELINE STAGES:" << color::reset << "\n";
+    std::cout << color::bold() << "PIPELINE STAGES:" << color::reset() << "\n";
     std::cout << "  index     Build/verify index only\n";
     std::cout << "  place     Stop after placement\n";
     std::cout << "  align     Stop after alignment (BAM output)\n";
     std::cout << "  genotype  Full pipeline through variant calling (default)\n\n";
     
-    std::cout << color::bold << "OPTIONS:" << color::reset << "\n";
+    std::cout << color::bold() << "OPTIONS:" << color::reset() << "\n";
 }
 
 int main(int argc, char** argv) {
@@ -1162,8 +678,9 @@ int main(int argc, char** argv) {
         ("version,V", "Show version")
         ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Number of threads")
         ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
-        ("verbose,v", po::bool_switch(), "Verbose output")
-        ("quiet,q", po::bool_switch(), "Suppress non-essential output");
+        ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
+        ("quiet,q", po::bool_switch(&cfg.quiet), "Suppress non-essential output")
+        ("no-color", po::bool_switch(&cfg.plain), "Disable colors and unicode");
     
     po::options_description pipeline("Pipeline Control");
     pipeline.add_options()
@@ -1210,8 +727,6 @@ int main(int argc, char** argv) {
             "Output top-N placements with all scores (for diagnostics)")
         ("debug-node", po::value<std::string>(&cfg.debugNodeId),
             "Output detailed metrics for a specific node ID")
-        ("compare-nodes", po::value<std::string>(&cfg.compareNodes),
-            "Compare two nodes from scratch: 'node1,node2' (compute seeds/metrics independently)")
         ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
     
     po::options_description hidden("Hidden");
@@ -1236,11 +751,23 @@ int main(int argc, char** argv) {
             .options(all).positional(pos).run(), vm);
         po::notify(vm);
     } catch (const po::error& e) {
-        std::cerr << color::red << "Error: " << e.what() << color::reset << "\n\n";
+        // Check for NO_COLOR env var
+        const char* noColorEnv = std::getenv("NO_COLOR");
+        bool plainMode = vm.count("no-color") > 0 || (noColorEnv && noColorEnv[0] != '\0');
+        output::init(false, false, plainMode);
+        output::error("{}", e.what());
+        std::cerr << "\n";
         printUsage();
         std::cout << visible << "\n";
         return 1;
     }
+    
+    // Check for NO_COLOR environment variable (no-color.org standard)
+    const char* noColorEnv = std::getenv("NO_COLOR");
+    if (noColorEnv && noColorEnv[0] != '\0') cfg.plain = true;
+    
+    // Initialize output early for help/version formatting
+    output::init(cfg.quiet, cfg.verbose, cfg.plain);
     
     // Handle help/version
     if (vm.count("help") || argc == 1) {
@@ -1256,7 +783,7 @@ int main(int argc, char** argv) {
     
     // Validate required args
     if (cfg.panman.empty()) {
-        std::cerr << color::red << "Error: PanMAN file required" << color::reset << "\n";
+        output::error("PanMAN file required");
         return 1;
     }
     
@@ -1267,7 +794,7 @@ int main(int argc, char** argv) {
     else if (stopStr == "align") cfg.stopAfter = PipelineStage::Align;
     else if (stopStr == "genotype") cfg.stopAfter = PipelineStage::Genotype;
     else {
-        std::cerr << color::red << "Error: Invalid stage '" << stopStr << "'" << color::reset << "\n";
+        output::error("Invalid stage '{}'", stopStr);
         return 1;
     }
     
@@ -1308,9 +835,8 @@ int main(int argc, char** argv) {
         }
     }
     
-    // Verbosity
-    if (vm["verbose"].as<bool>()) cfg.verbosity = 2;
-    if (vm["quiet"].as<bool>()) cfg.verbosity = 0;
+    // Install signal handlers for graceful interruption
+    signals::install_handlers();
     
     // Initialize threading
     tbb::global_control tbb_ctl(tbb::global_control::max_allowed_parallelism, cfg.threads);
@@ -1320,71 +846,46 @@ int main(int argc, char** argv) {
     // ========================================================================
     
     auto printConfigSummary = [&]() {
-        if (cfg.verbosity == 0) return;  // Skip in quiet mode
+        if (cfg.quiet) return;  // Skip in quiet mode
         if (cfg.dumpRandomNode || !cfg.dumpNodeId.empty()) return;  // Skip for utility modes
         
-        // Build stage string
+        // Build stage string using arrow from box chars
+        std::string arrow = output::box::arrow();
         std::string stageStr;
         switch (cfg.stopAfter) {
             case PipelineStage::Index:    stageStr = "index"; break;
-            case PipelineStage::Place:    stageStr = "index → place"; break;
-            case PipelineStage::Align:    stageStr = "index → place → align"; break;
-            case PipelineStage::Genotype: stageStr = "index → place → align → genotype"; break;
+            case PipelineStage::Place:    stageStr = fmt::format("index {} place", arrow); break;
+            case PipelineStage::Align:    stageStr = fmt::format("index {} place {} align", arrow, arrow); break;
+            case PipelineStage::Genotype: stageStr = fmt::format("index {} place {} align {} genotype", arrow, arrow, arrow); break;
             default:                      stageStr = "full"; break;
         }
         
-        // Header
-        std::cout << color::bold << color::cyan << "┌─ panmap " << color::reset 
-                  << color::dim << "v" << VERSION << color::reset 
-                  << color::bold << color::cyan << " ─";
-        for (int i = 0; i < 50; i++) std::cout << "─";
-        std::cout << "┐" << color::reset << "\n";
-        
-        // Core inputs
-        std::cout << color::bold << color::cyan << "│" << color::reset << " "
-                  << color::bold << "Input:  " << color::reset 
-                  << color::yellow << cfg.panman << color::reset;
+        // Build input string
+        std::string inputStr = cfg.panman;
         if (!cfg.reads1.empty()) {
-            std::cout << "  " << color::dim << "+" << color::reset << " " << cfg.reads1;
-            if (!cfg.reads2.empty()) std::cout << ", " << cfg.reads2;
+            inputStr += "  + " + cfg.reads1;
+            if (!cfg.reads2.empty()) inputStr += ", " + cfg.reads2;
         }
-        std::cout << "\n";
         
-        // Output prefix
-        std::cout << color::bold << color::cyan << "│" << color::reset << " "
-                  << color::bold << "Output: " << color::reset 
-                  << color::green << cfg.output << color::reset << ".*\n";
-        
-        // Pipeline stages
-        std::cout << color::bold << color::cyan << "│" << color::reset << " "
-                  << color::bold << "Stages: " << color::reset << stageStr << "\n";
-        
-        // Options line (compact)
-        std::cout << color::bold << color::cyan << "│" << color::reset << " "
-                  << color::bold << "Config: " << color::reset
-                  << color::dim << "threads=" << color::reset << cfg.threads
-                  << color::dim << "  k=" << color::reset << cfg.k
-                  << color::dim << " s=" << color::reset << cfg.s
-                  << color::dim << " l=" << color::reset << cfg.l;
-        
-        // Optional flags (only show if non-default)
+        // Build config string
+        std::string configStr = fmt::format("threads={}  k={} s={} l={}", 
+                                            cfg.threads, cfg.k, cfg.s, cfg.l);
         if (cfg.metagenomic) {
-            std::cout << color::dim << "  meta" << color::reset 
-                      << color::dim << "(top=" << color::reset << cfg.topN 
-                      << color::dim << ")" << color::reset;
+            configStr += fmt::format("  meta(top={})", cfg.topN);
         }
         if (cfg.forceReindex) {
-            std::cout << "  " << color::yellow << "reindex" << color::reset;
+            configStr += "  reindex";
         }
         if (cfg.aligner != "minimap2") {
-            std::cout << color::dim << "  aligner=" << color::reset << cfg.aligner;
+            configStr += "  aligner=" + cfg.aligner;
         }
-        std::cout << "\n";
         
-        // Footer
-        std::cout << color::bold << color::cyan << "└";
-        for (int i = 0; i < 68; i++) std::cout << "─";
-        std::cout << "┘" << color::reset << "\n\n";
+        output::print_header("panmap", VERSION);
+        output::print_row("Input ", inputStr);
+        output::print_row("Output", cfg.output + ".*");
+        output::print_row("Stages", stageStr);
+        output::print_row("Config", configStr);
+        output::print_footer();
     };
     
     printConfigSummary();
@@ -1419,69 +920,79 @@ int main(int argc, char** argv) {
             return 0;
         }
         
-        // Utility: compare two nodes from scratch
-        if (!cfg.compareNodes.empty()) {
-            if (cfg.reads1.empty()) {
-                logging::err("--compare-nodes requires reads to be specified");
-                return 1;
-            }
-            auto tg = loadPanMAN(cfg.panman);
-            compareNodesFromScratch(cfg, &tg->trees[0]);
-            return 0;
-        }
-        
         // Stage 1: Index
         if (!buildIndex(cfg)) return 1;
+        if (signals::check_interrupted()) return 130;  // Standard exit code for SIGINT
         if (cfg.stopAfter == PipelineStage::Index) {
-            logging::msg("{}Done.{} Index ready: {}", color::green, color::reset, cfg.index);
+            output::done("Index ready: " + cfg.index);
+            output::info("");
+            output::info("{}Next steps:{}", color::dim(), color::reset());
+            output::info("  {} panmap {} reads.fq", color::dim(), cfg.panman);
             return 0;
         }
         
         // Check for reads
         if (cfg.reads1.empty()) {
-            logging::msg("No reads provided. Index is ready.");
+            output::info("No reads provided. Index is ready.");
+            output::info("");
+            output::info("{}Next steps:{}", color::dim(), color::reset());
+            output::info("  {} panmap {} reads.fq", color::dim(), cfg.panman);
             return 0;
         }
         
         // Stage 2: Placement
         auto placement = runPlacement(cfg);
+        if (signals::check_interrupted()) return 130;
         if (!placement) {
-            logging::err("Placement failed");
+            output::error("Placement failed");
             return 1;
         }
         if (cfg.stopAfter == PipelineStage::Place) {
-            logging::msg("{}Done.{} Placement: {}.placement.tsv", 
-                        color::green, color::reset, cfg.output);
+            output::done("Placement: " + cfg.output + ".placement.tsv");
+            output::info("");
+            output::info("{}Next steps:{}", color::dim(), color::reset());
+            output::info("  {} Continue to alignment: panmap {} {} --stop align", 
+                        color::dim(), cfg.panman, cfg.reads1);
             return 0;
         }
         
         // Stage 3: Alignment
         if (runAlignment(cfg, *placement) != 0) {
-            logging::err("Alignment failed");
+            output::error("Alignment failed");
             return 1;
         }
+        if (signals::check_interrupted()) return 130;
         if (cfg.stopAfter == PipelineStage::Align) {
-            logging::msg("{}Done.{} Alignment: {}.bam", 
-                        color::green, color::reset, cfg.output);
+            output::done("Alignment: " + cfg.output + ".bam");
+            output::info("");
+            output::info("{}Next steps:{}", color::dim(), color::reset());
+            output::info("  {} View: samtools view {}.bam | head", color::dim(), cfg.output);
+            output::info("  {} Stats: samtools flagstat {}.bam", color::dim(), cfg.output);
             return 0;
         }
         
         // Stage 4: Genotyping
         if (runGenotyping(cfg) != 0) {
-            logging::err("Genotyping failed");
+            output::error("Genotyping failed");
             return 1;
         }
+        if (signals::check_interrupted()) return 130;
         
-        logging::msg("{}Pipeline complete.{}", color::green, color::reset);
-        logging::msg("  Placement:  {}.placement.tsv", cfg.output);
-        logging::msg("  Reference:  {}.ref.fa", cfg.output);
-        logging::msg("  Alignment:  {}.bam", cfg.output);
-        logging::msg("  Variants:   {}.vcf", cfg.output);
+        output::info("");
+        output::info("{}Pipeline complete.{}", color::green(), color::reset());
+        output::info("  Placement:  {}.placement.tsv", cfg.output);
+        output::info("  Reference:  {}.ref.fa", cfg.output);
+        output::info("  Alignment:  {}.bam", cfg.output);
+        output::info("  Variants:   {}.vcf", cfg.output);
+        output::info("");
+        output::info("{}Next steps:{}", color::dim(), color::reset());
+        output::info("  {} View variants: bcftools view {}.vcf | head", color::dim(), cfg.output);
+        output::info("  {} View alignment: samtools tview {}.bam {}.ref.fa", color::dim(), cfg.output, cfg.output);
         
         return 0;
         
     } catch (const std::exception& e) {
-        logging::err("Fatal error: {}", e.what());
+        output::error("Fatal error: {}", e.what());
         return 1;
     }
 }

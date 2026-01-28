@@ -34,20 +34,9 @@ class LiteNode {
     float jaccardScore = 0.0f;
     float weightedJaccardScore = 0.0f;
     float cosineScore = 0.0f;
-    float hitsScore = 0.0f;
     float rawSeedMatchScore = 0.0f;
-    float jaccardPresenceScore = 0.0f;
-    float containmentScore = 0.0f;
-    float weightedContainmentScore = 0.0f;
-    float logRawScore = 0.0f;  // Log-scaled, coverage-robust metric
-    float logCosineScore = 0.0f;  // Log-scaled cosine similarity
-    float adjCosineScore = 0.0f;  // N-adjusted cosine (penalizes incomplete genomes)
-    float adjRawScore = 0.0f;     // N-adjusted RAW (penalizes incomplete genomes)
-    float idfCosineScore = 0.0f;  // IDF-weighted cosine (upweights rare seeds)
-    float covCosineScore = 0.0f;  // Coverage-weighted cosine (penalizes singletons & over-rep)
-    float capCosineScore = 0.0f;  // Capped cosine (caps read freqs at 100)
-    float capLogCosineScore = 0.0f;  // Capped log cosine (caps read freqs at 100 before log)
-    float sigCosineScore = 0.0f;  // Sigmoid-scaled cosine (adaptive to median seed freq)
+    float logRawScore = 0.0f;
+    float logCosineScore = 0.0f;
     
     // Metric components for diagnostics (only populated when topPlacements > 0)
     int64_t jaccardNumerator = 0;
@@ -275,11 +264,6 @@ struct NewSyncmerRange {
 
 struct BlockSequences {
   std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
-
-  // uint64_t firstBlockOn;
-  // uint64_t lastBlockOn;
-  // Coordinate firstNucCoordinate;
-  // Coordinate lastNucCoordinate;
   std::vector<char> blockExists;
   std::vector<char> blockStrand;
   uint64_t totalLength;
@@ -298,7 +282,7 @@ struct BlockSequences {
       const auto& curBlock = tree->blocks[i];
       int32_t primaryBlockId = ((int32_t)curBlock.primaryBlockId);
       if (i != static_cast<size_t>(primaryBlockId)) {
-        std::cerr << "primaryBlockId: " << primaryBlockId << " i: " << i << std::endl;
+        output::error("Block ID mismatch: primaryBlockId={} i={}", primaryBlockId, i);
         std::exit(1);
       }
       maxBlockId = std::max(maxBlockId, primaryBlockId);
@@ -310,7 +294,6 @@ struct BlockSequences {
             endFlag = true;
             break;
           }
-          // len++;
           const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
           sequence[primaryBlockId].push_back({nucleotide, {}});
           totalLength++;
@@ -547,7 +530,7 @@ struct GlobalCoords {
 
   Coordinate getCoordFromScalar(uint64_t scalar, bool blockStrand = true) const {
     if (scalar >= scalarToCoord.size()) {
-      std::cerr << "In getCoordFromScalar(), scalar " << scalar << " is out of range" << std::endl;
+      output::error("In getCoordFromScalar(), scalar {} is out of range", scalar);
       exit(1);
     }
     Coordinate forwardCoord = scalarToCoord[scalar];
@@ -714,7 +697,7 @@ struct GlobalCoords {
         }
         return;
       } else {
-        std::cerr << "stepping right over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
+        output::error("Stepping right over more than one block: {} to {}", originalBlockId, coord.primaryBlockId);
         std::exit(1);
       }
     } else {
@@ -729,7 +712,7 @@ struct GlobalCoords {
         }
         return;
       } else {
-        std::cerr << "stepping left over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
+        output::error("Stepping left over more than one block: {} to {}", originalBlockId, coord.primaryBlockId);
         std::exit(1);
       }
     }
@@ -752,7 +735,7 @@ struct GlobalCoords {
           coord = blockEdgeCoords[coord.primaryBlockId].start;
         }
       } else {
-        std::cerr << "stepping left over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
+        output::error("Stepping left over more than one block: {} to {}", originalBlockId, coord.primaryBlockId);
         std::exit(1);
       }
     } else {
@@ -766,7 +749,7 @@ struct GlobalCoords {
           coord = blockEdgeCoords[originalBlockId - 1].start;
         }
       } else {
-        std::cerr << "stepping right over more than one block from " << originalBlockId << " to " << coord.primaryBlockId << std::endl;
+        output::error("Stepping right over more than one block: {} to {}", originalBlockId, coord.primaryBlockId);
         std::exit(1);
       }
     }
