@@ -43,10 +43,6 @@ extern "C" {
 namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
-// ============================================================================
-// Version and Constants
-// ============================================================================
-
 constexpr const char* VERSION = "0.1.0";
 constexpr const char* PROGRAM_NAME = "panmap";
 
@@ -120,6 +116,9 @@ struct Config {
     bool quiet = false;           // Minimal output (errors only)
     bool verbose = false;         // Extra debug output
     bool plain = false;           // Plain text output (no colors/unicode)
+    
+    // Consensus options
+    bool impute = false;          // Impute N's from parent sequence (ignore _->N mutations)
 };
 
 // Cap'n Proto reader with ZSTD decompression
@@ -155,9 +154,9 @@ private:
     }
 };
 
-// ============================================================================
+// ==================
 // Utility Functions
-// ============================================================================
+// ==================
 
 std::unique_ptr<panmanUtils::TreeGroup> loadPanMAN(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
@@ -188,8 +187,423 @@ std::string getRandomNodeId(panmanUtils::Tree* T, int seed) {
     return ids[std::uniform_int_distribution<>(0, ids.size()-1)(gen)];
 }
 
-void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std::string& path) {
-    std::string seq = T->getStringFromReference(nodeId, false);
+std::string sanitizeFilename(const std::string& s) {
+    std::string result = s;
+    for (char& c : result) {
+        if (c == '/' || c == '|' || c == ' ' || c == ':' || c == '\\') c = '_';
+    }
+    return result;
+}
+
+/**
+ * Get sequence from a node, optionally skipping N mutations.
+ * Copied from panmanUtils::Tree::getStringFromReference with minimal edits.
+ * When skipNMutations=true, any mutation to 'N' is ignored during sequence construction.
+ */
+std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string& reference, bool aligned, bool skipNMutations) {
+    using namespace panmanUtils;
+    
+    Node* referenceNode = nullptr;
+    for(auto u: T->allNodes) {
+        if(u.first == reference) {
+            referenceNode = u.second;
+            break;
+        }
+    }
+    if(referenceNode == nullptr) {
+        return "Error: Reference sequence with matching name not found!";
+    }
+
+    std::vector< Node* > path;
+    Node* it = referenceNode;
+    while(it != T->root) {
+        path.push_back(it);
+        it = it->parent;
+    }
+    path.push_back(T->root);
+
+    // List of blocks. Each block has a nucleotide list. Along with each nucleotide is a gap list.
+    std::vector< std::pair< std::vector< std::pair< char, std::vector< char > > >, std::vector< std::vector< std::pair< char, std::vector< char > > > > > > sequence(T->blocks.size() + 1);
+    std::vector< std::pair< bool, std::vector< bool > > > blockExists(T->blocks.size() + 1, {false, {}});
+    blockStrand_t blockStrand(T->blocks.size() + 1, {true, {}});
+
+    // Assigning block gaps
+    for(size_t i = 0; i < T->blockGaps.blockPosition.size(); i++) {
+        sequence[T->blockGaps.blockPosition[i]].second.resize(T->blockGaps.blockGapLength[i]);
+        blockExists[T->blockGaps.blockPosition[i]].second.resize(T->blockGaps.blockGapLength[i], false);
+        blockStrand[T->blockGaps.blockPosition[i]].second.resize(T->blockGaps.blockGapLength[i], true);
+    }
+
+    int32_t maxBlockId = 0;
+
+    // Create block consensus sequences
+    for(size_t i = 0; i < T->blocks.size(); i++) {
+        int32_t primaryBlockId = ((int32_t)T->blocks[i].primaryBlockId);
+        int32_t secondaryBlockId = ((int32_t)T->blocks[i].secondaryBlockId);
+        maxBlockId = std::max(maxBlockId, primaryBlockId);
+
+        for(size_t j = 0; j < T->blocks[i].consensusSeq.size(); j++) {
+            bool endFlag = false;
+            for(size_t k = 0; k < 8; k++) {
+                const int nucCode = (((T->blocks[i].consensusSeq[j]) >> (4*(7 - k))) & 15);
+                if(nucCode == 0) {
+                    endFlag = true;
+                    break;
+                }
+                const char nucleotide = getNucleotideFromCode(nucCode);
+                if(secondaryBlockId != -1) {
+                    sequence[primaryBlockId].second[secondaryBlockId].push_back({nucleotide, {}});
+                } else {
+                    sequence[primaryBlockId].first.push_back({nucleotide, {}});
+                }
+            }
+            if(endFlag) break;
+        }
+        // End character to incorporate for gaps at the end
+        if(secondaryBlockId != -1) {
+            sequence[primaryBlockId].second[secondaryBlockId].push_back({'x', {}});
+        } else {
+            sequence[primaryBlockId].first.push_back({'x', {}});
+        }
+    }
+
+    sequence.resize(maxBlockId + 1);
+    blockExists.resize(maxBlockId + 1);
+    blockStrand.resize(maxBlockId + 1);
+
+    // Assigning nucleotide gaps
+    for(size_t i = 0; i < T->gaps.size(); i++) {
+        int32_t primaryBId = (T->gaps[i].primaryBlockId);
+        int32_t secondaryBId = (T->gaps[i].secondaryBlockId);
+        for(size_t j = 0; j < T->gaps[i].nucPosition.size(); j++) {
+            int len = T->gaps[i].nucGapLength[j];
+            int pos = T->gaps[i].nucPosition[j];
+            if(secondaryBId != -1) {
+                sequence[primaryBId].second[secondaryBId][pos].second.resize(len, '-');
+            } else {
+                sequence[primaryBId].first[pos].second.resize(len, '-');
+            }
+        }
+    }
+
+    // Get all blocks on the path
+    for(auto node = path.rbegin(); node != path.rend(); node++) {
+        for(auto mutation: (*node)->blockMutation) {
+            int primaryBlockId = mutation.primaryBlockId;
+            int secondaryBlockId = mutation.secondaryBlockId;
+            int type = (mutation.blockMutInfo);
+            bool inversion = mutation.inversion;
+
+            if(type == BlockMutationType::BI) {
+                if(secondaryBlockId != -1) {
+                    blockExists[primaryBlockId].second[secondaryBlockId] = true;
+                    blockStrand[primaryBlockId].second[secondaryBlockId] = !inversion;
+                } else {
+                    blockExists[primaryBlockId].first = true;
+                    blockStrand[primaryBlockId].first = !inversion;
+                }
+            } else {
+                if(inversion) {
+                    if(secondaryBlockId != -1) {
+                        blockStrand[primaryBlockId].second[secondaryBlockId] = !blockStrand[primaryBlockId].second[secondaryBlockId];
+                    } else {
+                        blockStrand[primaryBlockId].first = !blockStrand[primaryBlockId].first;
+                    }
+                } else {
+                    if(secondaryBlockId != -1) {
+                        blockExists[primaryBlockId].second[secondaryBlockId] = false;
+                        blockStrand[primaryBlockId].second[secondaryBlockId] = true;
+                    } else {
+                        blockExists[primaryBlockId].first = false;
+                        blockStrand[primaryBlockId].first = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply nucleotide mutations
+    for(auto node = path.rbegin(); node != path.rend(); node++) {
+        for(size_t i = 0; i < (*node)->nucMutation.size(); i++) {
+            int32_t primaryBlockId = (*node)->nucMutation[i].primaryBlockId;
+            int32_t secondaryBlockId = (*node)->nucMutation[i].secondaryBlockId;
+
+            if(secondaryBlockId != -1) {
+                if(!blockExists[primaryBlockId].second[secondaryBlockId]) continue;
+            } else {
+                if(!blockExists[primaryBlockId].first) continue;
+            }
+
+            int32_t nucPosition = (*node)->nucMutation[i].nucPosition;
+            int32_t nucGapPosition = (*node)->nucMutation[i].nucGapPosition;
+            uint32_t type = ((*node)->nucMutation[i].mutInfo & 0x7);
+            char newVal = '-';
+
+            if(type < 3) {
+                int len = (((*node)->nucMutation[i].mutInfo) >> 4);
+
+                if(type == NucMutationType::NS) {
+                    if(secondaryBlockId != -1) {
+                        if(nucGapPosition != -1) {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition+j] = newVal;
+                            }
+                        } else {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
+                            }
+                        }
+                    } else {
+                        if(nucGapPosition != -1) {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].first[nucPosition].second[nucGapPosition+j] = newVal;
+                            }
+                        } else {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].first[nucPosition+j].first = newVal;
+                            }
+                        }
+                    }
+                } else if(type == NucMutationType::NI) {
+                    if(secondaryBlockId != -1) {
+                        if(nucGapPosition != -1) {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition+j] = newVal;
+                            }
+                        } else {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = newVal;
+                            }
+                        }
+                    } else {
+                        if(nucGapPosition != -1) {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].first[nucPosition].second[nucGapPosition+j] = newVal;
+                            }
+                        } else {
+                            for(int j = 0; j < len; j++) {
+                                newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> (4*(5-j))) & 0xF);
+                                if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                                sequence[primaryBlockId].first[nucPosition+j].first = newVal;
+                            }
+                        }
+                    }
+                } else if(type == NucMutationType::ND) {
+                    if(secondaryBlockId != -1) {
+                        if(nucGapPosition != -1) {
+                            for(int j = 0; j < len; j++) {
+                                sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition+j] = '-';
+                            }
+                        } else {
+                            for(int j = 0; j < len; j++) {
+                                sequence[primaryBlockId].second[secondaryBlockId][nucPosition + j].first = '-';
+                            }
+                        }
+                    } else {
+                        if(nucGapPosition != -1) {
+                            for(int j = 0; j < len; j++) {
+                                sequence[primaryBlockId].first[nucPosition].second[nucGapPosition+j] = '-';
+                            }
+                        } else {
+                            for(int j = 0; j < len; j++) {
+                                sequence[primaryBlockId].first[nucPosition+j].first = '-';
+                            }
+                        }
+                    }
+                }
+            } else {
+                if(type == NucMutationType::NSNPS) {
+                    newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> 20) & 0xF);
+                    if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                    if(secondaryBlockId != -1) {
+                        if(nucGapPosition != -1) {
+                            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = newVal;
+                        } else {
+                            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = newVal;
+                        }
+                    } else {
+                        if(nucGapPosition != -1) {
+                            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = newVal;
+                        } else {
+                            sequence[primaryBlockId].first[nucPosition].first = newVal;
+                        }
+                    }
+                } else if(type == NucMutationType::NSNPI) {
+                    newVal = getNucleotideFromCode((((*node)->nucMutation[i].nucs) >> 20) & 0xF);
+                    if(skipNMutations && newVal == 'N') continue;  // SKIP N MUTATIONS
+                    if(secondaryBlockId != -1) {
+                        if(nucGapPosition != -1) {
+                            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = newVal;
+                        } else {
+                            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = newVal;
+                        }
+                    } else {
+                        if(nucGapPosition != -1) {
+                            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = newVal;
+                        } else {
+                            sequence[primaryBlockId].first[nucPosition].first = newVal;
+                        }
+                    }
+                } else if(type == NucMutationType::NSNPD) {
+                    if(secondaryBlockId != -1) {
+                        if(nucGapPosition != -1) {
+                            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = '-';
+                        } else {
+                            sequence[primaryBlockId].second[secondaryBlockId][nucPosition].first = '-';
+                        }
+                    } else {
+                        if(nucGapPosition != -1) {
+                            sequence[primaryBlockId].first[nucPosition].second[nucGapPosition] = '-';
+                        } else {
+                            sequence[primaryBlockId].first[nucPosition].first = '-';
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if(!aligned && T->rotationIndexes.find(reference) != T->rotationIndexes.end() && T->rotationIndexes[reference] != 0) {
+        int ctr = -1, rotInd = 0;
+        for(size_t i = 0; i < blockExists.size(); i++) {
+            if(blockExists[i].first) ctr++;
+            if(ctr == T->rotationIndexes[reference]) { rotInd = i; break; }
+        }
+        rotate(sequence.begin(), sequence.begin() + rotInd, sequence.end());
+        rotate(blockExists.begin(), blockExists.begin() + rotInd, blockExists.end());
+        rotate(blockStrand.begin(), blockStrand.begin() + rotInd, blockStrand.end());
+    }
+
+    if(T->sequenceInverted.find(reference) != T->sequenceInverted.end() && T->sequenceInverted[reference]) {
+        reverse(sequence.begin(), sequence.end());
+        reverse(blockExists.begin(), blockExists.end());
+        reverse(blockStrand.begin(), blockStrand.end());
+    }
+
+    std::string sequenceString;
+    for(size_t i = 0; i < sequence.size(); i++) {
+        // Gap blocks (currently not used for SARS-CoV-2)
+        for(size_t j = 0; j < sequence[i].second.size(); j++) {
+            if(blockExists[i].second[j]) {
+                if(blockStrand[i].second[j]) {
+                    for(size_t k = 0; k < sequence[i].second[j].size(); k++) {
+                        for(size_t w = 0; w < sequence[i].second[j][k].second.size(); w++) {
+                            if(sequence[i].second[j][k].second[w] == 'x' || sequence[i].second[j][k].second[w] == '-') {
+                                if(aligned) sequenceString+='-';
+                            } else {
+                                sequenceString += sequence[i].second[j][k].second[w];
+                            }
+                        }
+                        if(sequence[i].second[j][k].first == 'x' || sequence[i].second[j][k].first == '-') {
+                            if(aligned) sequenceString+='-';
+                        } else {
+                            sequenceString += sequence[i].second[j][k].first;
+                        }
+                    }
+                } else {
+                    for(size_t k = sequence[i].second[j].size()-1; k + 1 > 0; k--) {
+                        if(sequence[i].second[j][k].first == 'x' || sequence[i].second[j][k].first == '-') {
+                            if(aligned) sequenceString+='-';
+                        } else {
+                            sequenceString += sequence[i].second[j][k].first;
+                        }
+                        for(size_t w = sequence[i].second[j][k].second.size() - 1; w + 1 > 0; w--) {
+                            if(sequence[i].second[j][k].second[w] == 'x' || sequence[i].second[j][k].second[w] == '-') {
+                                if(aligned) sequenceString+='-';
+                            } else {
+                                sequenceString += sequence[i].second[j][k].second[w];
+                            }
+                        }
+                    }
+                }
+            } else {
+                if(aligned) {
+                    for(size_t k = 0; k < sequence[i].second[j].size(); k++) {
+                        for(size_t w = 0; w < sequence[i].second[j][k].second.size(); w++) sequenceString+='-';
+                        sequenceString+='-';
+                    }
+                }
+            }
+        }
+
+        // Main block
+        if(blockExists[i].first) {
+            if(blockStrand[i].first) {
+                for(size_t j = 0; j < sequence[i].first.size(); j++) {
+                    for(size_t k = 0; k < sequence[i].first[j].second.size(); k++) {
+                        if(sequence[i].first[j].second[k] == 'x' || sequence[i].first[j].second[k] == '-') {
+                            if(aligned) sequenceString += '-';
+                        } else {
+                            sequenceString += sequence[i].first[j].second[k];
+                        }
+                    }
+                    if(sequence[i].first[j].first == 'x' || sequence[i].first[j].first == '-') {
+                        if(aligned) sequenceString += '-';
+                    } else {
+                        sequenceString += sequence[i].first[j].first;
+                    }
+                }
+            } else {
+                for(size_t j = sequence[i].first.size()-1; j + 1 > 0; j--) {
+                    if(sequence[i].first[j].first == 'x' || sequence[i].first[j].first == '-') {
+                        if(aligned) sequenceString += '-';
+                    } else {
+                        sequenceString += getComplementCharacter(sequence[i].first[j].first);
+                    }
+                    for(size_t k = sequence[i].first[j].second.size() - 1; k+1 > 0; k--) {
+                        if(sequence[i].first[j].second[k] == 'x' || sequence[i].first[j].second[k] == '-') {
+                            if(aligned) sequenceString += '-';
+                        } else {
+                            sequenceString += getComplementCharacter(sequence[i].first[j].second[k]);
+                        }
+                    }
+                }
+            }
+        } else {
+            if(aligned) {
+                for(size_t j = 0; j < sequence[i].first.size(); j++) {
+                    for(size_t k = 0; k < sequence[i].first[j].second.size(); k++) sequenceString+='-';
+                    sequenceString+='-';
+                }
+            }
+        }
+    }
+
+    int offset = 0;
+    if(!aligned && T->circularSequences.find(reference) != T->circularSequences.end()) {
+        offset = T->circularSequences[reference];
+    }
+    if(offset == 0) {
+        return sequenceString;
+    } else {
+        return sequenceString.substr(offset) + sequenceString.substr(0,offset);
+    }
+}
+
+std::string getNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, bool impute = false) {
+    if (impute) {
+        return getStringFromReferenceSkipN(T, nodeId, false, true);
+    }
+    return T->getStringFromReference(nodeId, false, true);
+}
+
+void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std::string& path, bool impute = false) {
+    std::string seq = getNodeSequence(T, nodeId, impute);
+    
     std::ofstream out(path);
     if (!out) throw std::runtime_error("Cannot write: " + path);
     
@@ -200,17 +614,7 @@ void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std
     logging::msg("Saved {} ({} bp) to {}", nodeId, seq.size(), path);
 }
 
-std::string sanitizeFilename(const std::string& s) {
-    std::string result = s;
-    for (char& c : result) {
-        if (c == '/' || c == '|' || c == ' ' || c == ':' || c == '\\') c = '_';
-    }
-    return result;
-}
-
-// ============================================================================
-// Pipeline Steps
-// ============================================================================
+/* INDEXING */
 
 bool buildIndex(const Config& cfg) {
     if (fs::exists(cfg.index) && !cfg.forceReindex) {
@@ -226,8 +630,6 @@ bool buildIndex(const Config& cfg) {
     }
     
     index_single_mode::IndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false, cfg.flankMaskBp);
-    // Always use buildIndexParallel - it handles single-threaded mode efficiently
-    // using the delta-based approach (much more memory efficient than old buildIndex)
     builder.buildIndexParallel(cfg.threads);
     builder.writeIndex(cfg.index, cfg.threads);
     
@@ -484,7 +886,6 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     }
     
     if (cfg.metagenomic && cfg.topN > 1) {
-        // TODO: Report top N placements for metagenomic mode
         logging::msg("Top {} placements written to {}", cfg.topN, outPath);
     }
     
@@ -509,7 +910,10 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement)
     }
     
     // Get reference sequence (like working commit: panmapUtils::getStringFromReference)
-    std::string bestMatchSequence = T->getStringFromReference(nodeId, false, true);
+    // If impute is enabled, skip N mutations during sequence construction
+    std::string bestMatchSequence = cfg.impute 
+        ? getStringFromReferenceSkipN(T, nodeId, false, true)
+        : T->getStringFromReference(nodeId, false, true);
     
     if (bestMatchSequence.empty()) {
         logging::err("Empty sequence for node '{}' - cannot align", nodeId);
@@ -642,95 +1046,66 @@ int runGenotyping(const Config& cfg) {
 void printUsage() {
     std::cout << color::bold() << "panmap" << color::reset() << " v" << VERSION << "\n";
     std::cout << "Pangenome-based sequence placement, alignment, and genotyping\n\n";
-    
-    std::cout << color::bold() << "USAGE:" << color::reset() << "\n";
-    std::cout << "  panmap [OPTIONS] <panman> [reads1.fq] [reads2.fq]\n\n";
-    
-    std::cout << color::bold() << "EXAMPLES:" << color::reset() << "\n";
-    std::cout << "  # Full pipeline (place -> align -> genotype)\n";
-    std::cout << "  panmap genomes.panman reads_R1.fq reads_R2.fq -o sample1\n\n";
-    
-    std::cout << "  # Placement only\n";
-    std::cout << "  panmap genomes.panman reads.fq --stop place\n\n";
-    
-    std::cout << "  # Build index only\n";
-    std::cout << "  panmap genomes.panman --stop index\n\n";
-    
-    std::cout << "  # Metagenomic mode (report top 10 placements)\n";
-    std::cout << "  panmap genomes.panman metagenome.fq --meta --top 10\n\n";
-    
-    std::cout << color::bold() << "PIPELINE STAGES:" << color::reset() << "\n";
-    std::cout << "  index     Build/verify index only\n";
-    std::cout << "  place     Stop after placement\n";
-    std::cout << "  align     Stop after alignment (BAM output)\n";
-    std::cout << "  genotype  Full pipeline through variant calling (default)\n\n";
-    
-    std::cout << color::bold() << "OPTIONS:" << color::reset() << "\n";
+    std::cout << color::bold() << "Usage:" << color::reset() 
+              << "  panmap [options] <panman> [reads.fq] [reads2.fq]\n";
+    std::cout << color::bold() << "Output:" << color::reset()
+              << " <prefix>.vcf, <prefix>.bam, <prefix>.placement.tsv\n"
+              << "        (prefix defaults to reads filename, or use -o)\n\n";
 }
 
 int main(int argc, char** argv) {
     Config cfg;
     
-    // Define options
-    po::options_description general("General");
-    general.add_options()
-        ("help,h", "Show this help message")
+    // Define options - organized into visible (common) and advanced groups
+    
+    // === Common options (shown in --help) ===
+    po::options_description visible("Options");
+    visible.add_options()
+        ("help,h", "Show help (--help-all for more)")
+        ("help-all", "Show all options")
         ("version,V", "Show version")
-        ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Number of threads")
         ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
-        ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
-        ("quiet,q", po::bool_switch(&cfg.quiet), "Suppress non-essential output")
-        ("no-color", po::bool_switch(&cfg.plain), "Disable colors and unicode");
-    
-    po::options_description pipeline("Pipeline Control");
-    pipeline.add_options()
+        ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
         ("stop", po::value<std::string>()->default_value("genotype"),
-            "Stop after stage: index|place|align|genotype")
+            "Stop after: index|place|align|genotype")
         ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode")
-        ("top", po::value<int>(&cfg.topN)->default_value(1), 
-            "Report top N placements (with --meta)")
-        ("dedup", po::bool_switch(&cfg.dedupReads), 
-            "Deduplicate reads before placement (recommended for amplicon data)");
-    
-    po::options_description indexing("Index Options");
-    indexing.add_options()
-        ("index,i", po::value<std::string>(&cfg.index), "Index file path")
-        ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force index rebuild")
-        ("kmer,k", po::value<int>(&cfg.k)->default_value(29), "Syncmer parameter k")
-        ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer parameter s")
-        ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Use l consecutive syncmers as seeds")
-        ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), 
-            "Hard mask first/last N bp at genome ends (ignore all seeds)")
-        ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0.001),
-            "Mask top N fraction of seeds by frequency (0=disabled, 0.001=top 0.1%, default)")
-        ("min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0),
-            "Min avg Phred quality for seed k-mer region (0=disabled, 20=Q20 filter)")
-        ("trim-start", po::value<int>(&cfg.trimStart)->default_value(0),
-            "Trim N bases from start of each read before seeding (for primer removal)")
-        ("trim-end", po::value<int>(&cfg.trimEnd)->default_value(0),
-            "Trim N bases from end of each read before seeding (for primer removal)");
-    
-    po::options_description alignment("Alignment Options");
-    alignment.add_options()
+        ("top", po::value<int>(&cfg.topN)->default_value(1), "Top N placements (with --meta)")
         ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"),
-            "Aligner: minimap2 (default) or bwa");
+            "Aligner: minimap2|bwa")
+        ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
+        ("quiet,q", po::bool_switch(&cfg.quiet), "Quiet output")
+        ("no-color", po::bool_switch(&cfg.plain), "No colors");
     
-    po::options_description utility("Utility");
-    utility.add_options()
-        ("dump-random-node", po::bool_switch(&cfg.dumpRandomNode),
-            "Dump random node sequence to FASTA")
-        ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId),
-            "Dump specific node sequence to FASTA")
-        ("remove-node", po::value<std::string>(&cfg.removeNodeId),
-            "Remove node before placement (for leave-one-out validation)")
-        ("top-placements", po::value<int>(&cfg.topPlacements)->default_value(0),
-            "Output top-N placements with all scores (for diagnostics)")
-        ("debug-node", po::value<std::string>(&cfg.debugNodeId),
-            "Output detailed metrics for a specific node ID")
+    // === Advanced options (shown only in --help-all) ===
+    po::options_description advanced("Advanced");
+    advanced.add_options()
+        ("index,i", po::value<std::string>(&cfg.index), "Index file path")
+        ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
+        ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
+        ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations)")
+        ("kmer,k", po::value<int>(&cfg.k)->default_value(29), "Syncmer k")
+        ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
+        ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Syncmers per seed")
+        ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
+        ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0),
+            "Mask top seed fraction")
+        ("min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0),
+            "Min seed quality")
+        ("trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")
+        ("trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end");
+    
+    po::options_description developer("Developer");
+    developer.add_options()
+        ("dump-random-node", po::bool_switch(&cfg.dumpRandomNode), "Dump random node FASTA")
+        ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
+        ("remove-node", po::value<std::string>(&cfg.removeNodeId), "Exclude node")
+        ("top-placements", po::value<int>(&cfg.topPlacements)->default_value(0), "Show top N scores")
+        ("debug-node", po::value<std::string>(&cfg.debugNodeId), "Debug node metrics")
         ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
     
-    po::options_description hidden("Hidden");
-    hidden.add_options()
+    // Positional arguments (always hidden)
+    po::options_description positional;
+    positional.add_options()
         ("panman", po::value<std::string>(&cfg.panman), "")
         ("reads1", po::value<std::string>(&cfg.reads1), "")
         ("reads2", po::value<std::string>(&cfg.reads2), "");
@@ -738,11 +1113,12 @@ int main(int argc, char** argv) {
     po::positional_options_description pos;
     pos.add("panman", 1).add("reads1", 1).add("reads2", 1);
     
-    po::options_description all;
-    all.add(general).add(pipeline).add(indexing).add(alignment).add(utility).add(hidden);
+    // Combine option groups
+    po::options_description all;  // For parsing
+    all.add(visible).add(advanced).add(developer).add(positional);
     
-    po::options_description visible;
-    visible.add(general).add(pipeline).add(indexing).add(alignment).add(utility);
+    po::options_description visible_all;  // For --help-all
+    visible_all.add(visible).add(advanced).add(developer);
     
     // Parse
     po::variables_map vm;
@@ -773,6 +1149,12 @@ int main(int argc, char** argv) {
     if (vm.count("help") || argc == 1) {
         printUsage();
         std::cout << visible << "\n";
+        return 0;
+    }
+    
+    if (vm.count("help-all")) {
+        printUsage();
+        std::cout << visible_all << "\n";
         return 0;
     }
     
@@ -903,7 +1285,7 @@ int main(int argc, char** argv) {
             std::string outPath = cfg.output.empty() 
                 ? cfg.panman + ".random." + sanitizeFilename(nodeId) + ".fa"
                 : cfg.output;
-            saveNodeSequence(&tg->trees[0], nodeId, outPath);
+            saveNodeSequence(&tg->trees[0], nodeId, outPath, cfg.impute);
             std::cout << nodeId << "\n";
             return 0;
         }
@@ -915,7 +1297,7 @@ int main(int argc, char** argv) {
             std::string outPath = cfg.output.empty()
                 ? cfg.panman + "." + sanitizeFilename(cfg.dumpNodeId) + ".fa"
                 : cfg.output;
-            saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath);
+            saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath, cfg.impute);
             std::cout << cfg.dumpNodeId << "\n";
             return 0;
         }

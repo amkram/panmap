@@ -249,11 +249,13 @@ void createBam(
     bam_file = hts_open(bamFileName.c_str(), "wb");
     if (!bam_file) {
       output::error("Failed to open output BAM file: {}", bamFileName);
-      hts_close(bam_file);
+      return;
     }
     // Write BAM header
-    else if (sam_hdr_write(bam_file, header) < 0) {
+    if (sam_hdr_write(bam_file, header) < 0) {
       output::error("Failed to write BAM header");
+      hts_close(bam_file);
+      return;
     }
   }
 
@@ -273,17 +275,14 @@ void createBam(
       // Write to bam file
       if (bam_file && bam_write1(bam_file->fp.bgzf, bamRecords[i]) < 0) {
         output::error("Failed to write BAM record");
-        bam_hdr_destroy(header);
-        hts_close(bam_file);
       }
     }
   }
 
   if (bam_file) {
     logging::info("Wrote bam files to {}", bamFileName);
+    hts_close(bam_file);
   }
-  /// Converted to Bam
-  hts_close(bam_file);
   for (int i = 0; i < samAlignments.size(); i++) {
     free(samAlignments[i]);
   }
