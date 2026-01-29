@@ -1580,6 +1580,10 @@ void mgsr::extractReadSequences(
     // //Shuffle reads together, so that pairs are next to eatch other
     // perfect_shuffle(readSequences);
   }
+
+  for (size_t i = 0; i < readSequences.size(); ++i) {
+    std::cerr << "Group " << i << " has " << readSequences[i].size() << " reads" << std::endl;
+  }
 }
 
 mgsr::RDGNode* mgsr::ReadDebruijnGraph::makeNewNode(size_t hash) {
