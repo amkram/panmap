@@ -1280,6 +1280,16 @@ static size_t getBruteForceKminmerOverlapCount(
   return binaryOverlapKminmerCount;
 }
 
+
+bool isCanonical(char nuc) {
+  return (nuc == 'A' || nuc == 'T' || nuc == 'C' || nuc == 'G');
+}
+
+bool canonicalToAmb(char oldNuc, char newNuc) {
+  return (newNuc != '-' && newNuc != 'x' && 
+          isCanonical(oldNuc) && !isCanonical(newNuc));
+}
+
 static void applyMutations (
   panmanUtils::Node *node,
   size_t dfsIndex,
@@ -1293,7 +1303,8 @@ static void applyMutations (
   std::vector<std::pair<uint64_t, bool>>& invertedBlocksBacktracks,
   std::vector<uint32_t>& potentialSyncmerDeletions,
   const std::vector<char>& oldBlockExists,
-  const std::vector<char>& oldBlockStrand
+  const std::vector<char>& oldBlockStrand,
+  bool imputeAmb
 ) {
   std::vector<char>& blockExists = blockSequences.blockExists;
   std::vector<char>& blockStrand = blockSequences.blockStrand;
@@ -1363,6 +1374,8 @@ static void applyMutations (
       const char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
 
       if (oldNuc == newNuc) continue;
+      if (imputeAmb && canonicalToAmb(oldNuc, newNuc)) continue;
+
       blockSequences.setSequenceBase(pos, newNuc);
       nucMutationRecord.emplace_back(pos, oldNuc, newNuc);
 
@@ -3530,7 +3543,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   potentialSyncmerDeletions.reserve(node->nucMutation.size() * 6);
   localMutationRanges.reserve(node->blockMutation.size() + node->nucMutation.size() * 6);
   gapRunUpdates.reserve(node->nucMutation.size() * 6 + node->blockMutation.size() * 10);
-  applyMutations(node, dfsIndex, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, potentialSyncmerDeletions, blockExistsDelayed, blockStrandDelayed);
+  applyMutations(node, dfsIndex, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, potentialSyncmerDeletions, blockExistsDelayed, blockStrandDelayed, imputeAmb);
   blockMutationRecord.shrink_to_fit();
   nucMutationRecord.shrink_to_fit();
   potentialSyncmerDeletions.shrink_to_fit();
