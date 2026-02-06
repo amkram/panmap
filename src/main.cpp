@@ -745,6 +745,7 @@ int main(int argc, char *argv[]) {
     po::options_description mgsr_opts("MGSR options");
     mgsr_opts.add_options()
         ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
+        ("impute", "Impute ambiguous bases during indexing")
         ("mgsr-index,m", po::value<std::string>(), "Path to precomputed MGSR index")
         ("mgsr-l", po::value<int>()->default_value(3), "Length of k-min-mers (i.e. l seeds per kminmer)")
         ("mgsr-k", po::value<int>()->default_value(19), "Length of syncmer")
@@ -1655,8 +1656,8 @@ int main(int argc, char *argv[]) {
       int mgsr_s = vm["mgsr-s"].as<int>();
       int mgsr_t = vm["mgsr-t"].as<int>();
       bool mgsr_open = vm.count("mgsr-open") > 0;
-
-      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, mgsr_k, mgsr_s, mgsr_t, mgsr_l, mgsr_open);
+      bool imputeAmb = vm.count("impute") > 0;
+      mgsr::mgsrIndexBuilder mgsrIndexBuilder(&T, mgsr_k, mgsr_s, mgsr_t, mgsr_l, mgsr_open, imputeAmb);
       mgsrIndexBuilder.buildIndex();
       mgsrIndexBuilder.writeIndex(mgsr_index_path);
       msg("MGSR index written to: {}", mgsr_index_path);
@@ -1714,7 +1715,7 @@ int main(int argc, char *argv[]) {
       std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
 
       std::ofstream outFile(prefix + ".randomNodeIDs.txt");
-      for (size_t i = 0; i < num_nodes; i++) {
+      for (size_t i = 0; i < std::min(num_nodes, static_cast<uint32_t>(allNodeIDs.size())); i++) {
         outFile << allNodeIDs[i] << std::endl;
       }
       outFile.close();

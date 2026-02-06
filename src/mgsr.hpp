@@ -512,7 +512,6 @@ class mgsrIndexBuilder {
     MGSRIndex::Builder indexBuilder;
     capnp::List<NodeChanges>::Builder perNodeChanges;
     
-
     // tree pointer
     panmanUtils::Tree *T;
   
@@ -527,8 +526,10 @@ class mgsrIndexBuilder {
 
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
-    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer) 
-      : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T)
+    bool imputeAmb;
+
+    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer, bool imputeAmb) 
+      : outMessage(), indexBuilder(outMessage.initRoot<MGSRIndex>()), T(T), imputeAmb(imputeAmb)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
