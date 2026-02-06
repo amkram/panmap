@@ -198,6 +198,18 @@ static char comp(char c) {
   return compC;
 }
 
+static std::string revcomp(const std::string &s) {
+  std::string cs;
+  cs.resize(s.size());
+  int csIndex = 0;
+  for (int i = s.size() - 1; i > -1; --i) {
+    char c = s[i];
+    cs[csIndex] = comp(c);
+    csIndex++;
+  }
+  return cs;
+}
+
 
 bool is_syncmer(const std::string &seq, const int s, const bool open);
 
