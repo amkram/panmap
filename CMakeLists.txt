@@ -636,10 +636,11 @@ if(OPTION_BUILD_TESTS)
         src/panmap_utils.cpp
         src/zstd_compression.cpp
         src/index_utils.cpp
+        src/mm_align.c
         ${CMAKE_CURRENT_BINARY_DIR}/index_lite.capnp.c++
     )
     
-    add_dependencies(correctness_tests panman_lib build-deps index_capnp_generator tbb_build)
+    add_dependencies(correctness_tests panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
     
     target_include_directories(correctness_tests PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -654,6 +655,7 @@ if(OPTION_BUILD_TESTS)
     
     target_link_libraries(correctness_tests PRIVATE
         panman_lib
+        minimap2
         ${Boost_LIBRARIES}
         Boost::unit_test_framework
         ${PROTOBUF_LIBRARIES}
@@ -664,6 +666,9 @@ if(OPTION_BUILD_TESTS)
         ${KJ_LIBRARY}
         ${TBB_LIBRARY}
         libzstd_static
+        ZLIB::ZLIB
+        pthread
+        m
     )
     
     target_compile_definitions(correctness_tests PRIVATE BOOST_TEST_DYN_LINK)

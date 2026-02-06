@@ -400,3 +400,85 @@ void align_reads(const char *reference, int n_reads, const char **reads,
   mm_tbuf_destroy(tbuf);
   mm_idx_destroy(mi);
 }
+
+// Simple alignment scoring function for refinement
+// Returns NEGATIVE edit distance (sum of NM for all reads) - higher is better
+// Uses standard minimap2 mapping with its own minimizers (not our syncmers)
+int64_t score_reads_vs_reference(const char *reference, int n_reads, 
+                                  const char **reads, const int *r_lens,
+                                  int kmer_size) {
+  (void)kmer_size;  // Unused - always use k=11 for minimap2
+  
+  mm_idxopt_t iopt;
+  mm_mapopt_t mopt;
+  
+  mm_verbose = 0; // suppress warnings
+  mm_set_opt(0, &iopt, &mopt);
+  mopt.flag |= MM_F_CIGAR;  // need CIGAR for accurate scoring
+  
+  // Use k=11 for minimap2 (standard short-read setting)
+  // Let minimap2 compute its own minimizers
+  iopt.k = 11;
+  iopt.w = 5;  // minimizer window size
+  
+  // Build index from reference
+  // mm_idx_str params: bucket_bits, k, w, flag, n_seq, seqs, names
+  mm_idx_t *mi = mm_idx_str(10, iopt.k, iopt.w, 14, 1, &reference, NULL);
+  if (!mi) return 0;
+  
+  mm_mapopt_update(&mopt, mi);
+  mm_tbuf_t *tbuf = mm_tbuf_init();
+  
+  int64_t total_matches = 0;
+  int64_t total_mismatches = 0;
+  
+  for (int i = 0; i < n_reads; i++) {
+    int n_reg = 0;
+    mm_reg1_t *reg = mm_map(mi, r_lens[i], reads[i], &n_reg, tbuf, &mopt, NULL);
+    
+    if (n_reg > 0 && reg != NULL) {
+      // Use primary alignment - count matches and mismatches from CIGAR
+      mm_reg1_t *r = &reg[0];
+      if (r->p) {
+        // Count matches and mismatches from CIGAR
+        uint32_t *cigar = r->p->cigar;
+        int n_cigar = r->p->n_cigar;
+        for (int j = 0; j < n_cigar; j++) {
+          int op = cigar[j] & 0xf;
+          int len = cigar[j] >> 4;
+          if (op == 0) {  // M - match/mismatch
+            total_matches += len;
+          } else if (op == 8) {  // X - mismatch
+            total_mismatches += len;
+          } else if (op == 7) {  // = - exact match  
+            total_matches += len;
+          } else if (op == 1 || op == 2) {  // I or D - indel
+            total_mismatches += len;
+          }
+        }
+        // Also use NM for more accurate mismatch count if cigar doesn't have =X
+        // blen - mlen gives edit distance
+        int edit_dist = r->blen - r->mlen;
+        if (edit_dist > 0) {
+          total_mismatches += edit_dist;
+        }
+      } else {
+        // No CIGAR, use score as rough proxy
+        total_matches += reg[0].score;
+      }
+      
+      // Free alignment results
+      for (int j = 0; j < n_reg; j++) {
+        if (reg[j].p) free(reg[j].p);
+      }
+      free(reg);
+    }
+  }
+  
+  mm_tbuf_destroy(tbuf);
+  mm_idx_destroy(mi);
+  
+  // Return matches minus mismatches (higher is better)
+  // Scale mismatches more heavily to differentiate similar genomes
+  return total_matches - (total_mismatches * 10);
+}

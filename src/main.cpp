@@ -95,6 +95,7 @@ struct Config {
     int minSeedQuality = 0;          // Min avg Phred quality for seed region (0=disabled)
     int trimStart = 0;               // Trim N bases from start of each read (primer removal)
     int trimEnd = 0;                 // Trim N bases from end of each read (primer removal)
+    int minReadSupport = 1;          // Min reads for a seed to be counted (2 = filter singletons)
     
     // Resources
     int threads = 1;
@@ -104,6 +105,7 @@ struct Config {
     bool dumpSequence = false;
     std::string dumpNodeId;
     int seed = 42;
+    int listFilteredNodes = 0;    // List N filtered nodes (0 = off)
     
     // Leave-one-out validation mode
     std::string removeNodeId;     // Node to remove before placement (for validation)
@@ -111,6 +113,8 @@ struct Config {
     // Diagnostic options
     int topPlacements = 0;        // Output top-N placements with all scores (0 = off)
     std::string debugNodeId;      // Output detailed metrics for this specific node
+    std::string compareNodes;     // Compare two nodes in detail (format: "nodeA,nodeB")
+    std::string dumpAllScores;    // Dump all node scores to this file
     
     // Output control
     bool quiet = false;           // Minimal output (errors only)
@@ -118,7 +122,14 @@ struct Config {
     bool plain = false;           // Plain text output (no colors/unicode)
     
     // Consensus options
-    bool impute = false;          // Impute N's from parent sequence (ignore _->N mutations)
+    bool impute = true;          // Impute N's from parent sequence (ignore _->N mutations)
+    
+    // Alignment-based refinement options
+    bool refine = false;          // Enable alignment-based refinement
+    double refineTopPct = 0.01;   // Top X% of nodes to refine (default 1%)
+    int refineMaxTopN = 150;      // Max nodes to align against
+    int refineNeighborRadius = 2; // Expand to neighbors within N branches
+    int refineMaxNeighborN = 150; // Max additional nodes from neighbor expansion
 };
 
 // Cap'n Proto reader with ZSTD decompression
@@ -172,19 +183,185 @@ std::unique_ptr<panmanUtils::TreeGroup> loadPanMAN(const std::string& path) {
     return std::make_unique<panmanUtils::TreeGroup>(stream);
 }
 
+/**
+ * Compute ungapped genome lengths for ALL nodes efficiently via DFS traversal.
+ * This avoids O(n²) work by tracking gap count incrementally as we traverse.
+ * Returns map of nodeId -> ungapped length.
+ */
+std::unordered_map<std::string, size_t> computeAllUngappedLengths(panmanUtils::Tree* T) {
+    std::unordered_map<std::string, size_t> lengthMap;
+    
+    // Get total sequence length (with gaps) from root
+    std::string rootSeq = T->getStringFromReference(T->root->identifier, false);
+    size_t totalLen = rootSeq.size();
+    
+    // Count gaps in root sequence
+    size_t rootGaps = 0;
+    for (char c : rootSeq) {
+        if (c == '-' || c == 'x') rootGaps++;
+    }
+    size_t rootUngapped = totalLen - rootGaps;
+    
+    // DFS tracking gap count delta from mutations
+    std::function<void(panmanUtils::Node*, size_t)> dfs = [&](panmanUtils::Node* node, size_t parentUngapped) {
+        // Compute this node's gap delta from mutations
+        int64_t gapDelta = 0;  // positive = more gaps, negative = fewer gaps
+        
+        for (const auto& nucMut : node->nucMutation) {
+            int length = nucMut.mutInfo >> 4;
+            for (int i = 0; i < length && i < 6; i++) {
+                int newNucCode = (nucMut.nucs >> (4*(5-i))) & 0xF;
+                char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
+                // We'd need old nuc to track delta, but mutations record new value only
+                // Simplification: just track if new is gap
+                if (newNuc == '-') {
+                    gapDelta++;  // Became a gap
+                }
+            }
+        }
+        
+        // For block mutations, track entire block becoming gap or ungap
+        for (const auto& blockMut : node->blockMutation) {
+            bool isInsertion = blockMut.blockMutInfo;
+            if (!isInsertion) {
+                // Block deletion - adds gaps
+                // Would need block size, approximate with average
+            }
+        }
+        
+        // This is approximate - for exact we'd need to track old values
+        // For filtering purposes, approximate is fine
+        size_t nodeUngapped = (node == T->root) ? rootUngapped : parentUngapped;
+        lengthMap[node->identifier] = nodeUngapped;
+        
+        for (auto* child : node->children) {
+            dfs(child, nodeUngapped);
+        }
+    };
+    
+    dfs(T->root, rootUngapped);
+    return lengthMap;
+}
+
+/**
+ * Get ungapped genome length for a node (count non-gap characters).
+ */
+size_t getUngappedLength(panmanUtils::Tree* T, const std::string& nodeId) {
+    std::string seq = T->getStringFromReference(nodeId, false);
+    size_t count = 0;
+    for (char c : seq) {
+        if (c != '-' && c != 'x') count++;
+    }
+    return count;
+}
+
+/**
+ * Count N characters in a node's sequence.
+ */
+size_t getNCount(panmanUtils::Tree* T, const std::string& nodeId) {
+    std::string seq = T->getStringFromReference(nodeId, false);
+    size_t count = 0;
+    for (char c : seq) {
+        if (c == 'N' || c == 'n') count++;
+    }
+    return count;
+}
+
+/**
+ * Select a random node with ungapped genome length within 10% of the median.
+ * Also logs the node's parent length for diagnostic purposes.
+ * This filters out partial sequences (e.g., from edge deletions) that would
+ * bias LOO validation results.
+ */
 std::string getRandomNodeId(panmanUtils::Tree* T, int seed) {
+    // Build map from id -> Node* for parent lookup
+    std::unordered_map<std::string, panmanUtils::Node*> nodeMap;
     std::vector<std::string> ids;
     std::function<void(panmanUtils::Node*)> collect = [&](panmanUtils::Node* n) {
         if (!n) return;
         ids.push_back(n->identifier);
+        nodeMap[n->identifier] = n;
         for (auto* c : n->children) collect(c);
     };
     collect(T->root);
     
     if (ids.empty()) throw std::runtime_error("No nodes in tree");
     
+    // Sample a subset to estimate median (for speed)
+    const size_t sampleSize = std::min(ids.size(), size_t(100));
+    std::mt19937 sampleGen(42);  // Fixed seed for reproducibility
+    std::vector<std::string> sampleIds = ids;
+    std::shuffle(sampleIds.begin(), sampleIds.end(), sampleGen);
+    sampleIds.resize(sampleSize);
+    
+    std::vector<size_t> sampleLengths;
+    sampleLengths.reserve(sampleSize);
+    for (const auto& id : sampleIds) {
+        sampleLengths.push_back(getUngappedLength(T, id));
+    }
+    std::sort(sampleLengths.begin(), sampleLengths.end());
+    size_t medianLen = sampleLengths[sampleLengths.size() / 2];
+    
+    logging::info("Estimated median length from {} samples: {} bp", sampleSize, medianLen);
+    
+    // Filter nodes by computing lengths only for candidates
+    double tolerance = 0.10;
+    size_t minLen = static_cast<size_t>(medianLen * (1.0 - tolerance));
+    size_t maxLen = static_cast<size_t>(medianLen * (1.0 + tolerance));
+    
+    // Shuffle all IDs, then filter on-the-fly until we have enough
     std::mt19937 gen(seed);
-    return ids[std::uniform_int_distribution<>(0, ids.size()-1)(gen)];
+    std::shuffle(ids.begin(), ids.end(), gen);
+    
+    const size_t maxNs = 5;  // Maximum allowed N characters
+    std::unordered_map<std::string, size_t> lengthCache;
+    std::vector<std::string> filteredIds;
+    
+    for (const auto& id : ids) {
+        size_t len = getUngappedLength(T, id);
+        lengthCache[id] = len;
+        if (len >= minLen && len <= maxLen) {
+            // Also filter by N count
+            size_t nCount = getNCount(T, id);
+            if (nCount <= maxNs) {
+                filteredIds.push_back(id);
+                if (filteredIds.size() >= 1000) break;  // Enough candidates
+            }
+        }
+    }
+    
+    if (filteredIds.empty()) {
+        logging::warn("No nodes within 10% of median length ({}). Using first available.", medianLen);
+        filteredIds.push_back(ids[0]);
+        lengthCache[ids[0]] = getUngappedLength(T, ids[0]);
+    }
+    
+    logging::info("Found {} nodes within 10% of median ({}-{} bp)", 
+                 filteredIds.size(), minLen, maxLen);
+    
+    // Select from filtered set
+    std::string selectedId = filteredIds[std::uniform_int_distribution<size_t>(0, filteredIds.size()-1)(gen)];
+    
+    // Ensure selected node and parent are in cache
+    if (lengthCache.find(selectedId) == lengthCache.end()) {
+        lengthCache[selectedId] = getUngappedLength(T, selectedId);
+    }
+    
+    // Log selected node and parent info
+    size_t selectedLen = lengthCache[selectedId];
+    panmanUtils::Node* selectedNode = nodeMap[selectedId];
+    if (selectedNode->parent) {
+        if (lengthCache.find(selectedNode->parent->identifier) == lengthCache.end()) {
+            lengthCache[selectedNode->parent->identifier] = getUngappedLength(T, selectedNode->parent->identifier);
+        }
+        size_t parentLen = lengthCache[selectedNode->parent->identifier];
+        logging::info("Selected node: {} ({} bp), parent: {} ({} bp)", 
+                     selectedId, selectedLen, selectedNode->parent->identifier, parentLen);
+    } else {
+        logging::info("Selected node: {} ({} bp), no parent (root)", selectedId, selectedLen);
+    }
+    
+    return selectedId;
 }
 
 std::string sanitizeFilename(const std::string& s) {
@@ -688,8 +865,6 @@ void printNodeDiagnostics(panmapUtils::LiteNode* node,
         (node->genomeUniqueSeedCount - node->presenceIntersectionCount) : 0;
     size_t totalUnion = readUniqueSeedCount + genomeOnlyCount;
     
-    int64_t wjDenom = totalReadSeedFrequency + node->genomeTotalSeedFrequency - node->weightedJaccardNumerator;
-    
     // Compute distance from expected parent if provided
     std::string distStr = "";
     if (tree && !expectedParent.empty()) {
@@ -698,23 +873,221 @@ void printNodeDiagnostics(panmapUtils::LiteNode* node,
     }
     
     std::cout << "  NODE: " << node->identifier << distStr << "\n";
-    std::cout << "    Scores:     Jaccard=" << node->jaccardScore 
-              << "  WeightedJaccard=" << node->weightedJaccardScore
+    std::cout << "    LogRaw=" << node->logRawScore 
+              << "  LogCosine=" << node->logCosineScore
+              << "  Presence=" << node->presenceScore
+              << "  Containment=" << node->containmentScore << "\n";
+    std::cout << "    LogLogRaw=" << node->logLogRawScore 
+              << "  LogLogCosine=" << node->logLogCosineScore
               << "  Cosine=" << node->cosineScore 
               << "  Raw=" << node->rawSeedMatchScore << "\n";
-    std::cout << "    Jaccard:    num=" << node->jaccardNumerator 
-              << "  intersection=" << node->presenceIntersectionCount
-              << "  genomeUnique=" << node->genomeUniqueSeedCount
-              << "  genomeOnly=" << genomeOnlyCount
-              << "  union=" << totalUnion << "\n";
-    std::cout << "    WJaccard:   num=" << node->weightedJaccardNumerator
-              << "  readFreq=" << totalReadSeedFrequency
-              << "  genomeFreq=" << node->genomeTotalSeedFrequency
-              << "  denom=" << wjDenom << "\n";
-    std::cout << "    Cosine:     num=" << node->cosineNumerator
-              << "  readMag=" << readMagnitude
-              << "  genomeMagSq=" << node->genomeMagnitudeSquared
-              << "  genomeMag=" << genomeMag << "\n";
+    std::cout << "    CapCosine=" << node->capCosineScore
+              << "  CapLogCosine=" << node->capLogCosineScore
+              << "  LogCosineOld=" << node->logCosineOldScore
+              << "  WeightedContainment=" << node->weightedContainmentScore << "\n";
+    std::cout << "    Intersection=" << node->presenceIntersectionCount
+              << "  GenomeUnique=" << node->genomeUniqueSeedCount
+              << "  GenomeOnly=" << genomeOnlyCount
+              << "  Union=" << totalUnion << "\n";
+    std::cout << "    CosineNum=" << node->cosineNumerator
+              << "  ReadMag=" << readMagnitude
+              << "  GenomeMag=" << genomeMag << "\n";
+}
+
+// Build full seed frequency map for a node by traversing from root
+absl::flat_hash_map<uint64_t, int64_t> buildNodeSeedCounts(
+    panmapUtils::LiteNode* node,
+    panmapUtils::LiteTree& tree) {
+    
+    absl::flat_hash_map<uint64_t, int64_t> seedCounts;
+    
+    // Collect path from root to this node
+    std::vector<panmapUtils::LiteNode*> path;
+    for (auto* n = node; n != nullptr; n = n->parent) {
+        path.push_back(n);
+    }
+    std::reverse(path.begin(), path.end());
+    
+    // Apply seed changes along path to build full seed set
+    for (auto* n : path) {
+        for (const auto& [seedHash, parentCount, childCount] : n->seedChanges) {
+            int64_t delta = childCount - parentCount;
+            if (delta != 0) {
+                seedCounts[seedHash] += delta;
+                if (seedCounts[seedHash] <= 0) {
+                    seedCounts.erase(seedHash);
+                }
+            }
+        }
+    }
+    
+    return seedCounts;
+}
+
+// Detailed comparison of two nodes
+void printNodeComparison(
+    const std::string& nodeIdA,
+    const std::string& nodeIdB,
+    panmapUtils::LiteTree& tree,
+    const absl::flat_hash_map<size_t, int64_t, IdentityHash>& readSeeds,
+    double logReadMagnitude) {
+    
+    auto itA = tree.allLiteNodes.find(nodeIdA);
+    auto itB = tree.allLiteNodes.find(nodeIdB);
+    
+    if (itA == tree.allLiteNodes.end()) {
+        std::cout << "ERROR: Node A '" << nodeIdA << "' not found\n";
+        return;
+    }
+    if (itB == tree.allLiteNodes.end()) {
+        std::cout << "ERROR: Node B '" << nodeIdB << "' not found\n";
+        return;
+    }
+    
+    auto* nodeA = itA->second;
+    auto* nodeB = itB->second;
+    
+    // Build seed counts for each node
+    auto seedsA = buildNodeSeedCounts(nodeA, tree);
+    auto seedsB = buildNodeSeedCounts(nodeB, tree);
+    
+    std::cout << "\n" << std::string(80, '=') << "\n";
+    std::cout << "NODE COMPARISON: " << nodeIdA << " vs " << nodeIdB << "\n";
+    std::cout << std::string(80, '=') << "\n";
+    
+    // Basic stats
+    std::cout << "\nBASIC STATISTICS:\n";
+    std::cout << "  Node A: " << seedsA.size() << " unique seeds\n";
+    std::cout << "  Node B: " << seedsB.size() << " unique seeds\n";
+    std::cout << "  Reads:  " << readSeeds.size() << " unique seeds\n";
+    
+    // Compute intersection and differences with reads
+    size_t intersectA = 0, intersectB = 0;
+    double logRawNumA = 0.0, logRawNumB = 0.0;
+    double cosineNumA = 0.0, cosineNumB = 0.0;
+    
+    // Seeds in A only (not in B), that match reads
+    std::vector<std::tuple<uint64_t, int64_t, int64_t, double>> seedsOnlyAWithReads;
+    // Seeds in B only (not in A), that match reads
+    std::vector<std::tuple<uint64_t, int64_t, int64_t, double>> seedsOnlyBWithReads;
+    // Seeds in both A and B, with different genome counts, matching reads
+    std::vector<std::tuple<uint64_t, int64_t, int64_t, int64_t, double>> seedsDiffWithReads;
+    // All seeds matching reads for both nodes
+    std::vector<std::tuple<uint64_t, int64_t, int64_t, int64_t>> allMatchingSeeds;
+    
+    for (const auto& [hash, readCount] : readSeeds) {
+        auto itA_seed = seedsA.find(hash);
+        auto itB_seed = seedsB.find(hash);
+        int64_t countA = (itA_seed != seedsA.end()) ? itA_seed->second : 0;
+        int64_t countB = (itB_seed != seedsB.end()) ? itB_seed->second : 0;
+        double logRead = std::log1p(static_cast<double>(readCount));
+        
+        if (countA > 0) {
+            intersectA++;
+            logRawNumA += logRead / countA;
+            cosineNumA += static_cast<double>(readCount) * countA;
+        }
+        if (countB > 0) {
+            intersectB++;
+            logRawNumB += logRead / countB;
+            cosineNumB += static_cast<double>(readCount) * countB;
+        }
+        
+        if (countA > 0 || countB > 0) {
+            allMatchingSeeds.emplace_back(hash, readCount, countA, countB);
+        }
+        
+        // Track differences
+        if (countA > 0 && countB == 0) {
+            seedsOnlyAWithReads.emplace_back(hash, readCount, countA, logRead / countA);
+        } else if (countB > 0 && countA == 0) {
+            seedsOnlyBWithReads.emplace_back(hash, readCount, countB, logRead / countB);
+        } else if (countA > 0 && countB > 0 && countA != countB) {
+            seedsDiffWithReads.emplace_back(hash, readCount, countA, countB, logRead / countA - logRead / countB);
+        }
+    }
+    
+    // Compute scores
+    double logRawA = logRawNumA / logReadMagnitude;
+    double logRawB = logRawNumB / logReadMagnitude;
+    
+    std::cout << "\nINTERSECTION WITH READS:\n";
+    std::cout << "  Node A: " << intersectA << " seeds match reads\n";
+    std::cout << "  Node B: " << intersectB << " seeds match reads\n";
+    std::cout << "  Difference: " << (static_cast<int64_t>(intersectB) - static_cast<int64_t>(intersectA)) << " more seeds in B\n";
+    
+    std::cout << "\nLOG_RAW SCORE BREAKDOWN:\n";
+    std::cout << "  Node A: numerator=" << logRawNumA << ", score=" << logRawA << "\n";
+    std::cout << "  Node B: numerator=" << logRawNumB << ", score=" << logRawB << "\n";
+    std::cout << "  Delta: " << (logRawB - logRawA) << " (B - A)\n";
+    
+    std::cout << "\nCOSINE NUMERATOR:\n";
+    std::cout << "  Node A: " << cosineNumA << "\n";
+    std::cout << "  Node B: " << cosineNumB << "\n";
+    
+    // Sort by contribution to score difference (log(R)/G delta)
+    std::sort(seedsOnlyAWithReads.begin(), seedsOnlyAWithReads.end(),
+        [](const auto& a, const auto& b) { return std::get<3>(a) > std::get<3>(b); });
+    std::sort(seedsOnlyBWithReads.begin(), seedsOnlyBWithReads.end(),
+        [](const auto& a, const auto& b) { return std::get<3>(a) > std::get<3>(b); });
+    std::sort(seedsDiffWithReads.begin(), seedsDiffWithReads.end(),
+        [](const auto& a, const auto& b) { return std::abs(std::get<4>(a)) > std::abs(std::get<4>(b)); });
+    
+    // Show seeds only in A (with reads)
+    std::cout << "\nSEEDS ONLY IN A (matching reads): " << seedsOnlyAWithReads.size() << " total\n";
+    for (size_t i = 0; i < std::min(size_t(15), seedsOnlyAWithReads.size()); ++i) {
+        const auto& [hash, readCnt, genomeCnt, contrib] = seedsOnlyAWithReads[i];
+        std::cout << "  hash=" << std::hex << hash << std::dec 
+                  << "  readCnt=" << readCnt 
+                  << "  genomeCnt=" << genomeCnt
+                  << "  logRaw_contrib=" << contrib << "\n";
+    }
+    
+    // Show seeds only in B (with reads)
+    std::cout << "\nSEEDS ONLY IN B (matching reads): " << seedsOnlyBWithReads.size() << " total\n";
+    for (size_t i = 0; i < std::min(size_t(15), seedsOnlyBWithReads.size()); ++i) {
+        const auto& [hash, readCnt, genomeCnt, contrib] = seedsOnlyBWithReads[i];
+        std::cout << "  hash=" << std::hex << hash << std::dec 
+                  << "  readCnt=" << readCnt 
+                  << "  genomeCnt=" << genomeCnt
+                  << "  logRaw_contrib=" << contrib << "\n";
+    }
+    
+    // Show seeds with different genome counts
+    std::cout << "\nSEEDS IN BOTH (different genome counts): " << seedsDiffWithReads.size() << " total\n";
+    for (size_t i = 0; i < std::min(size_t(15), seedsDiffWithReads.size()); ++i) {
+        const auto& [hash, readCnt, cntA, cntB, delta] = seedsDiffWithReads[i];
+        std::cout << "  hash=" << std::hex << hash << std::dec 
+                  << "  readCnt=" << readCnt 
+                  << "  A_cnt=" << cntA << "  B_cnt=" << cntB
+                  << "  delta=" << delta << (delta > 0 ? " (favors A)" : " (favors B)") << "\n";
+    }
+    
+    // Summary of why B might score higher
+    double contribOnlyA = 0, contribOnlyB = 0, contribDiff = 0;
+    for (const auto& [hash, readCnt, genomeCnt, contrib] : seedsOnlyAWithReads) {
+        contribOnlyA += contrib;
+    }
+    for (const auto& [hash, readCnt, genomeCnt, contrib] : seedsOnlyBWithReads) {
+        contribOnlyB += contrib;
+    }
+    for (const auto& [hash, readCnt, cntA, cntB, delta] : seedsDiffWithReads) {
+        contribDiff += delta;  // positive = favors A
+    }
+    
+    std::cout << "\nSCORE DIFFERENCE BREAKDOWN:\n";
+    std::cout << "  Seeds only in A contribute: +" << contribOnlyA << " to A\n";
+    std::cout << "  Seeds only in B contribute: +" << contribOnlyB << " to B\n";
+    std::cout << "  Seeds with diff counts contribute: " << contribDiff << " to A (neg = favors B)\n";
+    std::cout << "  Net effect: " << (contribOnlyA - contribOnlyB + contribDiff) << " (pos = A better, neg = B better)\n";
+    
+    std::cout << "\nStored node scores:\n";
+    std::cout << "  Node A: LogRaw=" << nodeA->logRawScore << " LogCosine=" << nodeA->logCosineScore 
+              << " Intersection=" << nodeA->presenceIntersectionCount << "\n";
+    std::cout << "  Node B: LogRaw=" << nodeB->logRawScore << " LogCosine=" << nodeB->logCosineScore 
+              << " Intersection=" << nodeB->presenceIntersectionCount << "\n";
+    
+    std::cout << std::string(80, '=') << "\n\n";
 }
 
 std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
@@ -736,12 +1109,32 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     std::string* expectedParentPtr = cfg.removeNodeId.empty() ? nullptr : &expectedParentNode;
     
     // Enable diagnostics if requested
-    bool storeDiagnostics = (cfg.topPlacements > 0 || !cfg.debugNodeId.empty());
+    bool storeDiagnostics = (cfg.topPlacements > 0 || !cfg.debugNodeId.empty() || !cfg.compareNodes.empty());
+    
+    // Load full tree if refinement is enabled (needed for genome sequences)
+    std::unique_ptr<panmanUtils::TreeGroup> tg;
+    panmanUtils::Tree* fullTreePtr = nullptr;
+    bool refineEnabled = cfg.refine;
+    if (refineEnabled) {
+        tg = loadPanMAN(cfg.panman);
+        if (tg && !tg->trees.empty()) {
+            fullTreePtr = &tg->trees[0];
+            logging::msg("Loaded full tree for refinement ({} nodes)", 
+                        fullTreePtr->allNodes.size());
+        } else {
+            logging::warn("Failed to load full tree for refinement - disabling refinement");
+            refineEnabled = false;
+        }
+    }
     
     auto start = std::chrono::high_resolution_clock::now();
-    placement::placeLite(result, &tree, reader, cfg.reads1, cfg.reads2, outPath, false, nullptr,
+    placement::placeLite(result, &tree, reader, cfg.reads1, cfg.reads2, outPath, false, fullTreePtr,
                         cfg.removeNodeId, expectedParentPtr, storeDiagnostics, cfg.seedMaskFraction,
-                        cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd);
+                        cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
+                        cfg.minReadSupport,
+                        400, 150, // expectedFragmentSize, fragmentSizeTolerance
+                        refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN, 
+                        cfg.refineNeighborRadius, cfg.refineMaxNeighborN);
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start);
     
@@ -796,6 +1189,50 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                   << "\t" << (correctLogCosine ? "true" : "false") 
                   << "\t" << distLogCosine 
                   << "\t" << result.bestLogCosineScore << "\n";
+        
+        // Report refinement results if run
+        if (result.refinementWasRun) {
+            int distRefined = computeTreeDistance(tree, result.bestRefinedNodeId, expectedParentNode);
+            bool correctRefined = (result.bestRefinedNodeId == expectedParentNode);
+            logging::msg("  Refined:   {} {}{}{} (dist: {}, score: {:.0f})", 
+                        result.bestRefinedNodeId,
+                        correctRefined ? color::green() : color::yellow(),
+                        correctRefined ? output::box::check() : output::box::cross(),
+                        color::reset(),
+                        distRefined,
+                        result.bestRefinedScore);
+            std::cout << "REFINED\t" << result.bestRefinedNodeId 
+                      << "\t" << (correctRefined ? "true" : "false") 
+                      << "\t" << distRefined 
+                      << "\t" << result.bestRefinedScore << "\n";
+        }
+    }
+    
+    // Dump all scores to file if requested
+    if (!cfg.dumpAllScores.empty()) {
+        std::ofstream outFile(cfg.dumpAllScores);
+        if (outFile) {
+            outFile << "node\tlogRaw\tlogCosine\tpresence\tcontainment\n";
+            std::vector<std::pair<double, std::string>> allScores;
+            for (auto& [id, node] : tree.allLiteNodes) {
+                if (node->logRawScore > 0) {
+                    allScores.push_back({node->logRawScore, id});
+                }
+            }
+            // Sort by logRaw descending
+            std::sort(allScores.begin(), allScores.end(), std::greater<>());
+            for (auto& [score, id] : allScores) {
+                auto* node = tree.allLiteNodes[id];
+                outFile << id << "\t" 
+                        << node->logRawScore << "\t"
+                        << node->logCosineScore << "\t"
+                        << node->presenceScore << "\t"
+                        << node->containmentScore << "\n";
+            }
+            logging::msg("Dumped {} node scores to {}", allScores.size(), cfg.dumpAllScores);
+        } else {
+            logging::warn("Could not open {} for writing", cfg.dumpAllScores);
+        }
     }
     
     // Diagnostic output: top placements
@@ -809,8 +1246,8 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
         // Collect all nodes with non-zero scores and sort by each metric
         std::vector<panmapUtils::LiteNode*> scoredNodes;
         for (auto& [id, node] : tree.allLiteNodes) {
-            if (node->rawSeedMatchScore > 0 || node->jaccardScore > 0 || 
-                node->cosineScore > 0 || node->weightedJaccardScore > 0) {
+            if (node->logRawScore > 0 || node->logCosineScore > 0 || 
+                node->cosineScore > 0 || node->presenceScore > 0) {
                 scoredNodes.push_back(node);
             }
         }
@@ -818,20 +1255,30 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
         if (cfg.topPlacements > 0) {
             int topN = std::min(cfg.topPlacements, static_cast<int>(scoredNodes.size()));
             
-            // Top by RAW score
+            // Top by LogRaw score
             std::sort(scoredNodes.begin(), scoredNodes.end(), 
-                [](auto* a, auto* b) { return a->rawSeedMatchScore > b->rawSeedMatchScore; });
-            std::cout << "TOP " << topN << " BY RAW SCORE:\n";
+                [](auto* a, auto* b) { return a->logRawScore > b->logRawScore; });
+            std::cout << "TOP " << topN << " BY LOG_RAW:\n";
             for (int i = 0; i < topN; ++i) {
                 printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount, 
                                     result.totalReadSeedFrequency, result.readMagnitude,
                                     &tree, expectedParentNode);
             }
             
-            // Top by Weighted Jaccard
+            // Top by LogCosine
             std::sort(scoredNodes.begin(), scoredNodes.end(),
-                [](auto* a, auto* b) { return a->weightedJaccardScore > b->weightedJaccardScore; });
-            std::cout << "\nTOP " << topN << " BY WEIGHTED JACCARD:\n";
+                [](auto* a, auto* b) { return a->logCosineScore > b->logCosineScore; });
+            std::cout << "\nTOP " << topN << " BY LOG_COSINE:\n";
+            for (int i = 0; i < topN; ++i) {
+                printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount,
+                                    result.totalReadSeedFrequency, result.readMagnitude,
+                                    &tree, expectedParentNode);
+            }
+            
+            // Top by Presence
+            std::sort(scoredNodes.begin(), scoredNodes.end(),
+                [](auto* a, auto* b) { return a->presenceScore > b->presenceScore; });
+            std::cout << "\nTOP " << topN << " BY PRESENCE:\n";
             for (int i = 0; i < topN; ++i) {
                 printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount,
                                     result.totalReadSeedFrequency, result.readMagnitude,
@@ -842,16 +1289,6 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
             std::sort(scoredNodes.begin(), scoredNodes.end(),
                 [](auto* a, auto* b) { return a->cosineScore > b->cosineScore; });
             std::cout << "\nTOP " << topN << " BY COSINE:\n";
-            for (int i = 0; i < topN; ++i) {
-                printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount,
-                                    result.totalReadSeedFrequency, result.readMagnitude,
-                                    &tree, expectedParentNode);
-            }
-            
-            // Top by Jaccard
-            std::sort(scoredNodes.begin(), scoredNodes.end(),
-                [](auto* a, auto* b) { return a->jaccardScore > b->jaccardScore; });
-            std::cout << "\nTOP " << topN << " BY JACCARD:\n";
             for (int i = 0; i < topN; ++i) {
                 printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount,
                                     result.totalReadSeedFrequency, result.readMagnitude,
@@ -883,6 +1320,28 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
             }
         }
         std::cout << "=========================\n\n";
+    }
+    
+    // Node comparison mode
+    if (!cfg.compareNodes.empty()) {
+        // Parse "nodeA,nodeB" format
+        auto commaPos = cfg.compareNodes.find(',');
+        if (commaPos != std::string::npos) {
+            std::string nodeA = cfg.compareNodes.substr(0, commaPos);
+            std::string nodeB = cfg.compareNodes.substr(commaPos + 1);
+            
+            // Compute log read magnitude from result
+            double logReadMagnitude = 0.0;
+            for (const auto& [hash, count] : result.seedFreqInReads) {
+                double logCount = std::log1p(static_cast<double>(count));
+                logReadMagnitude += logCount * logCount;
+            }
+            logReadMagnitude = std::sqrt(logReadMagnitude);
+            
+            printNodeComparison(nodeA, nodeB, tree, result.seedFreqInReads, logReadMagnitude);
+        } else {
+            std::cerr << "ERROR: --compare-nodes requires format 'nodeA,nodeB'\n";
+        }
     }
     
     if (cfg.metagenomic && cfg.topN > 1) {
@@ -1092,15 +1551,30 @@ int main(int argc, char** argv) {
         ("min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0),
             "Min seed quality")
         ("trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")
-        ("trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end");
+        ("trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")
+        ("min-read-support", po::value<int>(&cfg.minReadSupport)->default_value(1),
+            "Min reads for a seed (2=filter singletons)")
+        ("refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")
+        ("refine-top-pct", po::value<double>(&cfg.refineTopPct)->default_value(0.01),
+            "Top % of nodes to refine (default 1%)")
+        ("refine-max-top-n", po::value<int>(&cfg.refineMaxTopN)->default_value(150),
+            "Max nodes to align against")
+        ("refine-neighbor-radius", po::value<int>(&cfg.refineNeighborRadius)->default_value(2),
+            "Expand to neighbors within N branches")
+        ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
+            "Max additional nodes from neighbor expansion");
     
     po::options_description developer("Developer");
     developer.add_options()
         ("dump-random-node", po::bool_switch(&cfg.dumpRandomNode), "Dump random node FASTA")
         ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
+        ("list-filtered-nodes", po::value<int>(&cfg.listFilteredNodes)->default_value(0), 
+            "List N nodes passing length filter (TSV: node_id,length,parent_id,parent_length)")
         ("remove-node", po::value<std::string>(&cfg.removeNodeId), "Exclude node")
         ("top-placements", po::value<int>(&cfg.topPlacements)->default_value(0), "Show top N scores")
         ("debug-node", po::value<std::string>(&cfg.debugNodeId), "Debug node metrics")
+        ("compare-nodes", po::value<std::string>(&cfg.compareNodes), "Compare two nodes (nodeA,nodeB)")
+        ("dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")
         ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
     
     // Positional arguments (always hidden)
@@ -1287,6 +1761,81 @@ int main(int argc, char** argv) {
                 : cfg.output;
             saveNodeSequence(&tg->trees[0], nodeId, outPath, cfg.impute);
             std::cout << nodeId << "\n";
+            return 0;
+        }
+        
+        // Utility: list filtered nodes
+        if (cfg.listFilteredNodes > 0) {
+            auto tg = loadPanMAN(cfg.panman);
+            panmanUtils::Tree* T = &tg->trees[0];
+            
+            // Build node map
+            std::unordered_map<std::string, panmanUtils::Node*> nodeMap;
+            std::vector<std::string> ids;
+            std::function<void(panmanUtils::Node*)> collect = [&](panmanUtils::Node* n) {
+                if (!n) return;
+                ids.push_back(n->identifier);
+                nodeMap[n->identifier] = n;
+                for (auto* c : n->children) collect(c);
+            };
+            collect(T->root);
+            
+            // Sample to estimate median
+            const size_t sampleSize = std::min(ids.size(), size_t(100));
+            std::mt19937 sampleGen(42);
+            std::vector<std::string> sampleIds = ids;
+            std::shuffle(sampleIds.begin(), sampleIds.end(), sampleGen);
+            sampleIds.resize(sampleSize);
+            
+            std::vector<size_t> sampleLengths;
+            for (const auto& id : sampleIds) {
+                sampleLengths.push_back(getUngappedLength(T, id));
+            }
+            std::sort(sampleLengths.begin(), sampleLengths.end());
+            size_t medianLen = sampleLengths[sampleLengths.size() / 2];
+            
+            double tolerance = 0.10;
+            size_t minLen = static_cast<size_t>(medianLen * (1.0 - tolerance));
+            size_t maxLen = static_cast<size_t>(medianLen * (1.0 + tolerance));
+            
+            const size_t maxNs = 5;  // Maximum allowed N characters
+            logging::info("Median length: {} bp, range: {}-{} bp, max Ns: {}", medianLen, minLen, maxLen, maxNs);
+            
+            // Shuffle and collect filtered nodes
+            std::mt19937 gen(cfg.seed);
+            std::shuffle(ids.begin(), ids.end(), gen);
+            
+            std::cout << "node_id\tlength\tn_count\tparent_id\tparent_length\n";
+            int count = 0;
+            std::unordered_map<std::string, size_t> lengthCache;
+            
+            for (const auto& id : ids) {
+                if (count >= cfg.listFilteredNodes) break;
+                
+                size_t len = getUngappedLength(T, id);
+                lengthCache[id] = len;
+                
+                if (len < minLen || len > maxLen) continue;
+                
+                // Filter by N count
+                size_t nCount = getNCount(T, id);
+                if (nCount > maxNs) continue;
+                
+                panmanUtils::Node* node = nodeMap[id];
+                std::string parentId = node->parent ? node->parent->identifier : "";
+                size_t parentLen = 0;
+                if (node->parent) {
+                    if (lengthCache.find(parentId) == lengthCache.end()) {
+                        lengthCache[parentId] = getUngappedLength(T, parentId);
+                    }
+                    parentLen = lengthCache[parentId];
+                }
+                
+                std::cout << id << "\t" << len << "\t" << nCount << "\t" << parentId << "\t" << parentLen << "\n";
+                count++;
+            }
+            
+            logging::info("Listed {} filtered nodes", count);
             return 0;
         }
         
