@@ -37,6 +37,18 @@ class LiteNode {
     float rawSeedMatchScore = 0.0f;
     float logRawScore = 0.0f;
     float logCosineScore = 0.0f;
+    float logLogRawScore = 0.0f;
+    float logLogCosineScore = 0.0f;
+    float containmentScore = 0.0f;
+    float concordanceScore = 0.0f;
+    float presenceScore = 0.0f;  // Low-coverage robust: Σ(1/G) for matched seeds
+    
+    // Old metrics from working version (6cfb6cf)
+    float rawScore = 0.0f;              // Sum of read counts for matching seeds
+    float logCosineOldScore = 0.0f;     // log_cosine_v1: log on reads only, not genome
+    float weightedContainmentScore = 0.0f;  // log-weighted containment
+    float capCosineScore = 0.0f;        // Capped cosine similarity
+    float capLogCosineScore = 0.0f;     // Capped log-cosine similarity
     
     // Metric components for diagnostics (only populated when topPlacements > 0)
     int64_t jaccardNumerator = 0;
