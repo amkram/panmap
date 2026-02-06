@@ -63,14 +63,28 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
   int recentAmbiguousBaseIndex = std::numeric_limits<int>::min();
 
   size_t curMinSmerHashForward = max_size_t;
+  size_t curMinSmerHashReverseForward = max_size_t;
   size_t curMinSmerHashReverse = max_size_t;
   int curMinSmerHashIndexForward = -1;
+  int curMinSmerHashIndexReverseForward = -1;
   int curMinSmerHashIndexReverse = -1;
   std::deque<size_t> curSmerHashesForward;
+  std::deque<size_t> curSmerHashesReverseForward;
   std::deque<size_t> curSmerHashesReverse;
+
 
   // first smer
   for (int i = 0; i < s; ++i) {
+    size_t fwd_hash = chash(seq[i]);
+    size_t rev_hash = chash(comp(seq[k-i-1]));
+    size_t smer_rev_hash = chash(comp(seq[s-i-1]));
+    
+    if (fwd_hash == 0) recentAmbiguousBaseIndex = i;
+    
+    forwardKmerHash ^= rol(fwd_hash, k-i-1);
+    reverseKmerHash ^= rol(rev_hash, k-i-1);
+    forwardSmerHash ^= rol(fwd_hash, s-i-1);
+    reverseSmerHash ^= rol(smer_rev_hash, s-i-1);
     size_t fwd_hash = chash(seq[i]);
     size_t rev_hash = chash(comp(seq[k-i-1]));
     size_t smer_rev_hash = chash(comp(seq[s-i-1]));
@@ -90,8 +104,38 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
   curMinSmerHashReverse = reverseSmerHash;
   curMinSmerHashIndexReverse = k - s;
 
+  curSmerHashesForward.push_back(forwardSmerHash);
+  curMinSmerHashForward = forwardSmerHash;
+  curMinSmerHashIndexForward = 0;
+  curSmerHashesReverse.push_back(reverseSmerHash);
+  curMinSmerHashReverse = reverseSmerHash;
+  curMinSmerHashIndexReverse = k - s;
+
+
   // first kmer
   for (int i = s; i < k; ++i) {
+    size_t fwd_hash = chash(seq[i]);
+    size_t rev_hash = chash(comp(seq[i]));
+    size_t old_fwd_hash = chash(seq[i-s]);
+    size_t old_rev_hash = chash(comp(seq[i-s]));
+    size_t rev_kmer_hash = chash(comp(seq[k-i-1]));
+    
+    if (fwd_hash == 0) recentAmbiguousBaseIndex = i;
+    
+    forwardKmerHash ^= rol(fwd_hash, k-i-1);
+    reverseKmerHash ^= rol(rev_kmer_hash, k-i-1);
+    forwardSmerHash = rol(forwardSmerHash, 1) ^ rol(old_fwd_hash, s) ^ fwd_hash;
+    reverseSmerHash = ror(reverseSmerHash, 1) ^ ror(old_rev_hash, 1) ^ rol(rev_hash, s-1);
+    
+    curSmerHashesForward.push_back(forwardSmerHash);
+    if (forwardSmerHash < curMinSmerHashForward) {
+      curMinSmerHashForward = forwardSmerHash;
+      curMinSmerHashIndexForward = i - s + 1;
+    }
+    curSmerHashesReverse.push_front(reverseSmerHash);
+    if (reverseSmerHash < curMinSmerHashReverse) {
+      curMinSmerHashReverse = reverseSmerHash;
+      curMinSmerHashIndexReverse = k - i - 1;
     size_t fwd_hash = chash(seq[i]);
     size_t rev_hash = chash(comp(seq[i]));
     size_t old_fwd_hash = chash(seq[i-s]);
@@ -119,6 +163,7 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
 
   if (recentAmbiguousBaseIndex >= 0) {
     if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
+    if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
   } else {
     bool forwardIsSyncmer = false;
     bool reverseIsSyncmer = false;
@@ -136,7 +181,24 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
         syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
       } else if (reverseKmerHash < forwardKmerHash) {
         syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
+    bool forwardIsSyncmer = false;
+    bool reverseIsSyncmer = false;
+
+    if (open) {
+      if (curSmerHashesForward[t] == curMinSmerHashForward) forwardIsSyncmer = true;
+      if (curSmerHashesReverse[t] == curMinSmerHashReverse) reverseIsSyncmer = true;
+    } else {
+      if (curSmerHashesForward[t] == curMinSmerHashForward || curSmerHashesForward[k-s-t] == curMinSmerHashForward) forwardIsSyncmer = true;
+      if (curSmerHashesReverse[t] == curMinSmerHashReverse || curSmerHashesReverse[k-s-t] == curMinSmerHashReverse) reverseIsSyncmer = true;
+    }
+
+    if (forwardIsSyncmer || reverseIsSyncmer) {
+      if (forwardKmerHash < reverseKmerHash) {
+        syncmers.emplace_back(std::make_tuple(forwardKmerHash, false, true, 0));
+      } else if (reverseKmerHash < forwardKmerHash) {
+        syncmers.emplace_back(std::make_tuple(reverseKmerHash, true, true, 0));
       } else {
+        if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
         if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, 0));
       }
     } else {
@@ -193,6 +255,8 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
       curMinSmerHashReverse = reverseSmerHash;
       curMinSmerHashIndexReverse = 0; 
     }
+
+
 
     if (recentAmbiguousBaseIndex >= 0 && i < recentAmbiguousBaseIndex + k) {
       if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
