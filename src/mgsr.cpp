@@ -720,7 +720,7 @@ void mgsr::MgsrLiteTree::fillFamilyIndices(size_t maximumFamilies) {
 }
 
 void mgsr::MgsrLiteTree::initialize(
-  MGSRIndex::Reader indexReader,
+  LiteIndex::Reader indexReader,
   const std::string& taxonomicMetadataPath,
   size_t maximumFamilies,
   size_t numThreads,
@@ -1790,7 +1790,7 @@ void mgsr::ReadDebruijnGraph::buildGraph(std::vector<Read>& reads) {
   
 }
 
-void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
+void mgsr::ThreadsManager::initializeMGSRIndex(LiteIndex::Reader indexReader) {
   k = indexReader.getK();
   s = indexReader.getS();
   t = indexReader.getT();
@@ -1798,7 +1798,7 @@ void mgsr::ThreadsManager::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
   openSyncmer = indexReader.getOpen();
 }
 
-void mgsr::mgsrPlacer::initializeMGSRIndex(MGSRIndex::Reader indexReader) {
+void mgsr::mgsrPlacer::initializeMGSRIndex(LiteIndex::Reader indexReader) {
   k = indexReader.getK();
   s = indexReader.getS();
   t = indexReader.getT();
