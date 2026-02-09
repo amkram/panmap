@@ -18,6 +18,36 @@ struct LiteTree {
   blockRanges @1: List(BlockRange);
 }
 
+struct GapRunDelta {
+  # deprecate soon
+  startPos @0 :UInt32;
+  endPos @1 :UInt32;
+  toGap @2 :Bool;
+}
+
+struct SeedInfo {
+  # deprecate soon
+  hash @0 :UInt64;
+  startPos @1 :UInt32;
+  endPos @2 :UInt32;
+  isReverse @3 :Bool;
+}
+
+struct SeedDelta {
+  # deprecate soon
+  seedIndex @0 :UInt32;
+  isDeleted @1 :Bool;
+}
+
+
+struct NodeChanges {
+  # deprecate soon
+  nodeIndex @0 :UInt32;
+  seedDeltas @1 :List(SeedDelta);
+  gapRunDeltas @2 :List(GapRunDelta);
+  invertedBlocks @3 :List(UInt32);
+}
+
 struct LiteIndex {
   k @0 :UInt16;
   s @1 :UInt16;
@@ -47,4 +77,8 @@ struct LiteIndex {
   totalLeafGenomes @17 :UInt32;           # Total number of leaf genomes (N for IDF)
   idfSeedHashes @18 :List(UInt64);        # Unique seed hashes (sorted)
   idfGenomeCounts @19 :List(UInt32);      # Number of genomes containing each seed (parallel array)
+
+  # mgsr (deprecate soon)
+  seedInfo @20 :List(SeedInfo);
+  perNodeChanges @21 :List(NodeChanges);
 }
