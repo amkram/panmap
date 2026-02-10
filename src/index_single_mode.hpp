@@ -61,8 +61,9 @@ struct BuildState {
     // Genome extent tracking: first and last non-gap scalar positions
     // Seeds in flank regions (before firstNonGapScalar or after lastNonGapScalar)
     // should NOT be deleted when they become gaps - they're missing data, not true gaps
-    uint64_t firstNonGapScalar = UINT64_MAX;
-    uint64_t lastNonGapScalar = 0;
+    // Default: permissive (all positions inside extent) - only restricts when extentGuard is on
+    uint64_t firstNonGapScalar = 0;
+    uint64_t lastNonGapScalar = UINT64_MAX;
     
     // Syncmer state - SPARSE: only stores positions with actual syncmers
     // Memory: O(num_syncmers) instead of O(genome_length)
@@ -80,18 +81,6 @@ struct BuildState {
     // Shared storage for final node changes - indexed by dfsIndex (thread-safe writes)
     // Each node writes to its own slot, so no synchronization needed
     std::shared_ptr<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>> nodeChanges;
-    
-    // Shared storage for genome metrics - computed during main DFS (indexed by dfsIndex)
-    std::shared_ptr<std::vector<double>> genomeMagnitudeSquared;
-    std::shared_ptr<std::vector<uint64_t>> genomeUniqueSeedCount;
-    std::shared_ptr<std::vector<int64_t>> genomeTotalSeedFrequency;
-    
-    // IDF tracking: For each seed hash, count how many leaf genomes contain it
-    // Thread-local map, merged at end. Key = seed hash, Value = count of leaf genomes
-    std::shared_ptr<std::unordered_map<uint64_t, uint32_t>> leafSeedGenomeCounts;
-    
-    // Track which DFS indices are leaf nodes (for IDF computation)
-    std::shared_ptr<std::vector<bool>> isLeafNode;
     
     // Default constructor
     BuildState() : nodeChanges(std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>()) {}
@@ -119,8 +108,8 @@ struct BacktrackInfo {
   std::vector<std::pair<uint64_t, int64_t>> runningCountChanges;
   
   // Genome extent before this node's mutations (for backtracking)
-  uint64_t prevFirstNonGapScalar = UINT64_MAX;
-  uint64_t prevLastNonGapScalar = 0;
+  uint64_t prevFirstNonGapScalar = 0;
+  uint64_t prevLastNonGapScalar = UINT64_MAX;
 
   void clear() {
     blockMutationRecord.clear();
@@ -132,147 +121,10 @@ struct BacktrackInfo {
     refOnKminmersChangeRecord.clear();
     gapRunBlockInversionBacktracks.clear();
     runningCountChanges.clear();
-    prevFirstNonGapScalar = UINT64_MAX;
-    prevLastNonGapScalar = 0;
+    prevFirstNonGapScalar = 0;
+    prevLastNonGapScalar = UINT64_MAX;
   }
 };
-
-// Compute genome extent from gapMap
-// Returns (firstNonGapScalar, lastNonGapScalar) - the bounds of actual sequence data
-// flankSize: number of non-gap bases to skip at each end (default 0, as masking is applied separately)
-// If genome is all gaps or too short, returns (UINT64_MAX, 0)
-inline std::pair<uint64_t, uint64_t> computeExtentFromGapMap(
-    const std::map<uint64_t, uint64_t>& gapMap,
-    uint64_t lastScalarCoord,
-    uint64_t flankSize = 0) {
-  
-  // Helper lambda: count non-gap bases and find position after skipping 'count' non-gap bases from 'start' going forward
-  auto findPositionAfterNonGaps = [&](uint64_t start, uint64_t count) -> uint64_t {
-    uint64_t nonGapCount = 0;
-    uint64_t pos = start;
-    
-    while (pos <= lastScalarCoord && nonGapCount < count) {
-      // Check if current position is in a gap
-      auto it = gapMap.upper_bound(pos);
-      if (it != gapMap.begin()) {
-        --it;
-        // it now points to the gap run that starts at or before pos
-        if (it->second >= pos) {
-          // pos is inside this gap run, skip to end of gap
-          pos = it->second + 1;
-          continue;
-        }
-      }
-      // pos is not in a gap
-      nonGapCount++;
-      if (nonGapCount >= count) {
-        return pos;
-      }
-      pos++;
-    }
-    
-    // Not enough non-gap bases
-    return UINT64_MAX;
-  };
-  
-  // Helper lambda: find position after skipping 'count' non-gap bases going backward from 'start'
-  auto findPositionBeforeNonGaps = [&](uint64_t start, uint64_t count) -> uint64_t {
-    uint64_t nonGapCount = 0;
-    int64_t pos = static_cast<int64_t>(start);
-    
-    while (pos >= 0 && nonGapCount < count) {
-      // Check if current position is in a gap
-      auto it = gapMap.upper_bound(static_cast<uint64_t>(pos));
-      if (it != gapMap.begin()) {
-        --it;
-        // it now points to the gap run that starts at or before pos
-        if (it->second >= static_cast<uint64_t>(pos)) {
-          // pos is inside this gap run, skip to start of gap - 1
-          pos = static_cast<int64_t>(it->first) - 1;
-          continue;
-        }
-      }
-      // pos is not in a gap
-      nonGapCount++;
-      if (nonGapCount >= count) {
-        return static_cast<uint64_t>(pos);
-      }
-      pos--;
-    }
-    
-    // Not enough non-gap bases
-    return 0;
-  };
-  
-  // Find initial extent (first and last non-gap positions)
-  uint64_t firstNonGap = 0;
-  uint64_t lastNonGap = lastScalarCoord;
-  
-  // Check for leading gap run (starts at position 0)
-  auto it = gapMap.find(0);
-  if (it != gapMap.end()) {
-    if (it->second >= lastScalarCoord) {
-      // Entire genome is gaps
-      return {UINT64_MAX, 0};
-    }
-    firstNonGap = it->second + 1;
-  }
-  
-  // Check for trailing gap run (ends at lastScalarCoord)
-  if (!gapMap.empty()) {
-    auto lastIt = std::prev(gapMap.end());
-    if (lastIt->second == lastScalarCoord) {
-      lastNonGap = lastIt->first - 1;
-    }
-  }
-  
-  // Now apply flank masking: skip flankSize non-gap bases from each end
-  if (flankSize > 0) {
-    uint64_t maskedFirst = findPositionAfterNonGaps(firstNonGap, flankSize);
-    uint64_t maskedLast = findPositionBeforeNonGaps(lastNonGap, flankSize);
-    
-    // Check if genome is too short after masking
-    if (maskedFirst == UINT64_MAX || maskedLast == 0 || maskedFirst > maskedLast) {
-      return {UINT64_MAX, 0};
-    }
-    
-    firstNonGap = maskedFirst;
-    lastNonGap = maskedLast;
-  }
-  
-  return {firstNonGap, lastNonGap};
-}
-
-void updateGapMapStep(
-    std::map<uint64_t, uint64_t>& gapMap,
-    uint64_t startPos,
-    uint64_t endPos,
-    bool toGap,
-    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates,
-    bool recordGapMapUpdates
-);
-
-void updateGapMap(
-  panmanUtils::Node *node,
-  size_t dfsIndex,
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-);
-
-void invertGapMap(
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::pair<uint64_t, uint64_t>& invertRange,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-);
-
-void revertGapMapInversions(
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks,
-  std::map<uint64_t, uint64_t>& gapMap
-);
 
 void makeCoordIndex(
   std::map<uint64_t, uint64_t>& degapCoordIndex,
@@ -336,15 +188,15 @@ class IndexBuilder {
     // Thread-safe empty nodes tracking
     tbb::spin_mutex emptyNodesMutex_;
 
-    IndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer, int flankMaskBp = 250) 
-      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), k_(k), s_(s), l_(l), flankMaskBp_(flankMaskBp)
+    IndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer, int flankMaskBp = 250, bool hpc = false, bool imputeAmb = false, bool extentGuard = false) 
+      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), k_(k), s_(s), l_(l), flankMaskBp_(flankMaskBp), hpc_(hpc), imputeAmb_(imputeAmb), extentGuard_(extentGuard)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
       indexBuilder.setT(t);
       indexBuilder.setL(l);
       indexBuilder.setOpen(openSyncmer);
-      indexBuilder.setVersion(3);
+      indexBuilder.setHpc(hpc);
       nodeToDfsIndex.reserve(T->allNodes.size());
       nodeSeedCounts.resize(T->allNodes.size());
     }
@@ -362,9 +214,15 @@ class IndexBuilder {
   private:
     int k_, s_, l_;
     int flankMaskBp_;  // Hard mask first/last N bp at genome ends
+    bool hpc_;         // Homopolymer-compressed seeds
+    bool imputeAmb_;   // Skip N mutations (impute from parent)
+    bool extentGuard_; // Guard seed deletions at genome extent boundaries
     
   public:
     int getFlankMaskBp() const { return flankMaskBp_; }
+    bool getHpc() const { return hpc_; }
+    bool getImputeAmb() const { return imputeAmb_; }
+    bool getExtentGuard() const { return extentGuard_; }
     
     // Compute subtree size for a node (recursive)
     uint64_t computeSubtreeSize(panmanUtils::Node* node);
