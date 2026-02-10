@@ -379,6 +379,7 @@ public:
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
 
+  void fillOCRanks(std::vector<std::pair<std::string, double>>& overlapCoefficients);
   void fillFamilyIndices(size_t maximumFamilies);
 
   std::unordered_map<size_t, int32_t> getSeedsAtNode(MgsrLiteNode* node, bool useCollapsed=true) const;
@@ -527,9 +528,10 @@ class mgsrIndexBuilder {
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
     bool imputeAmb;
+    bool indexFull;
 
-    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer, bool imputeAmb) 
-      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), imputeAmb(imputeAmb)
+    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer, bool imputeAmb, bool indexFull) 
+      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), imputeAmb(imputeAmb), indexFull(indexFull)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
@@ -621,7 +623,10 @@ class ThreadsManager {
     int t;
     int l;
     bool openSyncmer;
+    uint32_t maskSeeds;
     uint32_t maskReads;
+    double maskSeedsRelativeFrequency;
+    double maskReadsRelativeFrequency;
     bool lowMemory;
     bool progressBar;
 
@@ -661,7 +666,9 @@ class ThreadsManager {
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(MgsrLiteTree* liteTree, const std::string& prefix, size_t numThreads, uint32_t maskReads, bool progressBar, bool lowMemory) : liteTree(liteTree), prefix(prefix), numThreads(numThreads), maskReads(maskReads), progressBar(progressBar), lowMemory(lowMemory) {
+    ThreadsManager(MgsrLiteTree* liteTree, const std::string& prefix, size_t numThreads, uint32_t maskSeeds, uint32_t maskReads, bool maskSeedsRelativeFrequency, bool maskReadsRelativeFrequency, bool progressBar, bool lowMemory)
+      : liteTree(liteTree), prefix(prefix), numThreads(numThreads), maskSeeds(maskSeeds), maskReads(maskReads), maskSeedsRelativeFrequency(maskSeedsRelativeFrequency), maskReadsRelativeFrequency(maskReadsRelativeFrequency), progressBar(progressBar), lowMemory(lowMemory)
+    {
       threadRanges.resize(numThreads);
       readMinichainsInitialized.resize(numThreads);
       readMinichainsAdded.resize(numThreads);
@@ -673,10 +680,7 @@ class ThreadsManager {
     void initializeQueryData(
       const std::string& readPath1,
       const std::string& readPath2,
-      uint32_t maskSeeds,
       const std::string& ampliconDepthPath,
-      double maskReadsRelativeFrequency,
-      double maskSeedsRelativeFrequency,
       double dustThreshold,
       uint32_t maskReadsEnds,
       bool fast_mode = false
