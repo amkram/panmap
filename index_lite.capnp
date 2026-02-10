@@ -16,6 +16,36 @@ struct LiteTree {
   blockRanges @1: List(BlockRange);
 }
 
+struct GapRunDelta {
+  # deprecate soon
+  startPos @0 :UInt32;
+  endPos @1 :UInt32;
+  toGap @2 :Bool;
+}
+
+struct SeedInfo {
+  # deprecate soon
+  hash @0 :UInt64;
+  startPos @1 :UInt32;
+  endPos @2 :UInt32;
+  isReverse @3 :Bool;
+}
+
+struct SeedDelta {
+  # deprecate soon
+  seedIndex @0 :UInt32;
+  isDeleted @1 :Bool;
+}
+
+
+struct NodeChanges {
+  # deprecate soon
+  nodeIndex @0 :UInt32;
+  seedDeltas @1 :List(SeedDelta);
+  gapRunDeltas @2 :List(GapRunDelta);
+  invertedBlocks @3 :List(UInt32);
+}
+
 struct LiteIndex {
   k @0 :UInt16;
   s @1 :UInt16;
@@ -32,4 +62,8 @@ struct LiteIndex {
 
   # Homopolymer compression mode: if true, seeds were extracted from HPC sequences
   hpc @10 :Bool = false;
+
+    # mgsr (deprecate soon)
+  seedInfo @11 :List(SeedInfo);
+  perNodeChanges @12 :List(NodeChanges);
 }
