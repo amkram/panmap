@@ -9,6 +9,7 @@
 #include <boost/filesystem.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/filter/lzma.hpp>
+#include <boost/algorithm/string.hpp>
 #include <tbb/global_control.h>
 #include <fstream>
 #include <iostream>
@@ -90,6 +91,7 @@ struct Config {
     int k = 21;                   // syncmer k
     int s = 8;                    // syncmer s
     int l = 1;                    // l-mer size
+    int t = 0;                    // syncmer offset
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
     double seedMaskFraction = 0; // Mask top 0.1% most frequent seeds
     int minSeedQuality = 0;          // Min avg Phred quality for seed region (0=disabled)
@@ -101,11 +103,36 @@ struct Config {
     
     // Resources
     int threads = 1;
+
+    // Metagenomic options
+    bool indexFull = false;
+    bool noProgress = false;
+    size_t topOc = 1000;
+    uint32_t maskReads = 0;
+    uint32_t maskSeeds = 0;
+    std::string ampliconDepth;
+    double maskReadsRelativeFrequency = 0.0;
+    double maskSeedsRelativeFrequency = 0.0;
+    double emConvergenceThreshold = 0.00001;
+    double emDeltaThreshold = 0.0;
+    uint32_t emMaximumIterations = 1000;
+    bool emLeavesOnly = false;
+    bool filterAndAssign = false;
+    double dust = 100.0;
+    double discard = 0.0;
+    uint32_t maskReadEnds = 0;
+    std::string taxonomicMetadata;
+    size_t maximumFamilies = 1;
+    
     
     // Utility modes
+    std::string randomSeed;
     bool dumpRandomNode = false;
-    bool dumpSequence = false;
+    uint32_t dumpRandomNodeIDs = 0;
     std::string dumpNodeId;
+    bool dumpSequence = false;
+    std::vector<std::string> dumpSequences;
+    std::vector<uint32_t> simulateSNPs;
     int seed = 42;
     int listFilteredNodes = 0;    // List N filtered nodes (0 = off)
     
@@ -1506,8 +1533,7 @@ int main(int argc, char** argv) {
         ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
         ("stop", po::value<std::string>()->default_value("genotype"),
             "Stop after: index|place|align|genotype")
-        ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode")
-        ("top", po::value<int>(&cfg.topN)->default_value(1), "Top N placements (with --meta)")
+        ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")
         ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"),
             "Aligner: minimap2|bwa")
         ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
@@ -1523,6 +1549,7 @@ int main(int argc, char** argv) {
         ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
         ("kmer,k", po::value<int>(&cfg.k)->default_value(29), "Syncmer k")
         ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
+        ("offset,t", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
         ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Syncmers per seed")
         ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
         ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0),
@@ -1544,11 +1571,44 @@ int main(int argc, char** argv) {
             "Expand to neighbors within N branches")
         ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
             "Max additional nodes from neighbor expansion");
+
+    po::options_description metagenomic("Metagenomic");
+    metagenomic.add_options()
+        ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
+        ("index-full", po::bool_switch(&cfg.indexFull), "Build full index (default index-mgsr builds lite index)")
+        ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
     
+    po::options_description em("Metagenomic: EM");
+    em.add_options()
+        ("top-oc", po::value<size_t>(&cfg.topOc)->default_value(1000), "Select top <int> nodes by overlap coefficients to send to EM")
+        ("mask-reads", po::value<uint32_t>(&cfg.maskReads)->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
+        ("mask-seeds", po::value<uint32_t>(&cfg.maskSeeds)->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
+        ("amplicon-depth", po::value<std::string>(&cfg.ampliconDepth), "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")
+        ("mask-reads-relative-frequency", po::value<double>(&cfg.maskReadsRelativeFrequency)->default_value(0.0), "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")
+        ("mask-seeds-relative-frequency", po::value<double>(&cfg.maskSeedsRelativeFrequency)->default_value(0.0), "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
+
+        ("em-convergence-threshold", po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001), "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
+        ("em-delta-threshold", po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0), "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
+        ("em-maximum-iterations", po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000), "EM maximum iterations")
+        ("em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
+    
+    po::options_description filterAndAssign("Metagenomic: Filter and Assign");
+    filterAndAssign.add_options()
+        ("filter-and-assign", po::bool_switch(&cfg.filterAndAssign), "Filter and assign reads to nodes without running EM")
+        ("dust", po::value<double>(&cfg.dust)->default_value(100.0), "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")
+        ("discard", po::value<double>(&cfg.discard)->default_value(0.0), "Discard reads with maximum parsimony score < FLOAT * read_total_seed (default 0, i.e. no discard)")
+        ("mask-read-ends", po::value<uint32_t>(&cfg.maskReadEnds)->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
+        ("taxonomic-metadata", po::value<std::string>(&cfg.taxonomicMetadata), "Path to taxonomic metadata TSV file")
+        ("maximum-families", po::value<size_t>(&cfg.maximumFamilies)->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided");
+
     po::options_description developer("Developer");
     developer.add_options()
+        ("random-seed", po::value<std::string>(&cfg.randomSeed), "Seed for rng (read in as string then hashed). If not provided, default to 42.")
         ("dump-random-node", po::bool_switch(&cfg.dumpRandomNode), "Dump random node FASTA")
+        ("dump-random-nodeIDs", po::value<uint32_t>(&cfg.dumpRandomNodeIDs)->default_value(0), "Dump specified number of random node IDs from the tree")
         ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
+        ("dump-sequences",po::value<std::vector<std::string>>(&cfg.dumpSequences)->multitoken(), "Dump sequences for a list of node IDs")
+        ("simulate-snps",po::value<std::vector<uint32_t>>(&cfg.simulateSNPs)->multitoken(), "Simulate number of SNPs for node IDs, parameter position is relative to dump-sequences")
         ("list-filtered-nodes", po::value<int>(&cfg.listFilteredNodes)->default_value(0), 
             "List N nodes passing length filter (TSV: node_id,length,parent_id,parent_length)")
         ("remove-node", po::value<std::string>(&cfg.removeNodeId), "Exclude node")
@@ -1746,6 +1806,108 @@ int main(int argc, char** argv) {
             saveNodeSequence(&tg->trees[0], nodeId, outPath, cfg.impute);
             std::cout << nodeId << "\n";
             return 0;
+        }
+
+        if (cfg.dumpRandomNodeIDs > 0) {
+          auto tg = loadPanMAN(cfg.panman);
+          panmanUtils::Tree* T = &tg->trees[0];
+
+          std::mt19937 rng;
+          if (cfg.randomSeed.empty()) {
+            std::hash<std::string> hasher;
+            rng = std::mt19937(hasher(cfg.randomSeed));
+          } else {
+            std::random_device rd;
+            rng = std::mt19937(rd());
+          }
+
+          uint32_t num_nodes = cfg.dumpRandomNodeIDs;
+          std::vector<std::string_view> allNodeIDs;
+          allNodeIDs.reserve(T->allNodes.size());
+          for (const auto& [nodeID, node] : T->allNodes) {
+            if (node->children.empty()) {
+              allNodeIDs.push_back(nodeID);
+            }
+          }
+          allNodeIDs.shrink_to_fit();
+          std::sort(allNodeIDs.begin(), allNodeIDs.end(), std::greater<std::string_view>());
+          std::shuffle(allNodeIDs.begin(), allNodeIDs.end(), rng);
+
+          std::ofstream outFile(cfg.output + ".randomNodeIDs.txt");
+          for (size_t i = 0; i < std::min(num_nodes, static_cast<uint32_t>(allNodeIDs.size())); i++) {
+            outFile << allNodeIDs[i] << std::endl;
+          }
+          outFile.close();
+          return 0;
+        }
+
+        if (cfg.dumpSequences.size() > 0) {
+          auto tg = loadPanMAN(cfg.panman);
+          panmanUtils::Tree* T = &tg->trees[0];
+
+          std::mt19937 rng;
+          if (cfg.randomSeed.empty()) {
+            std::hash<std::string> hasher;
+            rng = std::mt19937(hasher(cfg.randomSeed));
+          } else {
+            std::random_device rd;
+            rng = std::mt19937(rd());
+          }
+
+          std::vector<std::string> nodeIDs;
+          auto& nodeID_groups = cfg.dumpSequences;
+          std::cerr << "Node ID groups: " << nodeID_groups.size() << std::endl;
+          for (size_t i = 0; i < nodeID_groups.size(); i++) {
+            const auto& nodeID_group = nodeID_groups[i];
+            std::vector<std::string> nodeID_group_parts;
+            boost::split(nodeID_group_parts, nodeID_group, boost::is_any_of(" "), boost::token_compress_on);
+            for (const auto& nodeID : nodeID_group_parts) {
+              nodeIDs.push_back(nodeID);
+              std::cerr << "Node ID " << nodeID << " added to dump sequences" << std::endl;
+            }
+            std::cerr << "Node ID group " << i << " size: " << nodeID_group_parts.size() << std::endl;
+          }
+    
+          std::vector<uint32_t> numsnps;
+          if (cfg.simulateSNPs.size() > 0) {
+            numsnps = cfg.simulateSNPs;
+            if (numsnps.size() != nodeIDs.size()) {
+              std::cerr << "Number of SNP parameters does not match number of node IDs" << std::endl;
+              return 1;
+            }
+          }
+    
+          std::string outputFileName = cfg.output + ".dump-sequences.fa";
+          std::ofstream outFile(outputFileName);
+          for (size_t i = 0; i < nodeIDs.size(); i++) {
+            const auto& nodeID = nodeIDs[i];
+            uint32_t numsnp = (numsnps.empty() ? 0 : numsnps[i]);
+            if (T->allNodes.find(nodeID) == T->allNodes.end()) {
+              std::cerr << "Node ID " << nodeID << " not found in the tree" << std::endl;
+              return 1;
+            }
+    
+            std::string sequence = panmapUtils::getStringFromReference(T, nodeID, false);
+            std::vector<std::tuple<char, char, uint32_t>> snpRecords;
+            panmapUtils::simulateSNPsOnSequence(sequence, snpRecords, numsnp, rng);
+    
+            if (outFile.is_open()) {
+              outFile << ">" << nodeID << " ";
+              for (const auto& [ref, alt, pos] : snpRecords) {
+                outFile << ref << pos << alt << " ";
+              }
+              outFile << "\n";
+              for (size_t i = 0; i < sequence.size(); i += 80) {
+                outFile << sequence.substr(i, 80) << "\n";
+              }
+              std::cout << "Sequence for node " << nodeID << " with " << numsnp << " SNPs written to " << outputFileName << std::endl;
+            } else {
+              std::cerr << "Failed to open file " << outputFileName << " for writing" << std::endl;
+              return 1;
+            }
+          }
+          outFile.close();
+          return 0;
         }
         
         // Utility: list filtered nodes
