@@ -96,6 +96,8 @@ struct Config {
     int trimStart = 0;               // Trim N bases from start of each read (primer removal)
     int trimEnd = 0;                 // Trim N bases from end of each read (primer removal)
     int minReadSupport = 1;          // Min reads for a seed to be counted (2 = filter singletons)
+    bool hpc = false;                 // Homopolymer-compressed seeds
+    bool extentGuard = false;            // Guard seed deletions at genome extent boundaries
     
     // Resources
     int threads = 1;
@@ -122,7 +124,7 @@ struct Config {
     bool plain = false;           // Plain text output (no colors/unicode)
     
     // Consensus options
-    bool impute = true;          // Impute N's from parent sequence (ignore _->N mutations)
+    bool impute = false;          // Impute N's from parent sequence (ignore _->N mutations)
     
     // Alignment-based refinement options
     bool refine = false;          // Enable alignment-based refinement
@@ -806,11 +808,11 @@ bool buildIndex(const Config& cfg) {
         return false;
     }
     
-    index_single_mode::IndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false, cfg.flankMaskBp);
+    index_single_mode::IndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false, cfg.flankMaskBp, cfg.hpc, cfg.impute, cfg.extentGuard);
     builder.buildIndexParallel(cfg.threads);
     builder.writeIndex(cfg.index, cfg.threads);
     
-    logging::msg("Index built with k={}, s={}, l={}, flankMask={}bp", cfg.k, cfg.s, cfg.l, cfg.flankMaskBp);
+    logging::msg("Index built with k={}, s={}, l={}, flankMask={}bp{}{}{}", cfg.k, cfg.s, cfg.l, cfg.flankMaskBp, cfg.hpc ? ", hpc=on" : "", cfg.impute ? ", impute=on" : "", cfg.extentGuard ? ", extentGuard=on" : "");
     return true;
 }
 
@@ -859,12 +861,6 @@ void printNodeDiagnostics(panmapUtils::LiteNode* node,
                           const std::string& expectedParent = "") {
     if (!node) return;
     
-    // Recompute scores from stored components for verification
-    double genomeMag = std::sqrt(node->genomeMagnitudeSquared);
-    size_t genomeOnlyCount = (node->genomeUniqueSeedCount > node->presenceIntersectionCount) ?
-        (node->genomeUniqueSeedCount - node->presenceIntersectionCount) : 0;
-    size_t totalUnion = readUniqueSeedCount + genomeOnlyCount;
-    
     // Compute distance from expected parent if provided
     std::string distStr = "";
     if (tree && !expectedParent.empty()) {
@@ -873,25 +869,9 @@ void printNodeDiagnostics(panmapUtils::LiteNode* node,
     }
     
     std::cout << "  NODE: " << node->identifier << distStr << "\n";
-    std::cout << "    LogRaw=" << node->logRawScore 
+    std::cout << "    LogRaw=" << node->logRawScore
               << "  LogCosine=" << node->logCosineScore
-              << "  Presence=" << node->presenceScore
               << "  Containment=" << node->containmentScore << "\n";
-    std::cout << "    LogLogRaw=" << node->logLogRawScore 
-              << "  LogLogCosine=" << node->logLogCosineScore
-              << "  Cosine=" << node->cosineScore 
-              << "  Raw=" << node->rawSeedMatchScore << "\n";
-    std::cout << "    CapCosine=" << node->capCosineScore
-              << "  CapLogCosine=" << node->capLogCosineScore
-              << "  LogCosineOld=" << node->logCosineOldScore
-              << "  WeightedContainment=" << node->weightedContainmentScore << "\n";
-    std::cout << "    Intersection=" << node->presenceIntersectionCount
-              << "  GenomeUnique=" << node->genomeUniqueSeedCount
-              << "  GenomeOnly=" << genomeOnlyCount
-              << "  Union=" << totalUnion << "\n";
-    std::cout << "    CosineNum=" << node->cosineNumerator
-              << "  ReadMag=" << readMagnitude
-              << "  GenomeMag=" << genomeMag << "\n";
 }
 
 // Build full seed frequency map for a node by traversing from root
@@ -964,7 +944,6 @@ void printNodeComparison(
     // Compute intersection and differences with reads
     size_t intersectA = 0, intersectB = 0;
     double logRawNumA = 0.0, logRawNumB = 0.0;
-    double cosineNumA = 0.0, cosineNumB = 0.0;
     
     // Seeds in A only (not in B), that match reads
     std::vector<std::tuple<uint64_t, int64_t, int64_t, double>> seedsOnlyAWithReads;
@@ -985,12 +964,10 @@ void printNodeComparison(
         if (countA > 0) {
             intersectA++;
             logRawNumA += logRead / countA;
-            cosineNumA += static_cast<double>(readCount) * countA;
         }
         if (countB > 0) {
             intersectB++;
             logRawNumB += logRead / countB;
-            cosineNumB += static_cast<double>(readCount) * countB;
         }
         
         if (countA > 0 || countB > 0) {
@@ -1020,10 +997,6 @@ void printNodeComparison(
     std::cout << "  Node A: numerator=" << logRawNumA << ", score=" << logRawA << "\n";
     std::cout << "  Node B: numerator=" << logRawNumB << ", score=" << logRawB << "\n";
     std::cout << "  Delta: " << (logRawB - logRawA) << " (B - A)\n";
-    
-    std::cout << "\nCOSINE NUMERATOR:\n";
-    std::cout << "  Node A: " << cosineNumA << "\n";
-    std::cout << "  Node B: " << cosineNumB << "\n";
     
     // Sort by contribution to score difference (log(R)/G delta)
     std::sort(seedsOnlyAWithReads.begin(), seedsOnlyAWithReads.end(),
@@ -1082,10 +1055,8 @@ void printNodeComparison(
     std::cout << "  Net effect: " << (contribOnlyA - contribOnlyB + contribDiff) << " (pos = A better, neg = B better)\n";
     
     std::cout << "\nStored node scores:\n";
-    std::cout << "  Node A: LogRaw=" << nodeA->logRawScore << " LogCosine=" << nodeA->logCosineScore 
-              << " Intersection=" << nodeA->presenceIntersectionCount << "\n";
-    std::cout << "  Node B: LogRaw=" << nodeB->logRawScore << " LogCosine=" << nodeB->logCosineScore 
-              << " Intersection=" << nodeB->presenceIntersectionCount << "\n";
+    std::cout << "  Node A: LogRaw=" << nodeA->logRawScore << "  LogCosine=" << nodeA->logCosineScore << "  Containment=" << nodeA->containmentScore << "\n";
+    std::cout << "  Node B: LogRaw=" << nodeB->logRawScore << "  LogCosine=" << nodeB->logCosineScore << "  Containment=" << nodeB->containmentScore << "\n";
     
     std::cout << std::string(80, '=') << "\n\n";
 }
@@ -1132,7 +1103,6 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                         cfg.removeNodeId, expectedParentPtr, storeDiagnostics, cfg.seedMaskFraction,
                         cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
                         cfg.minReadSupport,
-                        400, 150, // expectedFragmentSize, fragmentSizeTolerance
                         refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN, 
                         cfg.refineNeighborRadius, cfg.refineMaxNeighborN);
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1141,42 +1111,52 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     logging::msg("Placement complete in {}ms", elapsed.count());
     
     // Check if any metric found a placement
-    if (result.bestLogRawNodeId.empty() && result.bestLogCosineNodeId.empty()) {
+    if (result.bestLogRawNodeId.empty()) {
         logging::warn("No placement found");
         return std::nullopt;
     }
     
     // Report results
-    logging::msg("{}Best placement:{} {} (LogRaw: {:.6f}, LogCosine: {:.6f})", 
+    logging::msg("{}Best placement:{} {} (LogRaw: {:.6f}, LogCosine: {:.6f}, Containment: {:.6f})", 
                 color::green(), color::reset(),
                 result.bestLogRawNodeId, 
                 result.bestLogRawScore,
-                result.bestLogCosineScore);
+                result.bestLogCosineScore,
+                result.bestContainmentScore);
     
     // Leave-one-out validation: compare to expected parent
     if (!cfg.removeNodeId.empty() && !expectedParentNode.empty()) {
         int distLogRaw = computeTreeDistance(tree, result.bestLogRawNodeId, expectedParentNode);
         int distLogCosine = computeTreeDistance(tree, result.bestLogCosineNodeId, expectedParentNode);
+        int distContainment = computeTreeDistance(tree, result.bestContainmentNodeId, expectedParentNode);
         
         bool correctLogRaw = (result.bestLogRawNodeId == expectedParentNode);
         bool correctLogCosine = (result.bestLogCosineNodeId == expectedParentNode);
+        bool correctContainment = (result.bestContainmentNodeId == expectedParentNode);
         
         logging::msg("{}VALIDATION RESULTS:{}", color::cyan(), color::reset());
         logging::msg("  Expected parent: {}", expectedParentNode);
-        logging::msg("  LogRAW:    {} {}{}{} (dist: {}, score: {:.6f})", 
+        logging::msg("  LogRAW:        {} {}{}{} (dist: {}, score: {:.6f})", 
                     result.bestLogRawNodeId,
                     correctLogRaw ? color::green() : color::yellow(),
                     correctLogRaw ? output::box::check() : output::box::cross(),
                     color::reset(),
                     distLogRaw,
                     result.bestLogRawScore);
-        logging::msg("  LogCosine: {} {}{}{} (dist: {}, score: {:.6f})", 
+        logging::msg("  LogCosine:     {} {}{}{} (dist: {}, score: {:.6f})", 
                     result.bestLogCosineNodeId,
                     correctLogCosine ? color::green() : color::yellow(),
                     correctLogCosine ? output::box::check() : output::box::cross(),
                     color::reset(),
                     distLogCosine,
                     result.bestLogCosineScore);
+        logging::msg("  Containment:   {} {}{}{} (dist: {}, score: {:.6f})", 
+                    result.bestContainmentNodeId,
+                    correctContainment ? color::green() : color::yellow(),
+                    correctContainment ? output::box::check() : output::box::cross(),
+                    color::reset(),
+                    distContainment,
+                    result.bestContainmentScore);
         
         // Print to stdout for easy parsing (TSV format)
         std::cout << "REMOVED_NODE\t" << cfg.removeNodeId << "\n";
@@ -1189,22 +1169,31 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                   << "\t" << (correctLogCosine ? "true" : "false") 
                   << "\t" << distLogCosine 
                   << "\t" << result.bestLogCosineScore << "\n";
+        std::cout << "CONTAINMENT\t" << result.bestContainmentNodeId 
+                  << "\t" << (correctContainment ? "true" : "false") 
+                  << "\t" << distContainment 
+                  << "\t" << result.bestContainmentScore << "\n";
         
-        // Report refinement results if run
+        // Report per-metric refinement results if run
         if (result.refinementWasRun) {
-            int distRefined = computeTreeDistance(tree, result.bestRefinedNodeId, expectedParentNode);
-            bool correctRefined = (result.bestRefinedNodeId == expectedParentNode);
-            logging::msg("  Refined:   {} {}{}{} (dist: {}, score: {:.0f})", 
-                        result.bestRefinedNodeId,
-                        correctRefined ? color::green() : color::yellow(),
-                        correctRefined ? output::box::check() : output::box::cross(),
-                        color::reset(),
-                        distRefined,
-                        result.bestRefinedScore);
-            std::cout << "REFINED\t" << result.bestRefinedNodeId 
-                      << "\t" << (correctRefined ? "true" : "false") 
-                      << "\t" << distRefined 
-                      << "\t" << result.bestRefinedScore << "\n";
+            auto reportRefined = [&](const std::string& label, const placement::PlacementResult::RefinedResult& ref) {
+                int dist = computeTreeDistance(tree, ref.nodeId, expectedParentNode);
+                bool correct = (ref.nodeId == expectedParentNode);
+                logging::msg("  {}:   {} {}{}{} (dist: {}, score: {:.0f})", 
+                            label, ref.nodeId,
+                            correct ? color::green() : color::yellow(),
+                            correct ? output::box::check() : output::box::cross(),
+                            color::reset(), dist, ref.score);
+                std::cout << label << "\t" << ref.nodeId 
+                          << "\t" << (correct ? "true" : "false") 
+                          << "\t" << dist 
+                          << "\t" << ref.score << "\n";
+            };
+            reportRefined("REFINED_LOG_RAW", result.refinedLogRaw);
+            reportRefined("REFINED_LOG_COSINE", result.refinedLogCosine);
+            reportRefined("REFINED_CONTAINMENT", result.refinedContainment);
+            reportRefined("REFINED_WEIGHTED_CONTAINMENT", result.refinedWeightedContainment);
+            reportRefined("REFINED_LOG_CONTAINMENT", result.refinedLogContainment);
         }
     }
     
@@ -1212,10 +1201,10 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     if (!cfg.dumpAllScores.empty()) {
         std::ofstream outFile(cfg.dumpAllScores);
         if (outFile) {
-            outFile << "node\tlogRaw\tlogCosine\tpresence\tcontainment\n";
+            outFile << "node\tlogRaw\tlogCosine\tcontainment\n";
             std::vector<std::pair<double, std::string>> allScores;
             for (auto& [id, node] : tree.allLiteNodes) {
-                if (node->logRawScore > 0) {
+                if (node->logRawScore > 0 || node->logCosineScore > 0 || node->containmentScore > 0) {
                     allScores.push_back({node->logRawScore, id});
                 }
             }
@@ -1226,7 +1215,6 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                 outFile << id << "\t" 
                         << node->logRawScore << "\t"
                         << node->logCosineScore << "\t"
-                        << node->presenceScore << "\t"
                         << node->containmentScore << "\n";
             }
             logging::msg("Dumped {} node scores to {}", allScores.size(), cfg.dumpAllScores);
@@ -1246,8 +1234,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
         // Collect all nodes with non-zero scores and sort by each metric
         std::vector<panmapUtils::LiteNode*> scoredNodes;
         for (auto& [id, node] : tree.allLiteNodes) {
-            if (node->logRawScore > 0 || node->logCosineScore > 0 || 
-                node->cosineScore > 0 || node->presenceScore > 0) {
+            if (node->logRawScore > 0 || node->logCosineScore > 0 || node->containmentScore > 0) {
                 scoredNodes.push_back(node);
             }
         }
@@ -1265,35 +1252,27 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                                     &tree, expectedParentNode);
             }
             
-            // Top by LogCosine
-            std::sort(scoredNodes.begin(), scoredNodes.end(),
+            // Top by LogCosine score
+            std::sort(scoredNodes.begin(), scoredNodes.end(), 
                 [](auto* a, auto* b) { return a->logCosineScore > b->logCosineScore; });
             std::cout << "\nTOP " << topN << " BY LOG_COSINE:\n";
             for (int i = 0; i < topN; ++i) {
-                printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount,
+                printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount, 
                                     result.totalReadSeedFrequency, result.readMagnitude,
                                     &tree, expectedParentNode);
             }
             
-            // Top by Presence
-            std::sort(scoredNodes.begin(), scoredNodes.end(),
-                [](auto* a, auto* b) { return a->presenceScore > b->presenceScore; });
-            std::cout << "\nTOP " << topN << " BY PRESENCE:\n";
+            // Top by Containment score
+            std::sort(scoredNodes.begin(), scoredNodes.end(), 
+                [](auto* a, auto* b) { return a->containmentScore > b->containmentScore; });
+            std::cout << "\nTOP " << topN << " BY CONTAINMENT:\n";
             for (int i = 0; i < topN; ++i) {
-                printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount,
+                printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount, 
                                     result.totalReadSeedFrequency, result.readMagnitude,
                                     &tree, expectedParentNode);
             }
             
-            // Top by Cosine
-            std::sort(scoredNodes.begin(), scoredNodes.end(),
-                [](auto* a, auto* b) { return a->cosineScore > b->cosineScore; });
-            std::cout << "\nTOP " << topN << " BY COSINE:\n";
-            for (int i = 0; i < topN; ++i) {
-                printNodeDiagnostics(scoredNodes[i], result.readUniqueSeedCount,
-                                    result.totalReadSeedFrequency, result.readMagnitude,
-                                    &tree, expectedParentNode);
-            }
+
         }
         
         // Debug specific node
@@ -1541,7 +1520,7 @@ int main(int argc, char** argv) {
         ("index,i", po::value<std::string>(&cfg.index), "Index file path")
         ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
         ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
-        ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations)")
+        ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
         ("kmer,k", po::value<int>(&cfg.k)->default_value(29), "Syncmer k")
         ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
         ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Syncmers per seed")
@@ -1554,6 +1533,8 @@ int main(int argc, char** argv) {
         ("trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")
         ("min-read-support", po::value<int>(&cfg.minReadSupport)->default_value(1),
             "Min reads for a seed (2=filter singletons)")
+        ("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")
+        ("extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")
         ("refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")
         ("refine-top-pct", po::value<double>(&cfg.refineTopPct)->default_value(0.01),
             "Top % of nodes to refine (default 1%)")
@@ -1726,6 +1707,9 @@ int main(int argc, char** argv) {
         // Build config string
         std::string configStr = fmt::format("threads={}  k={} s={} l={}", 
                                             cfg.threads, cfg.k, cfg.s, cfg.l);
+        if (cfg.hpc) {
+            configStr += "  hpc";
+        }
         if (cfg.metagenomic) {
             configStr += fmt::format("  meta(top={})", cfg.topN);
         }

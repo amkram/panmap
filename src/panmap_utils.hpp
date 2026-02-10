@@ -5,9 +5,14 @@
 #include "capnp/serialize-packed.h"
 #include "index_lite.capnp.h"
 #include "logging.hpp"
+#include "gap_map_utils.hpp"
 #include <string>
 #include <iostream>
 #include <span>
+#include <map>
+#include <unordered_set>
+#include <tuple>
+#include <climits>
 
 
 namespace panmapUtils {
@@ -31,33 +36,11 @@ class LiteNode {
     std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges;
     
     // Placement scores (populated during placement)
-    float jaccardScore = 0.0f;
-    float weightedJaccardScore = 0.0f;
-    float cosineScore = 0.0f;
-    float rawSeedMatchScore = 0.0f;
     float logRawScore = 0.0f;
     float logCosineScore = 0.0f;
-    float logLogRawScore = 0.0f;
-    float logLogCosineScore = 0.0f;
     float containmentScore = 0.0f;
-    float concordanceScore = 0.0f;
-    float presenceScore = 0.0f;  // Low-coverage robust: Σ(1/G) for matched seeds
-    
-    // Old metrics from working version (6cfb6cf)
-    float rawScore = 0.0f;              // Sum of read counts for matching seeds
-    float logCosineOldScore = 0.0f;     // log_cosine_v1: log on reads only, not genome
-    float weightedContainmentScore = 0.0f;  // log-weighted containment
-    float capCosineScore = 0.0f;        // Capped cosine similarity
-    float capLogCosineScore = 0.0f;     // Capped log-cosine similarity
-    
-    // Metric components for diagnostics (only populated when topPlacements > 0)
-    int64_t jaccardNumerator = 0;
-    int64_t weightedJaccardNumerator = 0;
-    double cosineNumerator = 0.0;
-    size_t presenceIntersectionCount = 0;
-    double genomeMagnitudeSquared = 0.0;
-    size_t genomeUniqueSeedCount = 0;
-    int64_t genomeTotalSeedFrequency = 0;
+    float weightedContainmentScore = 0.0f;
+    float logContainmentScore = 0.0f;
 };
 
 class LiteTree {
@@ -773,5 +756,284 @@ struct GlobalCoords {
     return nextCoord;
   }
 };
+
+// ============================================================================
+// Nucleotide ambiguity helpers (IUPAC)
+// ============================================================================
+
+inline bool isCanonical(char nuc) {
+  return (nuc == 'A' || nuc == 'T' || nuc == 'C' || nuc == 'G');
+}
+
+// Returns true if the mutation is from a canonical base to an ambiguous IUPAC code
+// (excluding gap '-' and sentinel 'x')
+inline bool canonicalToAmb(char oldNuc, char newNuc) {
+  return (newNuc != '-' && newNuc != 'x' &&
+          isCanonical(oldNuc) && !isCanonical(newNuc));
+}
+
+// ============================================================================
+// applyMutations: Process block and nucleotide mutations for a tree node
+// Shared between lite and MGSR index building
+// ============================================================================
+
+inline void applyMutations(
+  panmanUtils::Node *node,
+  size_t dfsIndex,
+  BlockSequences &blockSequences,
+  std::unordered_set<uint64_t>& invertedBlocks,
+  GlobalCoords& globalCoords,
+  std::vector<std::pair<Coordinate, Coordinate>>& localMutationRanges,
+  std::vector<std::tuple<uint32_t, bool, bool, bool, bool>>& blockMutationRecord,
+  std::vector<std::tuple<Coordinate, char, char>>& nucMutationRecord,
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapRunUpdates,
+  std::vector<std::pair<uint64_t, bool>>& invertedBlocksBacktracks,
+  std::vector<uint32_t>& potentialSyncmerDeletions,
+  const std::vector<char>& oldBlockExists,
+  const std::vector<char>& oldBlockStrand,
+  bool imputeAmb = false
+) {
+  std::vector<char>& blockExists = blockSequences.blockExists;
+  std::vector<char>& blockStrand = blockSequences.blockStrand;
+  std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
+
+  // process block mutations
+  for (const auto& blockMutation : node->blockMutation) {
+    const int32_t blockId = blockMutation.primaryBlockId;
+    const bool isInsertion = blockMutation.blockMutInfo;
+    const bool isInversion = blockMutation.inversion;
+    const bool oldExists = blockExists[blockId];
+    const bool oldStrand = blockStrand[blockId];
+
+    if (isInsertion) {
+      blockExists[blockId] = true;
+      blockStrand[blockId] = !isInversion;
+      if (!blockStrand[blockId]) {
+        invertedBlocks.insert(blockId);
+        invertedBlocksBacktracks.emplace_back(blockId, true);
+      }
+    } else if (isInversion) {
+      blockStrand[blockId] = !blockStrand[blockId];
+      if (!blockStrand[blockId]) {
+        invertedBlocks.insert(blockId);
+        invertedBlocksBacktracks.emplace_back(blockId, true);
+      } else {
+        invertedBlocks.erase(blockId);
+        invertedBlocksBacktracks.emplace_back(blockId, false);
+      }
+    } else {
+      blockExists[blockId] = false;
+      blockStrand[blockId] = true;
+      if (!oldStrand) {
+        invertedBlocks.erase(blockId);
+        invertedBlocksBacktracks.emplace_back(blockId, false);
+      }
+    }
+    blockMutationRecord.emplace_back(blockId, oldExists, oldStrand, blockExists[blockId], blockStrand[blockId]);
+
+    const auto& curBlockEdgeCoords = globalCoords.blockEdgeCoords[blockId];
+    if (blockStrand[blockId]) {
+      localMutationRanges.emplace_back(curBlockEdgeCoords.start, curBlockEdgeCoords.end);
+    } else {
+      localMutationRanges.emplace_back(curBlockEdgeCoords.end, curBlockEdgeCoords.start);
+    }
+  }
+
+  // process nuc mutations
+  for (const auto& nucMutation : node->nucMutation) {
+    int length = nucMutation.mutInfo >> 4;
+    int blockId;
+    int lastOffset = -1;
+
+    for (int i = 0; i < length; i++) {
+      Coordinate pos = Coordinate(nucMutation, i);
+      if ((pos.nucPosition == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) ||
+              (pos.nucPosition >= sequence[pos.primaryBlockId].size())) {
+        continue;
+      }
+      lastOffset = i;
+      blockId = pos.primaryBlockId;
+      const char oldNuc = blockSequences.getSequenceBase(pos);
+      const int newNucCode = (nucMutation.nucs >> (4*(5-i))) & 0xF;
+      const char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
+
+      if (oldNuc == newNuc) continue;
+
+      // Imputation: when enabled, skip mutations where a canonical base
+      // becomes an ambiguous IUPAC code (not gap/sentinel).
+      // This effectively inherits the parent's base for syncmer computation.
+      if (imputeAmb && canonicalToAmb(oldNuc, newNuc)) continue;
+
+      blockSequences.setSequenceBase(pos, newNuc);
+      nucMutationRecord.emplace_back(pos, oldNuc, newNuc);
+
+      if (oldBlockExists[pos.primaryBlockId] && blockExists[pos.primaryBlockId]) {
+        const int64_t scalarCoord = globalCoords.getScalarFromCoord(pos);
+        if (newNuc == '-') {
+          if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true && gapRunUpdates.back().second.second + 1 == scalarCoord) {
+            ++(gapRunUpdates.back().second.second);
+          }
+          else {
+            gapRunUpdates.emplace_back(true, std::make_pair(scalarCoord, scalarCoord));
+          }
+          if (blockExists[blockId] && oldBlockExists[blockId] && blockStrand[blockId] == oldBlockStrand[blockId]) {
+            potentialSyncmerDeletions.push_back(globalCoords.getScalarFromCoord(pos, blockStrand[pos.primaryBlockId]));
+          }
+        } else if (oldNuc == '-') {
+          if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false && gapRunUpdates.back().second.second + 1 == scalarCoord) {
+            ++(gapRunUpdates.back().second.second);
+          } else {
+            gapRunUpdates.emplace_back(false, std::make_pair(scalarCoord, scalarCoord));
+          }
+        }
+      }
+    }
+    if (lastOffset != -1 && blockExists[blockId] && oldBlockExists[blockId] && blockStrand[blockId] == oldBlockStrand[blockId]) {
+      if (blockStrand[blockId]) {
+        localMutationRanges.emplace_back(Coordinate(nucMutation, 0), Coordinate(nucMutation, lastOffset));
+      } else {
+        localMutationRanges.emplace_back(Coordinate(nucMutation, lastOffset), Coordinate(nucMutation, 0));
+      }
+    }
+  }
+
+
+  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
+    if (oldExists && !newExists) {
+      uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
+      uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
+      gapRunUpdates.emplace_back(true, std::make_pair(beg, end));
+    } else if (!oldExists && newExists) {
+      Coordinate coord = globalCoords.blockEdgeCoords[blockId].start;
+      Coordinate end = globalCoords.blockEdgeCoords[blockId].end;
+      std::pair<int64_t, int64_t> curNucRange = {-1, -1};
+      while (true) {
+        char nuc = blockSequences.getSequenceBase(coord);
+        nuc = nuc == 'x' ? '-' : nuc;
+        int64_t scalar = globalCoords.getScalarFromCoord(coord);
+        if (nuc != '-') {
+          if (curNucRange.first != -1 && curNucRange.second + 1 == scalar) {
+            ++curNucRange.second;
+          } else {
+            if (curNucRange.first != -1) {
+              gapRunUpdates.emplace_back(false, std::make_pair((uint64_t)curNucRange.first, (uint64_t)curNucRange.second));
+            }
+            curNucRange = {scalar, scalar};
+          }
+        }
+
+        if (coord == end) break;
+        globalCoords.stepRightCoordinate(coord);
+      }
+      if (curNucRange.first != -1) {
+        gapRunUpdates.emplace_back(false, std::make_pair((uint64_t)curNucRange.first, (uint64_t)curNucRange.second));
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Gap map orchestrator: apply a sorted list of gap updates to the gap map
+// ============================================================================
+
+inline void updateGapMap(
+  std::map<uint64_t, uint64_t>& gapMap,
+  const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
+  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
+) {
+  for (const auto& update : updates) {
+    gap_map::updateGapMapStep(gapMap, update.second.first, update.second.second, update.first, backtrack, gapMapUpdates, true);
+  }
+}
+
+// ============================================================================
+// Compute genome extent from gap map
+// Returns (firstNonGapScalar, lastNonGapScalar) - the bounds of actual sequence data
+// flankSize: number of non-gap bases to skip at each end (default 0)
+// If genome is all gaps or too short, returns (UINT64_MAX, 0)
+// ============================================================================
+
+inline std::pair<uint64_t, uint64_t> computeExtentFromGapMap(
+    const std::map<uint64_t, uint64_t>& gapMap,
+    uint64_t lastScalarCoord,
+    uint64_t flankSize = 0) {
+
+  auto findPositionAfterNonGaps = [&](uint64_t start, uint64_t count) -> uint64_t {
+    uint64_t nonGapCount = 0;
+    uint64_t pos = start;
+
+    while (pos <= lastScalarCoord && nonGapCount < count) {
+      auto it = gapMap.upper_bound(pos);
+      if (it != gapMap.begin()) {
+        --it;
+        if (it->second >= pos) {
+          pos = it->second + 1;
+          continue;
+        }
+      }
+      nonGapCount++;
+      if (nonGapCount >= count) {
+        return pos;
+      }
+      pos++;
+    }
+    return UINT64_MAX;
+  };
+
+  auto findPositionBeforeNonGaps = [&](uint64_t start, uint64_t count) -> uint64_t {
+    uint64_t nonGapCount = 0;
+    int64_t pos = static_cast<int64_t>(start);
+
+    while (pos >= 0 && nonGapCount < count) {
+      auto it = gapMap.upper_bound(static_cast<uint64_t>(pos));
+      if (it != gapMap.begin()) {
+        --it;
+        if (it->second >= static_cast<uint64_t>(pos)) {
+          pos = static_cast<int64_t>(it->first) - 1;
+          continue;
+        }
+      }
+      nonGapCount++;
+      if (nonGapCount >= count) {
+        return static_cast<uint64_t>(pos);
+      }
+      pos--;
+    }
+    return 0;
+  };
+
+  uint64_t firstNonGap = 0;
+  uint64_t lastNonGap = lastScalarCoord;
+
+  auto it = gapMap.find(0);
+  if (it != gapMap.end()) {
+    if (it->second >= lastScalarCoord) {
+      return {UINT64_MAX, 0};
+    }
+    firstNonGap = it->second + 1;
+  }
+
+  if (!gapMap.empty()) {
+    auto lastIt = std::prev(gapMap.end());
+    if (lastIt->second == lastScalarCoord) {
+      lastNonGap = lastIt->first - 1;
+    }
+  }
+
+  if (flankSize > 0) {
+    uint64_t maskedFirst = findPositionAfterNonGaps(firstNonGap, flankSize);
+    uint64_t maskedLast = findPositionBeforeNonGaps(lastNonGap, flankSize);
+
+    if (maskedFirst == UINT64_MAX || maskedLast == 0 || maskedFirst > maskedLast) {
+      return {UINT64_MAX, 0};
+    }
+
+    firstNonGap = maskedFirst;
+    lastNonGap = maskedLast;
+  }
+
+  return {firstNonGap, lastNonGap};
+}
 
 }

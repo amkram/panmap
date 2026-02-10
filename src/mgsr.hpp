@@ -7,43 +7,13 @@
 #include "panmap_utils.hpp"
 #include "seeding.hpp"
 #include "progress_tracker.hpp"
+#include "gap_map_utils.hpp"
 #include "absl/container/flat_hash_set.h"
 #include <eigen3/Eigen/Dense>
 #include <span>
 #include <tbb/task_arena.h>
 
 namespace mgsr {
-
-void updateGapMapStep(
-    std::map<uint64_t, uint64_t>& gapMap,
-    uint64_t startPos,
-    uint64_t endPos,
-    bool toGap,
-    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates,
-    bool recordGapMapUpdates
-);
-
-void updateGapMap(
-  panmanUtils::Node *node,
-  size_t dfsIndex,
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-);
-
-void invertGapMap(
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::pair<uint64_t, uint64_t>& invertRange,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-);
-
-void revertGapMapInversions(
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks,
-  std::map<uint64_t, uint64_t>& gapMap
-);
 
 void makeCoordIndex(
   std::map<uint64_t, uint64_t>& degapCoordIndex,
