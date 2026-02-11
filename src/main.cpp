@@ -11,6 +11,7 @@
 #include <boost/iostreams/filter/lzma.hpp>
 #include <boost/algorithm/string.hpp>
 #include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -35,6 +36,7 @@
 #include "genotyping.hpp"
 #include "conversion.hpp"
 #include "seeding.hpp"
+#include "mgsr.hpp"
 
 extern "C" {
 #include <htslib/sam.h>
@@ -92,6 +94,7 @@ struct Config {
     int s = 8;                    // syncmer s
     int l = 1;                    // l-mer size
     int t = 0;                    // syncmer offset
+    bool openSyncmer = false;     // Open syncmer
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
     double seedMaskFraction = 0; // Mask top 0.1% most frequent seeds
     int minSeedQuality = 0;          // Min avg Phred quality for seed region (0=disabled)
@@ -110,12 +113,14 @@ struct Config {
     size_t topOc = 1000;
     uint32_t maskReads = 0;
     uint32_t maskSeeds = 0;
+    std::string indexMgsr;
     std::string ampliconDepth;
     double maskReadsRelativeFrequency = 0.0;
     double maskSeedsRelativeFrequency = 0.0;
     double emConvergenceThreshold = 0.00001;
     double emDeltaThreshold = 0.0;
     uint32_t emMaximumIterations = 1000;
+    uint32_t emMaximumRounds = 5;
     bool emLeavesOnly = false;
     bool filterAndAssign = false;
     double dust = 100.0;
@@ -133,6 +138,9 @@ struct Config {
     bool dumpSequence = false;
     std::vector<std::string> dumpSequences;
     std::vector<uint32_t> simulateSNPs;
+    bool writeMetaReadScoresFiltered = false;
+    bool writeMetaReadScoresUnfiltered = false;
+    bool writeOCRanks = false;
     int seed = 42;
     int listFilteredNodes = 0;    // List N filtered nodes (0 = off)
     
@@ -848,6 +856,21 @@ void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std
 }
 
 /* INDEXING */
+
+bool buildMgsrIndex(const Config& cfg) {
+  auto tg = loadPanMAN(cfg.panman);
+  if (!tg || tg->trees.empty()) {
+    logging::err("Failed to load pangenome");
+    return false;
+  }
+
+  panmanUtils::Tree* T = &tg->trees[0];
+  mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, cfg.indexFull);
+  mgsrIndexBuilder.buildIndex();
+  mgsrIndexBuilder.writeIndex(cfg.indexMgsr);
+  std::cout << (cfg.indexFull ? "Full" : "Lite") << " MGSR index written to " << cfg.indexMgsr << std::endl;
+  return true;
+}
 
 bool buildIndex(const Config& cfg) {
     if (fs::exists(cfg.index) && !cfg.forceReindex) {
@@ -1900,6 +1923,7 @@ int main(int argc, char** argv) {
         ("syncmer,s", po::value<int>(&cfg.s)->default_value(15), "Syncmer s")
         ("offset,t", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
         ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Syncmers per seed")
+        ("open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")
         ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
         ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0),
             "Mask top seed fraction")
@@ -1923,23 +1947,24 @@ int main(int argc, char** argv) {
 
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()
-        ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
+        ("index-mgsr", po::value<std::string>(&cfg.indexMgsr), "Path to build/rebuild MGSR index")
         ("index-full", po::bool_switch(&cfg.indexFull), "Build full index (default index-mgsr builds lite index)")
         ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
     
     po::options_description em("Metagenomic: EM");
     em.add_options()
-        ("top-oc", po::value<size_t>(&cfg.topOc)->default_value(1000), "Select top <int> nodes by overlap coefficients to send to EM")
-        ("mask-reads", po::value<uint32_t>(&cfg.maskReads)->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
-        ("mask-seeds", po::value<uint32_t>(&cfg.maskSeeds)->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
-        ("amplicon-depth", po::value<std::string>(&cfg.ampliconDepth), "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")
-        ("mask-reads-relative-frequency", po::value<double>(&cfg.maskReadsRelativeFrequency)->default_value(0.0), "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")
-        ("mask-seeds-relative-frequency", po::value<double>(&cfg.maskSeedsRelativeFrequency)->default_value(0.0), "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
+      ("top-oc", po::value<size_t>(&cfg.topOc)->default_value(1000), "Select top <int> nodes by overlap coefficients to send to EM")
+      ("mask-reads", po::value<uint32_t>(&cfg.maskReads)->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
+      ("mask-seeds", po::value<uint32_t>(&cfg.maskSeeds)->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
+      ("amplicon-depth", po::value<std::string>(&cfg.ampliconDepth), "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")
+      ("mask-reads-relative-frequency", po::value<double>(&cfg.maskReadsRelativeFrequency)->default_value(0.0), "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")
+      ("mask-seeds-relative-frequency", po::value<double>(&cfg.maskSeedsRelativeFrequency)->default_value(0.0), "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
 
-        ("em-convergence-threshold", po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001), "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
-        ("em-delta-threshold", po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0), "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
-        ("em-maximum-iterations", po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000), "EM maximum iterations")
-        ("em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
+      ("em-convergence-threshold", po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001), "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
+      ("em-delta-threshold", po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0), "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
+      ("em-maximum-rounds", po::value<uint32_t>(&cfg.emMaximumRounds)->default_value(5), "EM maximum rounds")
+      ("em-maximum-iterations", po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000), "EM maximum iterations")
+      ("em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
     
     po::options_description filterAndAssign("Metagenomic: Filter and Assign");
     filterAndAssign.add_options()
@@ -1965,6 +1990,9 @@ int main(int argc, char** argv) {
         ("debug-node", po::value<std::string>(&cfg.debugNodeId), "Debug node metrics")
         ("compare-nodes", po::value<std::string>(&cfg.compareNodes), "Compare two nodes (nodeA,nodeB)")
         ("dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")
+        ("write-meta-read-scores-filtered", po::bool_switch(&cfg.writeMetaReadScoresFiltered), "Write filtered meta read scores to TSV file")
+        ("write-meta-read-scores-unfiltered", po::bool_switch(&cfg.writeMetaReadScoresUnfiltered), "Write unfiltered meta read scores to TSV file")
+        ("write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")
         ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
     
     // Positional arguments (always hidden)
@@ -1979,10 +2007,10 @@ int main(int argc, char** argv) {
     
     // Combine option groups
     po::options_description all;  // For parsing
-    all.add(visible).add(advanced).add(developer).add(positional);
+    all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer).add(positional);
     
     po::options_description visible_all;  // For --help-all
-    visible_all.add(visible).add(advanced).add(developer);
+    visible_all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer);
     
     // Parse
     po::variables_map vm;
@@ -2344,6 +2372,18 @@ int main(int argc, char** argv) {
             saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath, cfg.impute);
             std::cout << cfg.dumpNodeId << "\n";
             return 0;
+        }
+
+        // metagenomics mode related
+        if (!cfg.indexMgsr.empty()) {
+          if (!buildMgsrIndex(cfg)) return 1;
+          return 0;
+        }
+
+        if (cfg.metagenomic) {
+          if (!runMetagenomic(cfg)) return 1;
+          std::cout << "Metagenomic mode run completed" << std::endl;
+          return 0;
         }
         
         // Stage 1: Index
