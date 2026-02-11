@@ -275,6 +275,83 @@ void align_read_given_seeds(const mm_idx_t *mi, int num_reads,
   }
 }
 
+// ============================================================================
+// Shared minimap2 setup: auto-selects preset based on average read length.
+//
+// Preset selection (from minimap2/options.c):
+//   avg_len < 500   -> "sr"       short reads  (k=21, w=11, b=8, max_gap=100)
+//   avg_len < 5000  -> "map-ont"  ONT/medium   (k=15, w=10, b=4, max_gap=5000)
+//   else            -> "map-hifi" HiFi/long    (k=19, w=19, b=4, max_gap=10000)
+//
+// After preset selection, MM_F_CIGAR is always enabled.
+// mm_idx_str arg order: (w, k, is_hpc=0, bucket_bits, n, seqs, names)
+//
+// for_scoring: when true, use sr scoring parameters (A/B/O/E) but WITHOUT
+//   the MM_F_SR/MM_F_FRAG_MODE flags that require paired-end context.
+//   mm_map() maps individual reads, so those flags cause all reads to fail.
+// ============================================================================
+static mm_idx_t *setup_minimap2(mm_idxopt_t *iopt, mm_mapopt_t *mopt,
+                                const char *reference,
+                                int n_reads, const int *r_lens,
+                                int for_scoring, int paired_end) {
+  // Compute average read length
+  int avg_len = 150; // default
+  if (n_reads > 0) {
+    int64_t total_len = 0;
+    for (int i = 0; i < n_reads; i++) total_len += r_lens[i];
+    avg_len = (int)(total_len / n_reads);
+  }
+
+  mm_verbose = 0;  // suppress warnings
+
+  if (avg_len < 500) {
+    if (for_scoring) {
+      // Replicate minimap2 sr preset scoring/index params exactly.
+      // We DON'T set MM_F_SR because the fork's older align.c has a bug in
+      // the ungapped sr alignment path (NULL r->p deref in mm_align1).
+      // Without MM_F_SR, minimap2 uses gapped alignment — same scoring params,
+      // correct results, no crash.  We still set MM_F_FRAG_MODE + MM_F_HEAP_SORT
+      // so mm_map_frag pairs reads correctly.
+      mm_set_opt(0, iopt, mopt);
+      // Index params (same as sr)
+      iopt->k = 21; iopt->w = 11;
+      // Scoring params (same as sr)
+      mopt->a = 2;  mopt->b = 8;
+      mopt->q = 12; mopt->e = 2;
+      mopt->q2 = 24; mopt->e2 = 1;
+      mopt->zdrop = 100; mopt->zdrop_inv = 100;
+      mopt->end_bonus = 10;
+      mopt->max_frag_len = 800;
+      mopt->max_gap = 100;
+      mopt->bw = 100; mopt->bw_long = 100;
+      mopt->pri_ratio = 0.5f;
+      mopt->min_cnt = 2;
+      mopt->min_chain_score = 25;
+      mopt->min_dp_max = 40;
+      mopt->best_n = 20;
+      mopt->mid_occ = 1000;
+      mopt->max_occ = 5000;
+      // PE flags (no MM_F_SR to avoid fork's ungapped-alignment bug)
+      mopt->flag |= MM_F_FRAG_MODE | MM_F_HEAP_SORT;
+      mopt->pe_ori = 0<<1|1; // FR
+      mopt->pe_bonus = 33;
+    } else {
+      // For assembly: full sr preset
+      mm_set_opt("sr", iopt, mopt);
+    }
+  } else if (avg_len < 5000) {
+    mm_set_opt("map-ont", iopt, mopt);
+  } else {
+    mm_set_opt("map-hifi", iopt, mopt);
+  }
+  mopt->flag |= MM_F_CIGAR;
+
+  mm_idx_t *mi = mm_idx_str(iopt->w, iopt->k, 0, 14, 1, &reference, NULL);
+  if (!mi) return NULL;
+  mm_mapopt_update(mopt, mi);
+  return mi;
+}
+
 // Stores sam strings in sam_alignments, and stores reference positions of
 // alignments in r_lens
 void align_reads(const char *reference, int n_reads, const char **reads,
@@ -285,24 +362,10 @@ void align_reads(const char *reference, int n_reads, const char **reads,
 
   mm_idxopt_t iopt;
   mm_mapopt_t mopt;
-  int n_threads = 1;
 
-  mm_verbose = 2; // disable message output to stderr
-  mm_set_opt(0, &iopt, &mopt);
-  mopt.flag |= MM_F_CIGAR; // perform alignment
-  // mopt.flag |= MM_F_SR;
-  // mopt.max_gap = 100;
-  // mopt.max_frag_len = 800;
-  // mopt.max_gap = 100;
-
-  iopt.k = syncmer_k; // setting seed length
-
-  mm_idx_t *mi = mm_idx_str(10, iopt.k, 0, 14, 1, &reference,
-                            NULL); // Read reference into structure
-
-  mm_mapopt_update(&mopt, mi); // this sets the maximum minimizer occurrence;
-  mm_tbuf_t *tbuf = mm_tbuf_init(); // thread buffer; for multi-threading,
-                                    // allocate one tbuf for each thread
+  mm_idx_t *mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 0, pairedEndReads ? 1 : 0);
+  if (!mi) return;
+  mm_tbuf_t *tbuf = mm_tbuf_init();
 
   if (pairedEndReads) {
     for (int k = 0; k < n_reads / 2; k++) {
@@ -401,84 +464,91 @@ void align_reads(const char *reference, int n_reads, const char **reads,
   mm_idx_destroy(mi);
 }
 
-// Simple alignment scoring function for refinement
-// Returns NEGATIVE edit distance (sum of NM for all reads) - higher is better
-// Uses standard minimap2 mapping with its own minimizers (not our syncmers)
+// Helper: count errors for one alignment result
+// Returns edit distance (blen - mlen + ambiguous bases) for the primary alignment,
+// or full read length if unmapped (no alignments returned).
+static int64_t count_read_errors(mm_reg1_t *reg, int n_reg, int read_len) {
+  if (n_reg > 0 && reg != NULL) {
+    mm_reg1_t *r = &reg[0];
+    if (r->p && r->blen > 0) {
+      return (r->blen - r->mlen + r->p->n_ambi);
+    }
+    return read_len;
+  }
+  return read_len;
+}
+
+// Helper: free alignment results
+static void free_regs(mm_reg1_t *reg, int n_reg) {
+  if (reg) {
+    for (int j = 0; j < n_reg; j++) {
+      if (reg[j].p) free(reg[j].p);
+    }
+    free(reg);
+  }
+}
+
+// Alignment scoring function for refinement
+// Returns: negative total edit distance (higher = fewer errors = better)
+// 
+// When paired_end is true, reads must be interleaved (R1_0, R2_0, R1_1, ...)
+// and n_reads must be even. Uses mm_map_frag(n_segs=2) for proper paired-end
+// mapping with fragment chaining, pair bonus, and insert size estimation.
+//
+// When paired_end is false, maps each read independently with mm_map.
 int64_t score_reads_vs_reference(const char *reference, int n_reads, 
                                   const char **reads, const int *r_lens,
-                                  int kmer_size) {
-  (void)kmer_size;  // Unused - always use k=11 for minimap2
+                                  int kmer_size, bool paired_end) {
+  (void)kmer_size;
+  
+  if (n_reads <= 0) return 0;
   
   mm_idxopt_t iopt;
   mm_mapopt_t mopt;
   
-  mm_verbose = 0; // suppress warnings
-  mm_set_opt(0, &iopt, &mopt);
-  mopt.flag |= MM_F_CIGAR;  // need CIGAR for accurate scoring
-  
-  // Use k=11 for minimap2 (standard short-read setting)
-  // Let minimap2 compute its own minimizers
-  iopt.k = 11;
-  iopt.w = 5;  // minimizer window size
-  
-  // Build index from reference
-  // mm_idx_str params: bucket_bits, k, w, flag, n_seq, seqs, names
-  mm_idx_t *mi = mm_idx_str(10, iopt.k, iopt.w, 14, 1, &reference, NULL);
+  mm_idx_t *mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens,
+                                 1, paired_end ? 1 : 0);
   if (!mi) return 0;
-  
-  mm_mapopt_update(&mopt, mi);
   mm_tbuf_t *tbuf = mm_tbuf_init();
   
-  int64_t total_matches = 0;
-  int64_t total_mismatches = 0;
-  
-  for (int i = 0; i < n_reads; i++) {
-    int n_reg = 0;
-    mm_reg1_t *reg = mm_map(mi, r_lens[i], reads[i], &n_reg, tbuf, &mopt, NULL);
-    
-    if (n_reg > 0 && reg != NULL) {
-      // Use primary alignment - count matches and mismatches from CIGAR
-      mm_reg1_t *r = &reg[0];
-      if (r->p) {
-        // Count matches and mismatches from CIGAR
-        uint32_t *cigar = r->p->cigar;
-        int n_cigar = r->p->n_cigar;
-        for (int j = 0; j < n_cigar; j++) {
-          int op = cigar[j] & 0xf;
-          int len = cigar[j] >> 4;
-          if (op == 0) {  // M - match/mismatch
-            total_matches += len;
-          } else if (op == 8) {  // X - mismatch
-            total_mismatches += len;
-          } else if (op == 7) {  // = - exact match  
-            total_matches += len;
-          } else if (op == 1 || op == 2) {  // I or D - indel
-            total_mismatches += len;
-          }
-        }
-        // Also use NM for more accurate mismatch count if cigar doesn't have =X
-        // blen - mlen gives edit distance
-        int edit_dist = r->blen - r->mlen;
-        if (edit_dist > 0) {
-          total_mismatches += edit_dist;
-        }
-      } else {
-        // No CIGAR, use score as rough proxy
-        total_matches += reg[0].score;
-      }
+  int64_t total_errors = 0;
+
+  if (paired_end && n_reads >= 2) {
+    for (int i = 0; i + 1 < n_reads; i += 2) {
+      int qlens[2] = { r_lens[i], r_lens[i+1] };
+      const char *seqs[2] = { reads[i], reads[i+1] };
+      mm_reg1_t *regs[2] = { NULL, NULL };
+      int n_regs[2] = { 0, 0 };
       
-      // Free alignment results
-      for (int j = 0; j < n_reg; j++) {
-        if (reg[j].p) free(reg[j].p);
-      }
-      free(reg);
+      mm_map_frag(mi, 2, qlens, seqs, n_regs, regs, tbuf, &mopt, NULL);
+      
+      total_errors += count_read_errors(regs[0], n_regs[0], r_lens[i]);
+      total_errors += count_read_errors(regs[1], n_regs[1], r_lens[i+1]);
+      
+      free_regs(regs[0], n_regs[0]);
+      free_regs(regs[1], n_regs[1]);
+    }
+    // If odd number of reads, map the last one alone
+    if (n_reads % 2 != 0) {
+      int last = n_reads - 1;
+      int n_reg = 0;
+      mm_reg1_t *reg = mm_map(mi, r_lens[last], reads[last], &n_reg, tbuf, &mopt, NULL);
+      total_errors += count_read_errors(reg, n_reg, r_lens[last]);
+      free_regs(reg, n_reg);
+    }
+  } else {
+    // Single-end scoring: map each read independently
+    for (int i = 0; i < n_reads; i++) {
+      int n_reg = 0;
+      mm_reg1_t *reg = mm_map(mi, r_lens[i], reads[i], &n_reg, tbuf, &mopt, NULL);
+      total_errors += count_read_errors(reg, n_reg, r_lens[i]);
+      free_regs(reg, n_reg);
     }
   }
   
   mm_tbuf_destroy(tbuf);
   mm_idx_destroy(mi);
   
-  // Return matches minus mismatches (higher is better)
-  // Scale mismatches more heavily to differentiate similar genomes
-  return total_matches - (total_mismatches * 10);
+  // Return negative total errors (higher = fewer errors = better)
+  return -total_errors;
 }
