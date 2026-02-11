@@ -201,6 +201,33 @@ private:
     }
 };
 
+class PackedIndexReader {
+  public:
+    int fd = -1;
+    std::unique_ptr<::capnp::PackedFdMessageReader> reader;
+  
+    explicit PackedIndexReader(const std::string& path) {
+      ::capnp::ReaderOptions opts;
+      opts.traversalLimitInWords = 16ULL * 1024 * 1024 * 1024;
+      opts.nestingLimit = 1024;
+      
+      fd = mgsr::open_file(path);
+      reader = std::make_unique<::capnp::PackedFdMessageReader>(fd, opts);
+    }
+  
+    ~PackedIndexReader() {
+      reader.reset();
+      if (fd >= 0) {
+        close(fd);
+      }
+    }
+  
+    template<typename T>
+    typename T::Reader getRoot() {
+      return reader->getRoot<T>();
+    }
+  };
+
 // ==================
 // Utility Functions
 // ==================
@@ -1259,29 +1286,26 @@ bool runMetagenomic(const Config& cfg) {
   }
   
   
-  int fd = -1;
-  std::unique_ptr<IndexReader> zstdReader;
-  std::unique_ptr<::capnp::PackedFdMessageReader> fdReader;
+  std::unique_ptr<IndexReader> compressedReader;
+  std::unique_ptr<PackedIndexReader> packedReader;
   ::capnp::MessageReader* baseReader = nullptr;
-  bool mgsrIndex;
   
   try {
-    zstdReader = std::make_unique<IndexReader>(cfg.index, cfg.threads);
-    baseReader = zstdReader.get();
-    mgsrIndex = false;
+    compressedReader = std::make_unique<IndexReader>(cfg.index, cfg.threads);
+    baseReader = compressedReader.get();
   } catch (...) {
-    std::cerr << "Trying to open index file as packed file..." << std::endl;
-    fd = mgsr::open_file(cfg.index);
-    ::capnp::ReaderOptions readerOptions{
-      .traversalLimitInWords = std::numeric_limits<uint64_t>::max(),
-      .nestingLimit = 1024
-    };
-    fdReader = std::make_unique<::capnp::PackedFdMessageReader>(fd, readerOptions);
-    baseReader = fdReader.get();
-    mgsrIndex = true;
+    try {
+      std::cerr << "Trying to open index file as packed file..." << std::endl;
+      packedReader = std::make_unique<PackedIndexReader>(cfg.index);
+      baseReader = packedReader->reader.get();
+    } catch (...) {
+      std::cerr << "Failed to open index file" << std::endl;
+      return false;
+    }
   }
   
   LiteIndex::Reader indexReader = baseReader->getRoot<LiteIndex>();
+
   bool lowMemory = false;
 
 
@@ -1289,7 +1313,7 @@ bool runMetagenomic(const Config& cfg) {
   T.initialize(indexReader, cfg.taxonomicMetadata, cfg.taxonomicMetadata.empty() ? 0 : cfg.maximumFamilies, cfg.threads, lowMemory, true);
 
   mgsr::ThreadsManager threadsManager(&T, cfg.output, cfg.threads, cfg.maskSeeds, cfg.maskReads, cfg.maskSeedsRelativeFrequency, cfg.maskReadsRelativeFrequency, !cfg.noProgress, lowMemory);
-  threadsManager.initializeMGSRIndex(indexReader);
+  threadsManager.initializeMGSRIndex(T.k, T.s, T.t, T.l, T.openSyncmer);
 
   threadsManager.initializeQueryData(cfg.reads1, cfg.reads2, cfg.ampliconDepth, cfg.dust, cfg.maskReadEnds);
 

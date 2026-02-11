@@ -602,6 +602,34 @@ void mgsr::MgsrLiteNode::initializeMutationData(
   }
 }
 
+
+void mgsr::MgsrLiteNode::initializeMutationData(
+    std::vector<refSeedChange>& refSeedChanges,
+    uint32_t curOffset,
+    uint32_t nextOffset,
+    size_t numThreads,
+    bool lowMemory
+) {
+
+  if (nextOffset > curOffset) {
+    this->refSeedChanges = std::vector<refSeedChange>(
+      std::make_move_iterator(refSeedChanges.begin() + curOffset),
+      std::make_move_iterator(refSeedChanges.begin() + nextOffset)
+    );
+  } else if (nextOffset < curOffset) {
+    std::cerr << "Error: nextOffset " << nextOffset << " < curOffset " << curOffset << " in mgsr::MgsrLiteNode::initializeMutationData!" << std::endl;
+    std::exit(1);
+  } else {
+    this->refSeedChanges = std::vector<refSeedChange>();
+  }
+
+  if (lowMemory) {
+    this->readScoreDeltasLowMemory.resize(numThreads);
+  } else {
+    this->readScoreDeltas.resize(numThreads);
+  }
+}
+
 void mgsr::MgsrLiteNode::initializeParent(MgsrLiteNode* p) {
   parent = p;
   collapsedParent = p;
@@ -847,6 +875,53 @@ void mgsr::MgsrLiteTree::initialize(
     });
   std::cerr << "Successfully read in perNodeChanges, size: " << perNodeChangesReader.size() << std::endl;
 
+  capnp::List<uint64_t>::Reader seedChangeHashesReader = indexReader.getSeedChangeHashes();
+  capnp::List<uint32_t>::Reader nodeChangeOffsetsReader = indexReader.getNodeChangeOffsets();
+  capnp::List<int64_t>::Reader seedChangeParentCountsReader = indexReader.getSeedChangeParentCounts();
+  capnp::List<int64_t>::Reader seedChangeChildCountsReader = indexReader.getSeedChangeChildCounts();
+  if (seedChangeHashesReader.size() != seedChangeParentCountsReader.size() || seedChangeHashesReader.size() != seedChangeChildCountsReader.size()) {
+    std::cerr << "Error: seed change hashes, parent counts, and child counts must have the same size!" << std::endl;
+    exit(1);
+  }
+
+  std::vector<refSeedChange> refSeedChanges;
+  std::vector<uint32_t> nodeChangeOffsets;
+
+  refSeedChanges.resize(seedChangeHashesReader.size());
+  size_t seedChangeHashes_chunkSize = (seedChangeHashesReader.size() + numThreads - 1) / numThreads;
+  std::cerr << "Start to read in seed change hashes, parent counts, and child counts" << std::endl;
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, seedChangeHashesReader.size(), seedChangeHashes_chunkSize),
+    [&](const tbb::blocked_range<size_t>& range) {
+      for (size_t i = range.begin(); i < range.end(); i++) {
+        refSeedChanges[i].hash = seedChangeHashesReader[i];
+        refSeedChanges[i].parentCount = seedChangeParentCountsReader[i];
+        refSeedChanges[i].currentCount = seedChangeChildCountsReader[i];
+      }
+    }, tbb::simple_partitioner());
+  std::cerr << "Successfully read in seed change hashes, parent counts, and child counts, size: " << refSeedChanges.size() << std::endl;
+
+  nodeChangeOffsets.resize(nodeChangeOffsetsReader.size());
+  for (size_t i = 0; i < nodeChangeOffsetsReader.size(); i++) {
+    nodeChangeOffsets[i] = nodeChangeOffsetsReader[i];
+  }
+  std::cerr << "Successfully read in node change offsets, size: " << nodeChangeOffsets.size() << std::endl;
+
+  if (seedInfos.size() > 0 && refSeedChanges.size() > 0) {
+    std::cerr << "Error: both seed infos and ref seed changes found in index!" << std::endl;
+    exit(1);
+  }
+
+  bool useSeedInfos;
+  if (seedInfos.size() > 0) {
+    useSeedInfos = true;
+  } else if (refSeedChanges.size() > 0) {
+    useSeedInfos = false;
+  } else{
+    std::cerr << "Error: no seed infos or ref seed changes found in index!" << std::endl;
+    exit(1);
+  }
+  
+
   auto liteTreeReader = indexReader.getLiteTree();
   // initialize blockScalarRanges
   auto blockScalarRangesReader = liteTreeReader.getBlockRanges();
@@ -866,7 +941,11 @@ void mgsr::MgsrLiteTree::initialize(
     const auto isIdenticalToParent = liteNodeReader.getIdenticalToParent();
     auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new MgsrLiteNode(nodeIdentifier, nullptr, {}, i));
     if (inserted) {
-      it->second->initializeMutationData(seedDeltas[i], gapRunDeltas[i], invertedBlocks[i], seedInfos, numThreads, lowMemory);
+      if (useSeedInfos) {
+        it->second->initializeMutationData(seedDeltas[i], gapRunDeltas[i], invertedBlocks[i], seedInfos, numThreads, lowMemory);
+      } else {
+        it->second->initializeMutationData(refSeedChanges, nodeChangeOffsets[i], nodeChangeOffsets[i + 1], numThreads, lowMemory);
+      }
       if (taxonomicMetadataPath != "") {
         auto familyIndexIt = sampleToFamilyIndex.find(nodeIdentifier);
         if (familyIndexIt != sampleToFamilyIndex.end()) {
@@ -940,6 +1019,7 @@ void mgsr::MgsrLiteTree::initialize(
     auto curPrevNode = root;
     setDfsIndex(root, curPrevNode, dfsIndex);
   }
+
 }
 
 void mgsr::MgsrLiteTree::collapseNode(mgsr::MgsrLiteNode* node) {
@@ -1804,21 +1884,21 @@ void mgsr::ReadDebruijnGraph::buildGraph(std::vector<Read>& reads) {
   
 }
 
-void mgsr::ThreadsManager::initializeMGSRIndex(LiteIndex::Reader indexReader) {
-  k = indexReader.getK();
-  s = indexReader.getS();
-  t = indexReader.getT();
-  l = indexReader.getL();
-  openSyncmer = indexReader.getOpen();
+void mgsr::ThreadsManager::initializeMGSRIndex(int k, int s, int t, int l, bool openSyncmer) {
+  this->k = k;
+  this->s = s;
+  this->t = t;
+  this->l = l;
+  this->openSyncmer = openSyncmer;
 }
 
-void mgsr::mgsrPlacer::initializeMGSRIndex(LiteIndex::Reader indexReader) {
-  k = indexReader.getK();
-  s = indexReader.getS();
-  t = indexReader.getT();
-  l = indexReader.getL();
-  openSyncmer = indexReader.getOpen();
-}
+// void mgsr::mgsrPlacer::initializeMGSRIndex(LiteIndex::Reader indexReader) {
+//   k = indexReader.getK();
+//   s = indexReader.getS();
+//   t = indexReader.getT();
+//   l = indexReader.getL();
+//   openSyncmer = indexReader.getOpen();
+// }
 
 constexpr int KMER_LENGTH = 3;
 constexpr int NUM_POSSIBLE_KMERS = 1 << (KMER_LENGTH * 2);
