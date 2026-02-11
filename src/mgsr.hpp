@@ -666,7 +666,7 @@ class ThreadsManager {
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(MgsrLiteTree* liteTree, const std::string& prefix, size_t numThreads, uint32_t maskSeeds, uint32_t maskReads, bool maskSeedsRelativeFrequency, bool maskReadsRelativeFrequency, bool progressBar, bool lowMemory)
+    ThreadsManager(MgsrLiteTree* liteTree, const std::string& prefix, size_t numThreads, uint32_t maskSeeds, uint32_t maskReads, double maskSeedsRelativeFrequency, double maskReadsRelativeFrequency, bool progressBar, bool lowMemory)
       : liteTree(liteTree), prefix(prefix), numThreads(numThreads), maskSeeds(maskSeeds), maskReads(maskReads), maskSeedsRelativeFrequency(maskSeedsRelativeFrequency), maskReadsRelativeFrequency(maskReadsRelativeFrequency), progressBar(progressBar), lowMemory(lowMemory)
     {
       threadRanges.resize(numThreads);
