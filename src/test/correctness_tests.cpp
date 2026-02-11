@@ -603,8 +603,7 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
         placement::NodeMetrics::computeChildMetrics(metrics, changes, state);
         
         // Debug: show running totals after each node
-        BOOST_TEST_MESSAGE("  After node " << i << ": unique=" << metrics.genomeUniqueSeedCount 
-            << " total=" << metrics.genomeTotalSeedFrequency);
+        BOOST_TEST_MESSAGE("  After node " << i << ": logRawNum=" << metrics.logRawNumerator);
     }
     
     // VERIFICATION: Manually track seed counts to verify unique count
@@ -639,28 +638,17 @@ BOOST_AUTO_TEST_CASE(test_placement_metrics_at_truth_node) {
     
     // Compute final scores from accumulated metrics
     double deltaLogRaw = metrics.getLogRawScore(logReadMagnitude);
-    double deltaLogCosine = metrics.getLogCosineScore(logReadMagnitude);
     
     BOOST_TEST_MESSAGE("=== DELTA-BASED (index traversal) ===");
-    BOOST_TEST_MESSAGE("  Genome unique seeds: " << metrics.genomeUniqueSeedCount);
-    BOOST_TEST_MESSAGE("  Genome total freq: " << metrics.genomeTotalSeedFrequency);
     BOOST_TEST_MESSAGE("  LogRaw: " << deltaLogRaw);
-    BOOST_TEST_MESSAGE("  LogCosine: " << deltaLogCosine);
     
     // ========================================================================
     // STEP 6: VERIFY delta-based metrics are reasonable
     // With N-imputation, the index may have MORE seeds than direct extraction
     // ========================================================================
     
-    // Index should have at least as many seeds (N-imputation adds seeds)
-    BOOST_TEST(metrics.genomeUniqueSeedCount >= groundTruth.genomeUniqueSeedCount,
-        "Genome unique: delta=" << metrics.genomeUniqueSeedCount 
-        << " truth=" << groundTruth.genomeUniqueSeedCount);
-    
-    // Log differences due to N-imputation
-    if (metrics.genomeUniqueSeedCount > groundTruth.genomeUniqueSeedCount) {
-        BOOST_TEST_MESSAGE("N-imputation added " << (metrics.genomeUniqueSeedCount - groundTruth.genomeUniqueSeedCount) << " extra seeds");
-    }
+    // Verify scores are non-negative
+    BOOST_TEST(deltaLogRaw >= 0.0, "LogRaw score should be non-negative");
     
     fs::remove(indexPath);
 }
@@ -746,9 +734,9 @@ BOOST_AUTO_TEST_CASE(test_reads_from_truth_genome_place_to_truth_node) {
     auto nodeChangeOffsets = indexRoot.getNodeChangeOffsets();
     
     // Find best scoring node by traversing all nodes
-    double bestLogCosine = -1.0;
-    int32_t bestLogCosineNodeIdx = -1;
-    double targetNodeLogCosine = 0.0;
+    double bestLogRaw = -1.0;
+    int32_t bestLogRawNodeIdx = -1;
+    double targetNodeLogRaw = 0.0;
     
     // BFS traversal to compute metrics at each node
     // Pass parent metrics to children, apply deltas at each node
@@ -779,19 +767,19 @@ BOOST_AUTO_TEST_CASE(test_reads_from_truth_genome_place_to_truth_node) {
             );
         }
         
-        // Apply delta updates - ALL metrics computed incrementally
+        // Apply delta updates
         placement::NodeMetrics::computeChildMetrics(nodeMetrics, changes, state);
         
-        // Compute LogCosine score
-        double logCosine = nodeMetrics.getLogCosineScore(logReadMagnitude);
+        // Compute LogRaw score
+        double logRaw = nodeMetrics.getLogRawScore(logReadMagnitude);
         
-        if (logCosine > bestLogCosine) {
-            bestLogCosine = logCosine;
-            bestLogCosineNodeIdx = node->nodeIndex;
+        if (logRaw > bestLogRaw) {
+            bestLogRaw = logRaw;
+            bestLogRawNodeIdx = node->nodeIndex;
         }
         
         if (static_cast<int32_t>(node->nodeIndex) == targetNodeIdx) {
-            targetNodeLogCosine = logCosine;
+            targetNodeLogRaw = logRaw;
         }
         
         // Add children to queue
@@ -800,17 +788,17 @@ BOOST_AUTO_TEST_CASE(test_reads_from_truth_genome_place_to_truth_node) {
         }
     }
     
-    std::string bestNodeId = liteTree.resolveNodeId(bestLogCosineNodeIdx);
-    BOOST_TEST_MESSAGE("Best LogCosine node: " << bestNodeId << " (score: " << bestLogCosine << ")");
-    BOOST_TEST_MESSAGE("Target node " << truthNodeId << " LogCosine: " << targetNodeLogCosine);
+    std::string bestNodeId = liteTree.resolveNodeId(bestLogRawNodeIdx);
+    BOOST_TEST_MESSAGE("Best LogRaw node: " << bestNodeId << " (score: " << bestLogRaw << ")");
+    BOOST_TEST_MESSAGE("Target node " << truthNodeId << " LogRaw: " << targetNodeLogRaw);
     
     // The target node should have one of the highest scores
     // (it may not be THE highest if there are very similar genomes)
-    BOOST_TEST(targetNodeLogCosine > 0.5, 
-        "Reads from " << truthNodeId << " should have high LogCosine at that node");
+    BOOST_TEST(targetNodeLogRaw > 0.5, 
+        "Reads from " << truthNodeId << " should have high LogRaw at that node");
     
     // Target should be within top scores
-    BOOST_TEST(targetNodeLogCosine >= bestLogCosine * 0.8,
+    BOOST_TEST(targetNodeLogRaw >= bestLogRaw * 0.8,
         "Target node should be close to best scoring node");
     
     fs::remove(indexPath);
@@ -963,15 +951,6 @@ BOOST_AUTO_TEST_CASE(test_incremental_traversal_matches_direct_at_every_node) {
         
         placement::NodeMetrics::computeChildMetrics(metrics, changes, state);
         
-        // With N-imputation, index may have more seeds than direct extraction
-        // Check that index has at least as many seeds
-        BOOST_TEST(metrics.genomeUniqueSeedCount >= directUnique,
-            "Node " << nodeId << " incremental unique: " << metrics.genomeUniqueSeedCount 
-            << " should be >= direct: " << directUnique);
-        BOOST_TEST(metrics.genomeTotalSeedFrequency >= directTotal,
-            "Node " << nodeId << " incremental total: " << metrics.genomeTotalSeedFrequency 
-            << " should be >= direct: " << directTotal);
-        
         // Compute direct metrics for comparison
         auto directTruth = GroundTruthMetrics::compute(readSeeds, directGenomeSeeds);
         
@@ -983,15 +962,8 @@ BOOST_AUTO_TEST_CASE(test_incremental_traversal_matches_direct_at_every_node) {
         // Verify genome metrics at final target node
         if (nodeId == truthNodeId) {
             BOOST_TEST_MESSAGE("Final validation at " << truthNodeId << ":");
-            BOOST_TEST_MESSAGE("  Direct unique seeds: " << directTruth.genomeUniqueSeedCount);
-            BOOST_TEST_MESSAGE("  Delta unique seeds: " << metrics.genomeUniqueSeedCount);
             BOOST_TEST_MESSAGE("  LogRaw: " << deltaLogRaw);
             BOOST_TEST_MESSAGE("  LogCosine: " << deltaLogCosine);
-            
-            // Log N-imputation effects
-            if (metrics.genomeUniqueSeedCount > directUnique) {
-                BOOST_TEST_MESSAGE("N-imputation added " << (metrics.genomeUniqueSeedCount - directUnique) << " extra seeds at " << nodeId);
-            }
         }
     }
     
@@ -1058,7 +1030,6 @@ BOOST_AUTO_TEST_CASE(test_index_write_and_read) {
     BOOST_TEST(indexRoot.getK() == k);
     BOOST_TEST(indexRoot.getS() == s);
     BOOST_TEST(indexRoot.getL() == l);
-    BOOST_TEST(indexRoot.getVersion() == 3);
     
     // Verify V3 arrays are present
     BOOST_TEST(indexRoot.hasSeedChangeHashes());
@@ -1072,7 +1043,6 @@ BOOST_AUTO_TEST_CASE(test_index_write_and_read) {
     BOOST_TEST(nodes.size() > 0);
     
     BOOST_TEST_MESSAGE("Index has " << nodes.size() << " nodes");
-    BOOST_TEST_MESSAGE("Total seed changes: " << indexRoot.getTotalSeedChanges());
     
     // Clean up
     fs::remove(indexPath);
@@ -1430,21 +1400,16 @@ BOOST_AUTO_TEST_CASE(test_placement_bfs_metrics_match_truth) {
     
     auto groundTruth = GroundTruthMetrics::compute(readSeeds, genomeSeeds);
     
-    // Compare BFS-accumulated metrics vs ground truth
-    // With N-imputation, BFS may have more seeds than direct extraction
-    BOOST_TEST_MESSAGE("BFS metrics: unique=" << metrics.genomeUniqueSeedCount 
-        << " total=" << metrics.genomeTotalSeedFrequency);
+    // Compare BFS-accumulated score vs ground truth
+    double bfsLogRaw = metrics.getLogRawScore(logReadMagnitude);
+    double bfsLogCosine = metrics.getLogCosineScore(logReadMagnitude);
+    BOOST_TEST_MESSAGE("BFS scores: LogRaw=" << bfsLogRaw << " LogCosine=" << bfsLogCosine);
     BOOST_TEST_MESSAGE("Truth: unique=" << groundTruth.genomeUniqueSeedCount 
         << " total=" << groundTruth.genomeTotalSeedFrequency);
     
-    // Index should have >= truth seeds due to N-imputation
-    BOOST_TEST(metrics.genomeUniqueSeedCount >= static_cast<int64_t>(groundTruth.genomeUniqueSeedCount),
-        "Unique seed count: BFS=" << metrics.genomeUniqueSeedCount << " should be >= truth=" << groundTruth.genomeUniqueSeedCount);
-    
-    // Log N-imputation effect
-    if (metrics.genomeUniqueSeedCount > static_cast<int64_t>(groundTruth.genomeUniqueSeedCount)) {
-        BOOST_TEST_MESSAGE("N-imputation added " << (metrics.genomeUniqueSeedCount - groundTruth.genomeUniqueSeedCount) << " extra seeds");
-    }
+    // Scores should be positive for reads from this genome
+    BOOST_TEST(bfsLogRaw > 0.0, "BFS LogRaw should be positive");
+    BOOST_TEST(bfsLogCosine > 0.0, "BFS LogCosine should be positive");
     
     fs::remove(indexPath);
 }

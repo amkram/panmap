@@ -23,207 +23,6 @@
 #include <iomanip>
 
 
-static void applyMutations (
-  panmanUtils::Node *node,
-  size_t dfsIndex,
-  panmapUtils::BlockSequences &blockSequences,
-  std::unordered_set<uint64_t>& invertedBlocks,
-  panmapUtils::GlobalCoords& globalCoords,
-  std::vector<std::pair<panmapUtils::Coordinate, panmapUtils::Coordinate>>& localMutationRanges,
-  std::vector<std::tuple<uint32_t, bool, bool, bool, bool>>& blockMutationRecord,
-  std::vector<std::tuple<panmapUtils::Coordinate, char, char>>& nucMutationRecord,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapRunUpdates,
-  std::vector<std::pair<uint64_t, bool>>& invertedBlocksBacktracks,
-  std::vector<uint32_t>& potentialSyncmerDeletions,
-  const std::vector<char>& oldBlockExists,
-  const std::vector<char>& oldBlockStrand
-) {
-  std::vector<char>& blockExists = blockSequences.blockExists;
-  std::vector<char>& blockStrand = blockSequences.blockStrand;
-  std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
-  
-  // process block mutations
-  for (const auto& blockMutation : node->blockMutation) {
-    const int32_t blockId = blockMutation.primaryBlockId;
-    const bool isInsertion = blockMutation.blockMutInfo;
-    const bool isInversion = blockMutation.inversion;
-    const bool oldExists = blockExists[blockId];
-    const bool oldStrand = blockStrand[blockId];
-
-    if (isInsertion) {
-      blockExists[blockId] = true;
-      blockStrand[blockId] = !isInversion;
-      if (!blockStrand[blockId]) {
-        invertedBlocks.insert(blockId);
-        invertedBlocksBacktracks.emplace_back(blockId, true);
-      }
-    } else if (isInversion) {
-      blockStrand[blockId] = !blockStrand[blockId];
-      if (!blockStrand[blockId]) {
-        invertedBlocks.insert(blockId);
-        invertedBlocksBacktracks.emplace_back(blockId, true);
-      } else {
-        invertedBlocks.erase(blockId);
-        invertedBlocksBacktracks.emplace_back(blockId, false);
-      }
-    } else {
-      blockExists[blockId] = false;
-      blockStrand[blockId] = true;
-      if (!oldStrand) {
-        invertedBlocks.erase(blockId);
-        invertedBlocksBacktracks.emplace_back(blockId, false);
-      }
-    }
-    blockMutationRecord.emplace_back(blockId, oldExists, oldStrand, blockExists[blockId], blockStrand[blockId]);
-
-    const auto& curBlockEdgeCoords = globalCoords.blockEdgeCoords[blockId];
-    if (blockStrand[blockId]) {
-      // forward strand
-      localMutationRanges.emplace_back(curBlockEdgeCoords.start, curBlockEdgeCoords.end);
-    } else {
-      // reversed strand
-      localMutationRanges.emplace_back(curBlockEdgeCoords.end, curBlockEdgeCoords.start);
-    }
-  }
-
-  // process nuc mutations
-  for (const auto& nucMutation : node->nucMutation) {
-    int length = nucMutation.mutInfo >> 4;
-    int blockId;
-    int lastOffset = -1;
-
-    for (int i = 0; i < length; i++) {
-      panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
-      if ((pos.nucPosition == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) ||
-              (pos.nucPosition >= sequence[pos.primaryBlockId].size())) {
-        continue;
-      }
-      lastOffset = i;
-      blockId = pos.primaryBlockId;
-      const char oldNuc = blockSequences.getSequenceBase(pos);
-      const int newNucCode = (nucMutation.nucs >> (4*(5-i))) & 0xF;
-      const char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
-
-      if (oldNuc == newNuc) continue;
-      
-      // N imputation: Skip XX->N mutations during indexing
-      // When a node has 'N' (ambiguous base), we treat it as inheriting the parent's base
-      // This effectively imputes the N with the ancestral value for syncmer computation
-      if (newNuc == 'N') continue;
-      
-      blockSequences.setSequenceBase(pos, newNuc);
-      nucMutationRecord.emplace_back(pos, oldNuc, newNuc);
-
-      if (oldBlockExists[pos.primaryBlockId] && blockExists[pos.primaryBlockId]) {
-        const int64_t scalarCoord = globalCoords.getScalarFromCoord(pos);
-        if (newNuc == '-') {
-          // nuc to gap
-          if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true && gapRunUpdates.back().second.second + 1 == scalarCoord) {
-            ++(gapRunUpdates.back().second.second);
-          }
-          else {
-            gapRunUpdates.emplace_back(true, std::make_pair(scalarCoord, scalarCoord)); 
-          }
-          if (blockExists[blockId] && oldBlockExists[blockId] && blockStrand[blockId] == oldBlockStrand[blockId]) {
-            potentialSyncmerDeletions.push_back(globalCoords.getScalarFromCoord(pos, blockStrand[pos.primaryBlockId]));
-          }
-        } else if (oldNuc == '-') {
-          // gap to nuc
-          if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false && gapRunUpdates.back().second.second + 1 == scalarCoord) {
-            ++(gapRunUpdates.back().second.second);
-          } else {
-            gapRunUpdates.emplace_back(false, std::make_pair(scalarCoord, scalarCoord));
-          }
-        }
-      }
-    }
-    if (lastOffset != -1 && blockExists[blockId] && oldBlockExists[blockId] && blockStrand[blockId] == oldBlockStrand[blockId]) {
-      if (blockStrand[blockId]) {
-        localMutationRanges.emplace_back(panmapUtils::Coordinate(nucMutation, 0), panmapUtils::Coordinate(nucMutation, lastOffset));
-      } else {
-        localMutationRanges.emplace_back(panmapUtils::Coordinate(nucMutation, lastOffset), panmapUtils::Coordinate(nucMutation, 0));
-      }
-    }
-  }
-
-
-  for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
-    if (oldExists && !newExists) {
-      // on to off -> block range to all gaps
-      uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
-      uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
-      gapRunUpdates.emplace_back(true, std::make_pair(beg, end));
-    } else if (!oldExists && newExists) {
-      // off to on -> recompute across entire block
-      panmapUtils::Coordinate coord = globalCoords.blockEdgeCoords[blockId].start;
-      panmapUtils::Coordinate end = globalCoords.blockEdgeCoords[blockId].end;
-      std::pair<int64_t, int64_t> curNucRange = {-1, -1};
-      while (true) {
-        char nuc = blockSequences.getSequenceBase(coord);
-        nuc = nuc == 'x' ? '-' : nuc;
-        int64_t scalar = globalCoords.getScalarFromCoord(coord);
-        if (nuc != '-') {
-          if (curNucRange.first != -1 && curNucRange.second + 1 == scalar) {
-            ++curNucRange.second;
-          } else {
-            if (curNucRange.first != -1) {
-              gapRunUpdates.emplace_back(false, std::make_pair((uint64_t)curNucRange.first, (uint64_t)curNucRange.second));
-            }
-            curNucRange = {scalar, scalar};
-          }
-        }
-
-        if (coord == end) break;
-        globalCoords.stepRightCoordinate(coord);
-      }
-      if (curNucRange.first != -1) {
-        gapRunUpdates.emplace_back(false, std::make_pair((uint64_t)curNucRange.first, (uint64_t)curNucRange.second));
-      }
-    }
-  }
-}
-
-void index_single_mode::updateGapMapStep(
-  std::map<uint64_t, uint64_t>& gapMap,
-  uint64_t start,
-  uint64_t end,
-  bool toGap,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates,
-  bool recordGapMapUpdates
-) {
-  gap_map::updateGapMapStep(gapMap, start, end, toGap, backtrack, gapMapUpdates, recordGapMapUpdates);
-}
-
-void index_single_mode::updateGapMap(
-  panmanUtils::Node *node,
-  size_t dfsIndex,
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-) {
-  for (const auto& update : updates) {
-    gap_map::updateGapMapStep(gapMap, update.second.first, update.second.second, update.first, backtrack, gapMapUpdates, true);
-  }
-}
-
-void index_single_mode::invertGapMap(
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::pair<uint64_t, uint64_t>& invertRange,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-) {
-  gap_map::invertGapMap(gapMap, invertRange, backtrack, gapMapUpdates);
-}
-
-void index_single_mode::revertGapMapInversions(
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks,
-  std::map<uint64_t, uint64_t>& gapMap
-) {
-  gap_map::revertGapMapChanges(gapMapBlocksBacktracks, gapMap);
-}
-
 
 std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::computeNewSyncmerRangesJump(
   panmanUtils::Node* node,
@@ -916,7 +715,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   potentialSyncmerDeletions.reserve(node->nucMutation.size() * 6);
   localMutationRanges.reserve(node->blockMutation.size() + node->nucMutation.size() * 6);
   gapRunUpdates.reserve(node->nucMutation.size() * 6 + node->blockMutation.size() * 10);
-  applyMutations(node, dfsIndex, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, potentialSyncmerDeletions, blockExistsDelayed, blockStrandDelayed);
+  panmapUtils::applyMutations(node, dfsIndex, blockSequences, invertedBlocks, globalCoords, localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, invertedBlocksBacktracks, potentialSyncmerDeletions, blockExistsDelayed, blockStrandDelayed, imputeAmb_);
   blockMutationRecord.shrink_to_fit();
   nucMutationRecord.shrink_to_fit();
   potentialSyncmerDeletions.shrink_to_fit();
@@ -926,7 +725,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
 
 
   std::sort(gapRunUpdates.begin(), gapRunUpdates.end(), [&](const auto& a, const auto& b) { return a.second.first < b.second.first; });
-  updateGapMap(node, dfsIndex, gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
+  panmapUtils::updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
 
   std::vector<uint64_t> invertedBlocksVec(invertedBlocks.begin(), invertedBlocks.end());
   std::sort(invertedBlocksVec.begin(), invertedBlocksVec.end());
@@ -934,12 +733,27 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
     uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
 
-    invertGapMap(gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
+    gap_map::invertGapMap(gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
   // Compute genome extent from gapMap for flank masking
-  // Pass flankSize=0 - actual flank masking is applied separately
-  auto [firstNonGapScalar, lastNonGapScalar] = computeExtentFromGapMap(gapMap, globalCoords.lastScalarCoord, 0);
+  uint64_t firstNonGapScalar = 0;
+  uint64_t lastNonGapScalar = UINT64_MAX;
+  if (extentGuard_) {
+    auto [fng, lng] = panmapUtils::computeExtentFromGapMap(gapMap, globalCoords.lastScalarCoord, 0);
+    firstNonGapScalar = fng;
+    lastNonGapScalar = lng;
+  }
+
+  // Compute hard mask boundaries (properly skipping non-gap bases, not scalar positions)
+  const int flankMaskBp = getFlankMaskBp();
+  uint64_t hardMaskStart = firstNonGapScalar;
+  uint64_t hardMaskEnd = lastNonGapScalar;
+  if (flankMaskBp > 0) {
+    auto [hms, hme] = panmapUtils::computeExtentFromGapMap(gapMap, globalCoords.lastScalarCoord, flankMaskBp);
+    hardMaskStart = hms;
+    hardMaskEnd = hme;
+  }
 
   std::vector<panmapUtils::NewSyncmerRange> newSyncmerRanges = computeNewSyncmerRangesJump(
       node, dfsIndex, blockSequences, blockExistsDelayed, blockStrandDelayed, 
@@ -949,12 +763,34 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   // processing syncmers
   for (const auto& syncmerRange : newSyncmerRanges) {
     const auto& [begCoord, endCoord, localRangeSeq, localRangeCoordToGlobalScalarCoords, localRangeCoordToBlockId, seedsToDelete] = syncmerRange;
-    if (localRangeSeq.size() >= indexBuilder.getK()) {
-      for (auto [hash, isReverse, isSeed, startPos] : seeding::rollingSyncmers(localRangeSeq, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getOpen(), indexBuilder.getT(), true)) {
-        auto startPosGlobal = localRangeCoordToGlobalScalarCoords[startPos];
-        auto endPosGlobal = localRangeCoordToGlobalScalarCoords[startPos + indexBuilder.getK() - 1];
-        auto curBlockId = localRangeCoordToBlockId[startPos];
+    
+    // Apply HPC if enabled: compress localRangeSeq and remap coordinate arrays
+    std::string effectiveSeq;
+    std::vector<uint64_t> effectiveCoords;
+    std::vector<uint64_t> effectiveBlockIds;
+    if (hpc_) {
+      auto [hpcSeq, hpcMapping] = seeding::hpcCompressWithMapping(localRangeSeq);
+      effectiveSeq = std::move(hpcSeq);
+      effectiveCoords.reserve(hpcMapping.size());
+      effectiveBlockIds.reserve(hpcMapping.size());
+      for (size_t idx : hpcMapping) {
+        effectiveCoords.push_back(localRangeCoordToGlobalScalarCoords[idx]);
+        effectiveBlockIds.push_back(localRangeCoordToBlockId[idx]);
+      }
+    } else {
+      effectiveSeq = localRangeSeq;
+      effectiveCoords = localRangeCoordToGlobalScalarCoords;
+      effectiveBlockIds = localRangeCoordToBlockId;
+    }
+    
+    if (effectiveSeq.size() >= indexBuilder.getK()) {
+      for (auto [hash, isReverse, isSeed, startPos] : seeding::rollingSyncmers(effectiveSeq, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getOpen(), indexBuilder.getT(), true)) {
+        auto startPosGlobal = effectiveCoords[startPos];
+        auto endPosGlobal = effectiveCoords[startPos + indexBuilder.getK() - 1];
+        auto curBlockId = effectiveBlockIds[startPos];
         bool wasSeed = refOnSyncmers.contains(startPosGlobal);
+        // Hard mask: skip all seed operations in flanked regions
+        if (startPosGlobal < hardMaskStart || startPosGlobal > hardMaskEnd) continue;
         if (!wasSeed && isSeed) {
           auto it = refOnSyncmersMap.insert(startPosGlobal).first;
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
@@ -967,8 +803,8 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
           refOnSyncmers.erase(startPosGlobal);
           refOnSyncmersMap.erase(startPosGlobal);
           blockOnSyncmers[curBlockId].erase(startPosGlobal);
-          if (blockOnSyncmers[localRangeCoordToBlockId[startPos]].empty()) {
-            blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
+          if (blockOnSyncmers[curBlockId].empty()) {
+            blockOnSyncmers.erase(curBlockId);
           }
         } else if (wasSeed && isSeed) {
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, refOnSyncmers.at(startPosGlobal));
@@ -978,6 +814,8 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     }
 
     for (uint64_t pos : seedsToDelete) {
+      // Hard mask: skip deletion in flanked regions
+      if (pos < hardMaskStart || pos > hardMaskEnd) continue;
       if (!refOnSyncmers.contains(pos)) {
         output::error("refOnSyncmers[{}] is null", pos);
         std::exit(1);
@@ -991,6 +829,8 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
 
   // Handle potential syncmer deletions
   for (uint32_t pos : potentialSyncmerDeletions) {
+    // Hard mask: skip deletion in flanked regions
+    if (pos < hardMaskStart || pos > hardMaskEnd) continue;
     if (refOnSyncmers.contains(pos)) {
       refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
       refOnSyncmers.erase(pos);
@@ -1006,14 +846,27 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     if (oldExists && !newExists) {
       if (blockOnSyncmers.find(blockId) != blockOnSyncmers.end()) {
+        std::vector<uint64_t> positionsToKeep;
         for (uint64_t pos : blockOnSyncmers[blockId]) {
+          // Hard mask: skip deletion in flanked regions
+          if (pos < hardMaskStart || pos > hardMaskEnd) {
+            positionsToKeep.push_back(pos);
+            continue;
+          }
           refOnSyncmersChangeRecord.emplace_back(pos, panmapUtils::seedChangeType::DEL, refOnSyncmers.at(pos));
           blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
 
           refOnSyncmers.erase(pos);
           refOnSyncmersMap.erase(pos);
         }
-        blockOnSyncmers.erase(blockId);
+        if (positionsToKeep.empty()) {
+          blockOnSyncmers.erase(blockId);
+        } else {
+          blockOnSyncmers[blockId].clear();
+          for (uint64_t pos : positionsToKeep) {
+            blockOnSyncmers[blockId].insert(pos);
+          }
+        }
       }
     }
   }
@@ -1185,7 +1038,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     curNodeCounts[newHash]++;
   }
   
-  revertGapMapInversions(gapRunBlockInversionBacktracks, gapMap);
+  gap_map::revertGapMapChanges(gapRunBlockInversionBacktracks, gapMap);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunBlockInversionBacktracks); // gapRunBlockInversionBacktracks is no longer needed... clear memory
 
   // update delayed block states
@@ -1371,10 +1224,6 @@ void index_single_mode::IndexBuilder::buildIndex() {
   }
   output::progress_clear();
 
-  // Set totals
-  indexBuilder.setTotalSeedChanges(totalChanges);
-  indexBuilder.setLargestNodeChangeCount(largestNodeChangeCount);
-
   // Allocate flat arrays
   auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(totalChanges);
   auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(totalChanges);
@@ -1393,26 +1242,6 @@ void index_single_mode::IndexBuilder::buildIndex() {
     }
   }
   nodeChangeOffsetsBuilder.set(numNodes, offset);
-
-  // Compute and write pre-indexed genome metrics
-  auto genomeMagnitudeSquaredBuilder = indexBuilder.initGenomeMagnitudeSquared(numNodes);
-  auto genomeUniqueSeedCountBuilder = indexBuilder.initGenomeUniqueSeedCount(numNodes);
-  auto genomeTotalSeedFrequencyBuilder = indexBuilder.initGenomeTotalSeedFrequency(numNodes);
-
-  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
-    const auto& counts = nodeSeedCounts[nodeIdx];
-    double magnitudeSquared = 0.0;
-    int64_t totalFrequency = 0;
-    
-    for (const auto& [hash, count] : counts) {
-      magnitudeSquared += static_cast<double>(count) * static_cast<double>(count);
-      totalFrequency += count;
-    }
-    
-    genomeMagnitudeSquaredBuilder.set(nodeIdx, magnitudeSquared);
-    genomeUniqueSeedCountBuilder.set(nodeIdx, counts.size());
-    genomeTotalSeedFrequencyBuilder.set(nodeIdx, totalFrequency);
-  }
 
   output::done(fmt::format("Index built ({} seed changes)", totalChanges));
 }
@@ -1517,10 +1346,10 @@ void index_single_mode::IndexBuilder::processNode(
   refOnSyncmersChangeRecord.reserve(128);  // avg is 76-153
   blockOnSyncmersChangeRecord.reserve(128);  // avg is 66-112
   
-  applyMutations(node, dfsIndex, state.blockSequences, state.invertedBlocks, globalCoords, 
+  panmapUtils::applyMutations(node, dfsIndex, state.blockSequences, state.invertedBlocks, globalCoords, 
                  localMutationRanges, blockMutationRecord, nucMutationRecord, gapRunUpdates, 
                  invertedBlocksBacktracks, potentialSyncmerDeletions, 
-                 state.blockExistsDelayed, state.blockStrandDelayed);
+                 state.blockExistsDelayed, state.blockStrandDelayed, imputeAmb_);
   
   blockMutationRecord.shrink_to_fit();
   nucMutationRecord.shrink_to_fit();
@@ -1530,14 +1359,14 @@ void index_single_mode::IndexBuilder::processNode(
 
   std::sort(gapRunUpdates.begin(), gapRunUpdates.end(), 
             [&](const auto& a, const auto& b) { return a.second.first < b.second.first; });
-  updateGapMap(node, dfsIndex, state.gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
+  panmapUtils::updateGapMap(state.gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
 
   std::vector<uint64_t> invertedBlocksVec(state.invertedBlocks.begin(), state.invertedBlocks.end());
   std::sort(invertedBlocksVec.begin(), invertedBlocksVec.end());
   for (const auto& blockId : invertedBlocksVec) {
     uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
     uint64_t end = (uint64_t)globalCoords.getBlockEndScalar(blockId);
-    invertGapMap(state.gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
+    gap_map::invertGapMap(state.gapMap, {beg, end}, gapRunBlockInversionBacktracks, gapMapUpdates);
   }
 
   // Update genome extent from gapMap - used to determine flank regions
@@ -1546,34 +1375,39 @@ void index_single_mode::IndexBuilder::processNode(
     backtrackInfo->prevFirstNonGapScalar = state.firstNonGapScalar;
     backtrackInfo->prevLastNonGapScalar = state.lastNonGapScalar;
   }
-  // Pass flankSize=0 here - flank masking is applied separately via hardMaskStart/hardMaskEnd below
-  auto [newFirstNonGap, newLastNonGap] = computeExtentFromGapMap(state.gapMap, globalCoords.lastScalarCoord, 0);
-  
-  // Debug: log extent changes for nodes we care about
-  static bool debugFlankMasking = (std::getenv("DEBUG_FLANK_MASKING") != nullptr);
-  if (debugFlankMasking) {
-    if (state.firstNonGapScalar != newFirstNonGap || state.lastNonGapScalar != newLastNonGap) {
-      output::debug("[FLANK] Node {} (dfs={}): extent [{},{}] -> [{},{}]",
-                   node->identifier, dfsIndex, 
-                   state.firstNonGapScalar, state.lastNonGapScalar,
-                   newFirstNonGap, newLastNonGap);
+
+  if (extentGuard_) {
+    // Pass flankSize=0 here - flank masking is applied separately via hardMaskStart/hardMaskEnd below
+    auto [newFirstNonGap, newLastNonGap] = panmapUtils::computeExtentFromGapMap(state.gapMap, globalCoords.lastScalarCoord, 0);
+    
+    // Debug: log extent changes for nodes we care about
+    static bool debugFlankMasking = (std::getenv("DEBUG_FLANK_MASKING") != nullptr);
+    if (debugFlankMasking) {
+      if (state.firstNonGapScalar != newFirstNonGap || state.lastNonGapScalar != newLastNonGap) {
+        output::debug("[FLANK] Node {} (dfs={}): extent [{},{}] -> [{},{}]",
+                     node->identifier, dfsIndex, 
+                     state.firstNonGapScalar, state.lastNonGapScalar,
+                     newFirstNonGap, newLastNonGap);
+      }
     }
+    
+    state.firstNonGapScalar = newFirstNonGap;
+    state.lastNonGapScalar = newLastNonGap;
   }
-  
-  state.firstNonGapScalar = newFirstNonGap;
-  state.lastNonGapScalar = newLastNonGap;
   
   // Compute hard mask boundaries relative to each genome's extent
   // Seeds in hard-masked regions are completely ignored (no adds, no deletes)
-  // Seeds in flank regions (between hard mask and extent) have deletions skipped (imputed)
   const int flankMaskBp = getFlankMaskBp();
   
-  // Hard mask is relative to the genome's extent (first/last N bp of actual sequence)
-  // Not relative to global scalar coordinates
-  const uint64_t hardMaskStart = state.firstNonGapScalar + static_cast<uint64_t>(flankMaskBp);
-  const uint64_t hardMaskEnd = state.lastNonGapScalar >= static_cast<uint64_t>(flankMaskBp) 
-                                ? state.lastNonGapScalar - flankMaskBp 
-                                : state.firstNonGapScalar;
+  // Use computeExtentFromGapMap with flankSize to correctly skip non-gap bases
+  // (not scalar positions) when determining mask boundaries
+  uint64_t hardMaskStart = state.firstNonGapScalar;
+  uint64_t hardMaskEnd = state.lastNonGapScalar;
+  if (flankMaskBp > 0) {
+    auto [hms, hme] = panmapUtils::computeExtentFromGapMap(state.gapMap, globalCoords.lastScalarCoord, flankMaskBp);
+    hardMaskStart = hms;
+    hardMaskEnd = hme;
+  }
   
   // Debug logging for specific nodes
   static bool debugMasking = (std::getenv("DEBUG_MASK") != nullptr);
@@ -1594,18 +1428,36 @@ void index_single_mode::IndexBuilder::processNode(
   // 1. HARD MASK: First/last flankMaskBp positions - completely ignore all seeds
   for (const auto& syncmerRange : newSyncmerRanges) {
     const auto& [begCoord, endCoord, localRangeSeq, localRangeCoordToGlobalScalarCoords, localRangeCoordToBlockId, seedsToDelete] = syncmerRange;
-    if (localRangeSeq.size() >= static_cast<size_t>(indexBuilder.getK())) {
-      for (auto [hash, isReverse, isSeed, startPos] : seeding::rollingSyncmers(localRangeSeq, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getOpen(), indexBuilder.getT(), true)) {
-        auto startPosGlobal = localRangeCoordToGlobalScalarCoords[startPos];
-        auto endPosGlobal = localRangeCoordToGlobalScalarCoords[startPos + indexBuilder.getK() - 1];
-        auto curBlockId = localRangeCoordToBlockId[startPos];
+    
+    // Apply HPC if enabled: compress localRangeSeq and remap coordinate arrays
+    std::string effectiveSeq;
+    std::vector<uint64_t> effectiveCoords;
+    std::vector<uint64_t> effectiveBlockIds;
+    if (hpc_) {
+      auto [hpcSeq, hpcMapping] = seeding::hpcCompressWithMapping(localRangeSeq);
+      effectiveSeq = std::move(hpcSeq);
+      effectiveCoords.reserve(hpcMapping.size());
+      effectiveBlockIds.reserve(hpcMapping.size());
+      for (size_t idx : hpcMapping) {
+        effectiveCoords.push_back(localRangeCoordToGlobalScalarCoords[idx]);
+        effectiveBlockIds.push_back(localRangeCoordToBlockId[idx]);
+      }
+    } else {
+      effectiveSeq = localRangeSeq;
+      effectiveCoords = localRangeCoordToGlobalScalarCoords;
+      effectiveBlockIds = localRangeCoordToBlockId;
+    }
+    
+    if (effectiveSeq.size() >= static_cast<size_t>(indexBuilder.getK())) {
+      for (auto [hash, isReverse, isSeed, startPos] : seeding::rollingSyncmers(effectiveSeq, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getOpen(), indexBuilder.getT(), true)) {
+        auto startPosGlobal = effectiveCoords[startPos];
+        auto endPosGlobal = effectiveCoords[startPos + indexBuilder.getK() - 1];
+        auto curBlockId = effectiveBlockIds[startPos];
         bool wasSeed = state.refOnSyncmers.contains(startPosGlobal);
         
         // Check masking conditions:
         // 1. Hard mask: position < hardMaskStart OR position > hardMaskEnd
         bool isHardMasked = (startPosGlobal < hardMaskStart || startPosGlobal > hardMaskEnd);
-        // 2. Flank imputation: position outside genome extent but not hard-masked
-        bool isInFlank = !isHardMasked && (startPosGlobal < state.firstNonGapScalar || startPosGlobal > state.lastNonGapScalar);
         
         // Hard-masked: skip ALL seed operations (adds and deletes)
         if (isHardMasked) {
@@ -1624,8 +1476,8 @@ void index_single_mode::IndexBuilder::processNode(
           state.refOnSyncmers.erase(startPosGlobal);
           state.refOnSyncmersMap.erase(startPosGlobal);
           state.blockOnSyncmers[curBlockId].erase(startPosGlobal);
-          if (state.blockOnSyncmers[localRangeCoordToBlockId[startPos]].empty()) {
-            state.blockOnSyncmers.erase(localRangeCoordToBlockId[startPos]);
+          if (state.blockOnSyncmers[curBlockId].empty()) {
+            state.blockOnSyncmers.erase(curBlockId);
           }
         } else if (wasSeed && isSeed) {
           refOnSyncmersChangeRecord.emplace_back(startPosGlobal, panmapUtils::seedChangeType::SUB, state.refOnSyncmers.at(startPosGlobal));
@@ -1637,7 +1489,6 @@ void index_single_mode::IndexBuilder::processNode(
     for (uint64_t pos : seedsToDelete) {
       // Check masking conditions
       bool isHardMasked = (pos < hardMaskStart || pos > hardMaskEnd);
-      bool isInFlank = !isHardMasked && (pos < state.firstNonGapScalar || pos > state.lastNonGapScalar);
       
       // Hard-masked: skip deletion
       if (isHardMasked) {
@@ -1659,7 +1510,6 @@ void index_single_mode::IndexBuilder::processNode(
     if (state.refOnSyncmers.contains(pos)) {
       // Check masking conditions
       bool isHardMasked = (pos < hardMaskStart || pos > hardMaskEnd);
-      bool isInFlank = !isHardMasked && (pos < state.firstNonGapScalar || pos > state.lastNonGapScalar);
       
       if (isHardMasked) {
         continue;
@@ -1682,7 +1532,6 @@ void index_single_mode::IndexBuilder::processNode(
         for (uint64_t pos : state.blockOnSyncmers[blockId]) {
           // Check masking conditions
           bool isHardMasked = (pos < hardMaskStart || pos > hardMaskEnd);
-          bool isInFlank = !isHardMasked && (pos < state.firstNonGapScalar || pos > state.lastNonGapScalar);
           
           if (isHardMasked) {
             positionsToKeep.push_back(pos);
@@ -1953,7 +1802,7 @@ void index_single_mode::IndexBuilder::processNode(
   }
 
   // Revert gap map inversions (for proper state for children)
-  revertGapMapInversions(gapRunBlockInversionBacktracks, state.gapMap);
+  gap_map::revertGapMapChanges(gapRunBlockInversionBacktracks, state.gapMap);
 
   // Update delayed block states (for children)
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
@@ -1962,34 +1811,6 @@ void index_single_mode::IndexBuilder::processNode(
   }
 
   // nodeToDfsIndex is pre-computed, no need to update here
-
-  // Compute genome metrics from runningCounts (only when we own this node)
-  if (!skipNodeChanges && state.genomeMagnitudeSquared) {
-    double magnitudeSquared = 0.0;
-    int64_t totalFrequency = 0;
-    for (const auto& [hash, count] : state.runningCounts) {
-      magnitudeSquared += static_cast<double>(count) * static_cast<double>(count);
-      totalFrequency += count;
-    }
-    (*state.genomeMagnitudeSquared)[dfsIndex] = magnitudeSquared;
-    (*state.genomeUniqueSeedCount)[dfsIndex] = state.runningCounts.size();
-    (*state.genomeTotalSeedFrequency)[dfsIndex] = totalFrequency;
-    
-    // IDF collection: For leaf nodes, record which seeds they contain
-    // A node is a leaf if it has no children
-    if (state.isLeafNode && node->children.empty()) {
-      (*state.isLeafNode)[dfsIndex] = true;
-      
-      // If we have IDF tracking, collect seeds for this leaf
-      if (state.leafSeedGenomeCounts) {
-        for (const auto& [hash, count] : state.runningCounts) {
-          if (count > 0) {
-            (*state.leafSeedGenomeCounts)[hash]++;
-          }
-        }
-      }
-    }
-  }
 
   // Update progress with instrumentation stats
   // Only count nodes where we actually computed nodeChanges (not path traversal duplicates)
@@ -2420,27 +2241,15 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   // Step 5: Process root node to establish initial state
   std::unordered_set<std::string_view> rootEmptyNodes;
   BacktrackInfo rootBacktrackInfo;
-  // Create shared storage for nodeChanges and genome metrics
+  // Create shared storage for nodeChanges
   templateState.nodeChanges = std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>(totalNodes);
-  templateState.genomeMagnitudeSquared = std::make_shared<std::vector<double>>(totalNodes);
-  templateState.genomeUniqueSeedCount = std::make_shared<std::vector<uint64_t>>(totalNodes);
-  templateState.genomeTotalSeedFrequency = std::make_shared<std::vector<int64_t>>(totalNodes);
-  templateState.isLeafNode = std::make_shared<std::vector<bool>>(totalNodes, false);
-  // Note: leafSeedGenomeCounts will be set per-chunk below
   processNode(T->root, templateState, globalCoords, rootEmptyNodes, 0, &rootBacktrackInfo);
 
   // Step 6: Make N copies upfront, each walks to its range start then processes its range
   std::vector<std::unordered_set<std::string_view>> chunkEmptyNodes(chunks.size());
   
-  // Per-chunk IDF maps - each chunk collects IDF data independently, merged at end
-  std::vector<std::unordered_map<uint64_t, uint32_t>> chunkIdfMaps(chunks.size());
-  
   // Shared storage - each node slot is written by exactly one chunk
   auto sharedNodeChanges = std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>(totalNodes);
-  auto sharedGenomeMagnitudeSquared = templateState.genomeMagnitudeSquared;  // Already created, share it
-  auto sharedGenomeUniqueSeedCount = templateState.genomeUniqueSeedCount;
-  auto sharedIsLeafNode = templateState.isLeafNode;
-  auto sharedGenomeTotalSeedFrequency = templateState.genomeTotalSeedFrequency;
   
   // Root was already processed
   (*sharedNodeChanges)[0] = std::move((*templateState.nodeChanges)[0]);
@@ -2456,9 +2265,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
         // Clone state from template (after root was processed)
         BuildState chunkState(templateState);
         chunkState.nodeChanges = sharedNodeChanges;  // Write to shared storage
-        chunkState.isLeafNode = sharedIsLeafNode;    // Share leaf tracking
-        // Set per-chunk IDF map
-        chunkState.leafSeedGenomeCounts = std::make_shared<std::unordered_map<uint64_t, uint32_t>>();
         // Genome metrics are already shared via templateState copy
         
         totalClonesCreated_.fetch_add(1, std::memory_order_relaxed);
@@ -2504,9 +2310,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
           }
           childDfs = childSubtreeEnd;
         }
-        
-        // Save chunk's IDF map for merging after parallel section
-        chunkIdfMaps[i] = std::move(*chunkState.leafSeedGenomeCounts);
       }
     );
   });
@@ -2522,29 +2325,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   for (auto& chunkEmpty : chunkEmptyNodes) {
     emptyNodes.insert(chunkEmpty.begin(), chunkEmpty.end());
   }
-  
-  // Merge IDF maps from all chunks
-  std::unordered_map<uint64_t, uint32_t> mergedIdfMap;
-  uint32_t totalLeafGenomes = 0;
-  for (size_t i = 0; i < totalNodes; i++) {
-    if ((*sharedIsLeafNode)[i]) totalLeafGenomes++;
-  }
-  
-  // Reserve space for merging
-  size_t estimatedSeeds = 0;
-  for (const auto& chunkMap : chunkIdfMaps) {
-    estimatedSeeds += chunkMap.size();
-  }
-  mergedIdfMap.reserve(estimatedSeeds);
-  
-  // Merge counts
-  for (auto& chunkMap : chunkIdfMaps) {
-    for (const auto& [hash, count] : chunkMap) {
-      mergedIdfMap[hash] += count;
-    }
-  }
-  
-  output::debug("IDF: {} leaf genomes, {} unique seeds", totalLeafGenomes, mergedIdfMap.size());
   
   // Print summary
   uint64_t finalNodes = processedNodes_.load();
@@ -2593,10 +2373,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
 
   auto serializeStart = std::chrono::high_resolution_clock::now();
 
-  // Set totals
-  indexBuilder.setTotalSeedChanges(totalChanges);
-  indexBuilder.setLargestNodeChangeCount(largestNodeChangeCount);
-
   // Allocate and write flat arrays (sequential - Cap'n Proto builders aren't thread-safe)
   auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(totalChanges);
   auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(totalChanges);
@@ -2619,46 +2395,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   auto serializeEnd = std::chrono::high_resolution_clock::now();
   auto serializeMs = std::chrono::duration_cast<std::chrono::milliseconds>(serializeEnd - serializeStart).count();
   output::done("Wrote seed changes", serializeMs);
-
-  // Copy pre-computed genome metrics to index builders
-  output::step("Writing genome metrics...");
-  auto metricsStart = std::chrono::high_resolution_clock::now();
-  auto genomeMagnitudeSquaredBuilder = indexBuilder.initGenomeMagnitudeSquared(numNodes);
-  auto genomeUniqueSeedCountBuilder = indexBuilder.initGenomeUniqueSeedCount(numNodes);
-  auto genomeTotalSeedFrequencyBuilder = indexBuilder.initGenomeTotalSeedFrequency(numNodes);
-
-  // Metrics were computed during main DFS - just copy them
-  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
-    genomeMagnitudeSquaredBuilder.set(nodeIdx, (*sharedGenomeMagnitudeSquared)[nodeIdx]);
-    genomeUniqueSeedCountBuilder.set(nodeIdx, (*sharedGenomeUniqueSeedCount)[nodeIdx]);
-    genomeTotalSeedFrequencyBuilder.set(nodeIdx, (*sharedGenomeTotalSeedFrequency)[nodeIdx]);
-  }
-
-  auto metricsEnd = std::chrono::high_resolution_clock::now();
-  auto metricsMs = std::chrono::duration_cast<std::chrono::milliseconds>(metricsEnd - metricsStart).count();
-  output::done("Wrote genome metrics", metricsMs);
-
-  // Write IDF data for seed weighting
-  output::step("Writing IDF data...");
-  auto idfStart = std::chrono::high_resolution_clock::now();
-  
-  // Sort seeds by hash for binary search at load time
-  std::vector<std::pair<uint64_t, uint32_t>> sortedIdf(mergedIdfMap.begin(), mergedIdfMap.end());
-  std::sort(sortedIdf.begin(), sortedIdf.end(), 
-            [](const auto& a, const auto& b) { return a.first < b.first; });
-  
-  indexBuilder.setTotalLeafGenomes(totalLeafGenomes);
-  auto idfHashesBuilder = indexBuilder.initIdfSeedHashes(sortedIdf.size());
-  auto idfCountsBuilder = indexBuilder.initIdfGenomeCounts(sortedIdf.size());
-  
-  for (size_t i = 0; i < sortedIdf.size(); i++) {
-    idfHashesBuilder.set(i, sortedIdf[i].first);
-    idfCountsBuilder.set(i, sortedIdf[i].second);
-  }
-  
-  auto idfEnd = std::chrono::high_resolution_clock::now();
-  auto idfMs = std::chrono::duration_cast<std::chrono::milliseconds>(idfEnd - idfStart).count();
-  output::done(fmt::format("Wrote IDF data ({} unique seeds)", sortedIdf.size()), idfMs);
 
   auto endTotal = std::chrono::high_resolution_clock::now();
   auto totalDurationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTotal - startTotal).count();

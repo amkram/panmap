@@ -7,43 +7,13 @@
 #include "panmap_utils.hpp"
 #include "seeding.hpp"
 #include "progress_tracker.hpp"
+#include "gap_map_utils.hpp"
 #include "absl/container/flat_hash_set.h"
 #include <eigen3/Eigen/Dense>
 #include <span>
 #include <tbb/task_arena.h>
 
 namespace mgsr {
-
-void updateGapMapStep(
-    std::map<uint64_t, uint64_t>& gapMap,
-    uint64_t startPos,
-    uint64_t endPos,
-    bool toGap,
-    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-    std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates,
-    bool recordGapMapUpdates
-);
-
-void updateGapMap(
-  panmanUtils::Node *node,
-  size_t dfsIndex,
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-);
-
-void invertGapMap(
-  std::map<uint64_t, uint64_t>& gapMap,
-  const std::pair<uint64_t, uint64_t>& invertRange,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& backtrack,
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapUpdates
-);
-
-void revertGapMapInversions(
-  std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& gapMapBlocksBacktracks,
-  std::map<uint64_t, uint64_t>& gapMap
-);
 
 void makeCoordIndex(
   std::map<uint64_t, uint64_t>& degapCoordIndex,
@@ -395,7 +365,6 @@ public:
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
 
-  void fillOCRanks(std::vector<std::pair<std::string, double>>& overlapCoefficients);
   void fillFamilyIndices(size_t maximumFamilies);
 
   std::unordered_map<size_t, int32_t> getSeedsAtNode(MgsrLiteNode* node, bool useCollapsed=true) const;
@@ -544,10 +513,9 @@ class mgsrIndexBuilder {
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
     bool imputeAmb;
-    bool indexFull;
 
-    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer, bool imputeAmb, bool indexFull) 
-      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), imputeAmb(imputeAmb), indexFull(indexFull)
+    mgsrIndexBuilder(panmanUtils::Tree *T, int k, int s, int t, int l, bool openSyncmer, bool imputeAmb) 
+      : outMessage(), indexBuilder(outMessage.initRoot<LiteIndex>()), T(T), imputeAmb(imputeAmb)
     {
       indexBuilder.setK(k);
       indexBuilder.setS(s);
@@ -639,10 +607,7 @@ class ThreadsManager {
     int t;
     int l;
     bool openSyncmer;
-    uint32_t maskSeeds;
     uint32_t maskReads;
-    double maskSeedsRelativeFrequency;
-    double maskReadsRelativeFrequency;
     bool lowMemory;
     bool progressBar;
 
@@ -682,9 +647,7 @@ class ThreadsManager {
     // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int t, int l, bool openSyncmer) : liteTree(liteTree) {
     //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
     // }
-    ThreadsManager(MgsrLiteTree* liteTree, const std::string& prefix, size_t numThreads, uint32_t maskSeeds, uint32_t maskReads, double maskSeedsRelativeFrequency, double maskReadsRelativeFrequency, bool progressBar, bool lowMemory)
-      : liteTree(liteTree), prefix(prefix), numThreads(numThreads), maskSeeds(maskSeeds), maskReads(maskReads), maskSeedsRelativeFrequency(maskSeedsRelativeFrequency), maskReadsRelativeFrequency(maskReadsRelativeFrequency), progressBar(progressBar), lowMemory(lowMemory)
-    {
+    ThreadsManager(MgsrLiteTree* liteTree, const std::string& prefix, size_t numThreads, uint32_t maskReads, bool progressBar, bool lowMemory) : liteTree(liteTree), prefix(prefix), numThreads(numThreads), maskReads(maskReads), progressBar(progressBar), lowMemory(lowMemory) {
       threadRanges.resize(numThreads);
       readMinichainsInitialized.resize(numThreads);
       readMinichainsAdded.resize(numThreads);
@@ -696,7 +659,10 @@ class ThreadsManager {
     void initializeQueryData(
       const std::string& readPath1,
       const std::string& readPath2,
+      uint32_t maskSeeds,
       const std::string& ampliconDepthPath,
+      double maskReadsRelativeFrequency,
+      double maskSeedsRelativeFrequency,
       double dustThreshold,
       uint32_t maskReadsEnds,
       bool fast_mode = false
