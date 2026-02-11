@@ -266,6 +266,12 @@ struct readScoreDeltaLowMemory {
   }
 };
 
+struct refSeedChange {
+  size_t hash;
+  uint32_t parentCount;
+  uint32_t currentCount;
+};
+
 class MgsrLiteNode {
 public:
   std::string identifier;
@@ -314,6 +320,8 @@ public:
   size_t totalKminmerNum = 0;
   std::vector<std::vector<readScoreDelta>> readScoreDeltas;
   std::vector<std::vector<readScoreDeltaLowMemory>> readScoreDeltasLowMemory;
+
+  std::vector<refSeedChange> refSeedChanges;
   std::vector<std::pair<uint32_t, bool>> seedDeltas;
   std::vector<std::tuple<uint32_t, uint32_t, bool>> gapRunDeltas; 
   std::vector<uint32_t> invertedBlocks;
@@ -325,6 +333,14 @@ public:
     const std::vector<seeding::uniqueKminmer_t>& seedInfos,
     size_t numThreads,
     bool lowMemory);
+
+  void initializeMutationData(
+    std::vector<refSeedChange>& refSeedChanges,
+    uint32_t curOffset,
+    uint32_t nextOffset,
+    size_t numThreads,
+    bool lowMemory
+  );
   
   void initializeParent(MgsrLiteNode* p);
   void initializeChild(MgsrLiteNode* c);
@@ -676,7 +692,7 @@ class ThreadsManager {
       readMinichainsUpdated.resize(numThreads);
     }
 
-    void initializeMGSRIndex(LiteIndex::Reader indexReader);
+    void initializeMGSRIndex(int k, int s, int t, int l, bool openSyncmer);
     void initializeQueryData(
       const std::string& readPath1,
       const std::string& readPath2,
@@ -824,14 +840,14 @@ class mgsrPlacer {
         progressBar(threadsManager.progressBar)
     {}
     
-    mgsrPlacer(MgsrLiteTree* liteTree, LiteIndex::Reader indexReader, bool lowMemory, size_t threadId)
+    mgsrPlacer(MgsrLiteTree* liteTree, int k, int s, int t, int l, bool openSyncmer, bool lowMemory, size_t threadId)
       : liteTree(liteTree),
         lowMemory(lowMemory),
         threadId(threadId)
     {
-      initializeMGSRIndex(indexReader);
+      initializeMGSRIndex(k, s, t, l, openSyncmer);
     }
-    void initializeMGSRIndex(LiteIndex::Reader indexReader);
+    void initializeMGSRIndex(int k, int s, int t, int l, bool openSyncmer);
     void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
