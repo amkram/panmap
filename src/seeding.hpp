@@ -85,83 +85,7 @@ struct seed_t {
   bool operator==(const seed_t &rhs) const { return pos == rhs.pos; }
 };
 
-// Represents a seed match between self and a reference sequence
-struct anchor_t : seed_t {
-  int64_t referencePos; // position in reference sequence
-  int64_t referenceEndPos; // end position in reference sequence
-};
 
-struct read_t {
-  std::string seq;                    // read sequence
-  std::string qual;                   // quality string
-  std::vector<int32_t> seedPositions; // positions of seed starts in read
-  std::string name;                   // read id
-};
-
-static size_t btn(char b) {
-  size_t n;
-  switch (b) {
-  case 'A':
-    n = 0;
-    break;
-  case 'a':
-    n = 0;
-    break;
-  case 'C':
-    n = 1;
-    break;
-  case 'c':
-    n = 1;
-    break;
-  case 'G':
-    n = 2;
-    break;
-  case 'g':
-    n = 2;
-    break;
-  case 'T':
-    n = 3;
-    break;
-  case 't':
-    n = 3;
-    break;
-  default:
-    // Instead of throwing an exception, return a special value
-    // that will be handled by the calling function
-    return std::numeric_limits<size_t>::max();
-  }
-  return n;
-}
-
-[[maybe_unused]] static size_t hash(const std::string &s) {
-  size_t h = 0;
-  if (s.empty()) {
-    return h;
-  } else if (s.size() == 1) {
-    h = btn(s[0]);
-    // Check for non-canonical base
-    if (h == std::numeric_limits<size_t>::max()) {
-      return 0; // Return 0 for non-canonical bases
-    }
-    return h;
-  }
-
-  h = btn(s[0]);
-  // Check for non-canonical base in first position
-  if (h == std::numeric_limits<size_t>::max()) {
-    return 0; // Return 0 for non-canonical bases
-  }
-  
-  for (size_t i = 1; i < s.size(); ++i) {
-    size_t base = btn(s[i]);
-    // Check for non-canonical base
-    if (base == std::numeric_limits<size_t>::max()) {
-      return 0; // Return 0 for non-canonical bases
-    }
-    h = (h << 2) + base;
-  }
-  return h;
-}
 
 static char comp(char c) {
   char compC;
@@ -211,8 +135,6 @@ static std::string revcomp(const std::string &s) {
 }
 
 
-bool is_syncmer(const std::string &seq, const int s, const bool open);
-
 size_t chash(const char& c);
 
 inline size_t rol(const size_t& h, const size_t& r) { return (h << r) | (h >> (64-r)); }
@@ -238,24 +160,13 @@ void seedsFromFastq(
 
 std::string reverseComplement(std::string dna_sequence);
 
-// For tracking seed mutations at each node
-struct SeedChange {
-    int64_t pos;       // Starting position of the seed, in scalar global genomic coordinates (includes gaps)
-    seed_t seed;  // Seed hash information including end position and orientation
-    int64_t tritMask;  // Ternary mask for efficient serialization
-    
-    explicit SeedChange(int64_t position = 0, const seed_t& seedHash = {}, int64_t mask = 0)
-        : pos(position), seed(seedHash), tritMask(mask) {}
-    
-    // Convenience accessor for end position
-    int64_t endPos() const { return seed.endPos; }
-    
-    bool operator==(const SeedChange& other) const {
-        return pos == other.pos && 
-               seed == other.seed &&
-               tritMask == other.tritMask;
-    }
-};
+// Homopolymer compression: collapse consecutive identical bases (e.g., AAACGG -> ACG)
+// Simple version: returns compressed sequence only
+std::string hpcCompress(const std::string& seq);
+
+// HPC with position mapping: returns (compressed_seq, mapping) where
+// mapping[i] = index in original seq of the i-th base in compressed seq
+std::pair<std::string, std::vector<size_t>> hpcCompressWithMapping(const std::string& seq);
 
 } // namespace seeding
 

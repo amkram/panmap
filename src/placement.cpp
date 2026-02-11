@@ -182,30 +182,6 @@ void extractFullFastqData(const std::string& readPath1, const std::string& readP
   }
 }
 
-// Build paired-end fragment tracking data
-// NOTE: Full fragment R1/R2 seed tracking is disabled (was O(fragments) per node for concordance)
-// Now just tracks basic paired-end info for potential future use
-void buildPairedEndFragmentData(
-    placement::PlacementGlobalState& state,
-    const std::vector<std::string>& allReadSequences,
-    const placement::TraversalParams& params) {
-    
-    // Check if paired-end (must have even number of reads, >= 2)
-    if (allReadSequences.size() < 2 || allReadSequences.size() % 2 != 0) {
-        state.isPairedEnd = false;
-        state.numFragments = allReadSequences.size();
-        logging::info("Single-end mode: {} reads", allReadSequences.size());
-        return;
-    }
-    
-    state.isPairedEnd = true;
-    state.numFragments = allReadSequences.size() / 2;
-    
-    // Skip expensive fragment seed building - concordance scoring is disabled
-    logging::info("Paired-end mode: {} fragments (fragment seed tracking disabled)", 
-                  state.numFragments);
-}
-
 } // anonymous namespace
 
 using namespace logging;
@@ -229,6 +205,7 @@ void placement::NodeMetrics::computeChildMetrics(
         const auto& [seedHash, _, __] = seedChanges[i];
         __builtin_prefetch(&seedChanges[i], 0, 0);
         state.seedFreqInReads.prefetch(seedHash);
+        state.seedInverseGenomeCounts.prefetch(seedHash);
     }
     
     // Process in batches for better instruction pipelining and cache utilization
@@ -241,154 +218,67 @@ void placement::NodeMetrics::computeChildMetrics(
                 const auto& [nextHash, _, __] = seedChanges[i + PREFETCH_DISTANCE];
                 __builtin_prefetch(&seedChanges[i + PREFETCH_DISTANCE], 0, 0);
                 state.seedFreqInReads.prefetch(nextHash);
+                state.seedInverseGenomeCounts.prefetch(nextHash);
             }
         
             const auto& [seedHash, parentCount, childCount] = seedChanges[i];
             
-            // ========================================
-            // GENOME-ONLY METRICS (computed for ALL seed changes)
-            // These don't require read lookup - just parent/child counts
-            // ========================================
-            
-            // Genome total seed frequency delta
             const int64_t freqDelta = childCount - parentCount;
-            childMetrics.genomeTotalSeedFrequency += freqDelta;
             
-            // Genome magnitude squared delta: child² - parent²
-            const double magDelta = static_cast<double>(childCount * childCount) 
-                                  - static_cast<double>(parentCount * parentCount);
+            // Pre-compute log-scaled genome counts for cosine metric
+            const double logChild = (childCount > 0) ? std::log1p(static_cast<double>(childCount)) : 0.0;
+            const double logParent = (parentCount > 0) ? std::log1p(static_cast<double>(parentCount)) : 0.0;
+            
+            // ========================================
+            // GENOME-ONLY METRICS (computed for ALL seed changes, even if not in reads)
+            // ========================================
+            
+            // Genome magnitude squared delta: log(1+child)² - log(1+parent)²
+            // Use log-scale to match the log-scaled read vector for proper cosine similarity
+            const double magDelta = logChild * logChild - logParent * logParent;
             childMetrics.genomeMagnitudeSquared += magDelta;
-            
-            // Log-dampened genome magnitude: Σ(log(1+G)²) for IDF-weighted cosine denominator
-            const double oldLogG = (parentCount > 0) ? std::log1p(static_cast<double>(parentCount)) : 0.0;
-            const double newLogG = (childCount > 0) ? std::log1p(static_cast<double>(childCount)) : 0.0;
-            childMetrics.logGenomeMagnitudeSquared += (newLogG * newLogG) - (oldLogG * oldLogG);
             
             // Genome unique seed count delta (branchless)
             const int64_t wasPresent = (parentCount > 0) ? 1 : 0;
             const int64_t isPresent = (childCount > 0) ? 1 : 0;
             childMetrics.genomeUniqueSeedCount += (isPresent - wasPresent);
             
-            // ========================================
-            // READ-GENOME INTERACTION METRICS (only for seeds in reads)
-            // SIMPLIFIED: Only compute LogRaw and LogCosine
-            // ========================================
-            
-            // Fast path: skip unchanged seeds (23% of all seeds per profiler)
+            // Fast path: skip unchanged seeds
             if (freqDelta == 0) [[likely]] continue;
             
-            // Single hash lookup: find() returns iterator, check if valid
-            auto readIt = state.seedFreqInReads.find(seedHash);
-            if (readIt == state.seedFreqInReads.end()) [[likely]] continue;
-            
-            // Hot path: seed changed AND present in reads (29% of all seeds)
-            // Get read count and pre-computed values
-            const int64_t readCount = readIt->second;
-            const double readCountD = static_cast<double>(readCount);
-            
             auto logIt = state.logReadCounts.find(seedHash);
-            if (logIt != state.logReadCounts.end()) {
-                const double logReadCount = logIt->second;
-                
-                // ========================================
-                // OLD METRICS (from working version 6cfb6cf)
-                // ========================================
-                
-                // Raw numerator: Σ(readCount / genomeCount)
-                const double oldRawContrib = (parentCount > 0) ? (readCountD / parentCount) : 0.0;
-                const double newRawContrib = (childCount > 0) ? (readCountD / childCount) : 0.0;
-                childMetrics.rawNumerator += (newRawContrib - oldRawContrib);
-                
-                // Cosine numerator: Σ(readCount × genomeCount)
-                childMetrics.cosineNumerator += readCountD * freqDelta;
-                
-                // Weighted Jaccard: Σmin(readCount, genomeCount)
-                const int64_t oldMin = std::min(readCount, parentCount);
-                const int64_t newMin = std::min(readCount, childCount);
-                childMetrics.weightedJaccardNumerator += (newMin - oldMin);
-                
-                // Capped metrics: cap read count at 100
-                const int64_t cappedReadCount = std::min(readCount, int64_t(100));
-                const double cappedReadCountD = static_cast<double>(cappedReadCount);
-                const double cappedLogReadCount = std::log1p(cappedReadCountD);
-                childMetrics.capCosineNumerator += cappedReadCountD * freqDelta;
-                childMetrics.capLogCosineNumerator += cappedLogReadCount * freqDelta;
-                
-                // Presence intersection count (binary: seed in both read and genome)
-                const bool wasInGenome = (parentCount > 0);
-                const bool isInGenome = (childCount > 0);
-                if (!wasInGenome && isInGenome) {
-                    childMetrics.presenceIntersectionCount += 1;
-                    // Track matched read magnitude for old containment
-                    childMetrics.matchedReadMagnitudeSquared += readCountD * readCountD;
-                } else if (wasInGenome && !isInGenome) {
-                    childMetrics.presenceIntersectionCount -= 1;
-                    childMetrics.matchedReadMagnitudeSquared -= readCountD * readCountD;
-                }
-                
-                // ========================================
-                // NEW METRICS (current version)
-                // ========================================
-                
-                // Update logRaw numerator: Σ(log(1+readCount) / genomeCount) for seeds in intersection
-                const double oldLogContrib = (parentCount > 0) ? (logReadCount / parentCount) : 0.0;
-                const double newLogContrib = (childCount > 0) ? (logReadCount / childCount) : 0.0;
-                childMetrics.logRawNumerator += (newLogContrib - oldLogContrib);
-                
-                // Update logCosine numerator: Σ(log(1+readCount) × genomeCount) delta (OLD FORMULA!)
-                childMetrics.logCosineNumerator += logReadCount * freqDelta;
-                
-                // IDF-WEIGHTED COSINE: Use log(1+genomeCount) instead of raw genomeCount
-                // This prevents repeat amplification: 100 copies → log(101) ≈ 4.6, not 100
-                const double oldLogGenome = (parentCount > 0) ? std::log1p(static_cast<double>(parentCount)) : 0.0;
-                const double newLogGenome = (childCount > 0) ? std::log1p(static_cast<double>(childCount)) : 0.0;
-                childMetrics.logCosineIdfNumerator += logReadCount * (newLogGenome - oldLogGenome);
-                
-                // Update logLogRaw and logLogCosine numerators
-                auto logLogIt = state.logLogReadCounts.find(seedHash);
-                if (logLogIt != state.logLogReadCounts.end()) {
-                    const double logLogReadCount = logLogIt->second;
-                    
-                    // LogLogRaw: Σ(log(1+log(1+readCount)) / genomeCount)
-                    const double oldLogLogContrib = (parentCount > 0) ? (logLogReadCount / parentCount) : 0.0;
-                    const double newLogLogContrib = (childCount > 0) ? (logLogReadCount / childCount) : 0.0;
-                    childMetrics.logLogRawNumerator += (newLogLogContrib - oldLogLogContrib);
-                    
-                    // LogLogCosine: Σ(log(1+log(1+readCount)) × genomeCount)
-                    childMetrics.logLogCosineNumerator += logLogReadCount * freqDelta;
-                    
-                    // Track logLog matched magnitude for coverage penalty
-                    const double logLogReadCountSquared = logLogReadCount * logLogReadCount;
-                    if (!wasInGenome && isInGenome) {
-                        childMetrics.matchedLogLogReadMagnitudeSquared += logLogReadCountSquared;
-                    } else if (wasInGenome && !isInGenome) {
-                        childMetrics.matchedLogLogReadMagnitudeSquared -= logLogReadCountSquared;
-                    }
-                }
-                
-                // COVERAGE TRACKING: Track matched read seed magnitude squared
-                // This seed was/is in reads. Track if it enters/leaves the genome.
-                const double logReadCountSquared = logReadCount * logReadCount;
-                
-                if (!wasInGenome && isInGenome) {
-                    // Seed newly appears in genome - add to matched magnitude
-                    childMetrics.matchedLogReadMagnitudeSquared += logReadCountSquared;
-                    // PRESENCE SCORE: Add 1/G for this newly matched seed
-                    childMetrics.presenceNumerator += 1.0 / static_cast<double>(childCount);
-                    childMetrics.matchedUniqueReadSeeds += 1;
-                } else if (wasInGenome && !isInGenome) {
-                    // Seed disappears from genome - remove from matched magnitude
-                    childMetrics.matchedLogReadMagnitudeSquared -= logReadCountSquared;
-                    // PRESENCE SCORE: Remove contribution (was 1/parentCount)
-                    childMetrics.presenceNumerator -= 1.0 / static_cast<double>(parentCount);
-                    childMetrics.matchedUniqueReadSeeds -= 1;
-                } else if (wasInGenome && isInGenome && parentCount != childCount) {
-                    // Seed still present but count changed - update 1/G contribution
-                    childMetrics.presenceNumerator -= 1.0 / static_cast<double>(parentCount);
-                    childMetrics.presenceNumerator += 1.0 / static_cast<double>(childCount);
-                }
-                // If seed stays in genome (count changes but still > 0), magnitude unchanged
+            if (logIt == state.logReadCounts.end()) [[likely]] continue;
+            
+            const double logReadCount = logIt->second;
+            
+            // Presence intersection count delta
+            const int64_t becamePresent = (parentCount == 0) & (childCount != 0);
+            const int64_t becameAbsent = (childCount == 0) & (parentCount != 0);
+            const int64_t presenceDelta = becamePresent - becameAbsent;
+            childMetrics.presenceIntersectionCount += presenceDelta;
+            
+            // LogRaw numerator: Σ(log(1+readCount) / genomeCount)
+            const double oldLogContrib = (parentCount > 0) ? (logReadCount / parentCount) : 0.0;
+            const double newLogContrib = (childCount > 0) ? (logReadCount / childCount) : 0.0;
+            childMetrics.logRawNumerator += (newLogContrib - oldLogContrib);
+            
+            // LogCosine numerator: Σ(log(1+readCount) × log(1+genomeCount))
+            // Both vectors in log-space for proper cosine similarity
+            childMetrics.logCosineNumerator += logReadCount * (logChild - logParent);
+
+            // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome
+            // Unlike regular containment which uses binary presence, this weights
+            // each seed by 1/(node's genome count), rewarding genomes where matching
+            // seeds are rare/unique. Delta: 1/childCount - 1/parentCount for seeds in reads.
+            {
+                const double oldWcContrib = (parentCount > 0) ? (1.0 / parentCount) : 0.0;
+                const double newWcContrib = (childCount > 0) ? (1.0 / childCount) : 0.0;
+                childMetrics.weightedContainmentNumerator += (newWcContrib - oldWcContrib);
             }
+
+            // Log containment numerator: Σ(log(1+r_i)) for seeds in reads ∩ genome
+            // Like containment but weights each seed by its log read abundance
+            childMetrics.logContainmentNumerator += presenceDelta * logReadCount;
         }
     }
 }
@@ -425,74 +315,61 @@ void PlacementResult::FuncName(uint32_t nodeIndex, double score, panmapUtils::Li
     } \
 }
 
-// Generate score update functions for OLD metrics
-DEFINE_UPDATE_SCORE_FUNC(updateRawScore, rawScore, bestRawScore, bestRawNodeIndex, tiedRawNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateCosineScore, cosineScore, bestCosineScore, bestCosineNodeIndex, tiedCosineNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateLogCosineOldScore, logCosineOldScore, bestLogCosineOldScore, bestLogCosineOldNodeIndex, tiedLogCosineOldNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateWeightedContainmentScore, weightedContainmentScore, bestWeightedContainmentScore, bestWeightedContainmentNodeIndex, tiedWeightedContainmentNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateCapCosineScore, capCosineScore, bestCapCosineScore, bestCapCosineNodeIndex, tiedCapCosineNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateCapLogCosineScore, capLogCosineScore, bestCapLogCosineScore, bestCapLogCosineNodeIndex, tiedCapLogCosineNodeIndices)
-
-// Generate score update functions for NEW metrics
+// Generate score update functions
 DEFINE_UPDATE_SCORE_FUNC(updateLogRawScore, logRawScore, bestLogRawScore, bestLogRawNodeIndex, tiedLogRawNodeIndices)
 DEFINE_UPDATE_SCORE_FUNC(updateLogCosineScore, logCosineScore, bestLogCosineScore, bestLogCosineNodeIndex, tiedLogCosineNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateLogLogRawScore, logLogRawScore, bestLogLogRawScore, bestLogLogRawNodeIndex, tiedLogLogRawNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateLogLogCosineScore, logLogCosineScore, bestLogLogCosineScore, bestLogLogCosineNodeIndex, tiedLogLogCosineNodeIndices)
 DEFINE_UPDATE_SCORE_FUNC(updateContainmentScore, containmentScore, bestContainmentScore, bestContainmentNodeIndex, tiedContainmentNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateConcordanceScore, concordanceScore, bestConcordanceScore, bestConcordanceNodeIndex, tiedConcordanceNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updatePresenceScore, presenceScore, bestPresenceScore, bestPresenceNodeIndex, tiedPresenceNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateWeightedContainmentScore, weightedContainmentScore, bestWeightedContainmentScore, bestWeightedContainmentNodeIndex, tiedWeightedContainmentNodeIndices)
+DEFINE_UPDATE_SCORE_FUNC(updateLogContainmentScore, logContainmentScore, bestLogContainmentScore, bestLogContainmentNodeIndex, tiedLogContainmentNodeIndices)
 
 #undef DEFINE_UPDATE_SCORE_FUNC
 
+// Helper to deduplicate a tied-indices vector and pick the lowest index as best
+static void finalizeTiedIndices(std::vector<uint32_t>& tied, uint32_t& bestIndex) {
+    if (tied.empty()) return;
+    // Sort and deduplicate
+    std::sort(tied.begin(), tied.end());
+    tied.erase(std::unique(tied.begin(), tied.end()), tied.end());
+    // Deterministic tie-breaking: lowest node index wins (DFS order is stable)
+    bestIndex = tied.front();
+}
+
 void PlacementResult::resolveNodeIds(panmapUtils::LiteTree* liteTree) {
-    // LOCK-FREE: Store score on node + update thread-local best
     if (!liteTree) return;
     
-    // Resolve OLD metric node indices to string IDs
-    if (bestRawNodeIndex != UINT32_MAX) {
-        bestRawNodeId = liteTree->resolveNodeId(bestRawNodeIndex);
-    }
-    if (bestCosineNodeIndex != UINT32_MAX) {
-        bestCosineNodeId = liteTree->resolveNodeId(bestCosineNodeIndex);
-    }
-    if (bestLogCosineOldNodeIndex != UINT32_MAX) {
-        bestLogCosineOldNodeId = liteTree->resolveNodeId(bestLogCosineOldNodeIndex);
-    }
-    if (bestWeightedContainmentNodeIndex != UINT32_MAX) {
-        bestWeightedContainmentNodeId = liteTree->resolveNodeId(bestWeightedContainmentNodeIndex);
-    }
-    if (bestCapCosineNodeIndex != UINT32_MAX) {
-        bestCapCosineNodeId = liteTree->resolveNodeId(bestCapCosineNodeIndex);
-    }
-    if (bestCapLogCosineNodeIndex != UINT32_MAX) {
-        bestCapLogCosineNodeId = liteTree->resolveNodeId(bestCapLogCosineNodeIndex);
-    }
+    // Deterministic tie-breaking before resolution
+    finalizeTiedIndices(tiedLogRawNodeIndices, bestLogRawNodeIndex);
+    finalizeTiedIndices(tiedLogCosineNodeIndices, bestLogCosineNodeIndex);
+    finalizeTiedIndices(tiedContainmentNodeIndices, bestContainmentNodeIndex);
+    finalizeTiedIndices(tiedWeightedContainmentNodeIndices, bestWeightedContainmentNodeIndex);
+    finalizeTiedIndices(tiedLogContainmentNodeIndices, bestLogContainmentNodeIndex);
     
-    // Resolve NEW metric node indices to string IDs
     if (bestLogRawNodeIndex != UINT32_MAX) {
         bestLogRawNodeId = liteTree->resolveNodeId(bestLogRawNodeIndex);
     }
     if (bestLogCosineNodeIndex != UINT32_MAX) {
         bestLogCosineNodeId = liteTree->resolveNodeId(bestLogCosineNodeIndex);
     }
-    if (bestLogLogRawNodeIndex != UINT32_MAX) {
-        bestLogLogRawNodeId = liteTree->resolveNodeId(bestLogLogRawNodeIndex);
-    }
-    if (bestLogLogCosineNodeIndex != UINT32_MAX) {
-        bestLogLogCosineNodeId = liteTree->resolveNodeId(bestLogLogCosineNodeIndex);
-    }
     if (bestContainmentNodeIndex != UINT32_MAX) {
         bestContainmentNodeId = liteTree->resolveNodeId(bestContainmentNodeIndex);
     }
-    if (bestConcordanceNodeIndex != UINT32_MAX) {
-        bestConcordanceNodeId = liteTree->resolveNodeId(bestConcordanceNodeIndex);
+    if (bestWeightedContainmentNodeIndex != UINT32_MAX) {
+        bestWeightedContainmentNodeId = liteTree->resolveNodeId(bestWeightedContainmentNodeIndex);
     }
-    if (bestPresenceNodeIndex != UINT32_MAX) {
-        bestPresenceNodeId = liteTree->resolveNodeId(bestPresenceNodeIndex);
+    if (bestLogContainmentNodeIndex != UINT32_MAX) {
+        bestLogContainmentNodeId = liteTree->resolveNodeId(bestLogContainmentNodeIndex);
     }
-    if (bestRefinedNodeIndex != UINT32_MAX) {
-        bestRefinedNodeId = liteTree->resolveNodeId(bestRefinedNodeIndex);
-    }
+    // Resolve per-metric refined node IDs
+    auto resolveRefined = [&](RefinedResult& r) {
+        if (r.nodeIndex != UINT32_MAX) {
+            r.nodeId = liteTree->resolveNodeId(r.nodeIndex);
+        }
+    };
+    resolveRefined(refinedLogRaw);
+    resolveRefined(refinedLogCosine);
+    resolveRefined(refinedContainment);
+    resolveRefined(refinedWeightedContainment);
+    resolveRefined(refinedLogContainment);
 }
 
 
@@ -558,12 +435,14 @@ std::string getNodeSequenceForRefinement(panmanUtils::Tree* T, const std::string
 }
 
 // Score a candidate node by aligning reads to its genome sequence
-// Returns sum of primary alignment scores
+// Returns negative total edit distance (higher = fewer errors = better)
+// When pairedEnd=true, reads are interleaved R1_0,R2_0,R1_1,R2_1,...
 int64_t scoreNodeByAlignment(
     panmanUtils::Tree* fullTree,
     const std::string& nodeId,
     const std::vector<std::string>& readSequences,
-    int kmerSize) {
+    int kmerSize,
+    bool pairedEnd) {
     
     if (!fullTree || nodeId.empty() || readSequences.empty()) {
         return 0;
@@ -585,26 +464,29 @@ int64_t scoreNodeByAlignment(
         readLens[i] = static_cast<int>(readSequences[i].size());
     }
     
-    // Call minimap2 scoring function
+    // Call minimap2 scoring function with paired-end awareness
     int64_t score = score_reads_vs_reference(
         genomeSeq.c_str(),
         n_reads,
         readPtrs.data(),
         readLens.data(),
-        kmerSize
+        kmerSize,
+        pairedEnd
     );
     
     return score;
 }
 
-// Main refinement function: align reads to top candidates and pick best
-// Called after BFS traversal to refine placement by full alignment
+// Main refinement function: per-metric candidate selection, shared alignment scoring
+// Each seed metric independently nominates its top candidates + neighbors.
+// All unique candidates are aligned once, then each metric picks its best.
 void refineTopCandidates(
     panmapUtils::LiteTree* liteTree,
     panmanUtils::Tree* fullTree,
     const std::vector<std::string>& readSequences,
     PlacementResult& result,
-    const TraversalParams& params) {
+    const TraversalParams& params,
+    bool pairedEnd) {
     
     if (!fullTree || !liteTree || readSequences.empty()) {
         logging::warn("Refinement skipped: missing tree data or no reads");
@@ -613,11 +495,10 @@ void refineTopCandidates(
     
     auto time_refine_start = std::chrono::high_resolution_clock::now();
     
-    // Step 1: Collect top candidates from ALL metrics (not just LogLogRaw)
-    // This ensures we don't miss the correct node if different metrics rank it differently
-    absl::flat_hash_set<uint32_t> candidateSet;  // Avoid duplicates
-    
-    auto addTopFromMetric = [&](auto scoreGetter, const char* metricName) {
+    // Step 1: For each metric, collect its own top candidate set
+    // Returns the set of candidate node indices for one metric
+    auto getTopForMetric = [&](auto scoreGetter, const char* metricName) -> absl::flat_hash_set<uint32_t> {
+        absl::flat_hash_set<uint32_t> metricCandidates;
         std::vector<std::pair<double, uint32_t>> scoredNodes;
         for (size_t i = 0; i < liteTree->dfsIndexToNode.size(); i++) {
             panmapUtils::LiteNode* node = liteTree->dfsIndexToNode[i];
@@ -628,7 +509,7 @@ void refineTopCandidates(
                 }
             }
         }
-        if (scoredNodes.empty()) return;
+        if (scoredNodes.empty()) return metricCandidates;
         
         std::sort(scoredNodes.begin(), scoredNodes.end(), std::greater<>());
         
@@ -638,87 +519,151 @@ void refineTopCandidates(
         );
         numTop = std::max(numTop, size_t(1));
         
-        size_t added = 0;
         for (size_t i = 0; i < numTop && i < scoredNodes.size(); i++) {
-            if (candidateSet.insert(scoredNodes[i].second).second) {
-                added++;
-            }
+            metricCandidates.insert(scoredNodes[i].second);
         }
-        logging::debug("Refinement: {} added {} unique candidates from top {}", metricName, added, numTop);
+        logging::debug("Refinement: {} selected {} candidates", metricName, metricCandidates.size());
+        return metricCandidates;
     };
     
-    // Add top candidates from each metric
-    addTopFromMetric([](auto* n) { return n->logRawScore; }, "LogRaw");
-    addTopFromMetric([](auto* n) { return n->logCosineScore; }, "LogCosine");
-    addTopFromMetric([](auto* n) { return n->logLogRawScore; }, "LogLogRaw");
-    addTopFromMetric([](auto* n) { return n->presenceScore; }, "Presence");
-    addTopFromMetric([](auto* n) { return n->containmentScore; }, "Containment");
-    addTopFromMetric([](auto* n) { return n->cosineScore; }, "Cosine");
+    // Collect per-metric candidate sets
+    auto logRawCands      = getTopForMetric([](auto* n) { return n->logRawScore; }, "LogRaw");
+    auto logCosineCands   = getTopForMetric([](auto* n) { return n->logCosineScore; }, "LogCosine");
+    auto containCands     = getTopForMetric([](auto* n) { return n->containmentScore; }, "Containment");
+    auto wContainCands    = getTopForMetric([](auto* n) { return n->weightedContainmentScore; }, "WeightedContainment");
+    auto logContainCands  = getTopForMetric([](auto* n) { return n->logContainmentScore; }, "LogContainment");
     
-    if (candidateSet.empty()) {
+    // Always include the unrefined best node for each metric in its candidate set.
+    // At high coverage, seed scores saturate and the correct node may fall outside
+    // the top-N% cutoff. Including the seed-phase winner ensures refinement always
+    // considers the best unrefined placement.
+    if (result.bestLogRawNodeIndex != UINT32_MAX)
+        logRawCands.insert(result.bestLogRawNodeIndex);
+    if (result.bestLogCosineNodeIndex != UINT32_MAX)
+        logCosineCands.insert(result.bestLogCosineNodeIndex);
+    if (result.bestContainmentNodeIndex != UINT32_MAX)
+        containCands.insert(result.bestContainmentNodeIndex);
+    if (result.bestWeightedContainmentNodeIndex != UINT32_MAX)
+        wContainCands.insert(result.bestWeightedContainmentNodeIndex);
+    if (result.bestLogContainmentNodeIndex != UINT32_MAX)
+        logContainCands.insert(result.bestLogContainmentNodeIndex);
+    
+    // Step 2: Expand each metric's candidates with neighbors, build union for alignment
+    absl::flat_hash_set<uint32_t> allCandidates;  // Union for alignment scoring
+    
+    // For each metric, expand candidates with neighbors and track membership
+    struct MetricCandidateSet {
+        absl::flat_hash_set<uint32_t> expanded;  // candidates + their neighbors
+    };
+    
+    auto expandWithNeighbors = [&](const absl::flat_hash_set<uint32_t>& baseCands) -> MetricCandidateSet {
+        MetricCandidateSet mcs;
+        for (uint32_t nodeIdx : baseCands) {
+            mcs.expanded.insert(nodeIdx);
+            allCandidates.insert(nodeIdx);
+            
+            panmapUtils::LiteNode* node = liteTree->dfsIndexToNode[nodeIdx];
+            if (!node) continue;
+            auto neighbors = getNodesWithinRadius(node, params.refineNeighborRadius, params.refineMaxNeighborN);
+            for (auto* neighbor : neighbors) {
+                if (neighbor) {
+                    mcs.expanded.insert(neighbor->nodeIndex);
+                    allCandidates.insert(neighbor->nodeIndex);
+                }
+            }
+        }
+        return mcs;
+    };
+    
+    auto logRawExpanded     = expandWithNeighbors(logRawCands);
+    auto logCosineExpanded  = expandWithNeighbors(logCosineCands);
+    auto containExpanded    = expandWithNeighbors(containCands);
+    auto wContainExpanded   = expandWithNeighbors(wContainCands);
+    auto logContainExpanded = expandWithNeighbors(logContainCands);
+    
+    if (allCandidates.empty()) {
         logging::warn("Refinement skipped: no nodes with positive scores");
         return;
     }
     
-    logging::info("Refinement: {} unique candidates from all metrics ({}%)", 
-                 candidateSet.size(), params.refineTopPct * 100);
+    logging::info("Refinement: {} unique candidates total from all metrics ({}%)", 
+                 allCandidates.size(), params.refineTopPct * 100);
     
-    // Step 2: Align reads to each candidate and collect neighbors
-    std::vector<std::pair<int64_t, uint32_t>> alignmentScores;  // (score, nodeIndex)
-    absl::flat_hash_set<uint32_t> scoredSet;  // Track what we've scored
+    // Step 3: Align reads to ALL unique candidates once (shared work)
+    absl::flat_hash_map<uint32_t, int64_t> alignmentScoreMap;  // nodeIndex -> score
     
-    for (uint32_t nodeIdx : candidateSet) {
-        if (scoredSet.count(nodeIdx)) continue;
-        scoredSet.insert(nodeIdx);
-        
+    // Log seed winners
+    logging::info("Refinement seed winners: LogRaw={} LogCosine={} Contain={} WContain={} LogContain={}",
+                 result.bestLogRawNodeIndex, result.bestLogCosineNodeIndex, 
+                 result.bestContainmentNodeIndex, result.bestWeightedContainmentNodeIndex,
+                 result.bestLogContainmentNodeIndex);
+    
+    for (uint32_t nodeIdx : allCandidates) {
         panmapUtils::LiteNode* node = liteTree->dfsIndexToNode[nodeIdx];
         if (!node) continue;
         
-        // Score this candidate
-        int64_t score = scoreNodeByAlignment(fullTree, node->identifier, readSequences, params.k);
-        alignmentScores.push_back({score, nodeIdx});
-        
-        // Step 3: Get neighbors within radius and score them too
-        auto neighbors = getNodesWithinRadius(node, params.refineNeighborRadius, params.refineMaxNeighborN);
-        
-        for (auto* neighbor : neighbors) {
-            if (neighbor && !scoredSet.count(neighbor->nodeIndex)) {
-                scoredSet.insert(neighbor->nodeIndex);
-                
-                int64_t neighborScore = scoreNodeByAlignment(
-                    fullTree, neighbor->identifier, readSequences, params.k);
-                alignmentScores.push_back({neighborScore, neighbor->nodeIndex});
-            }
-        }
+        int64_t score = scoreNodeByAlignment(fullTree, node->identifier, readSequences, params.k, pairedEnd);
+        alignmentScoreMap[nodeIdx] = score;
     }
     
-    // Step 4: Find best by alignment score, with seed score as tiebreaker
-    if (alignmentScores.empty()) {
+    if (alignmentScoreMap.empty()) {
         logging::warn("Refinement produced no alignment scores");
         return;
     }
     
-    // Find best alignment score, breaking ties by seed-based score (logRawScore)
-    auto bestIt = std::max_element(alignmentScores.begin(), alignmentScores.end(),
-        [&liteTree](const auto& a, const auto& b) {
-            if (a.first != b.first) return a.first < b.first;  // Higher alignment score wins
-            // Tie-break by seed score (higher is better)
-            auto* nodeA = liteTree->dfsIndexToNode[a.second];
-            auto* nodeB = liteTree->dfsIndexToNode[b.second];
-            float scoreA = nodeA ? nodeA->logRawScore : 0.0f;
-            float scoreB = nodeB ? nodeB->logRawScore : 0.0f;
-            return scoreA < scoreB;  // Higher seed score wins
-        });
-    result.bestRefinedScore = static_cast<double>(bestIt->first);
-    result.bestRefinedNodeIndex = bestIt->second;
+    // Step 4: For each metric, find the best candidate from its own expanded set
+    auto findBestForMetric = [&](const MetricCandidateSet& mcs, auto seedScoreGetter) 
+            -> std::pair<int64_t, uint32_t> {
+        int64_t bestScore = INT64_MIN;
+        uint32_t bestIdx = UINT32_MAX;
+        for (uint32_t nodeIdx : mcs.expanded) {
+            auto it = alignmentScoreMap.find(nodeIdx);
+            if (it == alignmentScoreMap.end()) continue;
+            int64_t score = it->second;
+            if (score > bestScore || 
+                (score == bestScore && bestIdx != UINT32_MAX)) {
+                // Tie-break by seed score
+                if (score == bestScore) {
+                    auto* nodeA = liteTree->dfsIndexToNode[nodeIdx];
+                    auto* nodeB = liteTree->dfsIndexToNode[bestIdx];
+                    float seedA = nodeA ? seedScoreGetter(nodeA) : 0.0f;
+                    float seedB = nodeB ? seedScoreGetter(nodeB) : 0.0f;
+                    if (seedA <= seedB) continue;  // Current best still wins
+                }
+                bestScore = score;
+                bestIdx = nodeIdx;
+            }
+        }
+        return {bestScore, bestIdx};
+    };
+    
+    auto [lrScore, lrIdx] = findBestForMetric(logRawExpanded, 
+        [](auto* n) { return n->logRawScore; });
+    auto [lcScore, lcIdx] = findBestForMetric(logCosineExpanded,
+        [](auto* n) { return n->logCosineScore; });
+    auto [cScore, cIdx] = findBestForMetric(containExpanded,
+        [](auto* n) { return n->containmentScore; });
+    auto [wcScore, wcIdx] = findBestForMetric(wContainExpanded,
+        [](auto* n) { return n->weightedContainmentScore; });
+    auto [lgcScore, lgcIdx] = findBestForMetric(logContainExpanded,
+        [](auto* n) { return n->logContainmentScore; });
+    
+    // Store results
+    if (lrIdx != UINT32_MAX)  { result.refinedLogRaw = {static_cast<double>(lrScore), lrIdx, ""}; }
+    if (lcIdx != UINT32_MAX)  { result.refinedLogCosine = {static_cast<double>(lcScore), lcIdx, ""}; }
+    if (cIdx != UINT32_MAX)   { result.refinedContainment = {static_cast<double>(cScore), cIdx, ""}; }
+    if (wcIdx != UINT32_MAX)  { result.refinedWeightedContainment = {static_cast<double>(wcScore), wcIdx, ""}; }
+    if (lgcIdx != UINT32_MAX) { result.refinedLogContainment = {static_cast<double>(lgcScore), lgcIdx, ""}; }
     result.refinementWasRun = true;
     
     auto time_refine_end = std::chrono::high_resolution_clock::now();
     auto duration_refine = std::chrono::duration_cast<std::chrono::milliseconds>(
         time_refine_end - time_refine_start);
     
-    logging::info("Refinement complete: {} candidates scored, best alignment score = {} ({}ms)", 
-                 alignmentScores.size(), result.bestRefinedScore, duration_refine.count());
+    logging::info("Refinement complete: {} candidates scored in {}ms", 
+                 alignmentScoreMap.size(), duration_refine.count());
+    logging::info("  refined_log_raw: {} | refined_containment: {} | refined_log_cosine: {}",
+                 lrScore, cScore, lcScore);
 }
 
 
@@ -823,80 +768,19 @@ void placeLiteHelperBFS(
                 
                 // Skip scoring for the excluded leaf node (leave-one-out validation)
                 if (nodeIndex != state.skipNodeIndex) {
-                    // ========================================
-                    // Compute OLD metrics (from working version 6cfb6cf)
-                    // ========================================
-                    
-                    // RAW Score
-                    double rawScore = nodeMetrics.getRawScore(state.readMagnitude);
-                    
-                    // Cosine Score (standard cosine similarity)
-                    double cosineScore = nodeMetrics.getCosineScore(state.readMagnitude);
-                    
-                    // OLD LogCosine Score (the working formula - log on reads only)
-                    double logCosineOldScore = nodeMetrics.getLogCosineOldScore(state.logReadMagnitude);
-                    
-                    // Weighted Containment Score
-                    double weightedContainmentScore = nodeMetrics.getWeightedContainmentScore(state.totalReadSeedFrequency);
-                    
-                    // Cap Cosine Score
-                    double capCosineScore = nodeMetrics.getCapCosineScore(state.cappedReadMagnitude);
-                    
-                    // Cap Log Cosine Score
-                    double capLogCosineScore = nodeMetrics.getCapLogCosineScore(state.cappedLogReadMagnitude);
-                    
-                    // ========================================
-                    // Compute NEW metrics (current version)
-                    // ========================================
-                    
-                    // LogRAW Score: log-scaled, coverage-robust metric
+                    // Compute scores
                     double logRawScore = nodeMetrics.getLogRawScore(state.logReadMagnitude);
-                    
-                    // NEW LogCosine Score: IDF-weighted with coverage penalty
                     double logCosineScore = nodeMetrics.getLogCosineScore(state.logReadMagnitude);
+                    double containmentScore = nodeMetrics.getContainmentScore(state.readUniqueSeedCount);
+                    double weightedContainmentScore = nodeMetrics.getWeightedContainmentScore(state.weightedContainmentDenominator);
+                    double logContainmentScore = nodeMetrics.getLogContainmentScore(state.logContainmentDenominator);
                     
-                    // LogLogRAW Score: double-log dampened coverage
-                    double logLogRawScore = nodeMetrics.getLogLogRawScore(state.logLogReadMagnitude);
-                    
-                    // LogLogCosine Score: double-log cosine similarity
-                    double logLogCosineScore = nodeMetrics.getLogLogCosineScore(state.logLogReadMagnitude);
-                    
-                    // Containment Score: fraction of read seeds covered
-                    double containmentScore = nodeMetrics.getContainmentScore(state.logReadMagnitude);
-                    
-                    // Concordance Score: R1/R2 balance weighted logRaw
-                    double concordanceScore = nodeMetrics.getConcordanceScore(state, state.logReadMagnitude);
-                    
-                    // Presence Score: low-coverage robust (binary presence weighted by 1/G)
-                    double presenceScore = nodeMetrics.getPresenceScore(state.readUniqueSeedCount);
-                    
-                    // Update thread-local results for OLD metrics
-                    tls.local_result.updateRawScore(nodeIndex, rawScore, node);
-                    tls.local_result.updateCosineScore(nodeIndex, cosineScore, node);
-                    tls.local_result.updateLogCosineOldScore(nodeIndex, logCosineOldScore, node);
-                    tls.local_result.updateWeightedContainmentScore(nodeIndex, weightedContainmentScore, node);
-                    tls.local_result.updateCapCosineScore(nodeIndex, capCosineScore, node);
-                    tls.local_result.updateCapLogCosineScore(nodeIndex, capLogCosineScore, node);
-                    
-                    // Update thread-local results for NEW metrics (NO LOCKS - parallel performance!)
+                    // Update thread-local results (NO LOCKS - parallel performance!)
                     tls.local_result.updateLogRawScore(nodeIndex, logRawScore, node);
                     tls.local_result.updateLogCosineScore(nodeIndex, logCosineScore, node);
-                    tls.local_result.updateLogLogRawScore(nodeIndex, logLogRawScore, node);
-                    tls.local_result.updateLogLogCosineScore(nodeIndex, logLogCosineScore, node);
                     tls.local_result.updateContainmentScore(nodeIndex, containmentScore, node);
-                    tls.local_result.updateConcordanceScore(nodeIndex, concordanceScore, node);
-                    tls.local_result.updatePresenceScore(nodeIndex, presenceScore, node);
-                    
-                    // Store diagnostic data on node if enabled
-                    if (params.store_diagnostics) {
-                        node->genomeMagnitudeSquared = nodeMetrics.genomeMagnitudeSquared;
-                        node->genomeUniqueSeedCount = nodeMetrics.genomeUniqueSeedCount;
-                        node->genomeTotalSeedFrequency = nodeMetrics.genomeTotalSeedFrequency;
-                        node->presenceIntersectionCount = nodeMetrics.presenceIntersectionCount;
-                        node->cosineNumerator = nodeMetrics.cosineNumerator;
-                        node->jaccardNumerator = nodeMetrics.presenceIntersectionCount; // Same as intersection
-                        node->weightedJaccardNumerator = nodeMetrics.weightedJaccardNumerator;
-                    }
+                    tls.local_result.updateWeightedContainmentScore(nodeIndex, weightedContainmentScore, node);
+                    tls.local_result.updateLogContainmentScore(nodeIndex, logContainmentScore, node);
                 }
 
                 if (!node->children.empty()) {
@@ -966,92 +850,6 @@ void placeLiteHelperBFS(
     auto merge_start = std::chrono::high_resolution_clock::now();
     
     for (auto& tls : thread_data) {
-        // ========================================
-        // Merge OLD metrics
-        // ========================================
-        
-        // Merge RAW scores
-        if (tls.local_result.bestRawNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestRawScore * 0.0001, 1e-9);
-            if (tls.local_result.bestRawScore > result.bestRawScore + tolerance) {
-                result.bestRawScore = tls.local_result.bestRawScore;
-                result.bestRawNodeIndex = tls.local_result.bestRawNodeIndex;
-                result.tiedRawNodeIndices = tls.local_result.tiedRawNodeIndices;
-            } else if (tls.local_result.bestRawScore >= result.bestRawScore - tolerance) {
-                result.tiedRawNodeIndices.insert(result.tiedRawNodeIndices.end(),
-                    tls.local_result.tiedRawNodeIndices.begin(), tls.local_result.tiedRawNodeIndices.end());
-            }
-        }
-        
-        // Merge Cosine scores
-        if (tls.local_result.bestCosineNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestCosineScore * 0.0001, 1e-9);
-            if (tls.local_result.bestCosineScore > result.bestCosineScore + tolerance) {
-                result.bestCosineScore = tls.local_result.bestCosineScore;
-                result.bestCosineNodeIndex = tls.local_result.bestCosineNodeIndex;
-                result.tiedCosineNodeIndices = tls.local_result.tiedCosineNodeIndices;
-            } else if (tls.local_result.bestCosineScore >= result.bestCosineScore - tolerance) {
-                result.tiedCosineNodeIndices.insert(result.tiedCosineNodeIndices.end(),
-                    tls.local_result.tiedCosineNodeIndices.begin(), tls.local_result.tiedCosineNodeIndices.end());
-            }
-        }
-        
-        // Merge LogCosineOLD scores (the working formula)
-        if (tls.local_result.bestLogCosineOldNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestLogCosineOldScore * 0.0001, 1e-9);
-            if (tls.local_result.bestLogCosineOldScore > result.bestLogCosineOldScore + tolerance) {
-                result.bestLogCosineOldScore = tls.local_result.bestLogCosineOldScore;
-                result.bestLogCosineOldNodeIndex = tls.local_result.bestLogCosineOldNodeIndex;
-                result.tiedLogCosineOldNodeIndices = tls.local_result.tiedLogCosineOldNodeIndices;
-            } else if (tls.local_result.bestLogCosineOldScore >= result.bestLogCosineOldScore - tolerance) {
-                result.tiedLogCosineOldNodeIndices.insert(result.tiedLogCosineOldNodeIndices.end(),
-                    tls.local_result.tiedLogCosineOldNodeIndices.begin(), tls.local_result.tiedLogCosineOldNodeIndices.end());
-            }
-        }
-        
-        // Merge WeightedContainment scores
-        if (tls.local_result.bestWeightedContainmentNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestWeightedContainmentScore * 0.0001, 1e-9);
-            if (tls.local_result.bestWeightedContainmentScore > result.bestWeightedContainmentScore + tolerance) {
-                result.bestWeightedContainmentScore = tls.local_result.bestWeightedContainmentScore;
-                result.bestWeightedContainmentNodeIndex = tls.local_result.bestWeightedContainmentNodeIndex;
-                result.tiedWeightedContainmentNodeIndices = tls.local_result.tiedWeightedContainmentNodeIndices;
-            } else if (tls.local_result.bestWeightedContainmentScore >= result.bestWeightedContainmentScore - tolerance) {
-                result.tiedWeightedContainmentNodeIndices.insert(result.tiedWeightedContainmentNodeIndices.end(),
-                    tls.local_result.tiedWeightedContainmentNodeIndices.begin(), tls.local_result.tiedWeightedContainmentNodeIndices.end());
-            }
-        }
-        
-        // Merge CapCosine scores
-        if (tls.local_result.bestCapCosineNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestCapCosineScore * 0.0001, 1e-9);
-            if (tls.local_result.bestCapCosineScore > result.bestCapCosineScore + tolerance) {
-                result.bestCapCosineScore = tls.local_result.bestCapCosineScore;
-                result.bestCapCosineNodeIndex = tls.local_result.bestCapCosineNodeIndex;
-                result.tiedCapCosineNodeIndices = tls.local_result.tiedCapCosineNodeIndices;
-            } else if (tls.local_result.bestCapCosineScore >= result.bestCapCosineScore - tolerance) {
-                result.tiedCapCosineNodeIndices.insert(result.tiedCapCosineNodeIndices.end(),
-                    tls.local_result.tiedCapCosineNodeIndices.begin(), tls.local_result.tiedCapCosineNodeIndices.end());
-            }
-        }
-        
-        // Merge CapLogCosine scores
-        if (tls.local_result.bestCapLogCosineNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestCapLogCosineScore * 0.0001, 1e-9);
-            if (tls.local_result.bestCapLogCosineScore > result.bestCapLogCosineScore + tolerance) {
-                result.bestCapLogCosineScore = tls.local_result.bestCapLogCosineScore;
-                result.bestCapLogCosineNodeIndex = tls.local_result.bestCapLogCosineNodeIndex;
-                result.tiedCapLogCosineNodeIndices = tls.local_result.tiedCapLogCosineNodeIndices;
-            } else if (tls.local_result.bestCapLogCosineScore >= result.bestCapLogCosineScore - tolerance) {
-                result.tiedCapLogCosineNodeIndices.insert(result.tiedCapLogCosineNodeIndices.end(),
-                    tls.local_result.tiedCapLogCosineNodeIndices.begin(), tls.local_result.tiedCapLogCosineNodeIndices.end());
-            }
-        }
-        
-        // ========================================
-        // Merge NEW metrics
-        // ========================================
-        
         // Merge LogRAW scores
         if (tls.local_result.bestLogRawNodeIndex != UINT32_MAX) {
             double tolerance = std::max(result.bestLogRawScore * 0.0001, 1e-9);
@@ -1067,7 +865,6 @@ void placeLiteHelperBFS(
                 );
             }
         }
-        
         // Merge LogCosine scores
         if (tls.local_result.bestLogCosineNodeIndex != UINT32_MAX) {
             double tolerance = std::max(result.bestLogCosineScore * 0.0001, 1e-9);
@@ -1083,39 +880,6 @@ void placeLiteHelperBFS(
                 );
             }
         }
-        
-        // Merge LogLogRAW scores
-        if (tls.local_result.bestLogLogRawNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestLogLogRawScore * 0.0001, 1e-9);
-            if (tls.local_result.bestLogLogRawScore > result.bestLogLogRawScore + tolerance) {
-                result.bestLogLogRawScore = tls.local_result.bestLogLogRawScore;
-                result.bestLogLogRawNodeIndex = tls.local_result.bestLogLogRawNodeIndex;
-                result.tiedLogLogRawNodeIndices = tls.local_result.tiedLogLogRawNodeIndices;
-            } else if (tls.local_result.bestLogLogRawScore >= result.bestLogLogRawScore - tolerance) {
-                result.tiedLogLogRawNodeIndices.insert(
-                    result.tiedLogLogRawNodeIndices.end(),
-                    tls.local_result.tiedLogLogRawNodeIndices.begin(),
-                    tls.local_result.tiedLogLogRawNodeIndices.end()
-                );
-            }
-        }
-        
-        // Merge LogLogCosine scores
-        if (tls.local_result.bestLogLogCosineNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestLogLogCosineScore * 0.0001, 1e-9);
-            if (tls.local_result.bestLogLogCosineScore > result.bestLogLogCosineScore + tolerance) {
-                result.bestLogLogCosineScore = tls.local_result.bestLogLogCosineScore;
-                result.bestLogLogCosineNodeIndex = tls.local_result.bestLogLogCosineNodeIndex;
-                result.tiedLogLogCosineNodeIndices = tls.local_result.tiedLogLogCosineNodeIndices;
-            } else if (tls.local_result.bestLogLogCosineScore >= result.bestLogLogCosineScore - tolerance) {
-                result.tiedLogLogCosineNodeIndices.insert(
-                    result.tiedLogLogCosineNodeIndices.end(),
-                    tls.local_result.tiedLogLogCosineNodeIndices.begin(),
-                    tls.local_result.tiedLogLogCosineNodeIndices.end()
-                );
-            }
-        }
-        
         // Merge Containment scores
         if (tls.local_result.bestContainmentNodeIndex != UINT32_MAX) {
             double tolerance = std::max(result.bestContainmentScore * 0.0001, 1e-9);
@@ -1131,35 +895,33 @@ void placeLiteHelperBFS(
                 );
             }
         }
-        
-        // Merge Concordance scores
-        if (tls.local_result.bestConcordanceNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestConcordanceScore * 0.0001, 1e-9);
-            if (tls.local_result.bestConcordanceScore > result.bestConcordanceScore + tolerance) {
-                result.bestConcordanceScore = tls.local_result.bestConcordanceScore;
-                result.bestConcordanceNodeIndex = tls.local_result.bestConcordanceNodeIndex;
-                result.tiedConcordanceNodeIndices = tls.local_result.tiedConcordanceNodeIndices;
-            } else if (tls.local_result.bestConcordanceScore >= result.bestConcordanceScore - tolerance) {
-                result.tiedConcordanceNodeIndices.insert(
-                    result.tiedConcordanceNodeIndices.end(),
-                    tls.local_result.tiedConcordanceNodeIndices.begin(),
-                    tls.local_result.tiedConcordanceNodeIndices.end()
+        // Merge Weighted Containment scores
+        if (tls.local_result.bestWeightedContainmentNodeIndex != UINT32_MAX) {
+            double tolerance = std::max(result.bestWeightedContainmentScore * 0.0001, 1e-9);
+            if (tls.local_result.bestWeightedContainmentScore > result.bestWeightedContainmentScore + tolerance) {
+                result.bestWeightedContainmentScore = tls.local_result.bestWeightedContainmentScore;
+                result.bestWeightedContainmentNodeIndex = tls.local_result.bestWeightedContainmentNodeIndex;
+                result.tiedWeightedContainmentNodeIndices = tls.local_result.tiedWeightedContainmentNodeIndices;
+            } else if (tls.local_result.bestWeightedContainmentScore >= result.bestWeightedContainmentScore - tolerance) {
+                result.tiedWeightedContainmentNodeIndices.insert(
+                    result.tiedWeightedContainmentNodeIndices.end(),
+                    tls.local_result.tiedWeightedContainmentNodeIndices.begin(),
+                    tls.local_result.tiedWeightedContainmentNodeIndices.end()
                 );
             }
         }
-        
-        // Merge Presence scores
-        if (tls.local_result.bestPresenceNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestPresenceScore * 0.0001, 1e-9);
-            if (tls.local_result.bestPresenceScore > result.bestPresenceScore + tolerance) {
-                result.bestPresenceScore = tls.local_result.bestPresenceScore;
-                result.bestPresenceNodeIndex = tls.local_result.bestPresenceNodeIndex;
-                result.tiedPresenceNodeIndices = tls.local_result.tiedPresenceNodeIndices;
-            } else if (tls.local_result.bestPresenceScore >= result.bestPresenceScore - tolerance) {
-                result.tiedPresenceNodeIndices.insert(
-                    result.tiedPresenceNodeIndices.end(),
-                    tls.local_result.tiedPresenceNodeIndices.begin(),
-                    tls.local_result.tiedPresenceNodeIndices.end()
+        // Merge Log Containment scores
+        if (tls.local_result.bestLogContainmentNodeIndex != UINT32_MAX) {
+            double tolerance = std::max(result.bestLogContainmentScore * 0.0001, 1e-9);
+            if (tls.local_result.bestLogContainmentScore > result.bestLogContainmentScore + tolerance) {
+                result.bestLogContainmentScore = tls.local_result.bestLogContainmentScore;
+                result.bestLogContainmentNodeIndex = tls.local_result.bestLogContainmentNodeIndex;
+                result.tiedLogContainmentNodeIndices = tls.local_result.tiedLogContainmentNodeIndices;
+            } else if (tls.local_result.bestLogContainmentScore >= result.bestLogContainmentScore - tolerance) {
+                result.tiedLogContainmentNodeIndices.insert(
+                    result.tiedLogContainmentNodeIndices.end(),
+                    tls.local_result.tiedLogContainmentNodeIndices.begin(),
+                    tls.local_result.tiedLogContainmentNodeIndices.end()
                 );
             }
         }
@@ -1188,8 +950,6 @@ void placeLite(PlacementResult &result,
                        int trimStart,
                        int trimEnd,
                        int minReadSupport,
-                       uint32_t expectedFragmentSize,
-                       uint32_t fragmentSizeTolerance,
                        bool refineEnabled,
                        double refineTopPct,
                        int refineMaxTopN,
@@ -1247,9 +1007,6 @@ void placeLite(PlacementResult &result,
     size_t totalHashDeltas = 0;
     
     auto indexRoot = liteIndex.getRoot<LiteIndex>();
-    auto genomeMagSquaredReader = indexRoot.getGenomeMagnitudeSquared();
-    auto genomeUniqueSeedReader = indexRoot.getGenomeUniqueSeedCount();
-    auto genomeTotalFreqReader = indexRoot.getGenomeTotalSeedFrequency();
     
     // OPTIMIZATION: Process nodes in DFS order with direct vector indexing for O(1) access
     // This eliminates hash map lookup overhead in the hot path
@@ -1339,6 +1096,7 @@ void placeLite(PlacementResult &result,
     params.t = indexRoot.getT();
     params.l = indexRoot.getL();
     params.open = indexRoot.getOpen();
+    params.hpc = indexRoot.getHpc();
     params.verify_scores = verify_scores;
     params.store_diagnostics = store_diagnostics;
     params.dedupReads = dedupReads;
@@ -1361,8 +1119,7 @@ void placeLite(PlacementResult &result,
         logging::info("Read trimming enabled: trimStart={}, trimEnd={} (for primer removal)", trimStart, trimEnd);
     }
     if (pairFilter && !reads2.empty()) {
-        logging::info("Paired-end concordance scoring enabled: fragments with both mates matching weighted higher");
-        logging::info("  Expected fragment size: {}bp ± {}bp", expectedFragmentSize, fragmentSizeTolerance);
+        logging::warn("Paired-end filter (--pair-filter) is not yet implemented - flag has no effect on scoring");
     } else if (pairFilter && reads2.empty()) {
         logging::info("Paired-end scoring requested but no R2 reads provided - disabled");
     }
@@ -1376,8 +1133,6 @@ void placeLite(PlacementResult &result,
     state.fullTree = fullTree;  // Store full tree pointer for verification mode
     state.liteNodes = liteTree->dfsIndexToNode;
     state.skipNodeIndex = skipNodeIndex;  // Set skip node for leave-one-out validation
-    state.expectedFragmentSize = expectedFragmentSize;
-    state.fragmentSizeTolerance = fragmentSizeTolerance;
     
     auto time_read_processing_start = std::chrono::high_resolution_clock::now();
     {
@@ -1393,14 +1148,20 @@ void placeLite(PlacementResult &result,
             }
         }
         
-        // Build paired-end fragment tracking if R2 was provided and pairFilter is enabled
-        if (pairFilter && !reads2.empty() && !allReadSequences.empty()) {
-            buildPairedEndFragmentData(state, allReadSequences, params);
+        // Apply homopolymer compression to reads if the index was built with HPC
+        if (params.hpc && !allReadSequences.empty()) {
+            logging::info("HPC mode: compressing read sequences");
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, allReadSequences.size()),
+                [&](const tbb::blocked_range<size_t>& range) {
+                    for (size_t i = range.begin(); i < range.end(); ++i) {
+                        allReadSequences[i] = seeding::hpcCompress(allReadSequences[i]);
+                    }
+                });
         }
         
         uint32_t l = indexRoot.getL();
-        logging::info("Index parameters: k={}, s={}, t={}, l={}", 
-                    params.k, params.s, params.t, l);
+        logging::info("Index parameters: k={}, s={}, t={}, l={}{}", 
+                    params.k, params.s, params.t, l, params.hpc ? ", hpc=on" : "");
         
         if (l == 0) {
             logging::info("l=0: Using raw syncmers instead of k-minimizers");
@@ -2066,75 +1827,46 @@ void placeLite(PlacementResult &result,
     
     auto time_magnitude_start = std::chrono::high_resolution_clock::now();
     {
-        // Compute log-scaled and double-log-scaled magnitudes for all metrics
+        // Compute log-scaled magnitudes for scoring
         state.totalReadSeedFrequency = 0;
         
-        // Pre-size maps for efficiency
         state.logReadCounts.reserve(state.seedFreqInReads.size());
-        state.logLogReadCounts.reserve(state.seedFreqInReads.size());
         
-        // Compute log-scaled values (needed for LogRaw and LogCosine)
         double logMagSquared = 0.0;
-        double logLogMagSquared = 0.0;
-        double rawMagSquared = 0.0;
-        double cappedMagSquared = 0.0;
-        double cappedLogMagSquared = 0.0;
+        double logCountSum = 0.0;  // Σ log(1+r_i) for log containment denominator
         size_t filteredSeedCount = 0;
         size_t lowSupportSeeds = 0;
         
-        // IMPROVED: Apply minimum read support filter for noise reduction
-        // Seeds seen in only 1 read are more likely to be errors or random matches
         const int64_t minSupport = params.minReadSupport;
         
         for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
             state.totalReadSeedFrequency += readCount;
             
-            // Filter seeds below minimum support threshold
             if (readCount < minSupport) {
                 lowSupportSeeds++;
-                continue;  // Skip this seed for scoring purposes
+                continue;
             }
             
-            // Pre-compute raw magnitude: Σ(readCount²)
+            // Pre-compute log(1 + readCount) for each seed
             const double readCountD = static_cast<double>(readCount);
-            rawMagSquared += readCountD * readCountD;
-            
-            // Pre-compute log(1 + readCount) for each seed - avoids repeated log() in hot path
             double logCount = std::log1p(readCountD);
             state.logReadCounts[seedHash] = logCount;
             logMagSquared += logCount * logCount;
-            
-            // Pre-compute log(1 + log(1 + readCount)) for double-log metrics
-            double logLogCount = std::log1p(logCount);
-            state.logLogReadCounts[seedHash] = logLogCount;
-            logLogMagSquared += logLogCount * logLogCount;
-            
-            // Pre-compute capped values: cap read count at 100
-            const int64_t cappedCount = std::min(readCount, int64_t(100));
-            const double cappedCountD = static_cast<double>(cappedCount);
-            state.cappedReadCounts[seedHash] = cappedCount;
-            cappedMagSquared += cappedCountD * cappedCountD;
-            
-            const double cappedLogCount = std::log1p(cappedCountD);
-            state.cappedLogReadCounts[seedHash] = cappedLogCount;
-            cappedLogMagSquared += cappedLogCount * cappedLogCount;
+            logCountSum += logCount;
             
             filteredSeedCount++;
         }
         
         state.readUniqueSeedCount = filteredSeedCount;
-        state.readMagnitude = std::sqrt(rawMagSquared);
         state.logReadMagnitude = std::sqrt(logMagSquared);
-        state.logLogReadMagnitude = std::sqrt(logLogMagSquared);
-        state.cappedReadMagnitude = std::sqrt(cappedMagSquared);
-        state.cappedLogReadMagnitude = std::sqrt(cappedLogMagSquared);
+        state.logContainmentDenominator = logCountSum;
         
         if (lowSupportSeeds > 0) {
             logging::info("Filtered {} seeds with read count < {} (kept {} seeds)", 
                          lowSupportSeeds, minSupport, filteredSeedCount);
         }
-        logging::info("Precomputed magnitudes: log={:.6f}, loglog={:.6f}, total read seed frequency: {}, unique read seeds: {}", 
-                    state.logReadMagnitude, state.logLogReadMagnitude, state.totalReadSeedFrequency, state.readUniqueSeedCount);
+        logging::info("Precomputed magnitude: log={:.6f}, total read seed frequency: {}, unique read seeds: {}", 
+                    state.logReadMagnitude, state.totalReadSeedFrequency, state.readUniqueSeedCount);
     }
     auto time_magnitude_end = std::chrono::high_resolution_clock::now();
     auto duration_magnitude = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2142,6 +1874,21 @@ void placeLite(PlacementResult &result,
     logging::info("Read magnitude precomputation: {}ms", duration_magnitude.count());
     
     state.root = liteTree->root;
+
+    // Precompute inverse genome counts from root's seed changes
+    // g_i = number of genomes containing seed i (root's childCount for that seed)
+    // Used by weighted containment metric to upweight rare/discriminative seeds
+    if (liteTree->root) {
+        for (const auto& [seedHash, parentCount, childCount] : liteTree->root->seedChanges) {
+            if (childCount > 0 && state.logReadCounts.contains(seedHash)) {
+                double invCount = 1.0 / static_cast<double>(childCount);
+                state.seedInverseGenomeCounts[seedHash] = invCount;
+                state.weightedContainmentDenominator += invCount;
+            }
+        }
+        logging::info("Weighted containment: {} seeds with inverse genome counts, denominator={:.6f}",
+                      state.seedInverseGenomeCounts.size(), state.weightedContainmentDenominator);
+    }
 
     placement::NodeMetrics rootMetrics;
     // CRITICAL: Root starts with empty genome (all genome metrics = 0).
@@ -2175,7 +1922,8 @@ void placeLite(PlacementResult &result,
         // =======================================================================
         if (params.refineEnabled && state.fullTree != nullptr) {
             TraversalParams refineParams = params;  // Copy params for refinement
-            refineTopCandidates(liteTree, state.fullTree, allReadSequences, result, refineParams);
+            bool pairedEnd = !reads2.empty();
+            refineTopCandidates(liteTree, state.fullTree, allReadSequences, result, refineParams, pairedEnd);
             
             // Re-resolve node IDs to include refinement result
             result.resolveNodeIds(liteTree);
@@ -2222,86 +1970,6 @@ void placeLite(PlacementResult &result,
     if (placementsFile.is_open()) {
         placementsFile << "metric\tscore\tnodes\n";
         
-        // ========================================
-        // OLD METRICS (from working version 6cfb6cf)
-        // ========================================
-        
-        // Raw score
-        placementsFile << "raw\t" << std::fixed << std::setprecision(6) << result.bestRawScore << "\t";
-        if (!result.tiedRawNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedRawNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedRawNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestRawNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Cosine score (standard)
-        placementsFile << "cosine\t" << std::fixed << std::setprecision(6) << result.bestCosineScore << "\t";
-        if (!result.tiedCosineNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedCosineNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedCosineNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestCosineNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Log Cosine OLD (the working formula - log on reads only)
-        placementsFile << "log_cosine_v1\t" << std::fixed << std::setprecision(6) << result.bestLogCosineOldScore << "\t";
-        if (!result.tiedLogCosineOldNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedLogCosineOldNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedLogCosineOldNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestLogCosineOldNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Weighted Containment score
-        placementsFile << "weighted_containment\t" << std::fixed << std::setprecision(6) << result.bestWeightedContainmentScore << "\t";
-        if (!result.tiedWeightedContainmentNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedWeightedContainmentNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedWeightedContainmentNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestWeightedContainmentNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Cap Cosine score
-        placementsFile << "cap_cosine\t" << std::fixed << std::setprecision(6) << result.bestCapCosineScore << "\t";
-        if (!result.tiedCapCosineNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedCapCosineNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedCapCosineNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestCapCosineNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Cap Log Cosine score
-        placementsFile << "cap_log_cosine\t" << std::fixed << std::setprecision(6) << result.bestCapLogCosineScore << "\t";
-        if (!result.tiedCapLogCosineNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedCapLogCosineNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedCapLogCosineNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestCapLogCosineNodeId;
-        }
-        placementsFile << "\n";
-        
-        // ========================================
-        // NEW METRICS (current version)
-        // ========================================
-        
         // Log Raw score
         placementsFile << "log_raw\t" << std::fixed << std::setprecision(6) << result.bestLogRawScore << "\t";
         if (!result.tiedLogRawNodeIndices.empty()) {
@@ -2314,8 +1982,8 @@ void placeLite(PlacementResult &result,
         }
         placementsFile << "\n";
         
-        // Log Cosine NEW (IDF-weighted with coverage penalty)
-        placementsFile << "log_cosine_v2\t" << std::fixed << std::setprecision(6) << result.bestLogCosineScore << "\t";
+        // Log Cosine score
+        placementsFile << "log_cosine\t" << std::fixed << std::setprecision(6) << result.bestLogCosineScore << "\t";
         if (!result.tiedLogCosineNodeIndices.empty()) {
             for (size_t i = 0; i < result.tiedLogCosineNodeIndices.size(); ++i) {
                 if (i > 0) placementsFile << ",";
@@ -2323,30 +1991,6 @@ void placeLite(PlacementResult &result,
             }
         } else {
             placementsFile << result.bestLogCosineNodeId;
-        }
-        placementsFile << "\n";
-        
-        // LogLog Raw score
-        placementsFile << "loglog_raw\t" << std::fixed << std::setprecision(6) << result.bestLogLogRawScore << "\t";
-        if (!result.tiedLogLogRawNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedLogLogRawNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedLogLogRawNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestLogLogRawNodeId;
-        }
-        placementsFile << "\n";
-        
-        // LogLog Cosine score
-        placementsFile << "loglog_cosine\t" << std::fixed << std::setprecision(6) << result.bestLogLogCosineScore << "\t";
-        if (!result.tiedLogLogCosineNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedLogLogCosineNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedLogLogCosineNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestLogLogCosineNodeId;
         }
         placementsFile << "\n";
         
@@ -2362,38 +2006,46 @@ void placeLite(PlacementResult &result,
         }
         placementsFile << "\n";
         
-        // Concordance score
-        placementsFile << "concordance\t" << std::fixed << std::setprecision(6) << result.bestConcordanceScore << "\t";
-        if (!result.tiedConcordanceNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedConcordanceNodeIndices.size(); ++i) {
+        // Weighted Containment score
+        placementsFile << "weighted_containment\t" << std::fixed << std::setprecision(6) << result.bestWeightedContainmentScore << "\t";
+        if (!result.tiedWeightedContainmentNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedWeightedContainmentNodeIndices.size(); ++i) {
                 if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedConcordanceNodeIndices[i]);
+                placementsFile << liteTree->resolveNodeId(result.tiedWeightedContainmentNodeIndices[i]);
             }
         } else {
-            placementsFile << result.bestConcordanceNodeId;
+            placementsFile << result.bestWeightedContainmentNodeId;
         }
         placementsFile << "\n";
         
-        // Presence score (low-coverage robust)
-        placementsFile << "presence\t" << std::fixed << std::setprecision(6) << result.bestPresenceScore << "\t";
-        if (!result.tiedPresenceNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedPresenceNodeIndices.size(); ++i) {
+        // Log Containment score
+        placementsFile << "log_containment\t" << std::fixed << std::setprecision(6) << result.bestLogContainmentScore << "\t";
+        if (!result.tiedLogContainmentNodeIndices.empty()) {
+            for (size_t i = 0; i < result.tiedLogContainmentNodeIndices.size(); ++i) {
                 if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedPresenceNodeIndices[i]);
+                placementsFile << liteTree->resolveNodeId(result.tiedLogContainmentNodeIndices[i]);
             }
         } else {
-            placementsFile << result.bestPresenceNodeId;
+            placementsFile << result.bestLogContainmentNodeId;
         }
         placementsFile << "\n";
         
-        // Refinement score (if refinement was run)
+        // Per-metric refinement scores (if refinement was run)
         if (result.refinementWasRun) {
-            placementsFile << "refined\t" << std::fixed << std::setprecision(0) << result.bestRefinedScore << "\t";
-            placementsFile << result.bestRefinedNodeId;
-            placementsFile << "\n";
+            auto writeRefined = [&](const char* name, const PlacementResult::RefinedResult& r) {
+                if (r.nodeIndex != UINT32_MAX) {
+                    placementsFile << name << "\t" << std::fixed << std::setprecision(0) << r.score << "\t";
+                    placementsFile << r.nodeId << "\n";
+                }
+            };
+            writeRefined("refined_log_raw", result.refinedLogRaw);
+            writeRefined("refined_log_cosine", result.refinedLogCosine);
+            writeRefined("refined_containment", result.refinedContainment);
+            writeRefined("refined_weighted_containment", result.refinedWeightedContainment);
+            writeRefined("refined_log_containment", result.refinedLogContainment);
         }
         
-        placementsFile.close();;
+        placementsFile.close();
         logging::info("Wrote placement results to {}", placementsFilePath);
     } else {
         logging::err("Failed to open placements file: {}", placementsFilePath);
@@ -2422,15 +2074,18 @@ void placeLite(PlacementResult &result,
         logging::info("  {} nodes tied for best LogRaw score", result.tiedLogRawNodeIndices.size());
     }
     
-    logging::info("Best LogCosine score: {:.6f} (node: {})", 
-                 result.bestLogCosineScore, result.bestLogCosineNodeId);
-    if (result.tiedLogCosineNodeIndices.size() > 1) {
-        logging::info("  {} nodes tied for best LogCosine score", result.tiedLogCosineNodeIndices.size());
-    }
-    
     if (result.refinementWasRun) {
-        logging::info("Best Refined score: {:.0f} (node: {})", 
-                     result.bestRefinedScore, result.bestRefinedNodeId);
+        logging::info("Per-metric refined placements:");
+        auto logRef = [](const char* name, const PlacementResult::RefinedResult& r) {
+            if (r.nodeIndex != UINT32_MAX) {
+                logging::info("  {}: score={:.0f} node={}", name, r.score, r.nodeId);
+            }
+        };
+        logRef("refined_log_raw", result.refinedLogRaw);
+        logRef("refined_log_cosine", result.refinedLogCosine);
+        logRef("refined_containment", result.refinedContainment);
+        logRef("refined_weighted_containment", result.refinedWeightedContainment);
+        logRef("refined_log_containment", result.refinedLogContainment);
     }
 }
 
