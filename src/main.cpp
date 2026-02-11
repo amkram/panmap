@@ -118,6 +118,7 @@ struct Config {
     double emConvergenceThreshold = 0.00001;
     double emDeltaThreshold = 0.0;
     uint32_t emMaximumIterations = 1000;
+    uint32_t emMaximumRounds = 5;
     bool emLeavesOnly = false;
     bool filterAndAssign = false;
     double dust = 100.0;
@@ -176,7 +177,8 @@ public:
         : ::capnp::MessageReader(makeOptions()) 
     {
         if (!panmap_zstd::decompressFromFile(path, data, numThreads)) {
-            throw std::runtime_error("Failed to decompress index: " + path);
+          std::cerr << "Failed to decompress index: " << path << std::endl;
+          throw std::exception();
         }
         
         reader = std::make_unique<::capnp::FlatArrayMessageReader>(
@@ -1257,13 +1259,31 @@ bool runMetagenomic(const Config& cfg) {
   }
   
   
-  // IndexReader reader(cfg.index, cfg.threads);
-  int fd = mgsr::open_file(cfg.index);
-  ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
-  ::capnp::PackedFdMessageReader reader(fd, readerOptions);
-
-  LiteIndex::Reader indexReader = reader.getRoot<LiteIndex>();
+  int fd = -1;
+  std::unique_ptr<IndexReader> zstdReader;
+  std::unique_ptr<::capnp::PackedFdMessageReader> fdReader;
+  ::capnp::MessageReader* baseReader = nullptr;
+  bool mgsrIndex;
+  
+  try {
+    zstdReader = std::make_unique<IndexReader>(cfg.index, cfg.threads);
+    baseReader = zstdReader.get();
+    mgsrIndex = false;
+  } catch (...) {
+    std::cerr << "Trying to open index file as packed file..." << std::endl;
+    fd = mgsr::open_file(cfg.index);
+    ::capnp::ReaderOptions readerOptions{
+      .traversalLimitInWords = std::numeric_limits<uint64_t>::max(),
+      .nestingLimit = 1024
+    };
+    fdReader = std::make_unique<::capnp::PackedFdMessageReader>(fd, readerOptions);
+    baseReader = fdReader.get();
+    mgsrIndex = true;
+  }
+  
+  LiteIndex::Reader indexReader = baseReader->getRoot<LiteIndex>();
   bool lowMemory = false;
+
 
   mgsr::MgsrLiteTree T;
   T.initialize(indexReader, cfg.taxonomicMetadata, cfg.taxonomicMetadata.empty() ? 0 : cfg.maximumFamilies, cfg.threads, lowMemory, true);
@@ -1354,7 +1374,89 @@ bool runMetagenomic(const Config& cfg) {
     }
     assignedReadsOut.close();
   } else {
+    T.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
+    mgsr::squareEM squareEM(threadsManager, T, cfg.output, cfg.topOc, cfg.emConvergenceThreshold, cfg.emDeltaThreshold, cfg.emMaximumIterations, false, cfg.emLeavesOnly);
+    
+    auto start_time_squareEM = std::chrono::high_resolution_clock::now();
 
+    for (size_t i = 0; i < cfg.emMaximumRounds; ++i) {
+      squareEM.runSquareEM();
+      std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
+      bool removed = squareEM.removeLowPropNodes();
+      std::cout << squareEM.nodes.size() << std::endl;
+      if (!removed) {
+        break;
+      }
+    }
+    std::cout << std::endl;
+
+    auto end_time_squareEM = std::chrono::high_resolution_clock::now();
+    auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
+    std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
+
+
+    std::vector<uint64_t> indices(squareEM.nodes.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
+      return squareEM.props[i] > squareEM.props[j];
+    });
+
+    std::cout << "writing abundance file: " << cfg.output + ".mgsr.abundance.out" << std::endl;
+    std::ofstream abundanceOutput(cfg.output + ".mgsr.abundance.out");
+    abundanceOutput << std::setprecision(5) << std::fixed;
+    for (size_t i = 0; i < indices.size(); ++i) {
+      size_t index = indices[i];
+      abundanceOutput << squareEM.nodes[index];
+      for (const auto& member : T.allLiteNodes.at(squareEM.nodes[index])->identicalNodeIdentifiers) {
+        abundanceOutput << "," << member;
+      }
+      if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
+        for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
+          abundanceOutput << "," << member;
+          for (const auto& identicalMember : T.allLiteNodes.at(member)->identicalNodeIdentifiers) {
+            abundanceOutput << "," << identicalMember;
+          }
+        }
+      }
+      abundanceOutput << "\t" << squareEM.props[index] << std::endl;
+    }
+    abundanceOutput.close();
+
+    std::vector<std::vector<size_t>> assignedReadsIndices(indices.size());
+    std::vector<size_t> readIndexOffset(threadsManager.reads.size(), 0);
+    for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+      readIndexOffset[i] = i;
+    }
+    for (size_t i = 0; i < indices.size(); ++i) {
+      size_t index = indices[i];
+      const auto& nodeId = squareEM.nodes[index];
+      auto curNodeScores = threadsManager.getScoresAtNode(nodeId, readIndexOffset);
+      for (size_t j = 0; j < curNodeScores.size(); ++j) {
+        const auto& curRead = threadsManager.reads[j];
+        if (curRead.maxScore != 0 && curNodeScores[j] == curRead.maxScore) {
+          for (const auto& rawReadIndex : threadsManager.readSeedmersDuplicatesIndex[j]) {
+            assignedReadsIndices[i].push_back(rawReadIndex);
+          }
+        }
+      }
+      if (assignedReadsIndices[i].size() > 0) {
+        std::sort(assignedReadsIndices[i].begin(), assignedReadsIndices[i].end());
+      }
+    }
+    std::ofstream assignedReadsOutput(cfg.output + ".mgsr.assignedReads.out");
+    for (size_t i = 0; i < indices.size(); ++i) {
+      size_t index = indices[i];
+      assignedReadsOutput << squareEM.nodes[index] << "\t" << assignedReadsIndices[i].size() << "\t";
+      for (size_t j = 0; j < assignedReadsIndices[i].size(); ++j) {
+        if (j == 0) {
+          assignedReadsOutput << assignedReadsIndices[i][j];
+        } else {
+          assignedReadsOutput << "," << assignedReadsIndices[i][j];
+        }
+      }
+      assignedReadsOutput << std::endl;
+    }
+    assignedReadsOutput.close();
   }
 
   if (cfg.writeMetaReadScoresFiltered) {
@@ -1858,6 +1960,7 @@ int main(int argc, char** argv) {
 
         ("em-convergence-threshold", po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001), "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
         ("em-delta-threshold", po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0), "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
+        ("em-maximum-rounds", po::value<uint32_t>(&cfg.emMaximumRounds)->default_value(5), "EM maximum rounds")
         ("em-maximum-iterations", po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000), "EM maximum iterations")
         ("em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
     
@@ -2274,6 +2377,7 @@ int main(int argc, char** argv) {
 
         if (cfg.metagenomic) {
           if (!runMetagenomic(cfg)) return 1;
+          std::cout << "Metagenomic mode run completed" << std::endl;
           return 0;
         }
         
