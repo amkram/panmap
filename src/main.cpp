@@ -11,6 +11,7 @@
 #include <boost/iostreams/filter/lzma.hpp>
 #include <boost/algorithm/string.hpp>
 #include <tbb/global_control.h>
+#include <tbb/parallel_for.h>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -35,6 +36,7 @@
 #include "genotyping.hpp"
 #include "conversion.hpp"
 #include "seeding.hpp"
+#include "mgsr.hpp"
 
 extern "C" {
 #include <htslib/sam.h>
@@ -92,6 +94,7 @@ struct Config {
     int s = 8;                    // syncmer s
     int l = 1;                    // l-mer size
     int t = 0;                    // syncmer offset
+    bool openSyncmer = false;     // Open syncmer
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
     double seedMaskFraction = 0; // Mask top 0.1% most frequent seeds
     int minSeedQuality = 0;          // Min avg Phred quality for seed region (0=disabled)
@@ -110,12 +113,14 @@ struct Config {
     size_t topOc = 1000;
     uint32_t maskReads = 0;
     uint32_t maskSeeds = 0;
+    std::string indexMgsr;
     std::string ampliconDepth;
     double maskReadsRelativeFrequency = 0.0;
     double maskSeedsRelativeFrequency = 0.0;
     double emConvergenceThreshold = 0.00001;
     double emDeltaThreshold = 0.0;
     uint32_t emMaximumIterations = 1000;
+    uint32_t emMaximumRounds = 5;
     bool emLeavesOnly = false;
     bool filterAndAssign = false;
     double dust = 100.0;
@@ -133,6 +138,9 @@ struct Config {
     bool dumpSequence = false;
     std::vector<std::string> dumpSequences;
     std::vector<uint32_t> simulateSNPs;
+    bool writeMetaReadScoresFiltered = false;
+    bool writeMetaReadScoresUnfiltered = false;
+    bool writeOCRanks = false;
     int seed = 42;
     int listFilteredNodes = 0;    // List N filtered nodes (0 = off)
     
@@ -171,7 +179,8 @@ public:
         : ::capnp::MessageReader(makeOptions()) 
     {
         if (!panmap_zstd::decompressFromFile(path, data, numThreads)) {
-            throw std::runtime_error("Failed to decompress index: " + path);
+          std::cerr << "Failed to decompress index: " << path << std::endl;
+          throw std::exception();
         }
         
         reader = std::make_unique<::capnp::FlatArrayMessageReader>(
@@ -822,6 +831,21 @@ void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std
 
 /* INDEXING */
 
+bool buildMgsrIndex(const Config& cfg) {
+  auto tg = loadPanMAN(cfg.panman);
+  if (!tg || tg->trees.empty()) {
+    logging::err("Failed to load pangenome");
+    return false;
+  }
+
+  panmanUtils::Tree* T = &tg->trees[0];
+  mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, cfg.indexFull);
+  mgsrIndexBuilder.buildIndex();
+  mgsrIndexBuilder.writeIndex(cfg.indexMgsr);
+  std::cout << (cfg.indexFull ? "Full" : "Lite") << " MGSR index written to " << cfg.indexMgsr << std::endl;
+  return true;
+}
+
 bool buildIndex(const Config& cfg) {
     if (fs::exists(cfg.index) && !cfg.forceReindex) {
         logging::msg("Using existing index: {}", cfg.index);
@@ -842,6 +866,7 @@ bool buildIndex(const Config& cfg) {
     logging::msg("Index built with k={}, s={}, l={}, flankMask={}bp{}{}{}", cfg.k, cfg.s, cfg.l, cfg.flankMaskBp, cfg.hpc ? ", hpc=on" : "", cfg.impute ? ", impute=on" : "", cfg.extentGuard ? ", extentGuard=on" : "");
     return true;
 }
+
 
 // Compute tree distance between two nodes (number of edges)
 // Returns -1 if either node is not found
@@ -930,6 +955,7 @@ absl::flat_hash_map<uint64_t, int64_t> buildNodeSeedCounts(
     
     return seedCounts;
 }
+
 
 // Detailed comparison of two nodes
 void printNodeComparison(
@@ -1086,6 +1112,331 @@ void printNodeComparison(
     std::cout << "  Node B: LogRaw=" << nodeB->logRawScore << "  LogCosine=" << nodeB->logCosineScore << "  Containment=" << nodeB->containmentScore << "\n";
     
     std::cout << std::string(80, '=') << "\n\n";
+}
+
+void writeOCRanks(const std::string& outputFile, const std::vector<std::pair<std::string, double>>& overlapCoefficients) {
+  std::ofstream outFile(outputFile);
+  uint32_t rank = 0;
+  double currentOverlapCoefficient = overlapCoefficients[0].second;
+  for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
+    if (overlapCoefficient != currentOverlapCoefficient) {
+      currentOverlapCoefficient = overlapCoefficient;
+      ++rank;
+    }
+    outFile << nodeId << "\t" << std::fixed << std::setprecision(6) << overlapCoefficient << "\t" << rank <<  std::endl;
+  }
+  outFile.close();
+}
+
+void writeMetaReadScoresUnfiltered(const std::string& outputFile, const mgsr::ThreadsManager& threadsManager) {
+  std::ofstream outFile(outputFile);
+  
+  outFile << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tRawReadsIndices" << std::endl;
+  for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+    const auto& curRead = threadsManager.reads[i];
+    if (curRead.maxScore == 0) continue;
+    outFile << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
+    for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
+      if (j == 0) {
+        outFile << threadsManager.readSeedmersDuplicatesIndex[i][j];
+      } else {
+        outFile << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+      }
+    }
+    outFile << std::endl;
+  }
+  outFile.close();
+}
+
+void writeMetaReadScoresFiltered(const std::string& outputFile, const mgsr::ThreadsManager& threadsManager) {
+  std::ofstream outFile(outputFile);
+  
+  outFile << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tOverMaximumFamilies\tRawReadsIndices" << std::endl;
+  for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+    const auto& curRead = threadsManager.reads[i];
+    if (curRead.maxScore == 0) continue;
+    outFile << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << curRead.overMaximumFamilies << "\t";
+    for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
+      if (j == 0) {
+        outFile << threadsManager.readSeedmersDuplicatesIndex[i][j];
+      } else {
+        outFile << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
+      }
+    }
+    outFile << std::endl;
+  }
+  outFile.close();
+}
+
+void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
+  std::vector<uint64_t> totalNodesPerThread(threadsManager.numThreads, 0);
+  for (size_t i = 0; i < threadsManager.numThreads; ++i) {
+    totalNodesPerThread[i] = T.getNumActiveNodes();
+  }
+  ProgressTracker progressTracker(threadsManager.numThreads, totalNodesPerThread);
+  std::cout << "Placing reads with " << threadsManager.numThreads << " threads..." << std::endl;
+
+  bool lowMemory = false;
+  auto start_time_place = std::chrono::high_resolution_clock::now();
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+    for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+      auto [start, end] = threadsManager.threadRanges[i];
+    
+      std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
+      mgsr::mgsrPlacer curThreadPlacer(&T, threadsManager, lowMemory, i);
+      curThreadPlacer.initializeQueryData(curThreadReads);
+
+      curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
+      
+      curThreadPlacer.setProgressTracker(&progressTracker, i);
+      // curThreadPlacer.placeReads();
+
+      curThreadPlacer.scoreReads();
+
+      if (i == 0) {
+        threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
+        threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
+      }
+    }
+  });
+  auto end_time_place = std::chrono::high_resolution_clock::now();
+  auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
+  std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+}
+
+bool runMetagenomic(const Config& cfg) {
+  std::cout << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads << std::endl;
+
+  // Checking IO
+  if (cfg.index.empty() || !fs::exists(cfg.index)) {
+    std::cerr << "Error: Index file " << cfg.index << " does not exist" << std::endl;
+    return false;
+  }
+  
+  
+  if (!cfg.taxonomicMetadata.empty() && !fs::exists(cfg.taxonomicMetadata)) {
+    std::cerr << "Error: Taxonomic metadata file " << cfg.taxonomicMetadata << " does not exist" << std::endl;
+    return false;
+  }
+
+  if (cfg.reads1.empty() || !fs::exists(cfg.reads1)) {
+    std::cerr << "Error: Reads1 file " << cfg.reads1 << " does not exist" << std::endl;
+    return false;
+  }
+
+  if (!cfg.reads2.empty() && !fs::exists(cfg.reads2)) {
+    std::cerr << "Error: Reads2 file " << cfg.reads2 << " does not exist" << std::endl;
+    return false;
+  }
+  
+  
+  int fd = -1;
+  std::unique_ptr<IndexReader> zstdReader;
+  std::unique_ptr<::capnp::PackedFdMessageReader> fdReader;
+  ::capnp::MessageReader* baseReader = nullptr;
+  bool mgsrIndex;
+  
+  try {
+    zstdReader = std::make_unique<IndexReader>(cfg.index, cfg.threads);
+    baseReader = zstdReader.get();
+    mgsrIndex = false;
+  } catch (...) {
+    std::cerr << "Trying to open index file as packed file..." << std::endl;
+    fd = mgsr::open_file(cfg.index);
+    ::capnp::ReaderOptions readerOptions{
+      .traversalLimitInWords = std::numeric_limits<uint64_t>::max(),
+      .nestingLimit = 1024
+    };
+    fdReader = std::make_unique<::capnp::PackedFdMessageReader>(fd, readerOptions);
+    baseReader = fdReader.get();
+    mgsrIndex = true;
+  }
+  
+  LiteIndex::Reader indexReader = baseReader->getRoot<LiteIndex>();
+  bool lowMemory = false;
+
+
+  mgsr::MgsrLiteTree T;
+  T.initialize(indexReader, cfg.taxonomicMetadata, cfg.taxonomicMetadata.empty() ? 0 : cfg.maximumFamilies, cfg.threads, lowMemory, true);
+
+  mgsr::ThreadsManager threadsManager(&T, cfg.output, cfg.threads, cfg.maskSeeds, cfg.maskReads, cfg.maskSeedsRelativeFrequency, cfg.maskReadsRelativeFrequency, !cfg.noProgress, lowMemory);
+  threadsManager.initializeMGSRIndex(indexReader);
+
+  threadsManager.initializeQueryData(cfg.reads1, cfg.reads2, cfg.ampliconDepth, cfg.dust, cfg.maskReadEnds);
+
+  if (!cfg.filterAndAssign) {
+    mgsr::mgsrPlacer placer(&T, threadsManager, lowMemory, 0);
+    auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+    
+    T.fillOCRanks(overlapCoefficients);
+
+    if (cfg.writeOCRanks) {
+      writeOCRanks(cfg.output + ".overlapCoefficients.tsv", overlapCoefficients);
+    }
+  }
+  
+  T.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+
+  scoreReadsMultiThreaded(T, threadsManager, cfg);
+
+  if (cfg.writeMetaReadScoresUnfiltered) {
+    writeMetaReadScoresUnfiltered(cfg.output + ".read_scores_info.unfiltered.tsv", threadsManager);
+  }
+
+  double discard_threshold = cfg.discard;
+  size_t num_discarded = 0;
+  size_t num_unmapped = 0;
+  for (auto& read : threadsManager.reads) {
+    if (read.maxScore == 0) {
+      ++num_unmapped;
+    } else if (read.maxScore < static_cast<int>(read.seedmersList.size() * discard_threshold)) {
+      read.maxScore = 0;
+      ++num_discarded;
+    }
+  }
+  std::cout << num_unmapped << " reads unmapped... " << std::endl;
+  std::cout << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
+  std::cout << threadsManager.reads.size() - num_unmapped - num_discarded << " reads mapped to nodes..." << std::endl;
+  if (threadsManager.reads.size() - num_unmapped - num_discarded == 0) {
+    std::cerr << "No reads remain for node scoring and EM after discarding low-score reads... Exiting... " << std::endl;
+    return true;
+  }
+
+
+
+  if (cfg.filterAndAssign) {
+    // Remove score updates of unmapped reads
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
+      for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
+        auto [start, end] = threadsManager.threadRanges[i];
+        std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
+
+        for (auto [_, node] : T.allLiteNodes) {
+          auto& curThreadNodeScoreDeltas = node->readScoreDeltas[i];
+          curThreadNodeScoreDeltas.erase(
+            std::remove_if(curThreadNodeScoreDeltas.begin(), curThreadNodeScoreDeltas.end(),
+              [&curThreadReads](const mgsr::readScoreDelta& delta) {
+                return curThreadReads[delta.readIndex].maxScore == 0;
+              }),
+            curThreadNodeScoreDeltas.end()
+          );
+        }
+      }
+    });
+
+    std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
+    threadsManager.assignReads(assignedReadsByNode, cfg.maximumFamilies);
+
+    std::ofstream assignedReadsOut(cfg.output + ".mgsr.assignedReads.out");
+    for (auto& [node, readIndices] : assignedReadsByNode) {
+      assignedReadsOut << node->identifier;
+      for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+        assignedReadsOut << "," << identicalNodeId;
+      }
+      assignedReadsOut << "\t" << readIndices.size() << "\t";
+      std::sort(readIndices.begin(), readIndices.end());
+      for (size_t i = 0; i < readIndices.size(); ++i) {
+        assignedReadsOut << readIndices[i];
+        if (i != readIndices.size() - 1) {
+          assignedReadsOut << ",";
+        }
+      }
+      assignedReadsOut << "\n";
+    }
+    assignedReadsOut.close();
+  } else {
+    T.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
+    mgsr::squareEM squareEM(threadsManager, T, cfg.output, cfg.topOc, cfg.emConvergenceThreshold, cfg.emDeltaThreshold, cfg.emMaximumIterations, false, cfg.emLeavesOnly);
+    
+    auto start_time_squareEM = std::chrono::high_resolution_clock::now();
+
+    for (size_t i = 0; i < cfg.emMaximumRounds; ++i) {
+      squareEM.runSquareEM();
+      std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
+      bool removed = squareEM.removeLowPropNodes();
+      std::cout << squareEM.nodes.size() << std::endl;
+      if (!removed) {
+        break;
+      }
+    }
+    std::cout << std::endl;
+
+    auto end_time_squareEM = std::chrono::high_resolution_clock::now();
+    auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
+    std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
+
+
+    std::vector<uint64_t> indices(squareEM.nodes.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
+      return squareEM.props[i] > squareEM.props[j];
+    });
+
+    std::cout << "writing abundance file: " << cfg.output + ".mgsr.abundance.out" << std::endl;
+    std::ofstream abundanceOutput(cfg.output + ".mgsr.abundance.out");
+    abundanceOutput << std::setprecision(5) << std::fixed;
+    for (size_t i = 0; i < indices.size(); ++i) {
+      size_t index = indices[i];
+      abundanceOutput << squareEM.nodes[index];
+      for (const auto& member : T.allLiteNodes.at(squareEM.nodes[index])->identicalNodeIdentifiers) {
+        abundanceOutput << "," << member;
+      }
+      if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
+        for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
+          abundanceOutput << "," << member;
+          for (const auto& identicalMember : T.allLiteNodes.at(member)->identicalNodeIdentifiers) {
+            abundanceOutput << "," << identicalMember;
+          }
+        }
+      }
+      abundanceOutput << "\t" << squareEM.props[index] << std::endl;
+    }
+    abundanceOutput.close();
+
+    std::vector<std::vector<size_t>> assignedReadsIndices(indices.size());
+    std::vector<size_t> readIndexOffset(threadsManager.reads.size(), 0);
+    for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
+      readIndexOffset[i] = i;
+    }
+    for (size_t i = 0; i < indices.size(); ++i) {
+      size_t index = indices[i];
+      const auto& nodeId = squareEM.nodes[index];
+      auto curNodeScores = threadsManager.getScoresAtNode(nodeId, readIndexOffset);
+      for (size_t j = 0; j < curNodeScores.size(); ++j) {
+        const auto& curRead = threadsManager.reads[j];
+        if (curRead.maxScore != 0 && curNodeScores[j] == curRead.maxScore) {
+          for (const auto& rawReadIndex : threadsManager.readSeedmersDuplicatesIndex[j]) {
+            assignedReadsIndices[i].push_back(rawReadIndex);
+          }
+        }
+      }
+      if (assignedReadsIndices[i].size() > 0) {
+        std::sort(assignedReadsIndices[i].begin(), assignedReadsIndices[i].end());
+      }
+    }
+    std::ofstream assignedReadsOutput(cfg.output + ".mgsr.assignedReads.out");
+    for (size_t i = 0; i < indices.size(); ++i) {
+      size_t index = indices[i];
+      assignedReadsOutput << squareEM.nodes[index] << "\t" << assignedReadsIndices[i].size() << "\t";
+      for (size_t j = 0; j < assignedReadsIndices[i].size(); ++j) {
+        if (j == 0) {
+          assignedReadsOutput << assignedReadsIndices[i][j];
+        } else {
+          assignedReadsOutput << "," << assignedReadsIndices[i][j];
+        }
+      }
+      assignedReadsOutput << std::endl;
+    }
+    assignedReadsOutput.close();
+  }
+
+  if (cfg.writeMetaReadScoresFiltered) {
+    writeMetaReadScoresFiltered(cfg.output + ".read_scores_info.filtered.tsv", threadsManager);
+  }
+
+
+  
+  return true;
 }
 
 std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
@@ -1551,6 +1902,7 @@ int main(int argc, char** argv) {
         ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
         ("offset,t", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
         ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Syncmers per seed")
+        ("open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")
         ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
         ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0),
             "Mask top seed fraction")
@@ -1574,7 +1926,7 @@ int main(int argc, char** argv) {
 
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()
-        ("index-mgsr", po::value<std::string>(), "Path to build/rebuild MGSR index")
+        ("index-mgsr", po::value<std::string>(&cfg.indexMgsr), "Path to build/rebuild MGSR index")
         ("index-full", po::bool_switch(&cfg.indexFull), "Build full index (default index-mgsr builds lite index)")
         ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
     
@@ -1589,6 +1941,7 @@ int main(int argc, char** argv) {
 
         ("em-convergence-threshold", po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001), "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
         ("em-delta-threshold", po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0), "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
+        ("em-maximum-rounds", po::value<uint32_t>(&cfg.emMaximumRounds)->default_value(5), "EM maximum rounds")
         ("em-maximum-iterations", po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000), "EM maximum iterations")
         ("em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
     
@@ -1616,6 +1969,9 @@ int main(int argc, char** argv) {
         ("debug-node", po::value<std::string>(&cfg.debugNodeId), "Debug node metrics")
         ("compare-nodes", po::value<std::string>(&cfg.compareNodes), "Compare two nodes (nodeA,nodeB)")
         ("dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")
+        ("write-meta-read-scores-filtered", po::bool_switch(&cfg.writeMetaReadScoresFiltered), "Write filtered meta read scores to TSV file")
+        ("write-meta-read-scores-unfiltered", po::bool_switch(&cfg.writeMetaReadScoresUnfiltered), "Write unfiltered meta read scores to TSV file")
+        ("write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")
         ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
     
     // Positional arguments (always hidden)
@@ -1630,10 +1986,10 @@ int main(int argc, char** argv) {
     
     // Combine option groups
     po::options_description all;  // For parsing
-    all.add(visible).add(advanced).add(developer).add(positional);
+    all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer).add(positional);
     
     po::options_description visible_all;  // For --help-all
-    visible_all.add(visible).add(advanced).add(developer);
+    visible_all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer);
     
     // Parse
     po::variables_map vm;
@@ -1995,6 +2351,18 @@ int main(int argc, char** argv) {
             saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath, cfg.impute);
             std::cout << cfg.dumpNodeId << "\n";
             return 0;
+        }
+
+        // metagenomics mode related
+        if (!cfg.indexMgsr.empty()) {
+          if (!buildMgsrIndex(cfg)) return 1;
+          return 0;
+        }
+
+        if (cfg.metagenomic) {
+          if (!runMetagenomic(cfg)) return 1;
+          std::cout << "Metagenomic mode run completed" << std::endl;
+          return 0;
         }
         
         // Stage 1: Index

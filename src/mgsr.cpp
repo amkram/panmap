@@ -673,6 +673,20 @@ void mgsr::MgsrLiteTree::loadTrueAbundances(const std::string& trueAbundanceFile
   infile.close();
 }
 
+void mgsr::MgsrLiteTree::fillOCRanks(std::vector<std::pair<std::string, double>>& overlapCoefficients) {
+  std::sort(overlapCoefficients.begin(), overlapCoefficients.end(), [](const auto& a, const auto& b) {
+    return a.second > b.second;
+  });
+  uint32_t rank = 0;
+  double currentOverlapCoefficient = overlapCoefficients[0].second;
+  for (const auto& [nodeId, overlapCoefficient] : overlapCoefficients) {
+    if (overlapCoefficient != currentOverlapCoefficient) {
+      currentOverlapCoefficient = overlapCoefficient;
+      ++rank;
+    }
+    allLiteNodes.at(nodeId)->ocRank = rank;
+  }
+}
 
 void mgsr::MgsrLiteTree::fillFamilyIndices(size_t maximumFamilies) {
   if (maximumFamilies == 0) return;
@@ -1708,10 +1722,7 @@ double mgsr::getDust(const std::string& seq, int windowSize) {
 void mgsr::ThreadsManager::initializeQueryData(
   const std::string& readPath1,
   const std::string& readPath2,
-  uint32_t maskSeeds,
   const std::string& ampliconDepthPath,
-  double maskReadsRelativeFrequency,
-  double maskSeedsRelativeFrequency,
   double dustThreshold,
   uint32_t maskReadsEnds,
   bool fast_mode
