@@ -106,7 +106,7 @@ struct Config {
     
     // Resources
     int threads = 1;
-    int zstdLevel = 19;
+    int zstdLevel = 7;
 
     // Metagenomic options
     bool indexFull = false;
@@ -1945,7 +1945,7 @@ int main(int argc, char** argv) {
             "Expand to neighbors within N branches")
         ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
             "Max additional nodes from neighbor expansion")
-        ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(19),
+        ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7),
             "ZSTD compression level for index (1-22)");
 
     po::options_description metagenomic("Metagenomic");
