@@ -79,7 +79,7 @@ struct Config {
     std::string index;            // Index file path
     
     // Pipeline control
-    PipelineStage stopAfter = PipelineStage::Genotype;
+    PipelineStage stopAfter = PipelineStage::Place;
     bool forceReindex = false;
     
     // Mode
@@ -106,6 +106,7 @@ struct Config {
     
     // Resources
     int threads = 1;
+    int zstdLevel = 19;
 
     // Metagenomic options
     bool indexFull = false;
@@ -887,7 +888,7 @@ bool buildIndex(const Config& cfg) {
     
     index_single_mode::IndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false, cfg.flankMaskBp, cfg.hpc, cfg.impute, cfg.extentGuard);
     builder.buildIndexParallel(cfg.threads);
-    builder.writeIndex(cfg.index, cfg.threads);
+    builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel);
     
     logging::msg("Index built with k={}, s={}, l={}, flankMask={}bp{}{}{}", cfg.k, cfg.s, cfg.l, cfg.flankMaskBp, cfg.hpc ? ", hpc=on" : "", cfg.impute ? ", impute=on" : "", cfg.extentGuard ? ", extentGuard=on" : "");
     return true;
@@ -1903,7 +1904,7 @@ int main(int argc, char** argv) {
         ("version,V", "Show version")
         ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
         ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
-        ("stop", po::value<std::string>()->default_value("genotype"),
+        ("stop", po::value<std::string>()->default_value("place"),
             "Stop after: index|place|align|genotype")
         ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")
         ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"),
@@ -1943,7 +1944,9 @@ int main(int argc, char** argv) {
         ("refine-neighbor-radius", po::value<int>(&cfg.refineNeighborRadius)->default_value(2),
             "Expand to neighbors within N branches")
         ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
-            "Max additional nodes from neighbor expansion");
+            "Max additional nodes from neighbor expansion")
+        ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(19),
+            "ZSTD compression level for index (1-22)");
 
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()

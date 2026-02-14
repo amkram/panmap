@@ -204,7 +204,7 @@ class IndexBuilder {
     void buildIndex();
     void buildIndexParallel(int numThreads = 0);  // 0 = auto-detect
 
-    void writeIndex(const std::string& path, int numThreads = 0);  // 0 = auto-detect
+    void writeIndex(const std::string& path, int numThreads = 0, int zstdLevel = 19);
 
     // Getters for parameters (for testing)
     int getK() const { return k_; }

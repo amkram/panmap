@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
+option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013+)" OFF)
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" OFF)
 
 # Set consistent compiler flags
@@ -551,6 +552,7 @@ set(PANMAP_SOURCES_MAIN
     src/placement.cpp
     src/seeding.cpp
     src/index_utils.cpp
+    src/mgsr.cpp
     src/mm_align.c
     src/pileup.c
     src/zstd_compression.cpp
@@ -752,6 +754,16 @@ target_link_libraries(panmap PRIVATE
 # Set compiler options based on build type
 if(OPTION_DEBUG)
     target_compile_options(panmap PUBLIC -g -O0 -ggdb)
+elseif(OPTION_PORTABLE)
+    target_compile_options(panmap PUBLIC
+        -O3
+        -march=x86-64-v3
+        -mtune=generic
+        -fno-omit-frame-pointer
+        -ftree-vectorize
+        -funroll-loops
+        -fprefetch-loop-arrays
+    )
 else()
     target_compile_options(panmap PUBLIC 
         -g -O3 
