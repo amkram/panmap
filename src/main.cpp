@@ -90,9 +90,9 @@ struct Config {
     std::string aligner = "minimap2";
     
     // Index parameters
-    int k = 21;                   // syncmer k
+    int k = 19;                   // syncmer k
     int s = 8;                    // syncmer s
-    int l = 1;                    // l-mer size
+    int l = 3;                    // l-mer size
     int t = 0;                    // syncmer offset
     bool openSyncmer = false;     // Open syncmer
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
@@ -1920,10 +1920,10 @@ int main(int argc, char** argv) {
         ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
         ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
         ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
-        ("kmer,k", po::value<int>(&cfg.k)->default_value(31), "Syncmer k")
-        ("syncmer,s", po::value<int>(&cfg.s)->default_value(15), "Syncmer s")
+        ("kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")
+        ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
         ("offset,t", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
-        ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Syncmers per seed")
+        ("lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")
         ("open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")
         ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
         ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0),
