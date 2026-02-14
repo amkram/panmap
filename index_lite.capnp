@@ -57,8 +57,8 @@ struct LiteIndex {
   # Struct-of-arrays format for seed changes
   seedChangeHashes @6 :List(UInt64);
   nodeChangeOffsets @7 :List(UInt32);  # Size = numNodes + 1
-  seedChangeParentCounts @8 :List(Int64);
-  seedChangeChildCounts @9 :List(Int64);
+  seedChangeParentCounts @8 :List(Int16);
+  seedChangeChildCounts @9 :List(Int16);
 
   # Homopolymer compression mode: if true, seeds were extracted from HPC sequences
   hpc @10 :Bool = false;
