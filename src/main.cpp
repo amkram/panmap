@@ -79,7 +79,7 @@ struct Config {
     std::string index;            // Index file path
     
     // Pipeline control
-    PipelineStage stopAfter = PipelineStage::Genotype;
+    PipelineStage stopAfter = PipelineStage::Place;
     bool forceReindex = false;
     
     // Mode
@@ -90,9 +90,9 @@ struct Config {
     std::string aligner = "minimap2";
     
     // Index parameters
-    int k = 21;                   // syncmer k
+    int k = 19;                   // syncmer k
     int s = 8;                    // syncmer s
-    int l = 1;                    // l-mer size
+    int l = 3;                    // l-mer size
     int t = 0;                    // syncmer offset
     bool openSyncmer = false;     // Open syncmer
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
@@ -106,6 +106,7 @@ struct Config {
     
     // Resources
     int threads = 1;
+    int zstdLevel = 7;
 
     // Metagenomic options
     bool indexFull = false;
@@ -914,7 +915,7 @@ bool buildIndex(const Config& cfg) {
     
     index_single_mode::IndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false, cfg.flankMaskBp, cfg.hpc, cfg.impute, cfg.extentGuard);
     builder.buildIndexParallel(cfg.threads);
-    builder.writeIndex(cfg.index, cfg.threads);
+    builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel);
     
     logging::msg("Index built with k={}, s={}, l={}, flankMask={}bp{}{}{}", cfg.k, cfg.s, cfg.l, cfg.flankMaskBp, cfg.hpc ? ", hpc=on" : "", cfg.impute ? ", impute=on" : "", cfg.extentGuard ? ", extentGuard=on" : "");
     return true;
@@ -1936,7 +1937,7 @@ int main(int argc, char** argv) {
         ("version,V", "Show version")
         ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
         ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
-        ("stop", po::value<std::string>()->default_value("genotype"),
+        ("stop", po::value<std::string>()->default_value("place"),
             "Stop after: index|place|align|genotype")
         ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")
         ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"),
@@ -1952,10 +1953,10 @@ int main(int argc, char** argv) {
         ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
         ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
         ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
-        ("kmer,k", po::value<int>(&cfg.k)->default_value(31), "Syncmer k")
-        ("syncmer,s", po::value<int>(&cfg.s)->default_value(15), "Syncmer s")
+        ("kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")
+        ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
         ("offset,t", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
-        ("lmer,l", po::value<int>(&cfg.l)->default_value(1), "Syncmers per seed")
+        ("lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")
         ("open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")
         ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
         ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0),
@@ -1976,7 +1977,9 @@ int main(int argc, char** argv) {
         ("refine-neighbor-radius", po::value<int>(&cfg.refineNeighborRadius)->default_value(2),
             "Expand to neighbors within N branches")
         ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
-            "Max additional nodes from neighbor expansion");
+            "Max additional nodes from neighbor expansion")
+        ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7),
+            "ZSTD compression level for index (1-22)");
 
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()

@@ -30,10 +30,10 @@ struct PlacementGlobalState;
 
 // Parameters for lite placement traversal
 struct TraversalParams {
-  int k = 32;               // k-mer size
+  int k = 19;               // k-mer size
   int s = 8;                // syncmer parameter s
   int t = 0;                // t-syncmer parameter
-  int l = 1;                // k-minimizer window size (1 = use raw syncmers)
+  int l = 3;                // k-minimizer window size (1 = use raw syncmers)
   bool open = false;        // Whether to use open syncmers
   bool verify_scores = false; // Whether to recompute scores from scratch for verification
   bool store_diagnostics = false; // Store metric components on nodes for diagnostic output
@@ -222,7 +222,7 @@ struct PlacementResult {
   absl::flat_hash_map<size_t, int64_t, IdentityHash> seedFreqInReads;
   
   // Index parameters (needed for alignment)
-  int k = 31;
+  int k = 19;
   int s = 8;
   int t = 0;
   bool open = false;

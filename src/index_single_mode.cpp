@@ -1230,14 +1230,26 @@ void index_single_mode::IndexBuilder::buildIndex() {
   auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
 
+  // Sort each node's changes by hash for better compression
+  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
+    std::sort(nodeChanges[nodeIdx].begin(), nodeChanges[nodeIdx].end(),
+             [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+  }
+
   // Write flat arrays
   uint32_t offset = 0;
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     nodeChangeOffsetsBuilder.set(nodeIdx, offset);
     for (const auto& [hash, parentCount, childCount] : nodeChanges[nodeIdx]) {
+      if (parentCount < INT16_MIN || parentCount > INT16_MAX || childCount < INT16_MIN || childCount > INT16_MAX) {
+        output::error("Seed count overflow at node {}: parentCount={}, childCount={} (Int16 range: [{}, {}]). "
+                      "This genome has too many repeated k-min-mers for the current index format.",
+                      nodeIdx, parentCount, childCount, INT16_MIN, INT16_MAX);
+        std::exit(1);
+      }
       seedChangeHashesBuilder.set(offset, hash);
-      seedChangeParentCountsBuilder.set(offset, parentCount);
-      seedChangeChildCountsBuilder.set(offset, childCount);
+      seedChangeParentCountsBuilder.set(offset, static_cast<int16_t>(parentCount));
+      seedChangeChildCountsBuilder.set(offset, static_cast<int16_t>(childCount));
       offset++;
     }
   }
@@ -1246,7 +1258,7 @@ void index_single_mode::IndexBuilder::buildIndex() {
   output::done(fmt::format("Index built ({} seed changes)", totalChanges));
 }
 
-void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads) {
+void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads, int zstdLevel) {
   output::step("Serializing index...");
   
   // Serialize Cap'n Proto message to flat array
@@ -1267,7 +1279,7 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
   output::step("Writing index ({} bytes uncompressed)...", dataSize);
   
   // Use ZSTD compression to write
-  if (!panmap_zstd::compressToFile(data, dataSize, path, 3, numThreads)) {
+  if (!panmap_zstd::compressToFile(data, dataSize, path, zstdLevel, numThreads)) {
     output::error("failed to write compressed index to {}", path);
     std::exit(1);
   }
@@ -2379,14 +2391,26 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
 
+  // Sort each node's changes by hash for better compression
+  for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
+    std::sort(nodeChanges[nodeIdx].begin(), nodeChanges[nodeIdx].end(),
+             [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+  }
+
   output::step("Writing seed changes to index...");
   uint32_t writeOffset = 0;
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     nodeChangeOffsetsBuilder.set(nodeIdx, writeOffset);
     for (const auto& [hash, parentCount, childCount] : nodeChanges[nodeIdx]) {
+      if (parentCount < INT16_MIN || parentCount > INT16_MAX || childCount < INT16_MIN || childCount > INT16_MAX) {
+        output::error("Seed count overflow at node {}: parentCount={}, childCount={} (Int16 range: [{}, {}]). "
+                      "This genome has too many repeated k-min-mers for the current index format.",
+                      nodeIdx, parentCount, childCount, INT16_MIN, INT16_MAX);
+        std::exit(1);
+      }
       seedChangeHashesBuilder.set(writeOffset, hash);
-      seedChangeParentCountsBuilder.set(writeOffset, parentCount);
-      seedChangeChildCountsBuilder.set(writeOffset, childCount);
+      seedChangeParentCountsBuilder.set(writeOffset, static_cast<int16_t>(parentCount));
+      seedChangeChildCountsBuilder.set(writeOffset, static_cast<int16_t>(childCount));
       writeOffset++;
     }
   }
