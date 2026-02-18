@@ -899,8 +899,8 @@ void mgsr::MgsrLiteTree::initialize(
 
   capnp::List<uint64_t>::Reader seedChangeHashesReader = indexReader.getSeedChangeHashes();
   capnp::List<uint32_t>::Reader nodeChangeOffsetsReader = indexReader.getNodeChangeOffsets();
-  capnp::List<int64_t>::Reader seedChangeParentCountsReader = indexReader.getSeedChangeParentCounts();
-  capnp::List<int64_t>::Reader seedChangeChildCountsReader = indexReader.getSeedChangeChildCounts();
+  capnp::List<int16_t>::Reader seedChangeParentCountsReader = indexReader.getSeedChangeParentCounts();
+  capnp::List<int16_t>::Reader seedChangeChildCountsReader = indexReader.getSeedChangeChildCounts();
   if (seedChangeHashesReader.size() != seedChangeParentCountsReader.size() || seedChangeHashesReader.size() != seedChangeChildCountsReader.size()) {
     std::cerr << "Error: seed change hashes, parent counts, and child counts must have the same size!" << std::endl;
     exit(1);
