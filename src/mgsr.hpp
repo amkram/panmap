@@ -560,7 +560,7 @@ class mgsrIndexBuilder {
 
     void buildIndex();
 
-    void writeIndex(const std::string& path);
+    void writeIndex(const std::string& path, bool packed);
   private:
     void buildIndexHelper(
       panmanUtils::Node *node,
