@@ -23,27 +23,14 @@ struct GapRunDelta {
   toGap @2 :Bool;
 }
 
-struct SeedInfo {
-  # deprecate soon
-  hash @0 :UInt64;
-  startPos @1 :UInt32;
-  endPos @2 :UInt32;
-  isReverse @3 :Bool;
-}
-
-struct SeedDelta {
-  # deprecate soon
-  seedIndex @0 :UInt32;
-  isDeleted @1 :Bool;
-}
-
 
 struct NodeChanges {
   # deprecate soon
   nodeIndex @0 :UInt32;
-  seedDeltas @1 :List(SeedDelta);
-  gapRunDeltas @2 :List(GapRunDelta);
-  invertedBlocks @3 :List(UInt32);
+  seedDeltaIndices @1 :List(UInt32);
+  seedDeltaIsDeleted @2 :List(Bool);
+  gapRunDeltas @3 :List(GapRunDelta);
+  invertedBlocks @4 :List(UInt32);
 }
 
 struct LiteIndex {
@@ -63,7 +50,11 @@ struct LiteIndex {
   # Homopolymer compression mode: if true, seeds were extracted from HPC sequences
   hpc @10 :Bool = false;
 
-    # mgsr (deprecate soon)
-  seedInfo @11 :List(SeedInfo);
-  perNodeChanges @12 :List(NodeChanges);
+  # mgsr (deprecate soon)
+  seedHashes @11 :List(UInt64);
+  seedStartPos @12 :List(UInt32);
+  seedEndPos @13 :List(UInt32);
+  seedIsReverse @14 :List(Bool);
+
+  perNodeChanges @15 :List(NodeChanges);
 }
