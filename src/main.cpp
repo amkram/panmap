@@ -789,6 +789,7 @@ int main(int argc, char *argv[]) {
         ("parallel-tester", "Run parallel tester")
         ("eval", po::value<std::string>(), "Evaluate placement accuracy (path to TSV)")
         ("random-seed", po::value<std::string>(), "Seed for rng (read in as string then hashed). If not provided, a random seed will be used.")
+        ("impute-when-dumping", "Impute when dumping sequences")
         ("dump-sequence", po::value<std::string>(), "Dump sequence for a specific node ID")
         ("dump-sequences",po::value<std::vector<std::string>>()->multitoken(), "Dump sequences for a list of node IDs")
         ("simulate-snps",po::value<std::vector<uint32_t>>()->multitoken(), "Simulate number of SNPs for node IDs, parameter position is relative to dump-sequences")
@@ -1783,7 +1784,9 @@ int main(int argc, char *argv[]) {
           return 1;
         }
 
-        std::string sequence = panmapUtils::getStringFromReference(&T, nodeID, false);
+        bool impute = vm.count("impute-when-dumping") > 0;
+        std::cerr << "Impute when dumping: " << impute << std::endl;
+        std::string sequence = panmapUtils::getStringFromReference(&T, nodeID, impute, false);
         std::vector<std::tuple<char, char, uint32_t>> snpRecords;
         panmapUtils::simulateSNPsOnSequence(sequence, snpRecords, numsnp, rng);
 
@@ -2099,7 +2102,7 @@ int main(int argc, char *argv[]) {
           */
           
 
-          std::string bestMatchSequence = panmapUtils::getStringFromReference(&T, result.bestJaccardPresenceNode->identifier, false);
+          std::string bestMatchSequence = panmapUtils::getStringFromReference(&T, result.bestJaccardPresenceNode->identifier, false, false);
           logging::info("Best match sequence built for {} with length {}", result.bestJaccardPresenceNode->identifier, bestMatchSequence.size());
 
 

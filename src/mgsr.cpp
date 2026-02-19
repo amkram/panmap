@@ -40,9 +40,9 @@ static void compareBruteForceBuild(
   std::vector<char> blockExistsBruteForce;
   std::vector<char> blockStrandBruteForce;
   std::unordered_map<int, int> blockLengthsBruteForce;
-  panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
+  panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier, false);
 
-  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, true);
+  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false, true);
   std::vector<std::pair<uint64_t, uint64_t>> gapMapBruteForce;
   // checking gap map with brute force
   uint64_t curScalar = 0;
@@ -272,7 +272,7 @@ static void compareBruteForceBuild(
   std::cout << "sequence and coordinate objects passed... " << std::flush;
 
   // check syncmers
-  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
+  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false,false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForceRevcomp = seeding::rollingSyncmers(seeding::revcomp(ungappedSequence), k, s, open, t, false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersDynamic;
@@ -440,9 +440,9 @@ static void compareBruteForcePlace(
   std::vector<char> blockExistsBruteForce;
   std::vector<char> blockStrandBruteForce;
   std::unordered_map<int, int> blockLengthsBruteForce;
-  panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
+  panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier, false);
 
-  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, true);
+  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false, true);
   std::vector<std::pair<uint64_t, uint64_t>> gapMapBruteForce;
   // checking gap map with brute force
   for (uint64_t i = 0; i < gappedSequenceBruteForce.size(); i++) {
@@ -491,7 +491,7 @@ static void compareBruteForcePlace(
     }
   }
   
-  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
+  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false, false);
   std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
   // check k-min-mers
   std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
@@ -1281,15 +1281,6 @@ static size_t getBruteForceKminmerOverlapCount(
 }
 
 
-bool isCanonical(char nuc) {
-  return (nuc == 'A' || nuc == 'T' || nuc == 'C' || nuc == 'G');
-}
-
-bool canonicalToAmb(char oldNuc, char newNuc) {
-  return (newNuc != '-' && newNuc != 'x' && 
-          isCanonical(oldNuc) && !isCanonical(newNuc));
-}
-
 static void applyMutations (
   panmanUtils::Node *node,
   size_t dfsIndex,
@@ -1374,7 +1365,7 @@ static void applyMutations (
       const char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
 
       if (oldNuc == newNuc) continue;
-      if (imputeAmb && canonicalToAmb(oldNuc, newNuc)) continue;
+      if (imputeAmb && panmapUtils::canonicalToAmb(oldNuc, newNuc)) continue;
 
       blockSequences.setSequenceBase(pos, newNuc);
       nucMutationRecord.emplace_back(pos, oldNuc, newNuc);
@@ -7739,14 +7730,53 @@ mgsr::squareEM::squareEM(
 
   std::vector<mgsr::MgsrLiteNode*> probableNodes;
   if (overlapCoefficientCutoff > 0) {
+    std::vector<mgsr::MgsrLiteNode*> nodesVec;
+    nodesVec.reserve(liteTree.allLiteNodes.size());
     for (const auto& [identifier, node] : liteTree.allLiteNodes) {
-      if (liteTree.detachedNodes.find(node) == liteTree.detachedNodes.end() &&
-          node->ocRank <= overlapCoefficientCutoff - 1
-      ) {
+      if (liteTree.detachedNodes.find(node) == liteTree.detachedNodes.end()) {
+        nodesVec.push_back(node);
+      }
+    }
+    std::sort(nodesVec.begin(), nodesVec.end(), [](const auto& a, const auto& b) {
+      return a->ocRank < b->ocRank;
+    });
+
+    if (emLeavesOnly) {
+      size_t previousRank = std::numeric_limits<size_t>::max();
+      size_t numUniqueRanks = 0;
+      for (const auto& node : nodesVec) {
+        // check if node is a leaf
+        bool isLeaf = false;
+        if (node->identifier.substr(0, 5) != "node_") isLeaf = true;
+        for (const auto& identicalNodeIdentifier : node->identicalNodeIdentifiers) {
+          if (identicalNodeIdentifier.substr(0, 5) != "node_") isLeaf = true;
+        }
+        if (!isLeaf) continue;
+        
+        if (node->ocRank != previousRank) {
+          previousRank = node->ocRank;
+          numUniqueRanks++;
+          if (numUniqueRanks > overlapCoefficientCutoff) {
+            break;
+          }
+        }
+        probableNodes.push_back(node);
+      }
+    } else {
+      size_t previousRank = std::numeric_limits<size_t>::max();
+      size_t numUniqueRanks = 0;
+      for (const auto& node : nodesVec) {
+        if (node->ocRank != previousRank) {
+          previousRank = node->ocRank;
+          numUniqueRanks++;
+          if (numUniqueRanks > overlapCoefficientCutoff) {
+            break;
+          }
+        }
         probableNodes.push_back(node);
       }
     }
-    std::cout << "Overlap coefficients selected " << probableNodes.size() << " nodes" << std::endl;
+    std::cout << "Overlap coefficients selected " << probableNodes.size() << " nodes, emLeavesOnly: " << emLeavesOnly << std::endl;
   } else if (useReadWeightedScores) {
     for (const auto& [identifier, node] : liteTree.allLiteNodes) {
       if (node->selected || node->selectedNeighbor) {
