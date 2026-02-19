@@ -23,7 +23,8 @@ void getSequenceFromReference(
   std::vector<char>& blockExists,
   std::vector<char>& blockStrand,
   std::unordered_map<int, int>& blockLengths,
-  std::string reference
+  std::string reference,
+  bool impute
 ) {
   if (tree->allNodes.find(reference) == tree->allNodes.end()) {
     logging::err("Reference sequence with matching name not found: {}", reference);
@@ -172,6 +173,12 @@ void getSequenceFromReference(
         }
         int newNucCode = (nucMutation.nucs >> (4*(5-i))) & 0xF;
         char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
+        if (impute) {
+          char oldNuc = pos.getSequenceBase(sequence);
+          if (canonicalToAmb(oldNuc, newNuc)) {
+            continue;
+          }
+        }
         pos.setSequenceBase(sequence, newNuc);
       }
     }
@@ -231,12 +238,12 @@ std::string getStringFromSequence(
   return seqString;
 }
 
-std::string getStringFromReference(panmanUtils::Tree* tree, std::string reference, bool aligned) {
+std::string getStringFromReference(panmanUtils::Tree* tree, std::string reference, bool impute, bool aligned) {
   std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
   std::unordered_map<int, int> blockLengths;
   std::vector<char> blockExists;
   std::vector<char> blockStrand;
-  getSequenceFromReference(tree, sequence, blockExists, blockStrand, blockLengths, reference);
+  getSequenceFromReference(tree, sequence, blockExists, blockStrand, blockLengths, reference, impute);
   std::string seqString = getStringFromSequence(sequence, blockLengths, blockExists, blockStrand, aligned);
   return seqString;
 }

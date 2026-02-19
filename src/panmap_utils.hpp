@@ -18,6 +18,17 @@ enum seedChangeType {
   SUB
 };
 
+
+inline bool isCanonical(char nuc) {
+  return (nuc == 'A' || nuc == 'T' || nuc == 'C' || nuc == 'G');
+}
+
+inline bool canonicalToAmb(char oldNuc, char newNuc) {
+  return (newNuc != '-' && newNuc != 'x' && 
+          isCanonical(oldNuc) && !isCanonical(newNuc));
+}
+
+
 std::string seedChangeTypeToString(seedChangeType changeType);
 
 void getSequenceFromReference(
@@ -26,7 +37,8 @@ void getSequenceFromReference(
   std::vector<char>& blockExists,
   std::vector<char>& blockStrand,
   std::unordered_map<int, int>& blockLengths,
-  std::string reference
+  std::string reference,
+  bool impute
 );
 
 std::string getStringFromSequence(
@@ -34,12 +46,14 @@ std::string getStringFromSequence(
   const std::unordered_map<int, int>& blockLengths,
   const std::vector<char>& blockExists,
   const std::vector<char>& blockStrand,
+  bool impute,
   bool aligned
 );
 
 std::string getStringFromReference(
   panmanUtils::Tree* tree,
   std::string reference,
+  bool impute,
   bool aligned
 );
 
