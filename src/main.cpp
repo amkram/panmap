@@ -759,6 +759,7 @@ int main(int argc, char *argv[]) {
         ("filter-and-assign", "Filter and assign reads to nodes without running EM")
         ("taxonomic-metadata", po::value<std::string>(), "Path to taxonomic metadata TSV file")
         ("maximum-families", po::value<size_t>()->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided")
+        ("ambiguous-score-threshold-ratio", po::value<double>()->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families")
         ("ambiguous-score-threshold", po::value<int>()->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families")
         ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
         ("read-scores", "Use read scores to score nodes")
@@ -1411,7 +1412,8 @@ int main(int argc, char *argv[]) {
       if (filterAndAssign) {
         std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
         int ambiguousScoreThreshold = vm["ambiguous-score-threshold"].as<int>();
-        threadsManager.assignReads(assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold);
+        double ambiguousScoreThresholdRatio = vm["ambiguous-score-threshold-ratio"].as<double>();
+        threadsManager.assignReads(assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
 
         std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
         for (auto& [node, readIndices] : assignedReadsByNode) {
