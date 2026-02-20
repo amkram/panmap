@@ -6360,7 +6360,7 @@ void mgsr::mgsrPlacer::assignReadsHelper(
   }
 }
 
-void mgsr::mgsrPlacer::checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies) {
+void mgsr::mgsrPlacer::checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies, int ambiguousScoreThreshold) {
   const auto& curNodeScoreDeltas = node->readScoreDeltas[threadId];
   
   for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
@@ -6371,7 +6371,7 @@ void mgsr::mgsrPlacer::checkFamilyIndices(MgsrLiteNode* node, size_t maximumFami
 
     if (curMaxScore == 0 || curOverMaximumFamilies) continue;
 
-    if (scoreDelta == curMaxScore) {
+    if (scoreDelta == curMaxScore || scoreDelta >= std::max(0, static_cast<int>(curMaxScore) - ambiguousScoreThreshold)) {
       bool exceeded = node->overMaximumFamilies;
       if (!exceeded) {
         curRead.familyIndices.insert(node->familyIndices.begin(), node->familyIndices.end());
@@ -6385,17 +6385,17 @@ void mgsr::mgsrPlacer::checkFamilyIndices(MgsrLiteNode* node, size_t maximumFami
   }
 
   for (auto child : node->collapsedChildren) {
-    checkFamilyIndices(child, maximumFamilies);
+    checkFamilyIndices(child, maximumFamilies, ambiguousScoreThreshold);
   }
 }
 
-void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies) {
+void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold) {
   std::unordered_set<size_t> mpsReadSet;
-  checkFamilyIndices(liteTree->root, maximumFamilies);
+  checkFamilyIndices(liteTree->root, maximumFamilies, ambiguousScoreThreshold);
   assignReadsHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
 }
 
-void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies) {
+void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold) {
   std::vector<std::unordered_map<MgsrLiteNode*, std::vector<size_t>>> assignedReadsByNodePerThread(threadRanges.size());
 
   // Assign reads per thread
@@ -6407,7 +6407,7 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
       mgsr::mgsrPlacer curThreadPlacer(liteTree, *this, lowMemory, i);
       curThreadPlacer.reads = curThreadReads;
 
-      curThreadPlacer.assignReads(assignedReadsByNodePerThread[i], maximumFamilies);
+      curThreadPlacer.assignReads(assignedReadsByNodePerThread[i], maximumFamilies, ambiguousScoreThreshold);
     }
   });
 

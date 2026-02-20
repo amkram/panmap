@@ -720,7 +720,7 @@ class ThreadsManager {
       size_t& dfsIndex
     );
 
-    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies);
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold);
 
 };
 
@@ -896,13 +896,13 @@ class mgsrPlacer {
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
 
-    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies);
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold);
     void assignReadsHelper(
       mgsr::MgsrLiteNode* node,
       std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
       std::unordered_set<size_t>& mpsReadSet
     );
-    void checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies);
+    void checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies, int ambiguousScoreThreshold);
 
 
 
