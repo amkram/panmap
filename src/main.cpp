@@ -761,6 +761,7 @@ int main(int argc, char *argv[]) {
         ("maximum-families", po::value<size_t>()->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided")
         ("ambiguous-score-threshold-ratio", po::value<double>()->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families")
         ("ambiguous-score-threshold", po::value<int>()->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families")
+        ("breadth-ratio", "Calculate observed / expected breadth ratio")
         ("overlap-coefficients", po::value<size_t>()->default_value(0), "If set > 0, use overlap coefficients with top N nodes to select probable nodes")
         ("read-scores", "Use read scores to score nodes")
         ("seed-scores", "Use seed scores instead of read scores to score nodes")
@@ -1261,6 +1262,8 @@ int main(int argc, char *argv[]) {
       // std::ofstream of(prefix + ".collapsed.newick");
       // of << collapsedNewick;
       // of.close();
+      
+      // liteTree.toRefSeedDeltas();
 
 
 
@@ -1413,7 +1416,20 @@ int main(int argc, char *argv[]) {
         std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
         int ambiguousScoreThreshold = vm["ambiguous-score-threshold"].as<int>();
         double ambiguousScoreThresholdRatio = vm["ambiguous-score-threshold-ratio"].as<double>();
-        threadsManager.assignReads(assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+
+        bool breathRatio = vm.count("breadth-ratio") > 0;
+        std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breaths;
+        threadsManager.assignReads(assignedReadsByNode, breaths, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio, breathRatio);
+
+
+        if (breathRatio) {
+          std::ofstream breathsOut(prefix + ".mgsr.breaths.out");
+          breathsOut << "NodeId\tTotalRefSeeds\tObservedBreadthCount\tObservedBreadthRatio\tTotalDepth\tMeanDepth\tExpectedBreadthRatio\tObservedToExpectedBreadthRatio" << std::endl;
+          for (const auto& [node, breathInfo] : breaths) {
+            breathsOut << node->identifier << "\t" << breathInfo.totalRefSeeds << "\t" << breathInfo.observedBreadthCount << "\t" << breathInfo.observedBreadthRatio << "\t" << breathInfo.totalDepth << "\t" << breathInfo.meanDepth << "\t" << breathInfo.expectedBreadthRatio << "\t" << breathInfo.observedToExpectedBreadthRatio << std::endl;
+          }
+          breathsOut.close();
+        }
 
         std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
         for (auto& [node, readIndices] : assignedReadsByNode) {
