@@ -1426,7 +1426,11 @@ int main(int argc, char *argv[]) {
           std::ofstream breathsOut(prefix + ".mgsr.breaths.out");
           breathsOut << "NodeId\tTotalRefSeeds\tObservedBreadthCount\tObservedBreadthRatio\tTotalDepth\tMeanDepth\tExpectedBreadthRatio\tObservedToExpectedBreadthRatio" << std::endl;
           for (const auto& [node, breathInfo] : breaths) {
-            breathsOut << node->identifier << "\t" << breathInfo.totalRefSeeds << "\t" << breathInfo.observedBreadthCount << "\t" << breathInfo.observedBreadthRatio << "\t" << breathInfo.totalDepth << "\t" << breathInfo.meanDepth << "\t" << breathInfo.expectedBreadthRatio << "\t" << breathInfo.observedToExpectedBreadthRatio << std::endl;
+            breathsOut << node->identifier;
+            for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+              breathsOut << "," << identicalNodeId;
+            }
+            breathsOut << "\t" << breathInfo.totalRefSeeds << "\t" << breathInfo.observedBreadthCount << "\t" << breathInfo.observedBreadthRatio << "\t" << breathInfo.totalDepth << "\t" << breathInfo.meanDepth << "\t" << breathInfo.expectedBreadthRatio << "\t" << breathInfo.observedToExpectedBreadthRatio << std::endl;
           }
           breathsOut.close();
         }

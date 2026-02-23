@@ -6592,11 +6592,12 @@ void mgsr::ThreadsManager::assignReads(
   std::vector<MgsrLiteNode*> nodeAssignedList(allNodesAssigned.begin(), allNodesAssigned.end());
   
   // Pre-allocate the result map
+  std::unordered_map<MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode_uncollapsed;
   for (MgsrLiteNode* node : nodeAssignedList) {
     assignedReadsByNode[node];
+    assignedReadsByNode_uncollapsed[node];
   }
 
-  std::unordered_map<MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode_uncollapsed;
   // Parallel merge and sort
   tbb::parallel_for(tbb::blocked_range<size_t>(0, nodeAssignedList.size()), [&](const tbb::blocked_range<size_t>& range) {
     for (size_t i = range.begin(); i != range.end(); ++i) {
