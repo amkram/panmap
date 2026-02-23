@@ -928,6 +928,86 @@ void mgsr::MgsrLiteTree::initialize(
   }
 }
 
+
+void mgsr::MgsrLiteTree::toRefSeedDeltasHelper(
+  MgsrLiteNode* node,
+  std::unordered_map<size_t, std::pair<int32_t, int32_t>>& refSeedCounts
+) {
+  auto& curSeedDeltas = node->seedDeltas;
+  auto& seedCountDeltas = node->seedCountDeltas;
+  const auto& seedInfos = this->seedInfos;
+
+  std::unordered_map<size_t, std::pair<int32_t, int32_t>> parSeedCounts;
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+    const bool    seedRev = seedInfos[seedIndex].isReverse;
+    
+    auto [parSeedCountsIt, parSeedCountsInserted] = parSeedCounts.try_emplace(seedHash, 0, 0);
+    auto [refSeedCountsIt, refSeedCountsInserted] = refSeedCounts.try_emplace(seedHash, 0, 0);
+    if (parSeedCountsInserted && !refSeedCountsInserted) {
+      parSeedCountsIt->second.first = refSeedCountsIt->second.first;
+      parSeedCountsIt->second.second = refSeedCountsIt->second.second;
+    }
+
+    if (toDelete) {
+      if (seedRev) {
+        --refSeedCountsIt->second.second;
+      } else {
+        --refSeedCountsIt->second.first;
+      }
+    } else {
+      if (seedRev) {
+        ++refSeedCountsIt->second.second;
+      } else {
+        ++refSeedCountsIt->second.first;
+      }
+    }
+  }
+
+  seedCountDeltas.reserve(parSeedCounts.size());
+  for (const auto [seedHash, parSeedCount] : parSeedCounts) {
+    auto refSeedCountsIt = refSeedCounts.find(seedHash);
+    
+    if (refSeedCountsIt == refSeedCounts.end()) {
+      std::cerr << "Error: seed hash " << seedHash << " not found in refSeedCounts!" << std::endl;
+      exit(1);
+    }
+
+    auto& [currentCountFwd, currentCountRev] = refSeedCountsIt->second;
+
+    if (currentCountFwd < 0 || currentCountRev < 0) {
+      std::cerr << "Error: refSeedCountsIt->second.first < 0 || refSeedCountsIt->second.second < 0!" << std::endl;
+      exit(1);
+    }
+
+    seedCountDeltas.emplace_back(seedHash, parSeedCount.first, parSeedCount.second, currentCountFwd, currentCountRev);
+
+    if (currentCountFwd == 0 && currentCountRev == 0) {
+      refSeedCounts.erase(refSeedCountsIt);
+    }
+  }
+
+  curSeedDeltas = {};
+
+  for (MgsrLiteNode* child : node->children) {
+    toRefSeedDeltasHelper(child, refSeedCounts);
+  }
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : seedCountDeltas) {
+    if (parentCountFwd == 0 && parentCountRev == 0) {
+      refSeedCounts.erase(seedHash);
+    } else {
+      refSeedCounts[seedHash] = {currentCountFwd, currentCountRev};
+    }
+  }
+
+}
+
+void mgsr::MgsrLiteTree::toRefSeedDeltas() {
+  std::unordered_map<size_t, std::pair<int32_t, int32_t>> refSeedCounts;
+  toRefSeedDeltasHelper(root, refSeedCounts);
+}
+
 void mgsr::MgsrLiteTree::collapseNode(mgsr::MgsrLiteNode* node) {
   if (node == root) return;
   auto& parent = node->collapsedParent;
@@ -6397,7 +6477,94 @@ void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector
   assignReadsHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
 }
 
-void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
+void mgsr::ThreadsManager::calculateBreadthRatio(
+  MgsrLiteNode* node,
+  std::unordered_map<size_t, int64_t>& refSeedsCount,
+  std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>>& breaths,
+  const std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode
+) {
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = liteTree->seedInfos;
+
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+
+    auto [it, inserted] = refSeedsCount.try_emplace(seedHash, 0);
+    if (toDelete) {
+      it->second--;
+    } else {
+      it->second++;
+    }
+
+    if (it->second == 0) {
+      refSeedsCount.erase(it);
+    }
+    if (it->second < 0) {
+      std::cout << "seed hash " << seedHash << " has negative count " << it->second << std::endl;
+    }
+  }
+
+  std::unordered_map<size_t, size_t> seedHitCounts;
+  size_t totalDepth = 0;
+  auto assignedReadsByNodeIt = assignedReadsByNode.find(node);
+  if (assignedReadsByNodeIt != assignedReadsByNode.end()) {
+    for (const auto& readIndex : assignedReadsByNodeIt->second) {
+      const auto& curRead = reads[readIndex];
+      const auto& curDuplicates = readSeedmersDuplicatesIndex[readIndex].size();
+      for (const auto& [seedHash, _] : curRead.uniqueSeedmers) {
+        if (refSeedsCount.find(seedHash) != refSeedsCount.end()) {
+          seedHitCounts[seedHash] += curDuplicates;
+          totalDepth += curDuplicates;
+        }
+      }
+    }
+  }
+
+  size_t totalRefSeeds = refSeedsCount.size();
+  size_t observedBreadthCount = seedHitCounts.size();
+  double observedBreadthRatio = totalRefSeeds > 0 ? static_cast<double>(observedBreadthCount) / static_cast<double>(totalRefSeeds) : 0.0;
+  double meanDepth = totalRefSeeds > 0 ? static_cast<double>(totalDepth) / static_cast<double>(totalRefSeeds) : 0.0;
+  double expectedBreadthRatio = meanDepth > 0 ? 1.0 - std::exp(-meanDepth) : 0.0;
+  double observedToExpectedBreadthRatio = expectedBreadthRatio > 0 ? observedBreadthRatio / expectedBreadthRatio : 0.0;
+
+  breaths.emplace_back(node, mgsr::breadthInfo{totalRefSeeds, observedBreadthCount, observedBreadthRatio, totalDepth, meanDepth, expectedBreadthRatio, observedToExpectedBreadthRatio});
+
+  std::cerr << "\rCalculating breadth ratio at DFS index " << node->collapsedDfsIndex << " / " << liteTree->getNumActiveNodes() << std::flush;
+
+  // Recursively calculate breadth ratio for children
+  for (auto child : node->collapsedChildren) {
+    calculateBreadthRatio(child, refSeedsCount, breaths, assignedReadsByNode);
+  }
+
+  // backtrack
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+
+    auto [it, inserted] = refSeedsCount.try_emplace(seedHash, 0);
+    if (toDelete) {
+      it->second++;
+    } else {
+      it->second--;
+    }
+
+    if (it->second == 0) {
+      refSeedsCount.erase(it);
+    }
+    if (it->second < 0) {
+      std::cout << "seed hash " << seedHash << " has negative count in backtrack" << it->second << std::endl;
+    }
+  }
+
+}
+
+void mgsr::ThreadsManager::assignReads(
+  std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
+  std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>>& breaths,
+  size_t maximumFamilies,
+  int ambiguousScoreThreshold,
+  double ambiguousScoreThresholdRatio,
+  bool breathRatio
+) {
   std::vector<std::unordered_map<MgsrLiteNode*, std::vector<size_t>>> assignedReadsByNodePerThread(threadRanges.size());
 
   // Assign reads per thread
@@ -6429,14 +6596,17 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
     assignedReadsByNode[node];
   }
 
+  std::unordered_map<MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode_uncollapsed;
   // Parallel merge and sort
   tbb::parallel_for(tbb::blocked_range<size_t>(0, nodeAssignedList.size()), [&](const tbb::blocked_range<size_t>& range) {
     for (size_t i = range.begin(); i != range.end(); ++i) {
       MgsrLiteNode* node = nodeAssignedList[i];
       auto& mergedVec = assignedReadsByNode[node];
+      auto& mergedVec_uncollapsed = assignedReadsByNode_uncollapsed[node];
       
       // Calculate total size and reserve
       size_t totalSize = 0;
+      size_t totalSize_uncollapsed = 0;
       for (size_t threadId = 0; threadId < assignedReadsByNodePerThread.size(); ++threadId) {
         const auto& threadMap = assignedReadsByNodePerThread[threadId];
         auto it = threadMap.find(node);
@@ -6446,9 +6616,11 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
             size_t readIndex = threadReadStart + localIndex;
             totalSize += readSeedmersDuplicatesIndex[readIndex].size();
           }
+          totalSize_uncollapsed += it->second.size();
         }
       }
       mergedVec.reserve(totalSize);
+      mergedVec_uncollapsed.reserve(totalSize_uncollapsed);
       
       // Merge from all threads, converting local indices to global
       for (size_t threadId = 0; threadId < assignedReadsByNodePerThread.size(); ++threadId) {
@@ -6461,6 +6633,7 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
             for (const auto rawReadIndex : readSeedmersDuplicatesIndex[readIndex]) {
               mergedVec.push_back(rawReadIndex);
             }
+            mergedVec_uncollapsed.push_back(readIndex);
           }
         }
       }
@@ -6470,7 +6643,12 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
     }
   });  
   
-
+  std::cout << "Finished merging assigned reads by node" << std::endl;
+  if (breathRatio) {
+    std::unordered_map<size_t, int64_t> refSeedsCount;
+    std::cout << "Calculating breadth ratio..." << std::endl;
+    calculateBreadthRatio(liteTree->root, refSeedsCount, breaths, assignedReadsByNode_uncollapsed);
+  }
 
 }
 
