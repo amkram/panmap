@@ -1182,6 +1182,9 @@ int main(int argc, char *argv[]) {
       }
       liteTree.initialize(indexReader, taxonomicMetadataPath, maximumFamilies, numThreads, lowMemory, true);
 
+      if (vm.count("breadth-ratio")) {
+        liteTree.calculateRefSeedCounts();
+      }
       liteTree.debugNodeID = vm["debug-node-id"].as<std::string>();
 
 
