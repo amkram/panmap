@@ -288,6 +288,7 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
+  size_t totalRefSeeds = 0;
   size_t ocRank = std::numeric_limits<size_t>::max();
 
   std::unordered_set<int> familyIndices;
@@ -387,6 +388,9 @@ public:
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
+
+  void calculateRefSeedCounts();
+  void calculateRefSeedCountsHelper(MgsrLiteNode* node, std::unordered_map<size_t, int64_t>& refSeedCounts);
 
   void toRefSeedDeltasHelper(MgsrLiteNode* node, std::unordered_map<size_t, std::pair<int32_t, int32_t>>& refSeedCounts);
   void toRefSeedDeltas();

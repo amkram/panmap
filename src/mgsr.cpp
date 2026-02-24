@@ -928,6 +928,59 @@ void mgsr::MgsrLiteTree::initialize(
   }
 }
 
+void mgsr::MgsrLiteTree::calculateRefSeedCountsHelper(
+  MgsrLiteNode* node,
+  std::unordered_map<size_t, int64_t>& refSeedsCount
+) {
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = this->seedInfos;
+
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+
+    auto [it, inserted] = refSeedsCount.try_emplace(seedHash, 0);
+    if (toDelete) {
+      it->second--;
+    } else {
+      it->second++;
+    }
+
+    if (it->second == 0) {
+      refSeedsCount.erase(it);
+    }
+  }
+
+  node->totalRefSeeds = refSeedsCount.size();
+
+
+  // Recursively calculate breadth ratio for children
+  for (auto child : node->collapsedChildren) {
+    calculateRefSeedCountsHelper(child, refSeedsCount);
+  }
+
+  // backtrack
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+
+    auto [it, inserted] = refSeedsCount.try_emplace(seedHash, 0);
+    if (toDelete) {
+      it->second++;
+    } else {
+      it->second--;
+    }
+
+    if (it->second == 0) {
+      refSeedsCount.erase(it);
+    }
+  }
+
+}
+
+void mgsr::MgsrLiteTree::calculateRefSeedCounts() {
+  std::unordered_map<size_t, int64_t> refSeedCounts;
+  calculateRefSeedCountsHelper(root, refSeedCounts);
+}
+
 
 void mgsr::MgsrLiteTree::toRefSeedDeltasHelper(
   MgsrLiteNode* node,
@@ -6499,9 +6552,6 @@ void mgsr::ThreadsManager::calculateBreadthRatio(
     if (it->second == 0) {
       refSeedsCount.erase(it);
     }
-    if (it->second < 0) {
-      std::cout << "seed hash " << seedHash << " has negative count " << it->second << std::endl;
-    }
   }
 
   std::unordered_map<size_t, size_t> seedHitCounts;
@@ -6520,7 +6570,7 @@ void mgsr::ThreadsManager::calculateBreadthRatio(
     }
   }
 
-  size_t totalRefSeeds = refSeedsCount.size();
+  size_t totalRefSeeds = node->totalRefSeeds;
   size_t observedBreadthCount = seedHitCounts.size();
   double observedBreadthRatio = totalRefSeeds > 0 ? static_cast<double>(observedBreadthCount) / static_cast<double>(totalRefSeeds) : 0.0;
   double meanDepth = totalRefSeeds > 0 ? static_cast<double>(totalDepth) / static_cast<double>(totalRefSeeds) : 0.0;
@@ -6549,9 +6599,6 @@ void mgsr::ThreadsManager::calculateBreadthRatio(
 
     if (it->second == 0) {
       refSeedsCount.erase(it);
-    }
-    if (it->second < 0) {
-      std::cout << "seed hash " << seedHash << " has negative count in backtrack" << it->second << std::endl;
     }
   }
 
