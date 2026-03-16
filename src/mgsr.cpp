@@ -879,7 +879,16 @@ void mgsr::MgsrLiteTree::initialize(
   capnp::List<uint32_t>::Reader nodeChangeOffsetsReader = indexReader.getNodeChangeOffsets();
   capnp::List<int16_t>::Reader seedChangeParentCountsReader = indexReader.getSeedChangeParentCounts();
   capnp::List<int16_t>::Reader seedChangeChildCountsReader = indexReader.getSeedChangeChildCounts();
-  if (seedChangeHashesReader.size() != seedChangeParentCountsReader.size() || seedChangeHashesReader.size() != seedChangeChildCountsReader.size()) {
+
+  // Check for overflow arrays (split indices with >500M seed changes)
+  bool hasOverflow = indexReader.hasSeedChangeHashes2() && indexReader.getSeedChangeHashes2().size() > 0;
+  capnp::List<uint64_t>::Reader seedChangeHashesReader2 = hasOverflow ? indexReader.getSeedChangeHashes2() : seedChangeHashesReader;
+  capnp::List<int16_t>::Reader seedChangeParentCountsReader2 = hasOverflow ? indexReader.getSeedChangeParentCounts2() : seedChangeParentCountsReader;
+  capnp::List<int16_t>::Reader seedChangeChildCountsReader2 = hasOverflow ? indexReader.getSeedChangeChildCounts2() : seedChangeChildCountsReader;
+  uint32_t primarySize = seedChangeHashesReader.size();
+  size_t totalSeedChanges = primarySize + (hasOverflow ? seedChangeHashesReader2.size() : 0);
+
+  if (totalSeedChanges != (primarySize + (hasOverflow ? seedChangeParentCountsReader2.size() : 0))) {
     std::cerr << "Error: seed change hashes, parent counts, and child counts must have the same size!" << std::endl;
     exit(1);
   }
@@ -887,15 +896,22 @@ void mgsr::MgsrLiteTree::initialize(
   std::vector<refSeedChange> refSeedChanges;
   std::vector<uint32_t> nodeChangeOffsets;
 
-  refSeedChanges.resize(seedChangeHashesReader.size());
-  size_t seedChangeHashes_chunkSize = (seedChangeHashesReader.size() + numThreads - 1) / numThreads;
+  refSeedChanges.resize(totalSeedChanges);
+  size_t seedChangeHashes_chunkSize = (totalSeedChanges + numThreads - 1) / numThreads;
   std::cerr << "Start to read in seed change hashes, parent counts, and child counts" << std::endl;
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, seedChangeHashesReader.size(), seedChangeHashes_chunkSize),
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, totalSeedChanges, seedChangeHashes_chunkSize),
     [&](const tbb::blocked_range<size_t>& range) {
       for (size_t i = range.begin(); i < range.end(); i++) {
-        refSeedChanges[i].hash = seedChangeHashesReader[i];
-        refSeedChanges[i].parentCount = seedChangeParentCountsReader[i];
-        refSeedChanges[i].currentCount = seedChangeChildCountsReader[i];
+        if (i < primarySize) {
+          refSeedChanges[i].hash = seedChangeHashesReader[i];
+          refSeedChanges[i].parentCount = seedChangeParentCountsReader[i];
+          refSeedChanges[i].currentCount = seedChangeChildCountsReader[i];
+        } else {
+          size_t oi = i - primarySize;
+          refSeedChanges[i].hash = seedChangeHashesReader2[oi];
+          refSeedChanges[i].parentCount = seedChangeParentCountsReader2[oi];
+          refSeedChanges[i].currentCount = seedChangeChildCountsReader2[oi];
+        }
       }
     }, tbb::simple_partitioner());
   std::cerr << "Successfully read in seed change hashes, parent counts, and child counts, size: " << refSeedChanges.size() << std::endl;

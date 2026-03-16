@@ -1224,11 +1224,25 @@ void index_single_mode::IndexBuilder::buildIndex() {
   }
   output::progress_clear();
 
+  // Cap'n Proto list element limit (~536M for UInt64). Split into primary + overflow.
+  constexpr uint32_t CAPNP_SPLIT = 500'000'000;
+  uint32_t primarySize = (totalChanges <= CAPNP_SPLIT) ? totalChanges : CAPNP_SPLIT;
+  uint32_t overflowSize = totalChanges - primarySize;
+
   // Allocate flat arrays
-  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(totalChanges);
-  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(totalChanges);
-  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges);
+  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(primarySize);
+  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(primarySize);
+  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(primarySize);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
+
+  // Overflow arrays (zero-length if not needed)
+  auto seedChangeHashes2Builder = indexBuilder.initSeedChangeHashes2(overflowSize);
+  auto seedChangeParentCounts2Builder = indexBuilder.initSeedChangeParentCounts2(overflowSize);
+  auto seedChangeChildCounts2Builder = indexBuilder.initSeedChangeChildCounts2(overflowSize);
+
+  if (overflowSize > 0) {
+    output::step("Large index: splitting {} seed changes into {}+{}", totalChanges, primarySize, overflowSize);
+  }
 
   // Sort each node's changes by hash for better compression
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
@@ -1247,15 +1261,187 @@ void index_single_mode::IndexBuilder::buildIndex() {
                       nodeIdx, parentCount, childCount, INT16_MIN, INT16_MAX);
         std::exit(1);
       }
-      seedChangeHashesBuilder.set(offset, hash);
-      seedChangeParentCountsBuilder.set(offset, static_cast<int16_t>(parentCount));
-      seedChangeChildCountsBuilder.set(offset, static_cast<int16_t>(childCount));
+      if (offset < primarySize) {
+        seedChangeHashesBuilder.set(offset, hash);
+        seedChangeParentCountsBuilder.set(offset, static_cast<int16_t>(parentCount));
+        seedChangeChildCountsBuilder.set(offset, static_cast<int16_t>(childCount));
+      } else {
+        uint32_t oi = offset - primarySize;
+        seedChangeHashes2Builder.set(oi, hash);
+        seedChangeParentCounts2Builder.set(oi, static_cast<int16_t>(parentCount));
+        seedChangeChildCounts2Builder.set(oi, static_cast<int16_t>(childCount));
+      }
       offset++;
     }
   }
   nodeChangeOffsetsBuilder.set(numNodes, offset);
 
   output::done(fmt::format("Index built ({} seed changes)", totalChanges));
+}
+
+// ============================================================================
+// Substitution Spectrum Computation
+// ============================================================================
+
+static int nucToIdx(char c) {
+  switch (c) {
+    case 'A': case 'a': return 0;
+    case 'C': case 'c': return 1;
+    case 'G': case 'g': return 2;
+    case 'T': case 't': return 3;
+    default: return -1;
+  }
+}
+
+void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
+  output::step("Computing substitution spectrum from tree...");
+
+  // 4x4 counts: subCounts[from][to]
+  std::vector<std::vector<int64_t>> subCounts(4, std::vector<int64_t>(4, 0));
+  int64_t numBranches = 0;
+
+  // Set up block sequences from root
+  panmapUtils::BlockSequences blockSequences(T);
+  auto& sequence = blockSequences.sequence;
+
+  // Simple DFS: apply block+nuc mutations, count substitutions, recurse, undo
+  std::function<void(panmanUtils::Node*)> dfs = [&](panmanUtils::Node* node) {
+    std::vector<std::pair<panmapUtils::Coordinate, char>> nucUndoRecord;
+    std::vector<std::pair<uint32_t, bool>> blockUndoRecord;
+
+    // Apply block mutations
+    for (const auto& blockMut : node->blockMutation) {
+      uint32_t blockId = blockMut.primaryBlockId;
+      bool oldExists = blockSequences.blockExists[blockId];
+      bool isInsertion = blockMut.blockMutInfo;
+      blockUndoRecord.emplace_back(blockId, oldExists);
+      blockSequences.blockExists[blockId] = isInsertion;
+    }
+
+    if (node != T->root) {
+      numBranches++;
+
+      for (const auto& nucMutation : node->nucMutation) {
+        int length = nucMutation.mutInfo >> 4;
+        uint32_t type = nucMutation.mutInfo & 0x7;
+        bool isSub = (type == panmanUtils::NucMutationType::NS ||
+                      type == panmanUtils::NucMutationType::NSNPS);
+
+        for (int i = 0; i < length; i++) {
+          panmapUtils::Coordinate pos(nucMutation, i);
+          if (pos.nucPosition >= sequence[pos.primaryBlockId].size()) continue;
+
+          char oldNuc = blockSequences.getSequenceBase(pos);
+          int newNucCode = (nucMutation.nucs >> (4 * (5 - i))) & 0xF;
+          char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
+          nucUndoRecord.emplace_back(pos, oldNuc);
+          blockSequences.setSequenceBase(pos, newNuc);
+
+          if (isSub && blockSequences.blockExists[pos.primaryBlockId]) {
+            int oldIdx = nucToIdx(oldNuc);
+            int newIdx = nucToIdx(newNuc);
+            if (oldIdx >= 0 && newIdx >= 0 && oldIdx != newIdx) {
+              subCounts[oldIdx][newIdx]++;
+            }
+          }
+        }
+      }
+    }
+
+    for (auto* child : node->children) {
+      dfs(child);
+    }
+
+    // Backtrack
+    for (auto it = nucUndoRecord.rbegin(); it != nucUndoRecord.rend(); ++it) {
+      blockSequences.setSequenceBase(it->first, it->second);
+    }
+    for (auto it = blockUndoRecord.rbegin(); it != blockUndoRecord.rend(); ++it) {
+      blockSequences.blockExists[it->first] = it->second;
+    }
+  };
+
+  dfs(T->root);
+
+  // Estimate genome length from sampled leaf nodes using existing functions
+  int64_t genomeLen = 0;
+  {
+    std::vector<int64_t> lengths;
+    // Collect leaf node identifiers
+    std::vector<std::string> leafIds;
+    for (const auto& [id, node] : T->allNodes) {
+      if (node->children.empty()) leafIds.push_back(id);
+    }
+    // Sample up to 10 leaves evenly spaced
+    size_t sampleCount = std::min<size_t>(10, leafIds.size());
+    size_t step = std::max<size_t>(1, leafIds.size() / sampleCount);
+    for (size_t i = 0; i < leafIds.size() && lengths.size() < sampleCount; i += step) {
+      std::vector<std::vector<std::pair<char, std::vector<char>>>> seq;
+      std::vector<char> bExists, bStrand;
+      std::unordered_map<int, int> bLengths;
+      panmapUtils::getSequenceFromReference(T, seq, bExists, bStrand, bLengths, leafIds[i]);
+      std::string ungapped = panmapUtils::getStringFromSequence(seq, bLengths, bExists, bStrand, false);
+      lengths.push_back((int64_t)ungapped.size());
+    }
+    if (!lengths.empty()) {
+      std::sort(lengths.begin(), lengths.end());
+      genomeLen = lengths[lengths.size() / 2]; // median
+    }
+  }
+
+  // Count base composition from the median-length sample (approximate with uniform A/C/G/T)
+  // For rate normalization we just need per-base counts; use genome/4 as fallback
+  std::vector<int64_t> baseCounts(4, genomeLen / 4);
+
+  auto substMatBuilder = indexBuilder.initSubstitutionMatrix(16);
+  
+  if (numBranches > 0 && genomeLen > 0) {
+    int64_t totalSubs = 0;
+    for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
+        if (i != j) totalSubs += subCounts[i][j];
+
+    output::step("Substitution spectrum: {} total substitutions across {} branches ({} bp genome)",
+                 totalSubs, numBranches, genomeLen);
+
+    for (int from = 0; from < 4; from++) {
+      int64_t baseCount = baseCounts[from];
+      for (int to = 0; to < 4; to++) {
+        double rate;
+        if (from == to) {
+          double offDiagSum = 0;
+          for (int j = 0; j < 4; j++) {
+            if (j != from && baseCount > 0) {
+              offDiagSum += (double)subCounts[from][j] / (numBranches * baseCount);
+            }
+          }
+          rate = 1.0 - offDiagSum;
+        } else {
+          rate = (baseCount > 0) ? (double)subCounts[from][to] / (numBranches * baseCount) : 0.0;
+        }
+        substMatBuilder.set(from * 4 + to, rate);
+      }
+    }
+
+    // Log the matrix
+    const char* bases = "ACGT";
+    for (int from = 0; from < 4; from++) {
+      std::string row;
+      for (int to = 0; to < 4; to++) {
+        if (!row.empty()) row += "  ";
+        row += fmt::format("{}→{}: {:.6e}", bases[from], bases[to], substMatBuilder[from * 4 + to]);
+      }
+      output::debug("{}", row);
+    }
+  } else {
+    // No data: set identity matrix 
+    for (int i = 0; i < 16; i++) {
+      substMatBuilder.set(i, (i / 4 == i % 4) ? 1.0 : 0.0);
+    }
+    output::step("No branches in tree, using identity substitution matrix");
+  }
+
+  output::done("Substitution spectrum computed");
 }
 
 void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads, int zstdLevel) {
@@ -2385,11 +2571,25 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
 
   auto serializeStart = std::chrono::high_resolution_clock::now();
 
+  // Cap'n Proto list element limit (~536M for UInt64). Split into primary + overflow.
+  constexpr uint32_t CAPNP_SPLIT = 500'000'000;
+  uint32_t primarySize = (totalChanges <= CAPNP_SPLIT) ? totalChanges : CAPNP_SPLIT;
+  uint32_t overflowSize = totalChanges - primarySize;
+
   // Allocate and write flat arrays (sequential - Cap'n Proto builders aren't thread-safe)
-  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(totalChanges);
-  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(totalChanges);
-  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(totalChanges);
+  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(primarySize);
+  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(primarySize);
+  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(primarySize);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
+
+  // Overflow arrays (zero-length if not needed)
+  auto seedChangeHashes2Builder = indexBuilder.initSeedChangeHashes2(overflowSize);
+  auto seedChangeParentCounts2Builder = indexBuilder.initSeedChangeParentCounts2(overflowSize);
+  auto seedChangeChildCounts2Builder = indexBuilder.initSeedChangeChildCounts2(overflowSize);
+
+  if (overflowSize > 0) {
+    output::step("Large index: splitting {} seed changes into {}+{}", totalChanges, primarySize, overflowSize);
+  }
 
   // Sort each node's changes by hash for better compression
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
@@ -2408,9 +2608,16 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
                       nodeIdx, parentCount, childCount, INT16_MIN, INT16_MAX);
         std::exit(1);
       }
-      seedChangeHashesBuilder.set(writeOffset, hash);
-      seedChangeParentCountsBuilder.set(writeOffset, static_cast<int16_t>(parentCount));
-      seedChangeChildCountsBuilder.set(writeOffset, static_cast<int16_t>(childCount));
+      if (writeOffset < primarySize) {
+        seedChangeHashesBuilder.set(writeOffset, hash);
+        seedChangeParentCountsBuilder.set(writeOffset, static_cast<int16_t>(parentCount));
+        seedChangeChildCountsBuilder.set(writeOffset, static_cast<int16_t>(childCount));
+      } else {
+        uint32_t oi = writeOffset - primarySize;
+        seedChangeHashes2Builder.set(oi, hash);
+        seedChangeParentCounts2Builder.set(oi, static_cast<int16_t>(parentCount));
+        seedChangeChildCounts2Builder.set(oi, static_cast<int16_t>(childCount));
+      }
       writeOffset++;
     }
   }

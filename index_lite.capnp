@@ -63,7 +63,18 @@ struct LiteIndex {
   # Homopolymer compression mode: if true, seeds were extracted from HPC sequences
   hpc @10 :Bool = false;
 
+  # 4x4 nucleotide substitution rate matrix (A=0,C=1,G=2,T=3), row-major
+  # Each entry is P(col | row) per branch, computed from the pangenome tree.
+  # 16 elements: [A→A, A→C, A→G, A→T, C→A, C→C, ...]
+  substitutionMatrix @16 :List(Float64);
+
     # mgsr (deprecate soon)
   seedInfo @11 :List(SeedInfo);
   perNodeChanges @12 :List(NodeChanges);
+
+  # Overflow arrays for large indices (>500M seed changes)
+  # When present, the full array = concat(primary, overflow)
+  seedChangeHashes2 @13 :List(UInt64);
+  seedChangeParentCounts2 @14 :List(Int16);
+  seedChangeChildCounts2 @15 :List(Int16);
 }

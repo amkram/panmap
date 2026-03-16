@@ -89,6 +89,8 @@ class LiteTree {
     // Storage for all seed changes (flat array, nodes reference spans into this)
     std::vector<std::tuple<uint64_t, int64_t, int64_t>> allSeedChanges;
     
+    // True once seed changes have been loaded from the index (skip re-loading in batch mode)
+    bool seedChangesLoaded = false;
 
     ~LiteTree() {
       for (auto& pair : allLiteNodes) {
