@@ -318,6 +318,56 @@ void seedsFromFastq(
   }
 }
 
+void readFastqPaired(
+    std::vector<std::string> &readSequences,
+    std::vector<std::string> &readQuals,
+    std::vector<std::string> &readNames,
+    const std::string &fastqPath1,
+    const std::string &fastqPath2) {
+
+  FILE *fp = fopen(fastqPath1.c_str(), "r");
+  if (!fp) {
+    std::cerr << "Error: File " << fastqPath1 << " not found" << std::endl;
+    exit(1);
+  }
+  kseq_t *seq = kseq_init(fileno(fp));
+  while (kseq_read(seq) >= 0) {
+    readSequences.push_back(seq->seq.s);
+    readNames.push_back(seq->name.s);
+    readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
+  }
+  kseq_destroy(seq);
+  fclose(fp);
+
+  if (!fastqPath2.empty()) {
+    fp = fopen(fastqPath2.c_str(), "r");
+    if (!fp) {
+      std::cerr << "Error: File " << fastqPath2 << " not found" << std::endl;
+      exit(1);
+    }
+    seq = kseq_init(fileno(fp));
+    int forwardReads = readSequences.size();
+    while (kseq_read(seq) >= 0) {
+      readSequences.push_back(reverseComplement(seq->seq.s));
+      readNames.push_back(seq->name.s);
+      readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
+    }
+    kseq_destroy(seq);
+    fclose(fp);
+
+    if ((int)readSequences.size() != forwardReads * 2) {
+      std::cerr << "Error: " << fastqPath2
+                << " does not contain the same number of reads as "
+                << fastqPath1 << std::endl;
+      exit(1);
+    }
+
+    perfect_shuffle(readSequences);
+    perfect_shuffle(readNames);
+    perfect_shuffle(readQuals);
+  }
+}
+
 std::string reverseComplement(std::string dna_sequence) {
   std::string complement = "";
   for (char c : dna_sequence) {

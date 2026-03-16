@@ -1,9 +1,8 @@
-#include "seeding.hpp"
+#pragma once
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <unordered_map>
-#include <utility>
 #include <vector>
 
 extern "C" {
@@ -17,15 +16,11 @@ namespace genotyping {
 
 // Main functions
 void createSam(
-    std::vector<std::vector<seeding::seed_t>> &readSeeds,
     std::vector<std::string> &readSequences,
     std::vector<std::string> &readQuals,
     std::vector<std::string> &readNames,
     std::string &bestMatchSequence,
-    std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> &seedToRefPositions,
     std::string &samFileName,
-    int k,
-    bool shortenSyncmers,
     bool pairedEndReads,
     std::vector<char *> &samAlignments,
     std::string &samHeader);
@@ -47,7 +42,8 @@ void createMplpBcf(std::string &prefix,
                    std::string &refFileName,
                    std::string &bestMatchSequence,
                    std::string &bamFileName,
-                   std::string &mpileupFileName);
+                   std::string &mpileupFileName,
+                   bool baq = false);
 
 void createVcf(char *mplpString,
                const genotyping::mutationMatrices &mutMat,
@@ -57,6 +53,16 @@ void createVcf(char *mplpString,
 void createVcfWithMutationMatrices(
     std::string &prefix,
     std::string &mpileupFileName,
-    const genotyping::mutationMatrices &mutMat,
     std::string &vcfFileName,
-    double mutationRate);
+    const std::vector<std::vector<double>> &substMatrixPhred);
+
+// Direct alignment-to-BAM pipeline: parallel minimap2 alignment with direct
+// bam1_t construction (no SAM text intermediate). Writes sorted BAM file.
+void alignAndWriteBam(
+    std::vector<std::string> &readSequences,
+    std::vector<std::string> &readQuals,
+    std::vector<std::string> &readNames,
+    std::string &reference,
+    const std::string &bamFileName,
+    bool pairedEndReads,
+    int n_threads);
