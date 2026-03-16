@@ -23,27 +23,14 @@ struct GapRunDelta {
   toGap @2 :Bool;
 }
 
-struct SeedInfo {
-  # deprecate soon
-  hash @0 :UInt64;
-  startPos @1 :UInt32;
-  endPos @2 :UInt32;
-  isReverse @3 :Bool;
-}
-
-struct SeedDelta {
-  # deprecate soon
-  seedIndex @0 :UInt32;
-  isDeleted @1 :Bool;
-}
-
 
 struct NodeChanges {
   # deprecate soon
   nodeIndex @0 :UInt32;
-  seedDeltas @1 :List(SeedDelta);
-  gapRunDeltas @2 :List(GapRunDelta);
-  invertedBlocks @3 :List(UInt32);
+  seedDeltaIndices @1 :List(UInt32);
+  seedDeltaIsDeleted @2 :List(Bool);
+  gapRunDeltas @3 :List(GapRunDelta);
+  invertedBlocks @4 :List(UInt32);
 }
 
 struct LiteIndex {
@@ -63,18 +50,20 @@ struct LiteIndex {
   # Homopolymer compression mode: if true, seeds were extracted from HPC sequences
   hpc @10 :Bool = false;
 
-  # 4x4 nucleotide substitution rate matrix (A=0,C=1,G=2,T=3), row-major
-  # Each entry is P(col | row) per branch, computed from the pangenome tree.
-  # 16 elements: [A→A, A→C, A→G, A→T, C→A, C→C, ...]
-  substitutionMatrix @16 :List(Float64);
+  # mgsr (deprecate soon)
+  seedHashes @11 :List(UInt64);
+  seedStartPos @12 :List(UInt32);
+  seedEndPos @13 :List(UInt32);
+  seedIsReverse @14 :List(Bool);
 
-    # mgsr (deprecate soon)
-  seedInfo @11 :List(SeedInfo);
-  perNodeChanges @12 :List(NodeChanges);
+  perNodeChanges @15 :List(NodeChanges);
 
   # Overflow arrays for large indices (>500M seed changes)
   # When present, the full array = concat(primary, overflow)
-  seedChangeHashes2 @13 :List(UInt64);
-  seedChangeParentCounts2 @14 :List(Int16);
-  seedChangeChildCounts2 @15 :List(Int16);
+  seedChangeHashes2 @16 :List(UInt64);
+  seedChangeParentCounts2 @17 :List(Int16);
+  seedChangeChildCounts2 @18 :List(Int16);
+
+  # 4x4 nucleotide substitution rate matrix (A=0,C=1,G=2,T=3), row-major
+  substitutionMatrix @19 :List(Float64);
 }
