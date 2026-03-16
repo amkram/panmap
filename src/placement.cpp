@@ -186,7 +186,6 @@ void extractFullFastqData(const std::string& readPath1, const std::string& readP
 
 using namespace logging;
 
-
 void placement::NodeMetrics::computeChildMetrics(
     placement::NodeMetrics& childMetrics,
     std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges,
@@ -766,8 +765,9 @@ void placeLiteHelperBFS(
                     }
                 }
                 
-                // Skip scoring for the excluded leaf node (leave-one-out validation)
-                if (nodeIndex != state.skipNodeIndex) {
+                // Skip scoring for excluded nodes (leave-one-out) and internal nodes (force-leaf)
+                bool isLeaf = node->children.empty();
+                if (nodeIndex != state.skipNodeIndex && (!state.forceLeaf || isLeaf)) {
                     // Compute scores
                     double logRawScore = nodeMetrics.getLogRawScore(state.logReadMagnitude);
                     double logCosineScore = nodeMetrics.getLogCosineScore(state.logReadMagnitude);
@@ -954,7 +954,8 @@ void placeLite(PlacementResult &result,
                        double refineTopPct,
                        int refineMaxTopN,
                        int refineNeighborRadius,
-                       int refineMaxNeighborN) {
+                       int refineMaxNeighborN,
+                       bool forceLeaf) {
     auto placement_total_start = std::chrono::high_resolution_clock::now();
     logging::info("Starting lite-index placement");
     
@@ -1001,12 +1002,13 @@ void placeLite(PlacementResult &result,
     
     // State initialization moved to after parameter setup
     
-    logging::info("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
-    
     auto time_hash_delta_start = std::chrono::high_resolution_clock::now();
     size_t totalHashDeltas = 0;
     
     auto indexRoot = liteIndex.getRoot<LiteIndex>();
+    
+    if (!liteTree->seedChangesLoaded) {
+    logging::info("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
     
     // OPTIMIZATION: Process nodes in DFS order with direct vector indexing for O(1) access
     // This eliminates hash map lookup overhead in the hot path
@@ -1041,24 +1043,42 @@ void placeLite(PlacementResult &result,
         
         // Parallel Pass 2: Populate data and assign spans
         
-        // VERSION 3: Struct-of-arrays format
+        // VERSION 3: Struct-of-arrays format (with optional overflow arrays for large indices)
         auto hashesReader = indexRoot.getSeedChangeHashes();
         auto parentCountsReader = indexRoot.getSeedChangeParentCounts();
         auto childCountsReader = indexRoot.getSeedChangeChildCounts();
         
-        logging::info("Struct-of-arrays format: {} hashes, {} parent counts, {} child counts",
-                        hashesReader.size(), parentCountsReader.size(), childCountsReader.size());
+        // Check for overflow arrays (split indices with >500M seed changes)
+        bool hasOverflow = indexRoot.hasSeedChangeHashes2() && indexRoot.getSeedChangeHashes2().size() > 0;
+        capnp::List<uint64_t>::Reader hashesReader2 = hasOverflow ? indexRoot.getSeedChangeHashes2() : hashesReader;
+        capnp::List<int16_t>::Reader parentCountsReader2 = hasOverflow ? indexRoot.getSeedChangeParentCounts2() : parentCountsReader;
+        capnp::List<int16_t>::Reader childCountsReader2 = hasOverflow ? indexRoot.getSeedChangeChildCounts2() : childCountsReader;
+        uint32_t primarySize = hashesReader.size();
+        
+        logging::info("Struct-of-arrays format: {} hashes ({}+{}), {} parent counts, {} child counts",
+                        totalHashDeltas, primarySize, hasOverflow ? hashesReader2.size() : 0u,
+                        primarySize + (hasOverflow ? parentCountsReader2.size() : 0u),
+                        primarySize + (hasOverflow ? childCountsReader2.size() : 0u));
         
         // Phase 2a
         const size_t GRAIN_SIZE = 262144; // 256K items per chunk
         tbb::parallel_for(tbb::blocked_range<size_t>(0, totalHashDeltas, GRAIN_SIZE), 
             [&](const tbb::blocked_range<size_t>& range) {
                 for (size_t i = range.begin(); i < range.end(); ++i) {
-                    liteTree->allSeedChanges[i] = std::make_tuple(
-                        hashesReader[i],
-                        parentCountsReader[i],
-                        childCountsReader[i]
-                    );
+                    if (i < primarySize) {
+                        liteTree->allSeedChanges[i] = std::make_tuple(
+                            hashesReader[i],
+                            parentCountsReader[i],
+                            childCountsReader[i]
+                        );
+                    } else {
+                        size_t oi = i - primarySize;
+                        liteTree->allSeedChanges[i] = std::make_tuple(
+                            hashesReader2[oi],
+                            parentCountsReader2[oi],
+                            childCountsReader2[oi]
+                        );
+                    }
                 }
             });
         
@@ -1083,11 +1103,13 @@ void placeLite(PlacementResult &result,
             });
     }
     
-    auto time_hash_delta_end = std::chrono::high_resolution_clock::now();
-    auto duration_hash_delta = std::chrono::duration_cast<std::chrono::milliseconds>(
-        time_hash_delta_end - time_hash_delta_start);
-    logging::info("Hash delta loading: {}ms", duration_hash_delta.count());
     logging::info("Loaded {} hash deltas from index", totalHashDeltas);
+    liteTree->seedChangesLoaded = true;
+    } else {
+        logging::info("Seed changes already loaded, skipping index deserialization");
+    }
+    
+    auto time_hash_delta_end = std::chrono::high_resolution_clock::now();
     
     // Set traversal parameters
     TraversalParams params;
@@ -1133,6 +1155,10 @@ void placeLite(PlacementResult &result,
     state.fullTree = fullTree;  // Store full tree pointer for verification mode
     state.liteNodes = liteTree->dfsIndexToNode;
     state.skipNodeIndex = skipNodeIndex;  // Set skip node for leave-one-out validation
+    state.forceLeaf = forceLeaf;  // Restrict scoring to leaf nodes only
+    if (forceLeaf) {
+        logging::info("Force-leaf mode: only leaf nodes will be considered for placement");
+    }
     
     auto time_read_processing_start = std::chrono::high_resolution_clock::now();
     {
@@ -2060,7 +2086,7 @@ void placeLite(PlacementResult &result,
         placement_total_end - placement_total_start);
     
     logging::info("\n=== PLACEMENT INTERNAL TIMING BREAKDOWN ===");
-    logging::info("HashDeltaLoading: {}ms", duration_hash_delta.count());
+    logging::info("HashDeltaLoading: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(time_hash_delta_end - time_hash_delta_start).count());
     logging::info("ReadProcessing: {}ms", duration_read_processing.count());
     logging::info("ReadMagnitude: {}ms", duration_magnitude.count());
     logging::info("TreeTraversal: {}ms", duration_traversal.count());

@@ -93,6 +93,9 @@ struct PlacementGlobalState {
     
     // Leave-one-out validation: node index to skip during scoring (UINT32_MAX = none)
     uint32_t skipNodeIndex = UINT32_MAX;
+    
+    // Restrict scoring to leaf nodes only (nodes with no children)
+    bool forceLeaf = false;
 };
 
 // Delta-based metrics computation (efficient forward-only traversal)
@@ -258,6 +261,7 @@ void placeLite(PlacementResult &result,
                double refineTopPct = 0.01,
                int refineMaxTopN = 150,
                int refineNeighborRadius = 2,
-               int refineMaxNeighborN = 150);
+               int refineMaxNeighborN = 150,
+               bool forceLeaf = false);
 
 } // namespace placement

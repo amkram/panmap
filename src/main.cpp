@@ -13,11 +13,15 @@
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <memory>
 #include <random>
 #include <chrono>
 #include <optional>
+#include <algorithm>
+#include <atomic>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -144,7 +148,11 @@ struct Config {
     bool writeOCRanks = false;
     int seed = 42;
     int listFilteredNodes = 0;    // List N filtered nodes (0 = off)
+    bool mutRate = false;         // Compute average mutation rate (muts/bp)
     
+    // Batch mode
+    std::string batchFile;        // Path to batch file listing samples (one per line: reads1 [reads2])
+
     // Leave-one-out validation mode
     std::string removeNodeId;     // Node to remove before placement (for validation)
     
@@ -159,8 +167,17 @@ struct Config {
     bool verbose = false;         // Extra debug output
     bool plain = false;           // Plain text output (no colors/unicode)
     
+    // Leaf-only placement
+    bool forceLeaf = false;       // Restrict placement to leaf nodes only
+    
     // Consensus options
     bool impute = false;          // Impute N's from parent sequence (ignore _->N mutations)
+    bool noMutationSpectrum = false; // Skip mutation spectrum filtering in VCF
+    bool baq = false;               // Enable BAQ (Base Alignment Quality) in mpileup
+    
+    // Pre-computed substitution spectrum from index (4x4 phred-scaled matrix)
+    // Empty if index has no spectrum or --no-mutation-spectrum is set
+    std::vector<std::vector<double>> substMatrixPhred;
     
     // Alignment-based refinement options
     bool refine = false;          // Enable alignment-based refinement
@@ -197,7 +214,7 @@ public:
 private:
     static ::capnp::ReaderOptions makeOptions() {
         ::capnp::ReaderOptions opts;
-        opts.traversalLimitInWords = 16ULL * 1024 * 1024 * 1024;
+        opts.traversalLimitInWords = kj::maxValue;
         opts.nestingLimit = 1024;
         return opts;
     }
@@ -210,7 +227,7 @@ class PackedIndexReader {
   
     explicit PackedIndexReader(const std::string& path) {
       ::capnp::ReaderOptions opts;
-      opts.traversalLimitInWords = 16ULL * 1024 * 1024 * 1024;
+      opts.traversalLimitInWords = kj::maxValue;
       opts.nestingLimit = 1024;
       
       fd = mgsr::open_file(path);
@@ -233,6 +250,29 @@ class PackedIndexReader {
 // ==================
 // Utility Functions
 // ==================
+
+// Load 4x4 substitution matrix from index and convert to phred scale.
+// Returns empty matrix if index has no spectrum data.
+std::vector<std::vector<double>> loadSubstMatrixFromIndex(LiteIndex::Reader& idx) {
+    auto matReader = idx.getSubstitutionMatrix();
+    if (matReader.size() != 16) return {};
+
+    // Check if matrix is populated (non-identity)
+    bool allZeroOffDiag = true;
+    for (int i = 0; i < 4 && allZeroOffDiag; i++)
+      for (int j = 0; j < 4; j++)
+        if (i != j && matReader[i * 4 + j] > 0) { allZeroOffDiag = false; break; }
+    if (allZeroOffDiag) return {};
+
+    // Convert probability matrix to phred: -10 * log10(p)
+    std::vector<std::vector<double>> phred(4, std::vector<double>(4, 0.0));
+    for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++) {
+        double p = matReader[i * 4 + j];
+        phred[i][j] = (p > 0) ? -10.0 * log10(p) : 100.0;
+      }
+    return phred;
+}
 
 std::unique_ptr<panmanUtils::TreeGroup> loadPanMAN(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
@@ -438,11 +478,13 @@ std::string sanitizeFilename(const std::string& s) {
 }
 
 /**
- * Get sequence from a node, optionally skipping N mutations.
+ * Get sequence from a node, optionally skipping N mutations and/or deletions.
  * Copied from panmanUtils::Tree::getStringFromReference with minimal edits.
  * When skipNMutations=true, any mutation to 'N' is ignored during sequence construction.
+ * When imputeDeletions=true, deletion mutations (block and nucleotide) are skipped,
+ * so the ancestral character is retained — producing a full-length reference.
  */
-std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string& reference, bool aligned, bool skipNMutations) {
+std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string& reference, bool aligned, bool skipNMutations, bool imputeDeletions = false) {
     using namespace panmanUtils;
     
     Node* referenceNode = nullptr;
@@ -552,6 +594,8 @@ std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string&
                         blockStrand[primaryBlockId].first = !blockStrand[primaryBlockId].first;
                     }
                 } else {
+                    // Block deletions are always applied — imputeDeletions
+                    // only affects nucleotide-level deletions within blocks.
                     if(secondaryBlockId != -1) {
                         blockExists[primaryBlockId].second[secondaryBlockId] = false;
                         blockStrand[primaryBlockId].second[secondaryBlockId] = true;
@@ -645,6 +689,7 @@ std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string&
                         }
                     }
                 } else if(type == NucMutationType::ND) {
+                    if(!imputeDeletions) {
                     if(secondaryBlockId != -1) {
                         if(nucGapPosition != -1) {
                             for(int j = 0; j < len; j++) {
@@ -666,6 +711,7 @@ std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string&
                             }
                         }
                     }
+                    } // imputeDeletions
                 }
             } else {
                 if(type == NucMutationType::NSNPS) {
@@ -701,6 +747,7 @@ std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string&
                         }
                     }
                 } else if(type == NucMutationType::NSNPD) {
+                    if(!imputeDeletions) {
                     if(secondaryBlockId != -1) {
                         if(nucGapPosition != -1) {
                             sequence[primaryBlockId].second[secondaryBlockId][nucPosition].second[nucGapPosition] = '-';
@@ -714,6 +761,7 @@ std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string&
                             sequence[primaryBlockId].first[nucPosition].first = '-';
                         }
                     }
+                    } // imputeDeletions
                 }
             }
         }
@@ -837,9 +885,7 @@ std::string getStringFromReferenceSkipN(panmanUtils::Tree* T, const std::string&
 }
 
 std::string getNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, bool impute = false) {
-    if (impute) {
-        return getStringFromReferenceSkipN(T, nodeId, false, true);
-    }
+    
     return T->getStringFromReference(nodeId, false, true);
 }
 
@@ -888,6 +934,7 @@ bool buildIndex(const Config& cfg) {
     
     index_single_mode::IndexBuilder builder(&tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false, cfg.flankMaskBp, cfg.hpc, cfg.impute, cfg.extentGuard);
     builder.buildIndexParallel(cfg.threads);
+    builder.computeSubstitutionSpectrum();
     builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel);
     
     logging::msg("Index built with k={}, s={}, l={}, flankMask={}bp{}{}{}", cfg.k, cfg.s, cfg.l, cfg.flankMaskBp, cfg.hpc ? ", hpc=on" : "", cfg.impute ? ", impute=on" : "", cfg.extentGuard ? ", extentGuard=on" : "");
@@ -1461,6 +1508,272 @@ bool runMetagenomic(const Config& cfg) {
   return true;
 }
 
+// Forward declarations
+int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
+                 panmanUtils::Tree* preloadedTree = nullptr);
+int runGenotyping(const Config& cfg);
+
+int runBatchPlacement(const Config& cfg) {
+    // Parse batch file
+    std::ifstream batchIn(cfg.batchFile);
+    if (!batchIn.is_open()) {
+        output::error("Cannot open batch file: {}", cfg.batchFile);
+        return 1;
+    }
+
+    struct BatchSample {
+        std::string reads1, reads2, outputPrefix;
+    };
+    std::vector<BatchSample> samples;
+    std::string line;
+    int lineNum = 0;
+    while (std::getline(batchIn, line)) {
+        lineNum++;
+        // Skip empty lines and comments
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream iss(line);
+        BatchSample s;
+        iss >> s.reads1;
+        if (s.reads1.empty()) continue;
+        // Optional second field (reads2 or output prefix)
+        std::string field2, field3;
+        iss >> field2 >> field3;
+        if (!field2.empty()) {
+            // If field3 exists: field2=reads2, field3=output
+            // If only field2: check if it looks like a fastq (reads2) or output prefix
+            if (!field3.empty()) {
+                s.reads2 = field2;
+                s.outputPrefix = field3;
+            } else {
+                // Heuristic: if it ends with .fastq/.fq/.gz, it's reads2
+                std::string lower = field2;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                if (lower.find(".fastq") != std::string::npos || 
+                    lower.find(".fq") != std::string::npos) {
+                    s.reads2 = field2;
+                } else {
+                    s.outputPrefix = field2;
+                }
+            }
+        }
+        // Auto-derive output prefix if not specified
+        if (s.outputPrefix.empty()) {
+            fs::path p(s.reads1);
+            std::string stem = p.stem().string();
+            for (const auto& suffix : {"_R1", "_R2", "_1", "_2", ".R1", ".R2"}) {
+                if (stem.size() > strlen(suffix) &&
+                    stem.substr(stem.size() - strlen(suffix)) == suffix) {
+                    stem = stem.substr(0, stem.size() - strlen(suffix));
+                    break;
+                }
+            }
+            for (const auto& ext : {".fastq", ".fq"}) {
+                if (stem.size() > strlen(ext) &&
+                    stem.substr(stem.size() - strlen(ext)) == ext) {
+                    stem = stem.substr(0, stem.size() - strlen(ext));
+                    break;
+                }
+            }
+            s.outputPrefix = (p.parent_path() / stem).string();
+        }
+        if (!fs::exists(s.reads1)) {
+            output::error("Batch line {}: reads file not found: {}", lineNum, s.reads1);
+            return 1;
+        }
+        if (!s.reads2.empty() && !fs::exists(s.reads2)) {
+            output::error("Batch line {}: reads file not found: {}", lineNum, s.reads2);
+            return 1;
+        }
+        samples.push_back(std::move(s));
+    }
+    batchIn.close();
+
+    if (samples.empty()) {
+        output::error("No samples found in batch file");
+        return 1;
+    }
+
+    output::info("Batch mode: {} samples", samples.size());
+
+    // Load index ONCE
+    logging::msg("Loading index...");
+    IndexReader reader(cfg.index, cfg.threads);
+    auto idx = reader.getRoot<LiteIndex>();
+    logging::msg("Index parameters: k={}, s={}, l={}", idx.getK(), idx.getS(), idx.getL());
+
+    panmapUtils::LiteTree tree;
+    tree.initialize(idx.getLiteTree());
+    logging::msg("Tree loaded: {} nodes", tree.allLiteNodes.size());
+
+    // Load full tree if refinement is enabled or if running alignment/genotyping
+    std::unique_ptr<panmanUtils::TreeGroup> tg;
+    panmanUtils::Tree* fullTreePtr = nullptr;
+    bool refineEnabled = cfg.refine;
+    bool needFullTree = refineEnabled || cfg.stopAfter >= PipelineStage::Align;
+    if (needFullTree) {
+        tg = loadPanMAN(cfg.panman);
+        if (tg && !tg->trees.empty()) {
+            fullTreePtr = &tg->trees[0];
+        } else {
+            logging::warn("Failed to load full tree");
+            if (refineEnabled) refineEnabled = false;
+        }
+    }
+
+    int successCount = 0, failCount = 0;
+    auto batchStart = std::chrono::high_resolution_clock::now();
+
+    // Pre-load seed changes into the LiteTree by running placement on the first sample.
+    // After this, liteTree.seedChangesLoaded == true, and subsequent calls skip the loading.
+    {
+        const auto& s = samples[0];
+        std::string outPath = s.outputPrefix + ".placement.tsv";
+        fs::path outDir = fs::path(s.outputPrefix).parent_path();
+        if (!outDir.empty()) fs::create_directories(outDir);
+
+        output::config().quiet = true;
+        placement::PlacementResult result;
+        auto start = std::chrono::high_resolution_clock::now();
+        placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, false, fullTreePtr,
+                            "", nullptr, false, cfg.seedMaskFraction,
+                            cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
+                            cfg.minReadSupport,
+                            refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN,
+                            cfg.refineNeighborRadius, cfg.refineMaxNeighborN,
+                            cfg.forceLeaf);
+        output::config().quiet = false;
+
+        if (result.bestLogRawNodeId.empty()) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::high_resolution_clock::now() - start);
+            fmt::print(stderr, "[1/{}] {} -> NO PLACEMENT ({}ms)\n", samples.size(),
+                      s.outputPrefix, elapsed.count());
+            failCount++;
+        } else {
+            if (cfg.stopAfter >= PipelineStage::Align) {
+                Config sampleCfg = cfg;
+                sampleCfg.output = s.outputPrefix;
+                sampleCfg.reads1 = s.reads1;
+                sampleCfg.reads2 = s.reads2;
+                if (runAlignment(sampleCfg, result, fullTreePtr) != 0) {
+                    fmt::print(stderr, "[1/{}] {} -> alignment failed\n", samples.size(), s.outputPrefix);
+                    failCount++;
+                } else if (cfg.stopAfter >= PipelineStage::Genotype) {
+                    if (runGenotyping(sampleCfg) != 0) {
+                        fmt::print(stderr, "[1/{}] {} -> genotyping failed\n", samples.size(), s.outputPrefix);
+                        failCount++;
+                    } else {
+                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::high_resolution_clock::now() - start);
+                        fmt::print(stderr, "[1/{}] {} -> {} ({}ms)\n", samples.size(),
+                                  s.outputPrefix, result.bestLogRawNodeId, elapsed.count());
+                        successCount++;
+                    }
+                } else {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::high_resolution_clock::now() - start);
+                    fmt::print(stderr, "[1/{}] {} -> {} ({}ms)\n", samples.size(),
+                              s.outputPrefix, result.bestLogRawNodeId, elapsed.count());
+                    successCount++;
+                }
+            } else {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::high_resolution_clock::now() - start);
+                fmt::print(stderr, "[1/{}] {} -> {} ({}ms)\n", samples.size(),
+                          s.outputPrefix, result.bestLogRawNodeId, elapsed.count());
+                successCount++;
+            }
+        }
+    }
+
+    // Process remaining samples in parallel (seed changes already loaded, tree is read-only)
+    if (samples.size() > 1) {
+        std::atomic<int> atomicSuccess(0), atomicFail(0);
+        std::atomic<int> completedCount(1); // first sample already done
+        std::mutex progressMutex;
+        output::config().quiet = true;
+
+        tbb::parallel_for(tbb::blocked_range<size_t>(1, samples.size()),
+            [&](const tbb::blocked_range<size_t>& range) {
+                for (size_t i = range.begin(); i < range.end(); i++) {
+                    if (signals::check_interrupted()) continue;
+                    const auto& s = samples[i];
+                    std::string outPath = s.outputPrefix + ".placement.tsv";
+
+                    fs::path outDir = fs::path(s.outputPrefix).parent_path();
+                    if (!outDir.empty()) fs::create_directories(outDir);
+
+                    placement::PlacementResult result;
+                    auto start = std::chrono::high_resolution_clock::now();
+                    placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, false, fullTreePtr,
+                                        "", nullptr, false, cfg.seedMaskFraction,
+                                        cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
+                                        cfg.minReadSupport,
+                                        refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN,
+                                        cfg.refineNeighborRadius, cfg.refineMaxNeighborN,
+                                        cfg.forceLeaf);
+
+                    if (result.bestLogRawNodeId.empty()) {
+                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::high_resolution_clock::now() - start);
+                        int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+                        std::lock_guard<std::mutex> lock(progressMutex);
+                        fmt::print(stderr, "[{}/{}] {} -> NO PLACEMENT ({}ms)\n", n, samples.size(),
+                                  s.outputPrefix, elapsed.count());
+                        atomicFail.fetch_add(1, std::memory_order_relaxed);
+                        continue;
+                    }
+
+                    bool sampleOk = true;
+                    if (cfg.stopAfter >= PipelineStage::Align) {
+                        Config sampleCfg = cfg;
+                        sampleCfg.output = s.outputPrefix;
+                        sampleCfg.reads1 = s.reads1;
+                        sampleCfg.reads2 = s.reads2;
+
+                        if (runAlignment(sampleCfg, result, fullTreePtr) != 0) {
+                            int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+                            std::lock_guard<std::mutex> lock(progressMutex);
+                            fmt::print(stderr, "[{}/{}] {} -> alignment failed\n", n, samples.size(),
+                                      s.outputPrefix);
+                            atomicFail.fetch_add(1, std::memory_order_relaxed);
+                            continue;
+                        }
+
+                        if (cfg.stopAfter >= PipelineStage::Genotype) {
+                            if (runGenotyping(sampleCfg) != 0) {
+                                int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+                                std::lock_guard<std::mutex> lock(progressMutex);
+                                fmt::print(stderr, "[{}/{}] {} -> genotyping failed\n", n, samples.size(),
+                                          s.outputPrefix);
+                                atomicFail.fetch_add(1, std::memory_order_relaxed);
+                                continue;
+                            }
+                        }
+                    }
+
+                    auto totalElapsedSample = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::high_resolution_clock::now() - start);
+                    int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+                    std::lock_guard<std::mutex> lock(progressMutex);
+                    fmt::print(stderr, "[{}/{}] {} -> {} ({}ms)\n", n, samples.size(),
+                              s.outputPrefix, result.bestLogRawNodeId, totalElapsedSample.count());
+                    atomicSuccess.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+
+        output::config().quiet = false;
+        successCount += atomicSuccess.load();
+        failCount += atomicFail.load();
+    }
+
+    auto totalElapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::high_resolution_clock::now() - batchStart);
+    output::done(fmt::format("Batch complete: {}/{} placed in {}s", successCount, samples.size(), totalElapsed.count()));
+    if (failCount > 0) logging::warn("{} samples failed placement", failCount);
+    return 0;
+}
+
 std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     logging::msg("Loading index...");
     IndexReader reader(cfg.index, cfg.threads);
@@ -1504,7 +1817,8 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                         cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
                         cfg.minReadSupport,
                         refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN, 
-                        cfg.refineNeighborRadius, cfg.refineMaxNeighborN);
+                        cfg.refineNeighborRadius, cfg.refineMaxNeighborN,
+                        cfg.forceLeaf);
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start);
     
@@ -1730,15 +2044,19 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     return result;
 }
 
-int runAlignment(const Config& cfg, const placement::PlacementResult& placement) {
-    logging::msg("Loading tree for alignment...");
-    auto tg = loadPanMAN(cfg.panman);
-    if (!tg || tg->trees.empty()) {
-        logging::err("Failed to load tree");
-        return 1;
+int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
+                 panmanUtils::Tree* preloadedTree) {
+    std::unique_ptr<panmanUtils::TreeGroup> tg;
+    panmanUtils::Tree* T = preloadedTree;
+    if (!T) {
+        logging::msg("Loading tree for alignment...");
+        tg = loadPanMAN(cfg.panman);
+        if (!tg || tg->trees.empty()) {
+            logging::err("Failed to load tree");
+            return 1;
+        }
+        T = &tg->trees[0];
     }
-    
-    auto* T = &tg->trees[0];
     // Use LogRaw as primary placement metric
     std::string nodeId = placement.bestLogRawNodeId;
     
@@ -1747,11 +2065,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement)
         return 1;
     }
     
-    // Get reference sequence (like working commit: panmapUtils::getStringFromReference)
-    // If impute is enabled, skip N mutations during sequence construction
-    std::string bestMatchSequence = cfg.impute 
-        ? getStringFromReferenceSkipN(T, nodeId, false, true)
-        : T->getStringFromReference(nodeId, false, true);
+    std::string bestMatchSequence = panmapUtils::getStringFromReference(T, nodeId, false);
     
     if (bestMatchSequence.empty()) {
         logging::err("Empty sequence for node '{}' - cannot align", nodeId);
@@ -1781,69 +2095,23 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement)
     }
     
     logging::msg("Reference: {} bp from node {} -> {}", bestMatchSequence.size(), nodeId, refFileName);
-    
-    // Get index parameters from placement result
-    int32_t k = placement.k;
-    int32_t s = placement.s;
-    int32_t t = placement.t;
-    bool open = placement.open;
-    
-    // Minimap2 has k <= 28 limit, adjust if needed (from working commit)
-    if (k > 28) {
-        logging::msg("k > 28, setting k = 19, s = 10, t = 0 for minimap alignment");
-    }
-    int k_minimap = k > 28 ? 19 : k;
-    int s_minimap = k > 28 ? 10 : s;
-    int t_minimap = k > 28 ? 0 : t;
-    bool open_minimap = open;
-    
+
     auto start = std::chrono::high_resolution_clock::now();
-    
-    // Read input sequences using seedsFromFastq (populates everything we need)
-    std::vector<std::vector<seeding::seed_t>> readSeeds;
+
+    // Opt 1: Lightweight FASTQ reader (no seed computation)
     std::vector<std::string> readSequences, readQuals, readNames;
-    std::vector<std::vector<std::string>> readSeedSeqs;
-    absl::flat_hash_map<size_t, std::pair<size_t, size_t>> readSeedCounts;
-    
-    seeding::seedsFromFastq(k_minimap, s_minimap, t_minimap, open_minimap, 1,
-                            readSeedCounts, readSequences, readQuals, readNames,
-                            readSeeds, readSeedSeqs, cfg.reads1, cfg.reads2);
-    
-    // Build seed-to-reference position map from reference sequence (from working commit)
-    std::unordered_map<size_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> seedToRefPositions;
-    for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : 
-         seeding::rollingSyncmers(bestMatchSequence, k_minimap, s_minimap, open_minimap, t_minimap, false)) {
-        if (!isSyncmer) continue;
-        if (seedToRefPositions.find(kmerHash) == seedToRefPositions.end()) {
-            seedToRefPositions[kmerHash] = std::make_pair(std::vector<uint32_t>(), std::vector<uint32_t>());
-        }
-        if (isReverse) {
-            seedToRefPositions[kmerHash].second.push_back(startPos);
-        } else {
-            seedToRefPositions[kmerHash].first.push_back(startPos);
-        }
-    }
-    
-    logging::msg("Loaded {} reads, built {} reference seed positions", 
-                 readSequences.size(), seedToRefPositions.size());
-    
-    // Create SAM alignment (from working commit)
+    seeding::readFastqPaired(readSequences, readQuals, readNames, cfg.reads1, cfg.reads2);
+
+    logging::msg("Loaded {} reads", readSequences.size());
+
+    // Opts 2+3: Parallel alignment with direct BAM construction
     bool pairedEndReads = !cfg.reads2.empty();
-    bool shortenSyncmers = false;  // Use full syncmer positions
-    std::vector<char*> samAlignments;
-    std::string samHeader;
-    createSam(readSeeds, readSequences, readQuals, readNames, bestMatchSequence, 
-              seedToRefPositions, samFileName, k_minimap, shortenSyncmers, pairedEndReads, 
-              samAlignments, samHeader);
-    
-    // Create BAM from SAM (from working commit)
-    sam_hdr_t* header;
-    bam1_t** bamRecords;
-    createBam(samAlignments, samHeader, bamFileName, header, bamRecords);
-    
+    alignAndWriteBam(readSequences, readQuals, readNames, bestMatchSequence,
+                     bamFileName, pairedEndReads, cfg.threads);
+
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start);
-    
+
     logging::msg("Alignment complete in {}ms -> {}", elapsed.count(), bamFileName);
     return 0;
 }
@@ -1865,10 +2133,9 @@ int runGenotyping(const Config& cfg) {
     
     auto start = std::chrono::high_resolution_clock::now();
     
-    // Create mpileup and VCF (from working commit)
-    genotyping::mutationMatrices mutMat;
-    createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName);
-    createVcfWithMutationMatrices(prefix, mpileupFileName, mutMat, vcfFileName, 0.0011);
+    // Create mpileup and VCF
+    createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq);
+    createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred);
     
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start);
@@ -1920,9 +2187,11 @@ int main(int argc, char** argv) {
         ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
         ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
         ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
+        ("no-mutation-spectrum", po::bool_switch(&cfg.noMutationSpectrum), "Disable mutation spectrum filtering in VCF genotyping")
+        ("baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")
         ("kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")
         ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
-        ("offset,t", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
+        ("offset", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
         ("lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")
         ("open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")
         ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
@@ -1936,6 +2205,7 @@ int main(int argc, char** argv) {
             "Min reads for a seed (2=filter singletons)")
         ("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")
         ("extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")
+        ("force-leaf", po::bool_switch(&cfg.forceLeaf), "Restrict placement to leaf nodes only (default when --stop genotype)")
         ("refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")
         ("refine-top-pct", po::value<double>(&cfg.refineTopPct)->default_value(0.01),
             "Top % of nodes to refine (default 1%)")
@@ -1946,7 +2216,9 @@ int main(int argc, char** argv) {
         ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
             "Max additional nodes from neighbor expansion")
         ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7),
-            "ZSTD compression level for index (1-22)");
+            "ZSTD compression level for index (1-22)")
+        ("batch", po::value<std::string>(&cfg.batchFile),
+            "Batch file listing samples (one per line: reads1 [reads2] [output_prefix])");
 
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()
@@ -1996,7 +2268,9 @@ int main(int argc, char** argv) {
         ("write-meta-read-scores-filtered", po::bool_switch(&cfg.writeMetaReadScoresFiltered), "Write filtered meta read scores to TSV file")
         ("write-meta-read-scores-unfiltered", po::bool_switch(&cfg.writeMetaReadScoresUnfiltered), "Write unfiltered meta read scores to TSV file")
         ("write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")
-        ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
+        ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed")
+        ("mut-rate", po::bool_switch(&cfg.mutRate),
+            "Compute average mutation rate across panman tree (muts/bp per branch, SNPs and indels)");
     
     // Positional arguments (always hidden)
     po::options_description positional;
@@ -2063,6 +2337,19 @@ int main(int argc, char** argv) {
         output::error("PanMAN file required");
         return 1;
     }
+
+    // Auto-detect: if panman arg looks like an index file (.pmi/.idx), use it as the index
+    {
+        auto ext = fs::path(cfg.panman).extension().string();
+        if (ext == ".pmi" || ext == ".idx") {
+            if (cfg.index.empty()) {
+                cfg.index = cfg.panman;
+            }
+            output::error("'{}' looks like an index file, not a PanMAN.", cfg.panman);
+            output::error("Usage: panmap <panman> [reads.fq] -i {}", cfg.panman);
+            return 1;
+        }
+    }
     
     // Parse stop stage
     std::string stopStr = vm["stop"].as<std::string>();
@@ -2073,6 +2360,11 @@ int main(int argc, char** argv) {
     else {
         output::error("Invalid stage '{}'", stopStr);
         return 1;
+    }
+    
+    // Default --force-leaf on when running genotype (unless user explicitly set it)
+    if (!vm.count("force-leaf") && cfg.stopAfter >= PipelineStage::Genotype) {
+        cfg.forceLeaf = true;
     }
     
     // Set defaults
@@ -2365,6 +2657,108 @@ int main(int argc, char** argv) {
             return 0;
         }
         
+        // Utility: compute mutation rate across the tree
+        if (cfg.mutRate) {
+            auto tg = loadPanMAN(cfg.panman);
+            if (!tg || tg->trees.empty()) {
+                output::error("Failed to load panman");
+                return 1;
+            }
+            for (size_t ti = 0; ti < tg->trees.size(); ti++) {
+                panmanUtils::Tree* T = &tg->trees[ti];
+
+                // Genome length: sample up to 200 leaf nodes, take median ungapped length.
+                // Robust when the root sequence is empty/all-gap (common in block-structured panmans).
+                std::vector<std::string> leafIds;
+                std::function<void(panmanUtils::Node*)> collectLeaves = [&](panmanUtils::Node* n) {
+                    if (n->children.empty()) leafIds.push_back(n->identifier);
+                    else for (auto* c : n->children) collectLeaves(c);
+                };
+                collectLeaves(T->root);
+                {
+                    std::mt19937 rng(42);
+                    if (leafIds.size() > 200) {
+                        std::shuffle(leafIds.begin(), leafIds.end(), rng);
+                        leafIds.resize(200);
+                    }
+                }
+                std::vector<size_t> leafLens;
+                for (const auto& id : leafIds) leafLens.push_back(getUngappedLength(T, id));
+                std::sort(leafLens.begin(), leafLens.end());
+                size_t genomeLen = leafLens.empty() ? 0 : leafLens[leafLens.size() / 2];
+
+                // Compatible with wgsim -r / -R:
+                //   wgsim -r = total mutation EVENTS per site
+                //   wgsim -R = fraction of events that are indels
+                //   SNP: each substituted base = 1 event  (NS len L → L events)
+                //   Indel: each NI/ND entry   = 1 event   (regardless of bp length)
+                //   Block mutations = pan-genome structural variation → excluded
+                int64_t totalSnpPositions = 0;  // substituted bases
+                int64_t totalIndelEvents  = 0;  // indel entries (each = 1 event)
+                int64_t numBranches = 0;
+                std::vector<double> branchRates;
+                std::vector<double> branchIndelFracs;  // per-branch indel fraction
+
+                std::function<void(panmanUtils::Node*)> dfs = [&](panmanUtils::Node* node) {
+                    if (node != T->root) {
+                        int64_t bSnps = 0, bIndels = 0;
+                        for (const auto& nm : node->nucMutation) {
+                            int type = nm.mutInfo & 0x7;
+                            int len  = nm.mutInfo >> 4;
+                            if (len == 0) len = 1;
+                            if (type == panmanUtils::NucMutationType::NS ||
+                                type == panmanUtils::NucMutationType::NSNPS) {
+                                bSnps += len;  // each substituted base = 1 independent event
+                            } else {
+                                bIndels += 1;  // each NI/ND entry = 1 indel event (wgsim: 1 event regardless of length)
+                            }
+                        }
+                        totalSnpPositions += bSnps;
+                        totalIndelEvents  += bIndels;
+                        numBranches++;
+                        int64_t bTotal = bSnps + bIndels;
+                        double rate = genomeLen > 0 ? (double)bTotal / genomeLen : 0.0;
+                        branchRates.push_back(rate);
+                        // Per-branch indel fraction (only for branches with any mutations)
+                        if (bTotal > 0)
+                            branchIndelFracs.push_back((double)bIndels / bTotal);
+                    }
+                    for (auto* child : node->children) dfs(child);
+                };
+                dfs(T->root);
+
+                auto median_of = [](std::vector<double> v) -> double {
+                    if (v.empty()) return 0.0;
+                    std::sort(v.begin(), v.end());
+                    return v[v.size() / 2];
+                };
+
+                double medianRate        = median_of(branchRates);
+                double medianIndelFrac   = median_of(branchIndelFracs);
+                // wgsim -r  = medianRate        (total events/site for a typical branch)
+                // wgsim -R  = medianIndelFrac   (fraction of those that are indels)
+
+                double avgSnpRate = (numBranches > 0 && genomeLen > 0)
+                    ? (double)totalSnpPositions / (numBranches * genomeLen) : 0.0;
+                double avgIndelRate = (numBranches > 0 && genomeLen > 0)
+                    ? (double)totalIndelEvents  / (numBranches * genomeLen) : 0.0;
+
+                if (tg->trees.size() > 1)
+                    std::cout << "tree\t" << ti << "\n";
+                std::cout << "genome_length_bp\t"      << genomeLen        << "\n";
+                std::cout << "num_branches\t"          << numBranches      << "\n";
+                std::cout << "total_snp_positions\t"   << totalSnpPositions<< "\n";
+                std::cout << "total_indel_events\t"    << totalIndelEvents  << "\n";
+                std::cout << std::fixed << std::setprecision(8);
+                std::cout << "avg_snp_rate\t"          << avgSnpRate        << "\n";
+                std::cout << "avg_indel_rate\t"        << avgIndelRate      << "\n";
+                std::cout << "median_branch_rate\t"    << medianRate        << "\n";
+                std::cout << "median_indel_fraction\t" << medianIndelFrac   << "\n";
+                std::cout << "# wgsim: -r " << medianRate << "  -R " << medianIndelFrac << "\n";
+            }
+            return 0;
+        }
+
         // Utility: dump specific node sequence
         if (!cfg.dumpNodeId.empty()) {
             auto tg = loadPanMAN(cfg.panman);
@@ -2392,12 +2786,37 @@ int main(int argc, char** argv) {
         // Stage 1: Index
         if (!buildIndex(cfg)) return 1;
         if (signals::check_interrupted()) return 130;  // Standard exit code for SIGINT
+
+        // Load substitution spectrum from index for genotyping
+        if (!cfg.noMutationSpectrum && cfg.stopAfter >= PipelineStage::Genotype) {
+            IndexReader specReader(cfg.index, cfg.threads);
+            auto specIdx = specReader.getRoot<LiteIndex>();
+            cfg.substMatrixPhred = loadSubstMatrixFromIndex(specIdx);
+            if (!cfg.substMatrixPhred.empty()) {
+                logging::msg("Loaded substitution spectrum from index");
+            }
+        }
+
         if (cfg.stopAfter == PipelineStage::Index) {
             output::done("Index ready: " + cfg.index);
             output::info("");
             output::info("{}Next steps:{}", color::dim(), color::reset());
             output::info("  {} panmap {} reads.fq", color::dim(), cfg.panman);
             return 0;
+        }
+
+        // Batch mode: load index once, place all samples
+        if (!cfg.batchFile.empty()) {
+            // Load substitution spectrum from index for genotyping
+            if (!cfg.noMutationSpectrum && cfg.stopAfter >= PipelineStage::Genotype) {
+                IndexReader specReader(cfg.index, cfg.threads);
+                auto specIdx = specReader.getRoot<LiteIndex>();
+                cfg.substMatrixPhred = loadSubstMatrixFromIndex(specIdx);
+                if (!cfg.substMatrixPhred.empty()) {
+                    logging::msg("Loaded substitution spectrum from index");
+                }
+            }
+            return runBatchPlacement(cfg);
         }
         
         // Check for reads
