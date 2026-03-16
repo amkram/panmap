@@ -90,12 +90,12 @@ endif()
 
 # Force the correct protobuf library path
 set(Protobuf_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprotobuf.so")
-set(Protobuf_INCLUDE_DIRS "/usr/include/google/protobuf")
+set(Protobuf_INCLUDE_DIRS "/usr/include")
 
 # Include TBB and jsoncpp headers
 include_directories(${tbb_SOURCE_DIR}/include)
 include_directories(${jsoncpp_SOURCE_DIR}/include)
-include_directories(${Protobuf_INCLUDE_DIRS})
+include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
 # Setup for CapnProto using system-installed tools
 find_program(CAPNP_EXECUTABLE NAMES capnp)
@@ -272,10 +272,9 @@ if(Protobuf_FOUND)
 
 # Force the correct protobuf library path
 set(Protobuf_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprotobuf.so")
-set(Protobuf_INCLUDE_DIRS "/usr/include/google/protobuf")
+set(Protobuf_INCLUDE_DIRS "/usr/include")
 
-include_directories(${Protobuf_INCLUDE_DIRS})
-include_directories("/usr/include")
+include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
 # Generate Protocol Buffers
 set(PROTO_FILES 
