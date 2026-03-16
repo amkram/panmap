@@ -204,6 +204,9 @@ class IndexBuilder {
     void buildIndex();
     void buildIndexParallel(int numThreads = 0);  // 0 = auto-detect
 
+    // Compute 4x4 substitution spectrum from tree mutations and store in index
+    void computeSubstitutionSpectrum();
+
     void writeIndex(const std::string& path, int numThreads = 0, int zstdLevel = 7);
 
     // Getters for parameters (for testing)
