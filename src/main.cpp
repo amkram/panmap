@@ -114,6 +114,8 @@ struct Config {
 
     // Metagenomic options
     bool indexFull = false;
+    bool indexPacked = false;
+    bool readPacked = false;
     bool noProgress = false;
     size_t topOc = 1000;
     uint32_t maskReads = 0;
@@ -220,12 +222,12 @@ private:
     }
 };
 
-class PackedIndexReader {
+class PackedFdReader {
   public:
     int fd = -1;
     std::unique_ptr<::capnp::PackedFdMessageReader> reader;
   
-    explicit PackedIndexReader(const std::string& path) {
+    explicit PackedFdReader(const std::string& path) {
       ::capnp::ReaderOptions opts;
       opts.traversalLimitInWords = kj::maxValue;
       opts.nestingLimit = 1024;
@@ -234,11 +236,36 @@ class PackedIndexReader {
       reader = std::make_unique<::capnp::PackedFdMessageReader>(fd, opts);
     }
   
-    ~PackedIndexReader() {
+    ~PackedFdReader() {
       reader.reset();
       if (fd >= 0) {
         close(fd);
       }
+    }
+  
+    template<typename T>
+    typename T::Reader getRoot() {
+      return reader->getRoot<T>();
+    }
+  };
+
+
+class FdReader {
+  public:
+    int fd = -1;
+    std::unique_ptr<::capnp::StreamFdMessageReader> reader;
+  
+    explicit FdReader(const std::string& path) {
+      ::capnp::ReaderOptions opts;
+      opts.traversalLimitInWords = 16ULL * 1024 * 1024 * 1024;
+      opts.nestingLimit = 1024;
+      fd = mgsr::open_file(path);
+      reader = std::make_unique<::capnp::StreamFdMessageReader>(fd, opts);
+    }
+  
+    ~FdReader() {
+      reader.reset();
+      if (fd >= 0) close(fd);
     }
   
     template<typename T>
@@ -914,7 +941,7 @@ bool buildMgsrIndex(const Config& cfg) {
   panmanUtils::Tree* T = &tg->trees[0];
   mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, cfg.indexFull);
   mgsrIndexBuilder.buildIndex();
-  mgsrIndexBuilder.writeIndex(cfg.indexMgsr);
+  mgsrIndexBuilder.writeIndex(cfg.indexMgsr, cfg.indexPacked);
   std::cout << (cfg.indexFull ? "Full" : "Lite") << " MGSR index written to " << cfg.indexMgsr << std::endl;
   return true;
 }
@@ -1303,7 +1330,8 @@ bool runMetagenomic(const Config& cfg) {
   
   
   std::unique_ptr<IndexReader> compressedReader;
-  std::unique_ptr<PackedIndexReader> packedReader;
+  std::unique_ptr<PackedFdReader> packedFdReader;
+  std::unique_ptr<FdReader> fdReader;
   ::capnp::MessageReader* baseReader = nullptr;
   
   try {
@@ -1312,8 +1340,13 @@ bool runMetagenomic(const Config& cfg) {
   } catch (...) {
     try {
       std::cerr << "Trying to open index file as packed file..." << std::endl;
-      packedReader = std::make_unique<PackedIndexReader>(cfg.index);
-      baseReader = packedReader->reader.get();
+      if (cfg.readPacked) {
+        packedFdReader = std::make_unique<PackedFdReader>(cfg.index);
+        baseReader = packedFdReader->reader.get();
+      } else {
+        fdReader = std::make_unique<FdReader>(cfg.index);
+        baseReader = fdReader->reader.get();
+      }
     } catch (...) {
       std::cerr << "Failed to open index file" << std::endl;
       return false;
@@ -2224,6 +2257,8 @@ int main(int argc, char** argv) {
     metagenomic.add_options()
         ("index-mgsr", po::value<std::string>(&cfg.indexMgsr), "Path to build/rebuild MGSR index")
         ("index-full", po::bool_switch(&cfg.indexFull), "Build full index (default index-mgsr builds lite index)")
+        ("index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")
+        ("read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")
         ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
     
     po::options_description em("Metagenomic: EM");

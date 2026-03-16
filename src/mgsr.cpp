@@ -818,21 +818,38 @@ void mgsr::MgsrLiteTree::initialize(
   std::vector<std::vector<std::pair<uint32_t, bool>>> seedDeltas;
   std::vector<std::vector<std::tuple<uint32_t, uint32_t, bool>>> gapRunDeltas;
   std::vector<std::vector<uint32_t>> invertedBlocks;
-  capnp::List<SeedInfo>::Reader seedInfosReader = indexReader.getSeedInfo();
+  capnp::List<uint64_t>::Reader seedHashesReader = indexReader.getSeedHashes();
+  capnp::List<uint32_t>::Reader seedStartPosReader = indexReader.getSeedStartPos();
+  capnp::List<uint32_t>::Reader seedEndPosReader = indexReader.getSeedEndPos();
+  capnp::List<bool>::Reader seedIsReverseReader = indexReader.getSeedIsReverse();
   capnp::List<NodeChanges>::Reader perNodeChangesReader = indexReader.getPerNodeChanges();
-  seedInfos.resize(seedInfosReader.size());
 
-  size_t seedInfos_chunkSize = (seedInfosReader.size() + numThreads - 1) / numThreads;
+  if (seedHashesReader.size() != seedIsReverseReader.size()) {
+    std::cerr << "Error: seed hashes and is reverse must have the same size!" << std::endl;
+    exit(1);
+  }
+
+  if (seedStartPosReader.size() > 0 || seedEndPosReader.size() > 0) {
+    if (seedStartPosReader.size() != seedEndPosReader.size() || seedStartPosReader.size() != seedHashesReader.size()) {
+      std::cerr << "Error: seed start positions, end positions, and hashes must have the same size!" << std::endl;
+      exit(1);
+    }
+  }
+
+  seedInfos.resize(seedHashesReader.size());
+
+  size_t seedInfos_chunkSize = (seedHashesReader.size() + numThreads - 1) / numThreads;
   std::cerr << "Start to read in seedInfos" << std::endl;
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, seedInfosReader.size(), seedInfos_chunkSize),
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, seedHashesReader.size(), seedInfos_chunkSize),
     [&](const tbb::blocked_range<size_t>& range) {
       for (size_t i = range.begin(); i < range.end(); i++) {
-        const auto& seedReader = seedInfosReader[i];
         auto& seed = seedInfos[i];
-        seed.hash = seedReader.getHash();
-        seed.startPos = seedReader.getStartPos();
-        seed.endPos = seedReader.getEndPos();
-        seed.isReverse = seedReader.getIsReverse();
+        seed.hash = seedHashesReader[i];
+        seed.isReverse = seedIsReverseReader[i];
+        if (seedStartPosReader.size() > 0) {
+          seed.startPos = seedStartPosReader[i];
+          seed.endPos = seedEndPosReader[i];
+        }
       }
     }, tbb::simple_partitioner());
   std::cerr << "Successfully read in seedInfos, size: " << seedInfos.size() << std::endl;
@@ -848,17 +865,22 @@ void mgsr::MgsrLiteTree::initialize(
         auto& currentSeedDeltas = seedDeltas[i];
         auto& currentGapRunDeltas = gapRunDeltas[i];
         auto& currentInvertedBlocks = invertedBlocks[i];
-        const auto& currentSeedDeltasReader = currentPerNodeChangeReader.getSeedDeltas();
+        const auto& currentSeedDeltaIndicesReader = currentPerNodeChangeReader.getSeedDeltaIndices();
+        const auto& currentSeedDeltaIsDeletedReader = currentPerNodeChangeReader.getSeedDeltaIsDeleted();
         const auto& currentGapRunDeltasReader = currentPerNodeChangeReader.getGapRunDeltas();
         const auto& currentInvertedBlocksReader = currentPerNodeChangeReader.getInvertedBlocks();
         
-        currentSeedDeltas.resize(currentSeedDeltasReader.size());
+        if (currentSeedDeltaIndicesReader.size() != currentSeedDeltaIsDeletedReader.size()) {
+          std::cerr << "Error: seed delta indices and is deleted must have the same size!" << std::endl;
+          exit(1);
+        }
+        currentSeedDeltas.resize(currentSeedDeltaIndicesReader.size());
         currentGapRunDeltas.reserve(currentGapRunDeltasReader.size());
         currentInvertedBlocks.resize(currentInvertedBlocksReader.size());
         
-        for (size_t j = 0; j < currentSeedDeltasReader.size(); j++) {
-          currentSeedDeltas[j].first = currentSeedDeltasReader[j].getSeedIndex();
-          currentSeedDeltas[j].second = currentSeedDeltasReader[j].getIsDeleted();
+        for (size_t j = 0; j < currentSeedDeltaIndicesReader.size(); j++) {
+          currentSeedDeltas[j].first = currentSeedDeltaIndicesReader[j];
+          currentSeedDeltas[j].second = currentSeedDeltaIsDeletedReader[j];
         }
         
         for (size_t j = 0; j < currentGapRunDeltasReader.size(); j++) {
@@ -3923,131 +3945,156 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     }
   }
 
-  std::sort(deletedSeedIndices.begin(), deletedSeedIndices.end(), [&](const auto& a, const auto& b) { return uniqueKminmers[a].startPos < uniqueKminmers[b].startPos; });
  
   //  Adding node changes to index
   NodeChanges::Builder curNodeChanges = perNodeChanges[dfsIndex];
   curNodeChanges.setNodeIndex(dfsIndex);
 
   // adding inserted/substituted seeds to index
-  capnp::List<SeedDelta>::Builder seedDeltasBuilder = curNodeChanges.initSeedDeltas(addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
-  size_t deltaSeedIndicesIndex = 0, deletedIdx = 0, addedIdx = 0, substitutedIdx = 0;
+  capnp::List<uint32_t>::Builder seedDeltaIndicesBuilder = curNodeChanges.initSeedDeltaIndices(addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
+  capnp::List<bool>::Builder seedDeltaIsDeletedBuilder = curNodeChanges.initSeedDeltaIsDeleted(addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
   
-  while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
-    auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
-    auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
-    auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
-    if (deletedStartPos <= addedStartPos && deletedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+  if (indexFull) {
+    size_t deltaSeedIndicesIndex = 0, deletedIdx = 0, addedIdx = 0, substitutedIdx = 0;
+  
+    std::sort(deletedSeedIndices.begin(), deletedSeedIndices.end(), [&](const auto& a, const auto& b) { return uniqueKminmers[a].startPos < uniqueKminmers[b].startPos; });
+    while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
+      auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
+      auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
+      auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
+      if (deletedStartPos <= addedStartPos && deletedStartPos <= substitutedStartPos) {;
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, deletedSeedIndices[deletedIdx]);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
+        deltaSeedIndicesIndex++;
+        deletedIdx++;
+      } else if (addedStartPos <= substitutedStartPos) {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, addedSeedIndices[addedIdx]);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
+        deltaSeedIndicesIndex++;
+        addedIdx++;
+      } else {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].first);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
+        deltaSeedIndicesIndex++;
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].second);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
+        deltaSeedIndicesIndex++;
+        substitutedIdx++;
+      }
+    }
+    
+    while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size()) {
+      auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
+      auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
+      if (deletedStartPos <= addedStartPos) {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, deletedSeedIndices[deletedIdx]);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
+        deltaSeedIndicesIndex++;
+        deletedIdx++;
+      } else {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, addedSeedIndices[addedIdx]);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
+        deltaSeedIndicesIndex++;
+        addedIdx++;
+      }
+    }
+    while (deletedIdx < deletedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
+      auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
+      auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
+      if (deletedStartPos <= substitutedStartPos) {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, deletedSeedIndices[deletedIdx]);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
+        deltaSeedIndicesIndex++;
+        deletedIdx++;
+      } else {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].first);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
+        deltaSeedIndicesIndex++;
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].second);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
+        deltaSeedIndicesIndex++;
+        substitutedIdx++;
+      }
+    }
+    while (addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
+      auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
+      auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
+      if (addedStartPos <= substitutedStartPos) {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, addedSeedIndices[addedIdx]);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
+        deltaSeedIndicesIndex++;
+        addedIdx++;
+      } else {
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].first);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
+        deltaSeedIndicesIndex++;
+        seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].second);
+        seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
+        deltaSeedIndicesIndex++;
+        substitutedIdx++;
+      }
+    }
+    
+    while (deletedIdx < deletedSeedIndices.size()) {
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, deletedSeedIndices[deletedIdx]);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
       deltaSeedIndicesIndex++;
       deletedIdx++;
-    } else if (addedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+    }
+    while (addedIdx < addedSeedIndices.size()) {
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, addedSeedIndices[addedIdx]);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
       deltaSeedIndicesIndex++;
       addedIdx++;
-    } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+    }
+    while (substitutedIdx < substitutedSeedIndices.size()) {
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].first);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
       deltaSeedIndicesIndex++;
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[substitutedIdx].second);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
       deltaSeedIndicesIndex++;
       substitutedIdx++;
     }
-  }
+    
+    // adding coord deltas to index
+    capnp::List<GapRunDelta>::Builder gapRunDeltaBuilder = curNodeChanges.initGapRunDeltas(gapRunUpdates.size());
+    for (size_t i = 0; i < gapRunUpdates.size(); i++) {
+      const auto& [toGap, range] = gapRunUpdates[i];
+      gapRunDeltaBuilder[i].setStartPos(range.first);
+      gapRunDeltaBuilder[i].setEndPos(range.second);
+      gapRunDeltaBuilder[i].setToGap(toGap);
+    }
+    
   
-  while (deletedIdx < deletedSeedIndices.size() && addedIdx < addedSeedIndices.size()) {
-    auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
-    auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
-    if (deletedStartPos <= addedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
+    // adding inverted blocks to index
+    capnp::List<uint32_t>::Builder invertedBlocksBuilder = curNodeChanges.initInvertedBlocks(invertedBlocksVec.size());
+    for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
+      invertedBlocksBuilder.set(i, invertedBlocksVec[i]);
+    }
+  } else {
+    size_t deltaSeedIndicesIndex = 0;
+    for (size_t i = 0; i < deletedSeedIndices.size(); i++) {
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, deletedSeedIndices[i]);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
       deltaSeedIndicesIndex++;
-      deletedIdx++;
-    } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
+    }
+    for (size_t i = 0; i < addedSeedIndices.size(); i++) {
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, addedSeedIndices[i]);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
       deltaSeedIndicesIndex++;
-      addedIdx++;
+    }
+    for (size_t i = 0; i < substitutedSeedIndices.size(); i++) {
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[i].first);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, true);
+      deltaSeedIndicesIndex++;
+      seedDeltaIndicesBuilder.set(deltaSeedIndicesIndex, substitutedSeedIndices[i].second);
+      seedDeltaIsDeletedBuilder.set(deltaSeedIndicesIndex, false);
+      deltaSeedIndicesIndex++;
     }
   }
-  while (deletedIdx < deletedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
-    auto deletedStartPos = uniqueKminmers[deletedSeedIndices[deletedIdx]].startPos;
-    auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
-    if (deletedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
-      deletedIdx++;
-    } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
-      substitutedIdx++;
-    }
-  }
-  while (addedIdx < addedSeedIndices.size() && substitutedIdx < substitutedSeedIndices.size()) {
-    auto addedStartPos = uniqueKminmers[addedSeedIndices[addedIdx]].startPos;
-    auto substitutedStartPos = uniqueKminmers[substitutedSeedIndices[substitutedIdx].first].startPos;
-    if (addedStartPos <= substitutedStartPos) {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
-      addedIdx++;
-    } else {
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-      deltaSeedIndicesIndex++;
-      seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-      seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-      deltaSeedIndicesIndex++;
-      substitutedIdx++;
-    }
-  }
-  
-  while (deletedIdx < deletedSeedIndices.size()) {
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(deletedSeedIndices[deletedIdx]);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-    deltaSeedIndicesIndex++;
-    deletedIdx++;
-  }
-  while (addedIdx < addedSeedIndices.size()) {
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(addedSeedIndices[addedIdx]);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-    deltaSeedIndicesIndex++;
-    addedIdx++;
-  }
-  while (substitutedIdx < substitutedSeedIndices.size()) {
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].first);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(true);
-    deltaSeedIndicesIndex++;
-    seedDeltasBuilder[deltaSeedIndicesIndex].setSeedIndex(substitutedSeedIndices[substitutedIdx].second);
-    seedDeltasBuilder[deltaSeedIndicesIndex].setIsDeleted(false);
-    deltaSeedIndicesIndex++;
-    substitutedIdx++;
-  }
-  
 
-  // adding coord deltas to index
-  capnp::List<GapRunDelta>::Builder gapRunDeltaBuilder = curNodeChanges.initGapRunDeltas(gapRunUpdates.size());
-  for (size_t i = 0; i < gapRunUpdates.size(); i++) {
-    const auto& [toGap, range] = gapRunUpdates[i];
-    gapRunDeltaBuilder[i].setStartPos(range.first);
-    gapRunDeltaBuilder[i].setEndPos(range.second);
-    gapRunDeltaBuilder[i].setToGap(toGap);
-  }
-  
 
-  // adding inverted blocks to index
-  capnp::List<uint32_t>::Builder invertedBlocksBuilder = curNodeChanges.initInvertedBlocks(invertedBlocksVec.size());
-  for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
-    invertedBlocksBuilder.set(i, invertedBlocksVec[i]);
-  }
 
 
   // // compare with brute force for debugging
@@ -4184,12 +4231,17 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
 
   
   // Add unique k-min-mers to index
-  capnp::List<SeedInfo>::Builder seedInfoBuilder = indexBuilder.initSeedInfo(uniqueKminmers.size());
+  capnp::List<uint64_t>::Builder seedHashesBuilder = indexBuilder.initSeedHashes(uniqueKminmers.size());
+  capnp::List<bool>::Builder seedIsReverseBuilder = indexBuilder.initSeedIsReverse(uniqueKminmers.size());
+  capnp::List<uint32_t>::Builder seedStartPosBuilder = indexBuilder.initSeedStartPos(indexFull ? uniqueKminmers.size() : 0);
+  capnp::List<uint32_t>::Builder seedEndPosBuilder = indexBuilder.initSeedEndPos(indexFull ? uniqueKminmers.size() : 0);
   for (size_t i = 0; i < uniqueKminmers.size(); i++) {
-    seedInfoBuilder[i].setHash(uniqueKminmers[i].hash);
-    seedInfoBuilder[i].setStartPos(uniqueKminmers[i].startPos);
-    seedInfoBuilder[i].setEndPos(uniqueKminmers[i].endPos);
-    seedInfoBuilder[i].setIsReverse(uniqueKminmers[i].isReverse);
+    seedHashesBuilder.set(i, uniqueKminmers[i].hash);
+    seedIsReverseBuilder.set(i, uniqueKminmers[i].isReverse);
+    if (indexFull) {
+      seedStartPosBuilder.set(i, uniqueKminmers[i].startPos);
+      seedEndPosBuilder.set(i, uniqueKminmers[i].endPos);
+    }
   }
 
   // Add block infos to index
@@ -4222,14 +4274,18 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
   std::cout << "Finished building index!" << std::endl;
 }
 
-void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path) {
+void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path, bool packed) {
   int fd = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
   if (fd == -1) {
     std::cerr << "Error: failed to open file " << path << std::endl;
     std::exit(1);
   }
   std::cout << "Writing index to " << path << std::endl;
-  capnp::writePackedMessageToFd(fd, outMessage);
+  if (packed) {
+    capnp::writePackedMessageToFd(fd, outMessage);
+  } else {
+    capnp::writeMessageToFd(fd, outMessage);
+  }
   close(fd);
   std::cout << "Index written to " << path << std::endl;
 }
