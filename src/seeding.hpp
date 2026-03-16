@@ -160,6 +160,16 @@ void seedsFromFastq(
 
 std::string reverseComplement(std::string dna_sequence);
 
+// Lightweight FASTQ reader: reads sequences, qualities, and names without computing seeds.
+// For paired-end (fastqPath2 non-empty): RC's R2 sequences, interleaves pairs
+// (R1_0, R2_0, R1_1, R2_1, ...). Properly closes file handles.
+void readFastqPaired(
+    std::vector<std::string> &readSequences,
+    std::vector<std::string> &readQuals,
+    std::vector<std::string> &readNames,
+    const std::string &fastqPath1,
+    const std::string &fastqPath2);
+
 // Homopolymer compression: collapse consecutive identical bases (e.g., AAACGG -> ACG)
 // Simple version: returns compressed sequence only
 std::string hpcCompress(const std::string& seq);
