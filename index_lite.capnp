@@ -42,10 +42,11 @@ struct LiteIndex {
   liteTree @5 :LiteTree;
 
   # Struct-of-arrays format for seed changes
-  seedChangeHashes @6 :List(UInt64);
-  nodeChangeOffsets @7 :List(UInt32);  # Size = numNodes + 1
-  seedChangeParentCounts @8 :List(Int16);
-  seedChangeChildCounts @9 :List(Int16);
+  seedChangeHashes @6 :List(List(UInt64));
+  seedChangeParentCounts @7 :List(List(Int16));
+  seedChangeChildCounts @8 :List(List(Int16));
+  nodeChangeOffsets @9 :List(UInt32);  # Size = numNodes + 1
+
 
   # Homopolymer compression mode: if true, seeds were extracted from HPC sequences
   hpc @10 :Bool = false;
@@ -58,12 +59,8 @@ struct LiteIndex {
 
   perNodeChanges @15 :List(NodeChanges);
 
-  # Overflow arrays for large indices (>500M seed changes)
-  # When present, the full array = concat(primary, overflow)
-  seedChangeHashes2 @16 :List(UInt64);
-  seedChangeParentCounts2 @17 :List(Int16);
-  seedChangeChildCounts2 @18 :List(Int16);
+
 
   # 4x4 nucleotide substitution rate matrix (A=0,C=1,G=2,T=3), row-major
-  substitutionMatrix @19 :List(Float64);
+  substitutionMatrix @16 :List(Float64);
 }

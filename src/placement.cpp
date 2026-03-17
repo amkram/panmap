@@ -1048,39 +1048,27 @@ void placeLite(PlacementResult &result,
         auto parentCountsReader = indexRoot.getSeedChangeParentCounts();
         auto childCountsReader = indexRoot.getSeedChangeChildCounts();
         
-        // Check for overflow arrays (split indices with >500M seed changes)
-        bool hasOverflow = indexRoot.hasSeedChangeHashes2() && indexRoot.getSeedChangeHashes2().size() > 0;
-        capnp::List<uint64_t>::Reader hashesReader2 = hasOverflow ? indexRoot.getSeedChangeHashes2() : hashesReader;
-        capnp::List<int16_t>::Reader parentCountsReader2 = hasOverflow ? indexRoot.getSeedChangeParentCounts2() : parentCountsReader;
-        capnp::List<int16_t>::Reader childCountsReader2 = hasOverflow ? indexRoot.getSeedChangeChildCounts2() : childCountsReader;
-        uint32_t primarySize = hashesReader.size();
-        
-        logging::info("Struct-of-arrays format: {} hashes ({}+{}), {} parent counts, {} child counts",
-                        totalHashDeltas, primarySize, hasOverflow ? hashesReader2.size() : 0u,
-                        primarySize + (hasOverflow ? parentCountsReader2.size() : 0u),
-                        primarySize + (hasOverflow ? childCountsReader2.size() : 0u));
+        size_t numSegs = hashesReader.size();
+        logging::info("Struct-of-arrays format: {} hashes in {} segments", totalHashDeltas, numSegs);
         
         // Phase 2a
         const size_t GRAIN_SIZE = 262144; // 256K items per chunk
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, totalHashDeltas, GRAIN_SIZE), 
+        const size_t CAPNP_SPLIT = 500'000'000;
+        for (uint32_t seg = 0; seg < numSegs; seg++) {
+          size_t segStart = (size_t)seg * CAPNP_SPLIT;
+          size_t segEnd = std::min(segStart + CAPNP_SPLIT, totalHashDeltas);
+          auto hashes = hashesReader[seg];
+          auto parents = parentCountsReader[seg];
+          auto children = childCountsReader[seg];
+          tbb::parallel_for(tbb::blocked_range<size_t>(segStart, segEnd, GRAIN_SIZE),
             [&](const tbb::blocked_range<size_t>& range) {
-                for (size_t i = range.begin(); i < range.end(); ++i) {
-                    if (i < primarySize) {
-                        liteTree->allSeedChanges[i] = std::make_tuple(
-                            hashesReader[i],
-                            parentCountsReader[i],
-                            childCountsReader[i]
-                        );
-                    } else {
-                        size_t oi = i - primarySize;
-                        liteTree->allSeedChanges[i] = std::make_tuple(
-                            hashesReader2[oi],
-                            parentCountsReader2[oi],
-                            childCountsReader2[oi]
-                        );
-                    }
-                }
+              for (size_t i = range.begin(); i < range.end(); ++i) {
+                uint32_t segOffset = i - segStart;
+                liteTree->allSeedChanges[i] = std::make_tuple(
+                  hashes[segOffset], parents[segOffset], children[segOffset]);
+              }
             });
+        }
         
         // Phase 2b: Assign spans to nodes
         tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes), 

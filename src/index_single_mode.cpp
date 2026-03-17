@@ -1225,23 +1225,26 @@ void index_single_mode::IndexBuilder::buildIndex() {
   output::progress_clear();
 
   // Cap'n Proto list element limit (~536M for UInt64). Split into primary + overflow.
-  constexpr uint32_t CAPNP_SPLIT = 500'000'000;
-  uint32_t primarySize = (totalChanges <= CAPNP_SPLIT) ? totalChanges : CAPNP_SPLIT;
-  uint32_t overflowSize = totalChanges - primarySize;
+  constexpr size_t CAPNP_SPLIT = 500'000'000;
+  size_t numSegments = (totalChanges + CAPNP_SPLIT - 1) / CAPNP_SPLIT;
 
   // Allocate flat arrays
-  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(primarySize);
-  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(primarySize);
-  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(primarySize);
+  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(numSegments);
+  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(numSegments);
+  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(numSegments);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
 
-  // Overflow arrays (zero-length if not needed)
-  auto seedChangeHashes2Builder = indexBuilder.initSeedChangeHashes2(overflowSize);
-  auto seedChangeParentCounts2Builder = indexBuilder.initSeedChangeParentCounts2(overflowSize);
-  auto seedChangeChildCounts2Builder = indexBuilder.initSeedChangeChildCounts2(overflowSize);
-
-  if (overflowSize > 0) {
-    output::step("Large index: splitting {} seed changes into {}+{}", totalChanges, primarySize, overflowSize);
+  for (size_t seg = 0; seg < numSegments; seg++) {
+    auto segStart = seg * CAPNP_SPLIT;
+    auto segEnd = std::min(segStart + CAPNP_SPLIT, totalChanges);
+    auto segSize = segEnd - segStart;
+    seedChangeHashesBuilder.init(seg, segSize);
+    seedChangeParentCountsBuilder.init(seg, segSize);
+    seedChangeChildCountsBuilder.init(seg, segSize);
+  }
+  
+  if (numSegments > 1) {
+    output::step("Large index: splitting {} seed changes into {} segments", totalChanges, numSegments);
   }
 
   // Sort each node's changes by hash for better compression
@@ -1251,7 +1254,7 @@ void index_single_mode::IndexBuilder::buildIndex() {
   }
 
   // Write flat arrays
-  uint32_t offset = 0;
+  uint64_t offset = 0;
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     nodeChangeOffsetsBuilder.set(nodeIdx, offset);
     for (const auto& [hash, parentCount, childCount] : nodeChanges[nodeIdx]) {
@@ -1261,16 +1264,11 @@ void index_single_mode::IndexBuilder::buildIndex() {
                       nodeIdx, parentCount, childCount, INT16_MIN, INT16_MAX);
         std::exit(1);
       }
-      if (offset < primarySize) {
-        seedChangeHashesBuilder.set(offset, hash);
-        seedChangeParentCountsBuilder.set(offset, static_cast<int16_t>(parentCount));
-        seedChangeChildCountsBuilder.set(offset, static_cast<int16_t>(childCount));
-      } else {
-        uint32_t oi = offset - primarySize;
-        seedChangeHashes2Builder.set(oi, hash);
-        seedChangeParentCounts2Builder.set(oi, static_cast<int16_t>(parentCount));
-        seedChangeChildCounts2Builder.set(oi, static_cast<int16_t>(childCount));
-      }
+      auto seg = offset / CAPNP_SPLIT;
+      auto segOffset = offset % CAPNP_SPLIT;
+      seedChangeHashesBuilder[seg].set(segOffset, hash);
+      seedChangeParentCountsBuilder[seg].set(segOffset, static_cast<int16_t>(parentCount));
+      seedChangeChildCountsBuilder[seg].set(segOffset, static_cast<int16_t>(childCount));
       offset++;
     }
   }
@@ -2567,28 +2565,31 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     nodesBuilder[idx].setIdenticalToParent(emptyNodes.find(nodeId) != emptyNodes.end());
   }
 
-  output::done(fmt::format("Index built ({} seed changes)", totalChanges));
+  output::done(fmt::format("Index built ({} seed changes. {} nodes)", totalChanges, numNodes));
+  
 
   auto serializeStart = std::chrono::high_resolution_clock::now();
 
   // Cap'n Proto list element limit (~536M for UInt64). Split into primary + overflow.
   constexpr uint32_t CAPNP_SPLIT = 500'000'000;
-  uint32_t primarySize = (totalChanges <= CAPNP_SPLIT) ? totalChanges : CAPNP_SPLIT;
-  uint32_t overflowSize = totalChanges - primarySize;
+  size_t numSegments = (totalChanges + CAPNP_SPLIT - 1) / CAPNP_SPLIT;
 
   // Allocate and write flat arrays (sequential - Cap'n Proto builders aren't thread-safe)
-  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(primarySize);
-  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(primarySize);
-  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(primarySize);
+  auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(numSegments);
+  auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(numSegments);
+  auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(numSegments);
   auto nodeChangeOffsetsBuilder = indexBuilder.initNodeChangeOffsets(numNodes + 1);
-
-  // Overflow arrays (zero-length if not needed)
-  auto seedChangeHashes2Builder = indexBuilder.initSeedChangeHashes2(overflowSize);
-  auto seedChangeParentCounts2Builder = indexBuilder.initSeedChangeParentCounts2(overflowSize);
-  auto seedChangeChildCounts2Builder = indexBuilder.initSeedChangeChildCounts2(overflowSize);
-
-  if (overflowSize > 0) {
-    output::step("Large index: splitting {} seed changes into {}+{}", totalChanges, primarySize, overflowSize);
+  
+  for (size_t seg = 0; seg < numSegments; seg++) {
+    auto segStart = seg * CAPNP_SPLIT;
+    auto segEnd = std::min(segStart + CAPNP_SPLIT, totalChanges);
+    auto segSize = segEnd - segStart;
+    seedChangeHashesBuilder.init(seg, segSize);
+    seedChangeParentCountsBuilder.init(seg, segSize);
+    seedChangeChildCountsBuilder.init(seg, segSize);
+  }
+  if (numSegments > 1) {
+    output::step("Large index: splitting {} seed changes into {} segments", totalChanges, numSegments);
   }
 
   // Sort each node's changes by hash for better compression
@@ -2598,9 +2599,9 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   }
 
   output::step("Writing seed changes to index...");
-  uint32_t writeOffset = 0;
+  uint64_t offset = 0;
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
-    nodeChangeOffsetsBuilder.set(nodeIdx, writeOffset);
+    nodeChangeOffsetsBuilder.set(nodeIdx, offset);
     for (const auto& [hash, parentCount, childCount] : nodeChanges[nodeIdx]) {
       if (parentCount < INT16_MIN || parentCount > INT16_MAX || childCount < INT16_MIN || childCount > INT16_MAX) {
         output::error("Seed count overflow at node {}: parentCount={}, childCount={} (Int16 range: [{}, {}]). "
@@ -2608,20 +2609,15 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
                       nodeIdx, parentCount, childCount, INT16_MIN, INT16_MAX);
         std::exit(1);
       }
-      if (writeOffset < primarySize) {
-        seedChangeHashesBuilder.set(writeOffset, hash);
-        seedChangeParentCountsBuilder.set(writeOffset, static_cast<int16_t>(parentCount));
-        seedChangeChildCountsBuilder.set(writeOffset, static_cast<int16_t>(childCount));
-      } else {
-        uint32_t oi = writeOffset - primarySize;
-        seedChangeHashes2Builder.set(oi, hash);
-        seedChangeParentCounts2Builder.set(oi, static_cast<int16_t>(parentCount));
-        seedChangeChildCounts2Builder.set(oi, static_cast<int16_t>(childCount));
-      }
-      writeOffset++;
+      auto seg = offset / CAPNP_SPLIT;
+      auto segOffset = offset % CAPNP_SPLIT;
+      seedChangeHashesBuilder[seg].set(segOffset, hash);
+      seedChangeParentCountsBuilder[seg].set(segOffset, static_cast<int16_t>(parentCount));
+      seedChangeChildCountsBuilder[seg].set(segOffset, static_cast<int16_t>(childCount));
+      offset++;
     }
   }
-  nodeChangeOffsetsBuilder.set(numNodes, writeOffset);
+  nodeChangeOffsetsBuilder.set(numNodes, offset);
   
   auto serializeEnd = std::chrono::high_resolution_clock::now();
   auto serializeMs = std::chrono::duration_cast<std::chrono::milliseconds>(serializeEnd - serializeStart).count();
