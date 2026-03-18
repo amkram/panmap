@@ -9,11 +9,13 @@
 #include <tbb/parallel_sort.h>
 #include <tbb/parallel_for.h>
 #include <tbb/global_control.h>
+#include <tbb/enumerable_thread_specific.h>
 #include <random>
 #include <numeric>
 #include <algorithm>
 #include <stack>
 #include <bitset>
+
 
 static void compareBruteForceBuild(
   panmanUtils::Tree *T,
@@ -782,8 +784,10 @@ void mgsr::MgsrLiteTree::initialize(
 
   size_t seedInfos_chunkSize = (seedInfosReader.size() + numThreads - 1) / numThreads;
   std::cerr << "Start to read in seedInfos" << std::endl;
+  tbb::enumerable_thread_specific<std::unordered_set<size_t>> localRefSeedHashSets;
   tbb::parallel_for(tbb::blocked_range<size_t>(0, seedInfosReader.size(), seedInfos_chunkSize),
     [&](const tbb::blocked_range<size_t>& range) {
+      auto& localRefSeedHashSet = localRefSeedHashSets.local();
       for (size_t i = range.begin(); i < range.end(); i++) {
         const auto& seedReader = seedInfosReader[i];
         auto& seed = seedInfos[i];
@@ -791,9 +795,16 @@ void mgsr::MgsrLiteTree::initialize(
         seed.startPos = seedReader.getStartPos();
         seed.endPos = seedReader.getEndPos();
         seed.isReverse = seedReader.getIsReverse();
+        localRefSeedHashSet.insert(seed.hash);
       }
     }, tbb::simple_partitioner());
+  refSeedHashSet.reserve(seedInfosReader.size());
+  for (auto& local : localRefSeedHashSets) {
+    refSeedHashSet.merge(local);
+  }
+
   std::cerr << "Successfully read in seedInfos, size: " << seedInfos.size() << std::endl;
+  std::cerr << "Number of reference seed hashes: " << refSeedHashSet.size() << std::endl;
 
   seedDeltas.resize(perNodeChangesReader.size());
   gapRunDeltas.resize(perNodeChangesReader.size());
@@ -1041,6 +1052,7 @@ void mgsr::MgsrLiteTree::toRefSeedDeltasHelper(
   }
 
   curSeedDeltas = {};
+  parSeedCounts = {};
 
   for (MgsrLiteNode* child : node->children) {
     toRefSeedDeltasHelper(child, refSeedCounts);
@@ -1050,7 +1062,7 @@ void mgsr::MgsrLiteTree::toRefSeedDeltasHelper(
     if (parentCountFwd == 0 && parentCountRev == 0) {
       refSeedCounts.erase(seedHash);
     } else {
-      refSeedCounts[seedHash] = {currentCountFwd, currentCountRev};
+      refSeedCounts[seedHash] = {parentCountFwd, parentCountRev};
     }
   }
 
@@ -1996,6 +2008,199 @@ double mgsr::getDust(const std::string& seq, int windowSize) {
   }
 }
 
+
+void mgsr::mgsrPlacer::initializeQueryDataBatch(
+  const std::vector<std::string>& readSequences,
+  std::vector<mgsr::Read>& reads,
+  std::vector<std::vector<size_t>>& readDuplicatesIndex,
+  double dustThreshold,
+  double discardThreshold,
+  uint32_t maskReadsEnds
+) {
+  const auto& refSeedHashSet = liteTree->refSeedHashSet;
+
+  std::vector<double> readDust;
+  if (dustThreshold < 100) {
+    readDust.resize(readSequences.size());
+    for (size_t i = 0; i < readSequences.size(); ++i) {
+      readDust[i] = mgsr::getDust(readSequences[i], 64);
+    }
+  }
+
+  // Build directly as vector of pairs, skipping intermediate unordered_map.
+  // Use a flat hash map (unordered_map with string_view) to track insertion
+  // order into seqToIndexVec, then discard it.
+  std::vector<std::pair<std::string_view, std::vector<size_t>>> seqToIndexVec;
+  {
+    std::unordered_map<std::string_view, size_t> seqToVecPos;
+    seqToVecPos.reserve(readSequences.size());
+    for (size_t i = 0; i < readSequences.size(); ++i) {
+      double curDust = dustThreshold < 100 ? readDust[i] : 0.0;
+      if (curDust != 0 && curDust > dustThreshold) continue;
+      auto [it, inserted] = seqToVecPos.try_emplace(readSequences[i], seqToIndexVec.size());
+      if (inserted) seqToIndexVec.emplace_back(readSequences[i], std::vector<size_t>{});
+      seqToIndexVec[it->second].second.push_back(i);
+    }
+  }
+
+  std::vector<mgsr::Read> uniqueReads(seqToIndexVec.size());
+  for (size_t i = 0; i < seqToIndexVec.size(); ++i) {
+    const auto& seq = seqToIndexVec[i].first;
+    mgsr::Read& curRead = uniqueReads[i];
+    const auto& syncmers = seeding::rollingSyncmers(seq, k, s, openSyncmer, t, false);
+    curRead.seedmersList.reserve(syncmers.size());
+    if (syncmers.size() < l) continue;
+
+    size_t forwardRolledHash = 0;
+    size_t reverseRolledHash = 0;
+
+    if (l == 1) {
+      if (std::get<1>(syncmers[0])) {
+        reverseRolledHash = std::get<0>(syncmers[0]);
+        forwardRolledHash = std::numeric_limits<size_t>::max();
+      } else {
+        forwardRolledHash = std::get<0>(syncmers[0]);
+        reverseRolledHash = std::numeric_limits<size_t>::max();
+      }
+    } else {
+      for (size_t j = 0; j < l; ++j) {
+        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmers[j]);
+        reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-j-1]);
+      }
+    }
+
+    uint32_t iorder = 0;
+    if (forwardRolledHash != reverseRolledHash) {
+      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+      if (refSeedHashSet.count(minHash)) {
+        // try_emplace avoids double-lookup: inserts and returns iterator in one shot
+        curRead.uniqueSeedmers.try_emplace(minHash, std::vector<uint32_t>{iorder});
+        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+          minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1,
+          reverseRolledHash < forwardRolledHash, iorder});
+        ++iorder;
+      }
+      ++curRead.totalSeedmers;
+    }
+
+    for (size_t j = 1; j + l <= syncmers.size(); ++j) {
+      if (l == 1) {
+        if (std::get<1>(syncmers[j])) {
+          reverseRolledHash = std::get<0>(syncmers[j]);
+          forwardRolledHash = std::numeric_limits<size_t>::max();
+        } else {
+          forwardRolledHash = std::get<0>(syncmers[j]);
+          reverseRolledHash = std::numeric_limits<size_t>::max();
+        }
+        if (forwardRolledHash == reverseRolledHash) {
+          std::cerr << "Error: palindromic syncmers returned during query sketching..." << std::endl;
+          exit(1);
+        }
+      } else {
+        const size_t prevHash = std::get<0>(syncmers[j-1]);
+        const size_t nextHash = std::get<0>(syncmers[j+l-1]);
+        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevHash, k * l) ^ nextHash;
+        reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevHash, k) ^ seeding::rol(nextHash, k * (l-1));
+      }
+
+      if (forwardRolledHash == reverseRolledHash) continue;
+
+      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+      ++curRead.totalSeedmers;
+
+      if (!refSeedHashSet.count(minHash)) continue;
+
+      // try_emplace: single lookup, constructs in-place on insertion
+      auto [it, inserted] = curRead.uniqueSeedmers.try_emplace(minHash, std::vector<uint32_t>{});
+      if (inserted) {
+        it->second.push_back(iorder);
+        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+          minHash, std::get<3>(syncmers[j]), std::get<3>(syncmers[j+l-1])+k-1,
+          reverseRolledHash < forwardRolledHash, iorder});
+      } else {
+        it->second.push_back(iorder);
+        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+          it->first, std::get<3>(syncmers[j]), std::get<3>(syncmers[j+l-1])+k-1,
+          reverseRolledHash < forwardRolledHash, iorder});
+      }
+      ++iorder;
+    }
+
+    curRead.discardThreshold = static_cast<int32_t>(discardThreshold * curRead.totalSeedmers);
+    if (static_cast<int32_t>(curRead.seedmersList.size()) < curRead.discardThreshold) {
+      curRead.seedmersList = {};
+      curRead.uniqueSeedmers = {};
+    }
+  }
+
+  // Sort indices. The comparator is restructured to avoid redundant
+  // lexicographical_compare: the prefix scan already establishes order for
+  // most pairs, so fall through to the positional tiebreaker only when
+  // the prefix scan exhausts both lists equally.
+  std::vector<size_t> sortedUniqueReadsIndices(uniqueReads.size());
+  std::iota(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(), 0);
+  tbb::parallel_sort(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(),
+    [&uniqueReads](size_t i1, size_t i2) {
+      const auto& lhs = uniqueReads[i1].seedmersList;
+      const auto& rhs = uniqueReads[i2].seedmersList;
+      const size_t minSize = std::min(lhs.size(), rhs.size());
+      for (size_t i = 0; i < minSize; ++i) {
+        if (lhs[i].hash != rhs[i].hash) return lhs[i].hash < rhs[i].hash;
+      }
+      if (lhs.size() != rhs.size()) return lhs.size() < rhs.size();
+      // full equality on hashes and sizes — tiebreak on position/orientation
+      for (size_t i = 0; i < lhs.size(); ++i) {
+        if (lhs[i].rev != rhs[i].rev) return lhs[i].rev < rhs[i].rev;
+        if (lhs[i].iorder != rhs[i].iorder) return lhs[i].iorder < rhs[i].iorder;
+      }
+      return false;
+    });
+
+  reads.reserve(uniqueReads.size());
+  readDuplicatesIndex.reserve(uniqueReads.size());
+
+  reads.emplace_back(std::move(uniqueReads[sortedUniqueReadsIndices[0]]));
+  readDuplicatesIndex.emplace_back(seqToIndexVec[sortedUniqueReadsIndices[0]].second);
+
+  for (size_t i = 1; i < sortedUniqueReadsIndices.size(); ++i) {
+    const size_t sortedIdx = sortedUniqueReadsIndices[i];
+    const auto& currSeedmers = uniqueReads[sortedIdx].seedmersList;
+    const auto& prevSeedmers = reads.back().seedmersList;
+    bool isDuplicate = false;
+
+    if (currSeedmers.size() == prevSeedmers.size()) {
+      const size_t n = currSeedmers.size();
+      isDuplicate = true;
+      for (size_t j = 0; j < n && isDuplicate; ++j) {
+        isDuplicate = (currSeedmers[j].hash   == prevSeedmers[j].hash &&
+                        currSeedmers[j].rev    == prevSeedmers[j].rev  &&
+                        currSeedmers[j].iorder == prevSeedmers[j].iorder);
+      }
+    }
+
+    if (!isDuplicate) {
+      reads.emplace_back(std::move(uniqueReads[sortedIdx]));
+      readDuplicatesIndex.emplace_back(std::vector<size_t>{});
+    }
+    for (const size_t idx : seqToIndexVec[sortedIdx].second) {
+      readDuplicatesIndex.back().push_back(idx);
+    }
+  }
+
+  reads.shrink_to_fit();
+  readDuplicatesIndex.shrink_to_fit();
+
+  for (uint32_t i = 0; i < reads.size(); ++i) {
+    const auto& sl = reads[i].seedmersList;
+    for (uint32_t j = 0; j < sl.size(); ++j) {
+      seedmerToReads[sl[j].hash].emplace_back(i, j);
+    }
+  }
+
+  this->reads = reads;
+  readScores.resize(reads.size(), 0);
+}
+
 void mgsr::ThreadsManager::initializeQueryData(
   const std::string& readPath1,
   const std::string& readPath2,
@@ -2004,11 +2209,13 @@ void mgsr::ThreadsManager::initializeQueryData(
   double maskReadsRelativeFrequency,
   double maskSeedsRelativeFrequency,
   double dustThreshold,
+  double discardThreshold,
   uint32_t maskReadsEnds,
   bool fast_mode
 ) {
   std::cerr << "Processing query reads... k=" << k << ", s=" << s << ", l=" << l << ", t=" << t << ", openSyncmer=" << openSyncmer << std::endl;
-  
+
+  const auto& refSeedHashSet = liteTree->refSeedHashSet;
   std::vector<std::vector<std::string>> readSequencesByGroup;
   std::vector<std::vector<std::string>> readNamesByGroup;
   extractReadSequences(readPath1, readPath2, ampliconDepthPath, readSequencesByGroup, readNamesByGroup, maskReadsEnds);
@@ -2133,10 +2340,13 @@ void mgsr::ThreadsManager::initializeQueryData(
         uint32_t iorder = 0;
         if (forwardRolledHash != reverseRolledHash) {
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-          curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
-          curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-            minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
-          ++iorder;
+          if (refSeedHashSet.find(minHash) != refSeedHashSet.end()) {
+            curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
+            curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+              minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+            ++iorder;
+          }
+          ++curRead.totalSeedmers;
         }
 
         // rest of kminmer
@@ -2171,17 +2381,28 @@ void mgsr::ThreadsManager::initializeQueryData(
             size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
             auto uniqueSeedmersIt = curRead.uniqueSeedmers.find(minHash);
             if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
-              curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
-              curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-                minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
-              ++iorder;
+              if (refSeedHashSet.find(minHash) != refSeedHashSet.end()) {
+                curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
+                curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+                  minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+                ++iorder;
+              }
+              ++curRead.totalSeedmers;
             } else {
-              uniqueSeedmersIt->second.push_back(iorder);
-              curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-                uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
-              ++iorder;
+              if (refSeedHashSet.find(minHash) != refSeedHashSet.end()) {
+                uniqueSeedmersIt->second.push_back(iorder);
+                curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+                  uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+                ++iorder;
+              }
+              ++curRead.totalSeedmers;
             }
           }
+        }
+        curRead.discardThreshold = static_cast<int32_t>(discardThreshold * curRead.totalSeedmers);
+        if (curRead.seedmersList.size() < curRead.discardThreshold) {
+          curRead.seedmersList = {};
+          curRead.uniqueSeedmers = {};
         }
       }
     });
@@ -6404,9 +6625,9 @@ void mgsr::mgsrPlacer::scoreNodes(const std::unordered_map<size_t, uint32_t>& se
     numDuplicates[i] = threadsManager->readSeedmersDuplicatesIndex[threadsManager->threadRanges[threadId].first+i].size();
     // readWEPPWeights[i] = numDuplicates / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
     if (seedNodesFrequency.empty()) {
-      readWEPPWeights[i] = static_cast<double>(numDuplicates[i]) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+      readWEPPWeights[i] = static_cast<double>(numDuplicates[i]) / (static_cast<double>((curRead.totalSeedmers - curRead.maxScore + 1)) * curRead.epp);
     } else {
-      if (curRead.maxScore == curRead.seedmersList.size()) {
+      if (curRead.maxScore == curRead.totalSeedmers) {
         double curWeight = 0.0;
         for (size_t j = 0; j < curRead.seedmersList.size(); ++j) {
           const auto& seed = curRead.seedmersList[j];
@@ -6529,6 +6750,95 @@ void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector
   checkFamilyIndices(liteTree->root, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
   assignReadsHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
 }
+
+
+
+void mgsr::mgsrPlacer::assignReadsBatchHelper(
+  mgsr::MgsrLiteNode* node,
+  std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
+  std::unordered_set<size_t>& mpsReadSet
+) {
+  const auto& curNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
+  
+  std::vector<std::pair<uint32_t, bool>> mpsReadSetBacktrack;
+  mpsReadSetBacktrack.reserve(curNodeScoreDeltas.size());
+
+  for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
+    const auto& curRead = reads[readIndex];
+    auto curMaxScore = curRead.maxScore;
+    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+
+    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+
+    auto readIt = mpsReadSet.find(readIndex);
+    if (scoreDelta == curMaxScore) {
+      if (readIt == mpsReadSet.end()) {
+        mpsReadSet.insert(readIndex);
+        mpsReadSetBacktrack.emplace_back(readIndex, false);
+
+      }
+    } else {
+      if (readIt != mpsReadSet.end()) {
+        mpsReadSet.erase(readIt);
+        mpsReadSetBacktrack.emplace_back(readIndex, true);
+      }
+    }
+  }
+
+  if (!mpsReadSet.empty()) {
+    assignedReadsByNode[node].insert(assignedReadsByNode[node].end(), mpsReadSet.begin(), mpsReadSet.end());
+  }
+
+  for (auto child : node->collapsedChildren) {
+    assignReadsBatchHelper(child, assignedReadsByNode, mpsReadSet);
+  }
+
+  for (const auto& [readIndex, erased] : mpsReadSetBacktrack) {
+    if (erased) {
+      mpsReadSet.insert(readIndex);
+    } else {
+      mpsReadSet.erase(readIndex);
+    }
+  }
+}
+
+void mgsr::mgsrPlacer::checkFamilyIndicesBatch(MgsrLiteNode* node, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
+  const auto& curNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
+  
+  for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
+    auto& curRead = reads[readIndex];
+    auto curMaxScore = curRead.maxScore;
+    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+
+
+    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+
+    int curAmbiguousScoreThreshold = std::max(ambiguousScoreThreshold, static_cast<int>(curMaxScore * ambiguousScoreThresholdRatio));
+
+    if (scoreDelta == curMaxScore || scoreDelta >= std::max(0, static_cast<int>(curMaxScore) - curAmbiguousScoreThreshold)) {
+      bool exceeded = node->overMaximumFamilies;
+      if (!exceeded) {
+        curRead.familyIndices.insert(node->familyIndices.begin(), node->familyIndices.end());
+        exceeded = curRead.familyIndices.size() > maximumFamilies;
+      }
+      if (exceeded) {
+        curRead.overMaximumFamilies = true;
+        curRead.familyIndices.clear();
+      }
+    }
+  }
+
+  for (auto child : node->collapsedChildren) {
+    checkFamilyIndicesBatch(child, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+  }
+}
+
+void mgsr::mgsrPlacer::assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
+  std::unordered_set<size_t> mpsReadSet;
+  checkFamilyIndicesBatch(liteTree->root, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+  assignReadsBatchHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
+}
+
 
 void mgsr::ThreadsManager::calculateBreadthRatio(
   MgsrLiteNode* node,
@@ -6735,9 +7045,9 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     if (curRead.maxScore == 0) continue;
     // readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1) * pow(curRead.epp, 2));
     if (seedNodesFrequency.empty()) {
-      readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.seedmersList.size() - curRead.maxScore + 1)) * curRead.epp);
+      readWEPPWeights[i] = static_cast<double>(readSeedmersDuplicatesIndex[i].size()) / (static_cast<double>((curRead.totalSeedmers - curRead.maxScore + 1)) * curRead.epp);
     } else {
-      if (curRead.maxScore == curRead.seedmersList.size()) {
+      if (curRead.maxScore == curRead.totalSeedmers) {
         double curWeight = 0.0;
         for (size_t j = 0; j < curRead.seedmersList.size(); ++j) {
           const auto& seed = curRead.seedmersList[j];
@@ -7264,7 +7574,8 @@ void mgsr::ThreadsManager::computeNodeSeedScores() {
 
 void mgsr::mgsrPlacer::scoreReadsHelper(
   mgsr::MgsrLiteNode* node,
-  mgsr::MgsrLiteNode*& processingNode
+  mgsr::MgsrLiteNode*& processingNode,
+  double discard_threshold
 ) {
   if (progressBar && progressTracker) {
     progressTracker->incrementProgress(threadId);
@@ -7276,6 +7587,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
   const auto& curSeedDeltas = node->seedDeltas;
   const auto& seedInfos = liteTree->seedInfos;
   
+  size_t totalReadsToKeep = 0;
   auto updateReadsForSeed = [&](size_t seedHash, bool seedRev, int scoreDelta) {
     auto seedmerToReadsIt = seedmerToReads.find(seedHash);
     if (seedmerToReadsIt == seedmerToReads.end()) return;
@@ -7295,6 +7607,13 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
         read.numForwardMatching += scoreDelta;
       } else {
         read.numReverseMatching += scoreDelta;
+      }
+
+      if (read.keepForFilterAndAssign) {
+        totalReadsToKeep++;
+      } else if (std::max(read.numForwardMatching, read.numReverseMatching) > read.discardThreshold) {
+        totalReadsToKeep++;
+        read.keepForFilterAndAssign = true;
       }
     }
   };
@@ -7352,8 +7671,10 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
       }
     }
   }
-  
 
+
+
+  
   // STORE READ SCORE INDEX
   if (!modifiedReads.empty()) {
     if (lowMemory) {
@@ -7439,7 +7760,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
       currentNodeScoreDeltasGrouped.shrink_to_fit();
     } else {
       auto& currentNodeScoreDeltas = node->readScoreDeltas[threadId];
-      currentNodeScoreDeltas.reserve(modifiedReads.size());
+      currentNodeScoreDeltas.reserve(totalReadsToKeep);
       for (const auto& [readIndex, _] : modifiedReads) {
         auto& curRead = reads[readIndex];
         if (curRead.readType != mgsr::ReadType::PASS) continue;
@@ -7448,7 +7769,9 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
 
         int32_t newScore = std::max(curRead.numForwardMatching, curRead.numReverseMatching);
 
-        currentNodeScoreDeltas.emplace_back(readIndex, newScore);
+        if (curRead.keepForFilterAndAssign) {
+          currentNodeScoreDeltas.emplace_back(readIndex, newScore);
+        }
 
         auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
         if (newScore > maxScore) {
@@ -7480,7 +7803,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
   }
   
   for (MgsrLiteNode *child : node->collapsedChildren) {
-    scoreReadsHelper(child, processingNode);
+    scoreReadsHelper(child, processingNode, discard_threshold);
   }
 
   // BACKTRACK
@@ -7527,9 +7850,118 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
 
 }
 
-void mgsr::mgsrPlacer::scoreReads() {
+void mgsr::mgsrPlacer::scoreReads(double discard_threshold) {
   MgsrLiteNode* processingNode = nullptr;
-  scoreReadsHelper(liteTree->root, processingNode);
+  scoreReadsHelper(liteTree->root, processingNode, discard_threshold);
+}
+
+void mgsr::mgsrPlacer::scoreReadsBatchHelper(
+  mgsr::MgsrLiteNode* node,
+  mgsr::MgsrLiteNode*& processingNode,
+  double discard_threshold
+) {
+  if (progressBar && progressTracker) {
+    progressTracker->incrementProgress(threadId);
+  }
+
+  processingNode = node;
+  std::unordered_map<uint32_t, mgsr::ModifiedReadInfo> modifiedReads;
+  
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = liteTree->seedInfos;
+  
+  size_t totalReadsToKeep = 0;
+  auto updateReadsForSeed = [&](size_t seedHash, bool seedRev, int scoreDelta) {
+    auto seedmerToReadsIt = seedmerToReads.find(seedHash);
+    if (seedmerToReadsIt == seedmerToReads.end()) return;
+    
+    for (const auto& pair : seedmerToReadsIt->second) {
+      const uint32_t readIndex = pair.first;
+      const uint32_t seedmerIndexOnRead = pair.second;
+      auto& read = reads[readIndex];
+      
+      if (read.readType != mgsr::ReadType::PASS) continue;
+      
+      modifiedReads.try_emplace(readIndex, mgsr::ModifiedReadInfo{
+        read.numForwardMatching, read.numReverseMatching
+      });
+      
+      if (read.seedmersList[seedmerIndexOnRead].rev == seedRev) {
+        read.numForwardMatching += scoreDelta;
+      } else {
+        read.numReverseMatching += scoreDelta;
+      }
+
+      if (read.keepForFilterAndAssign) {
+        totalReadsToKeep++;
+      } else if (std::max(read.numForwardMatching, read.numReverseMatching) > read.discardThreshold) {
+        totalReadsToKeep++;
+        read.keepForFilterAndAssign = true;
+      }
+    }
+  };
+
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : node->seedCountDeltas) {
+    if (seedmerToReads.find(seedHash) == seedmerToReads.end()) {
+      continue;
+    }
+    if (parentCountFwd == 0 && currentCountFwd > 0) {
+      updateReadsForSeed(seedHash, false, 1);
+    } else if (parentCountFwd > 0 && currentCountFwd == 0) {
+      updateReadsForSeed(seedHash, false, -1);
+    }
+    if (parentCountRev == 0 && currentCountRev > 0) {
+      updateReadsForSeed(seedHash, true, 1);
+    } else if (parentCountRev > 0 && currentCountRev == 0) {
+      updateReadsForSeed(seedHash, true, -1);
+    }
+  }
+
+  
+  // STORE READ SCORE INDEX
+  if (!modifiedReads.empty()) {
+    auto& currentNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
+    if (!currentNodeScoreDeltas.empty()) {
+      std::cerr << "Error: currentNodeScoreDeltas is not empty" << std::endl;
+      exit(1);
+    }
+    currentNodeScoreDeltas.reserve(totalReadsToKeep);
+    for (const auto& [readIndex, _] : modifiedReads) {
+      auto& curRead = reads[readIndex];
+      if (curRead.readType != mgsr::ReadType::PASS) continue;
+
+      auto& maxScore = curRead.maxScore;
+
+      int32_t newScore = std::max(curRead.numForwardMatching, curRead.numReverseMatching);
+
+      if (curRead.keepForFilterAndAssign) {
+        currentNodeScoreDeltas.emplace_back(readIndex, newScore);
+      }
+
+      if (newScore > maxScore) {
+        maxScore = newScore;
+        curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
+      }
+    }
+  }
+
+  
+  for (MgsrLiteNode *child : node->collapsedChildren) {
+    scoreReadsBatchHelper(child, processingNode, discard_threshold);
+  }
+
+  for (const auto& [readIndex, modifiedReadInfo] : modifiedReads) {
+    auto& curRead = reads[readIndex];
+    curRead.numForwardMatching = modifiedReadInfo.forwardOriginalScore;
+    curRead.numReverseMatching = modifiedReadInfo.reverseOriginalScore;
+  }
+
+}
+
+void mgsr::mgsrPlacer::scoreReadsBatch(double discard_threshold) {
+  MgsrLiteNode* processingNode = nullptr;
+  scoreReadsBatchHelper(liteTree->root, processingNode, discard_threshold);
 }
 
 
@@ -8115,7 +8547,7 @@ mgsr::squareEM::squareEM(
     const auto& [scores, nodeIds] = scoresToNodeIdsVector[i];
     nodes[i] = nodeIds[0];
     for (size_t j = 0; j < scores.size(); ++j) {
-      probs(j, i) = pow(errorRate, reads[j].seedmersList.size() - scores[j]) * pow(1 - errorRate, scores[j]);
+      probs(j, i) = pow(errorRate, reads[j].totalSeedmers - scores[j]) * pow(1 - errorRate, scores[j]);
     }
     }
   });
