@@ -28,6 +28,7 @@
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#include <tbb/tbb.h>
 #include <unistd.h>
 #include <vector>
 #include <stack>
@@ -67,6 +68,15 @@ static constexpr int DEFAULT_S = 8;
 // Thread safety
 std::mutex outputMutex, indexMutex, placementMutex;
 std::atomic<bool> shouldStop{false};
+
+// funciton timer
+template <typename Func>
+auto timeFunction(Func&& f) {
+  auto start = std::chrono::high_resolution_clock::now();
+  f();
+  auto end = std::chrono::high_resolution_clock::now();
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
 
 // Forward declarations
 std::unique_ptr<::capnp::MessageReader> readCapnp(const std::string &path);
@@ -686,6 +696,145 @@ bool saveNodeConstructedSequence(state::StateManager &stateManager, panmanUtils:
   return false;
 }
 
+void filterAndAssignBatch(
+  mgsr::ThreadsManager &threadsManager, mgsr::MgsrLiteTree &T,
+  const std::string& readPath1, const std::string& readPath2,
+  double dustThreshold, double discardThreshold, uint32_t maskReadsEnds,
+  int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio,
+  size_t maximumFamilies, double breathRatio,
+  size_t batchSize, const std::string& prefix
+) {
+  size_t maxLiveTokens = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism) + 2;
+  FILE *fp1 = fopen(readPath1.c_str(), "r");
+  kseq_t *seq1 = kseq_init(fileno(fp1));
+
+  FILE *fp2 = nullptr;
+  kseq_t *seq2 = nullptr;
+  bool pairedEnd = !readPath2.empty();
+  if (pairedEnd) {
+    fp2 = fopen(readPath2.c_str(), "r");
+    seq2 = kseq_init(fileno(fp2));
+  }
+
+  std::ofstream assignedReadsFastq(prefix + ".assignedReads.fastq");
+  if (!assignedReadsFastq.is_open()) {
+    logging::err("Failed to open assigned reads fastq file: {}", prefix + ".assignedReads.fastq");
+    return;
+  }
+
+  struct Batch {
+    std::vector<std::string> sequences;
+    std::vector<std::string> names;
+    std::vector<std::string> quals;
+    std::vector<mgsr::Read> reads;
+    std::vector<std::vector<size_t>> readDuplicatesIndex;
+    
+    std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
+    size_t numReadsAssigned;
+
+    double readProcessingTime;
+    double scoringTime;
+    double assigningTime;
+  };
+
+  size_t batchesCompleted = 0;
+  size_t readsCompleted = 0;
+
+  tbb::parallel_pipeline(
+    maxLiveTokens,
+    tbb::make_filter<void, Batch*>(tbb::filter::serial_in_order, [&](tbb::flow_control& fc) -> Batch* {
+      Batch* batch = new Batch();
+      batch->sequences.reserve(batchSize + 1);
+      batch->names.reserve(batchSize + 1);
+      batch->quals.reserve(batchSize + 1);
+      int l1;
+      if (pairedEnd) {
+        int l2;
+        while ((l1 = kseq_read(seq1)) >= 0 && (l2 = kseq_read(seq2)) >= 0) {
+          batch->sequences.emplace_back(seq1->seq.s);
+          batch->names.emplace_back(seq1->name.s);
+          batch->quals.emplace_back(seq1->qual.s);
+          batch->sequences.emplace_back(seq2->seq.s);
+          batch->names.emplace_back(seq2->name.s);
+          batch->quals.emplace_back(seq2->qual.s);
+          if (batch->sequences.size() >= batchSize) break;
+        }
+      } else {
+        while ((l1 = kseq_read(seq1)) >= 0) {
+          batch->sequences.emplace_back(seq1->seq.s);
+          batch->names.emplace_back(seq1->name.s);
+          batch->quals.emplace_back(seq1->qual.s);
+          if (batch->sequences.size() >= batchSize) break;
+        }
+      }
+      if (batch->sequences.empty()) {
+        delete batch;
+        fc.stop();
+        return nullptr;
+      }
+      batch->reads.shrink_to_fit();
+      batch->readDuplicatesIndex.shrink_to_fit();
+      return batch;
+    }) &
+
+  tbb::make_filter<Batch*, Batch*>(tbb::filter::parallel, [&](Batch* batch) -> Batch* {
+    mgsr::mgsrPlacer placer(&T, threadsManager, false, 0);
+    placer.readScoreDeltasBatch.resize(T.getNumActiveNodes());
+
+    auto startReadProcessing = std::chrono::high_resolution_clock::now();
+    placer.initializeQueryDataBatch(batch->sequences, batch->reads, batch->readDuplicatesIndex, dustThreshold, discardThreshold, maskReadsEnds);
+    auto endReadProcessing = std::chrono::high_resolution_clock::now();
+
+    auto startScoring = std::chrono::high_resolution_clock::now();
+    placer.scoreReadsBatch(discardThreshold);
+    auto endScoring = std::chrono::high_resolution_clock::now();
+
+    auto startAssigning = std::chrono::high_resolution_clock::now();
+    std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breaths;
+    placer.assignReadsBatch(batch->assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+    auto endAssigning = std::chrono::high_resolution_clock::now();
+
+    batch->readProcessingTime = std::chrono::duration<double>(endReadProcessing - startReadProcessing).count();
+    batch->scoringTime = std::chrono::duration<double>(endScoring - startScoring).count();
+    batch->assigningTime = std::chrono::duration<double>(endAssigning - startAssigning).count();
+    return batch;
+  }) &
+
+  tbb::make_filter<Batch*, void>(tbb::filter::serial_out_of_order, [&](Batch* batch) {
+    readsCompleted += batch->sequences.size();
+    ++batchesCompleted;
+
+    batch->numReadsAssigned = 0;
+    for (auto& [node, reads] : batch->assignedReadsByNode) {
+      batch->numReadsAssigned += reads.size();
+      for (size_t readIndex : reads) {
+        assignedReadsFastq << "@" << batch->names[readIndex] << "\n";
+        assignedReadsFastq << batch->sequences[readIndex] << "\n";
+        assignedReadsFastq << "+\n";
+        assignedReadsFastq << batch->quals[readIndex] << "\n";
+      }
+    }
+    std::cout << readsCompleted << " reads processed | "
+              << batch->numReadsAssigned << " reads assigned | "
+              << batch->readProcessingTime << " seconds (read processing) | "
+              << batch->scoringTime << " seconds (scoring) | "
+              << batch->assigningTime << " seconds (assigning)\n";
+    // collect results ...
+    delete batch;
+  })
+  
+  );
+
+
+  kseq_destroy(seq1);
+  fclose(fp1);
+  if (pairedEnd) {
+    kseq_destroy(seq2);
+    fclose(fp2);
+  }
+  assignedReadsFastq.close();
+}
+
 
 // Main program entry point
 int main(int argc, char *argv[]) {
@@ -754,9 +903,10 @@ int main(int argc, char *argv[]) {
         ("mgsr-open", "Use open syncmers")
         ("no-progress", "Disable progress bars")
         ("dust", po::value<double>()->default_value(100), "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")
-        ("discard", po::value<double>()->default_value(0.5), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
+        ("discard", po::value<double>()->default_value(0), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
         ("mask-read-ends", po::value<uint32_t>()->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
         ("filter-and-assign", "Filter and assign reads to nodes without running EM")
+        ("batch-size", po::value<size_t>()->default_value(1000000), "Batch size for filtering and assigning reads")
         ("taxonomic-metadata", po::value<std::string>(), "Path to taxonomic metadata TSV file")
         ("maximum-families", po::value<size_t>()->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided")
         ("ambiguous-score-threshold-ratio", po::value<double>()->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families")
@@ -1166,6 +1316,14 @@ int main(int argc, char *argv[]) {
       std::string ampliconDepthPath = vm.count("amplicon-depth") ? vm["amplicon-depth"].as<std::string>() : "";
       double maskReadsRelativeFrequency = vm["mask-reads-relative-frequency"].as<double>();
       double maskSeedsRelativeFrequency = vm["mask-seeds-relative-frequency"].as<double>();
+      bool sketchSeeds = vm.count("sketch-seeds") > 0;
+      uint32_t maskReadsEnds = vm["mask-read-ends"].as<uint32_t>();
+      double dust_threshold = vm["dust"].as<double>();
+      double discard_threshold = vm["discard"].as<double>();
+      double em_convergence_threshold = vm["em-convergence-threshold"].as<double>();
+      double em_delta_threshold = vm["em-delta-threshold"].as<double>();
+      uint32_t em_maximum_iterations = vm["em-maximum-iterations"].as<uint32_t>();
+      size_t batchSize = vm["batch-size"].as<size_t>();
       
       int fd = mgsr::open_file(mgsr_index_path);
       ::capnp::ReaderOptions readerOptions {.traversalLimitInWords = std::numeric_limits<uint64_t>::max(), .nestingLimit = 1024};
@@ -1195,15 +1353,42 @@ int main(int argc, char *argv[]) {
       threadsManager.initializeMGSRIndex(indexReader);
       close(fd);
 
-      bool sketchSeeds = vm.count("sketch-seeds") > 0;
-      uint32_t maskReadsEnds = vm["mask-read-ends"].as<uint32_t>();
-      double dust_threshold = vm["dust"].as<double>();
       if (dust_threshold > 100) {
         std::cerr << "Error: --dust must be <= 100" << std::endl;
         exit(1);
       }
-      threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency, dust_threshold, maskReadsEnds);
+      if (discard_threshold < 0 || discard_threshold > 1) {
+        std::cerr << "Error: --discard must be between 0 and 1" << std::endl;
+        exit(1);
+      }
+
+      if (filterAndAssign) {
+        auto start_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+        liteTree.toRefSeedDeltas();
+        auto end_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+        auto duration_toRefSeedDeltas = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_toRefSeedDeltas - start_time_toRefSeedDeltas);
+        std::cout << "Converted to reference seed deltas in " << static_cast<double>(duration_toRefSeedDeltas.count()) / 1000.0 << "s\n" << std::endl;
+
+        int ambiguousScoreThreshold = vm["ambiguous-score-threshold"].as<int>();
+        double ambiguousScoreThresholdRatio = vm["ambiguous-score-threshold-ratio"].as<double>();
+        bool breathRatio = vm.count("breadth-ratio") > 0;
+
+        filterAndAssignBatch(
+          threadsManager, liteTree, reads1, reads2,
+          dust_threshold, discard_threshold, maskReadsEnds,
+          ambiguousScoreThreshold, ambiguousScoreThresholdRatio,
+          maximumFamilies, breathRatio, batchSize, prefix);
+        
+        exit(0);
+      }
+
+      auto start_time_initializeQueryData = std::chrono::high_resolution_clock::now();
+      threadsManager.initializeQueryData(reads1, reads2, maskSeeds, ampliconDepthPath, maskReadsRelativeFrequency, maskSeedsRelativeFrequency, dust_threshold, discard_threshold, maskReadsEnds);
+      auto end_time_initializeQueryData = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<double> elapsed_initializeQueryData = end_time_initializeQueryData - start_time_initializeQueryData;
+      std::cerr << "[timing] initializeQueryData took " << elapsed_initializeQueryData.count() << " seconds." << std::endl;
       
+
       if (sketchSeeds) {
         std::ofstream seedsOut(prefix + ".seeds.txt");
         for (size_t i = 0; i < threadsManager.reads.size(); i++) {
@@ -1260,14 +1445,17 @@ int main(int argc, char *argv[]) {
         std::cout << "Computed overlap coefficients in " << static_cast<double>(duration_computeOverlapCoefficients.count()) / 1000.0 << "s\n" << std::endl;
       }
 
+      auto start_time_collapseIdenticalScoringNodes = std::chrono::high_resolution_clock::now();
       liteTree.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+      auto end_time_collapseIdenticalScoringNodes = std::chrono::high_resolution_clock::now();
+      auto duration_collapseIdenticalScoringNodes = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_collapseIdenticalScoringNodes - start_time_collapseIdenticalScoringNodes);
+      std::cout << "Collapsed identical scoring nodes in " << static_cast<double>(duration_collapseIdenticalScoringNodes.count()) / 1000.0 << "s\n" << std::endl;
+
+      // exit(0);
       // std::string collapsedNewick = liteTree.toNewick(true);
       // std::ofstream of(prefix + ".collapsed.newick");
       // of << collapsedNewick;
       // of.close();
-      
-      // liteTree.toRefSeedDeltas();
-
 
 
       if (vm.count("read-seed-scores")) {
@@ -1329,7 +1517,7 @@ int main(int argc, char *argv[]) {
           curThreadPlacer.setProgressTracker(&progressTracker, i);
           // curThreadPlacer.placeReads();
 
-          curThreadPlacer.scoreReads();
+          curThreadPlacer.scoreReads(discard_threshold);
 
           threadsManager.readMinichainsInitialized[i] = curThreadPlacer.readMinichainsInitialized;
           threadsManager.readMinichainsAdded[i] = curThreadPlacer.readMinichainsAdded;
@@ -1354,7 +1542,7 @@ int main(int argc, char *argv[]) {
         for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
           const auto& curRead = threadsManager.reads[i];
           if (curRead.maxScore == 0) continue;
-          readScoresOut_unfiltered << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
+          readScoresOut_unfiltered << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.totalSeedmers << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
           for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
             if (j == 0) {
               readScoresOut_unfiltered << threadsManager.readSeedmersDuplicatesIndex[i][j];
@@ -1368,13 +1556,12 @@ int main(int argc, char *argv[]) {
       }
 
 
-      double discard_threshold = vm["discard"].as<double>();
       size_t num_discarded = 0;
       size_t num_unmapped = 0;
       for (auto& read : threadsManager.reads) {
         if (read.maxScore == 0) {
           ++num_unmapped;
-        } else if (read.maxScore < static_cast<int>(read.seedmersList.size() * discard_threshold)) {
+        } else if (read.maxScore < read.discardThreshold) {
           read.maxScore = 0;
           ++num_discarded;
         }
@@ -1462,7 +1649,7 @@ int main(int argc, char *argv[]) {
       for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
         const auto& curRead = threadsManager.reads[i];
         if (curRead.maxScore == 0) continue;
-        readScoresOut << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << curRead.overMaximumFamilies << "\t";
+        readScoresOut << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.totalSeedmers << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << curRead.overMaximumFamilies << "\t";
         for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
           if (j == 0) {
             readScoresOut << threadsManager.readSeedmersDuplicatesIndex[i][j];
@@ -1543,9 +1730,7 @@ int main(int argc, char *argv[]) {
       }
       scoresOutExtra.close();
 
-      double em_convergence_threshold = vm["em-convergence-threshold"].as<double>();
-      double em_delta_threshold = vm["em-delta-threshold"].as<double>();
-      uint32_t em_maximum_iterations = vm["em-maximum-iterations"].as<uint32_t>();
+
       mgsr::squareEM squareEM(threadsManager, liteTree, prefix, overlap_coefficients_threshold, em_convergence_threshold, em_delta_threshold, em_maximum_iterations, vm.count("read-scores") > 0, vm.count("em-leaves-only") > 0);
       liteTree.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
       
