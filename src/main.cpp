@@ -732,6 +732,9 @@ void filterAndAssignBatch(
     std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
     size_t numReadsAssigned;
 
+    size_t numReadsUnmapped;
+    size_t numReadsDiscarded;
+
     double readProcessingTime;
     double scoringTime;
     double assigningTime;
@@ -790,6 +793,16 @@ void filterAndAssignBatch(
     auto endScoring = std::chrono::high_resolution_clock::now();
 
     auto startAssigning = std::chrono::high_resolution_clock::now();
+    size_t& numDiscarded = batch->numReadsDiscarded;
+    size_t& numUnmapped = batch->numReadsUnmapped;
+    for (auto& read : batch->reads) {
+      if (read.maxScore == 0) {
+        ++numUnmapped;
+      } else if (read.maxScore < read.discardThreshold) {
+        read.maxScore = 0;
+        ++numDiscarded;
+      }
+    }
     std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breaths;
     placer.assignReadsBatch(batch->assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
     auto endAssigning = std::chrono::high_resolution_clock::now();
@@ -804,6 +817,27 @@ void filterAndAssignBatch(
     readsCompleted += batch->sequences.size();
     ++batchesCompleted;
 
+    std::cout << batch->numReadsUnmapped << " reads unmapped... " << std::endl;
+    std::cout << batch->numReadsDiscarded << " reads discarded due to low parsimony score... " << std::endl;
+    std::cout << batch->reads.size() - batch->numReadsUnmapped - batch->numReadsDiscarded << " reads remain for node scoring and EM... " << std::endl;
+
+    std::ofstream readScoresOut(prefix + ".read_scores_info.tsv");
+    readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tOverMaximumFamilies\tRawReadsIndices" << std::endl;
+    for (size_t i = 0; i < batch->reads.size(); ++i) {
+      const auto& curRead = batch->reads[i];
+      if (curRead.maxScore == 0) continue;
+      readScoresOut << i << "\t" << batch->readDuplicatesIndex[i].size() << "\t" << curRead.totalSeedmers << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << curRead.overMaximumFamilies << "\t";
+      for (size_t j = 0; j < batch->readDuplicatesIndex[i].size(); ++j) {
+        if (j == 0) {
+          readScoresOut << batch->readDuplicatesIndex[i][j];
+        } else {
+          readScoresOut << "," << batch->readDuplicatesIndex[i][j];
+        }
+      }
+      readScoresOut << std::endl;
+    }
+    readScoresOut.close();
+
     batch->numReadsAssigned = 0;
     for (auto& [node, reads] : batch->assignedReadsByNode) {
       batch->numReadsAssigned += reads.size();
@@ -814,6 +848,32 @@ void filterAndAssignBatch(
         assignedReadsFastq << batch->quals[readIndex] << "\n";
       }
     }
+
+    std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
+    for (auto& [node, uniqueReadIndices] : batch->assignedReadsByNode) {
+      assignedReadsOut << node->identifier;
+      for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+        assignedReadsOut << "," << identicalNodeId;
+      }
+      std::vector<size_t> sortedReadIndices;
+      for (size_t uniqueReadIndex : uniqueReadIndices) {
+        for (size_t readIndex : batch->readDuplicatesIndex[uniqueReadIndex]) {
+          sortedReadIndices.push_back(readIndex);
+        }
+      }
+      std::sort(sortedReadIndices.begin(), sortedReadIndices.end());
+      assignedReadsOut << "\t" << sortedReadIndices.size() << "\t";
+
+      for (size_t i = 0; i < sortedReadIndices.size(); ++i) {
+        assignedReadsOut << sortedReadIndices[i];
+        if (i != sortedReadIndices.size() - 1) {
+          assignedReadsOut << ",";
+        }
+      }
+      assignedReadsOut << "\n";
+    }
+    assignedReadsOut.close();
+
     std::cout << readsCompleted << " reads processed | "
               << batch->numReadsAssigned << " reads assigned | "
               << batch->readProcessingTime << " seconds (read processing) | "

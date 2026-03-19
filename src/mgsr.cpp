@@ -7894,7 +7894,7 @@ void mgsr::mgsrPlacer::scoreReadsBatchHelper(
 
       if (read.keepForFilterAndAssign) {
         totalReadsToKeep++;
-      } else if (std::max(read.numForwardMatching, read.numReverseMatching) > read.discardThreshold) {
+      } else if (std::max(read.numForwardMatching, read.numReverseMatching) >= read.discardThreshold) {
         totalReadsToKeep++;
         read.keepForFilterAndAssign = true;
       }
@@ -7939,11 +7939,13 @@ void mgsr::mgsrPlacer::scoreReadsBatchHelper(
         currentNodeScoreDeltas.emplace_back(readIndex, newScore);
       }
 
+
       if (newScore > maxScore) {
         maxScore = newScore;
         curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
       }
     }
+    currentNodeScoreDeltas.shrink_to_fit();
   }
 
   
