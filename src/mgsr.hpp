@@ -807,7 +807,8 @@ class mgsrPlacer {
 
     // current query kminmer structures
     std::span<mgsr::Read> reads;
-    std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
+    std::span<std::vector<size_t>> readSeedmersDuplicatesIndex;
+
     // std::vector<mgsr::readType> readTypes;
     absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
     absl::flat_hash_set<size_t>* allSeedmerHashesSet;
@@ -912,6 +913,13 @@ class mgsrPlacer {
 
     void scoreReadsBatchHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode, double discard_threshold);
     void scoreReadsBatch(double discard_threshold);
+
+    void calculateBreadthRatio(
+      MgsrLiteNode* node,
+      std::unordered_map<size_t, int64_t>& refSeedsCount,
+      std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>>& breaths,
+      const std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode
+    );
 
 
     void calculateEppHelper(MgsrLiteNode* node);

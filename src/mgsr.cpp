@@ -2203,6 +2203,7 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(
   }
 
   this->reads = reads;
+  this->readSeedmersDuplicatesIndex = readDuplicatesIndex;
   readScores.resize(reads.size(), 0);
 }
 
@@ -6919,6 +6920,67 @@ void mgsr::ThreadsManager::calculateBreadthRatio(
 
 }
 
+void mgsr::mgsrPlacer::calculateBreadthRatio(
+  MgsrLiteNode* node,
+  std::unordered_map<size_t, int64_t>& refSeedsCount,
+  std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>>& breaths,
+  const std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode
+) {
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : node->seedCountDeltas) {
+    size_t parentCount = parentCountFwd + parentCountRev;
+    size_t currentCount = currentCountFwd + currentCountRev;
+    if (currentCount == 0) {
+      refSeedsCount.erase(seedHash);
+    } else {
+      refSeedsCount[seedHash] = currentCount;
+    }
+  }
+
+  std::unordered_map<size_t, size_t> seedHitCounts;
+  size_t totalDepth = 0;
+  auto assignedReadsByNodeIt = assignedReadsByNode.find(node);
+  if (assignedReadsByNodeIt != assignedReadsByNode.end()) {
+    for (const auto& readIndex : assignedReadsByNodeIt->second) {
+      const auto& curRead = reads[readIndex];
+      const auto& curDuplicates = readSeedmersDuplicatesIndex[readIndex].size();
+      for (const auto& [seedHash, _] : curRead.uniqueSeedmers) {
+        if (refSeedsCount.find(seedHash) != refSeedsCount.end()) {
+          seedHitCounts[seedHash] += curDuplicates;
+          totalDepth += curDuplicates;
+        }
+      }
+    }
+  }
+
+  size_t totalRefSeeds = node->totalRefSeeds;
+  size_t observedBreadthCount = seedHitCounts.size();
+  double observedBreadthRatio = totalRefSeeds > 0 ? static_cast<double>(observedBreadthCount) / static_cast<double>(totalRefSeeds) : 0.0;
+  double meanDepth = totalRefSeeds > 0 ? static_cast<double>(totalDepth) / static_cast<double>(totalRefSeeds) : 0.0;
+  double expectedBreadthRatio = meanDepth > 0 ? 1.0 - std::exp(-meanDepth) : 0.0;
+  double observedToExpectedBreadthRatio = expectedBreadthRatio > 0 ? observedBreadthRatio / expectedBreadthRatio : 0.0;
+
+  breaths.emplace_back(node, mgsr::breadthInfo{totalRefSeeds, observedBreadthCount, observedBreadthRatio, totalDepth, meanDepth, expectedBreadthRatio, observedToExpectedBreadthRatio});
+
+  std::cerr << "\rCalculating breadth ratio at DFS index " << node->collapsedDfsIndex << " / " << liteTree->getNumActiveNodes() << std::flush;
+
+  // Recursively calculate breadth ratio for children
+  for (auto child : node->collapsedChildren) {
+    calculateBreadthRatio(child, refSeedsCount, breaths, assignedReadsByNode);
+  }
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : node->seedCountDeltas) {
+    size_t parentCount = parentCountFwd + parentCountRev;
+    size_t currentCount = currentCountFwd + currentCountRev;
+    if (parentCount == 0) {
+      refSeedsCount.erase(seedHash);
+    } else {
+      refSeedsCount[seedHash] = parentCount;
+    }
+  }
+
+}
+
 void mgsr::ThreadsManager::assignReads(
   std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
   std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>>& breaths,
@@ -7871,9 +7933,7 @@ void mgsr::mgsrPlacer::scoreReadsBatchHelper(
 
   processingNode = node;
   std::unordered_map<uint32_t, mgsr::ModifiedReadInfo> modifiedReads;
-  
-  const auto& curSeedDeltas = node->seedDeltas;
-  const auto& seedInfos = liteTree->seedInfos;
+
   
   size_t totalReadsToKeep = 0;
   auto updateReadsForSeed = [&](size_t seedHash, bool seedRev, int scoreDelta) {

@@ -701,7 +701,7 @@ void filterAndAssignBatch(
   const std::string& readPath1, const std::string& readPath2,
   double dustThreshold, double discardThreshold, uint32_t maskReadsEnds,
   int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio,
-  size_t maximumFamilies, double breathRatio,
+  size_t maximumFamilies, double breadthRatio,
   size_t batchSize, const std::string& prefix
 ) {
   size_t maxLiveTokens = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism) + 2;
@@ -716,9 +716,9 @@ void filterAndAssignBatch(
     seq2 = kseq_init(fileno(fp2));
   }
 
-  std::ofstream assignedReadsFastq(prefix + ".assignedReads.fastq");
+  std::ofstream assignedReadsFastq(prefix + ".mgsr.assignedReads.fastq");
   if (!assignedReadsFastq.is_open()) {
-    logging::err("Failed to open assigned reads fastq file: {}", prefix + ".assignedReads.fastq");
+    logging::err("Failed to open assigned reads fastq file: {}", prefix + ".mgsr.assignedReads.fastq");
     return;
   }
 
@@ -821,7 +821,6 @@ void filterAndAssignBatch(
       }
     }
     auto startAssigning = std::chrono::high_resolution_clock::now();
-    std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breaths;
     placer.assignReadsBatch(batch->assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
 
 
@@ -876,6 +875,14 @@ void filterAndAssignBatch(
   })
   );
 
+  kseq_destroy(seq1);
+  fclose(fp1);
+  if (pairedEnd) {
+    kseq_destroy(seq2);
+    fclose(fp2);
+  }
+  assignedReadsFastq.close();
+
   for (auto& [node, readIndices] : allAssignedReadsByNode) {
     assignedReadsOut << node->identifier;
     for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
@@ -894,17 +901,50 @@ void filterAndAssignBatch(
     assignedReadsOut << "\n";
   }
   assignedReadsOut.close();
-
-
-  kseq_destroy(seq1);
-  fclose(fp1);
-  if (pairedEnd) {
-    kseq_destroy(seq2);
-    fclose(fp2);
-  }
-  assignedReadsFastq.close();
   std::cout << totalFastqReadsWritten << " reads written to fastq file" << std::endl;
-  assignedReadsOut.close();
+
+  // Calculate breadth from assigned reads
+  if (breadthRatio) {
+    std::cout << "Calculating breadth ratio from assigned reads..." << std::endl;
+    FILE *fpAssigned = fopen(std::string(prefix + ".mgsr.assignedReads.fastq").c_str(), "r");
+    kseq_t *seqAssigned = kseq_init(fileno(fpAssigned));
+    std::vector<std::string> assignedReads;
+    assignedReads.reserve(totalFastqReadsWritten);
+    int l;
+    while ((l = kseq_read(seqAssigned)) >= 0) {
+      assignedReads.emplace_back(seqAssigned->seq.s);
+    }
+    kseq_destroy(seqAssigned);
+    fclose(fpAssigned);
+    std::cout << "Read in " << assignedReads.size() << " assigned reads" << std::endl;
+
+    mgsr::mgsrPlacer placer(&T, threadsManager, false, 0);
+    placer.readScoreDeltasBatch.resize(T.getNumActiveNodes());
+
+    std::vector<mgsr::Read> reads;
+    std::vector<std::vector<size_t>> readDuplicatesIndex;
+    placer.initializeQueryDataBatch(assignedReads, reads, readDuplicatesIndex, dustThreshold, discardThreshold, maskReadsEnds);
+
+    placer.scoreReadsBatch(discardThreshold);
+
+    std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
+    placer.assignReadsBatch(assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+    std::unordered_map<size_t, int64_t> refSeedsCount;
+    std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breadths;
+    placer.calculateBreadthRatio(T.root, refSeedsCount, breadths, assignedReadsByNode);
+
+    std::ofstream breadthsOut(prefix + ".mgsr.breadths.out");
+    breadthsOut << "NodeId\tTotalRefSeeds\tObservedBreadthCount\tObservedBreadthRatio\tTotalDepth\tMeanDepth\tExpectedBreadthRatio\tObservedToExpectedBreadthRatio" << std::endl;
+    for (const auto& [node, breadthInfo] : breadths) {
+      breadthsOut << node->identifier;
+      for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+        breadthsOut << "," << identicalNodeId;
+      }
+      breadthsOut << "\t" << breadthInfo.totalRefSeeds << "\t" << breadthInfo.observedBreadthCount << "\t" << breadthInfo.observedBreadthRatio << "\t" << breadthInfo.totalDepth << "\t" << breadthInfo.meanDepth << "\t" << breadthInfo.expectedBreadthRatio << "\t" << breadthInfo.observedToExpectedBreadthRatio << std::endl;
+    }
+    breadthsOut.close();
+  }
+
 }
 
 
@@ -1443,13 +1483,13 @@ int main(int argc, char *argv[]) {
 
         int ambiguousScoreThreshold = vm["ambiguous-score-threshold"].as<int>();
         double ambiguousScoreThresholdRatio = vm["ambiguous-score-threshold-ratio"].as<double>();
-        bool breathRatio = vm.count("breadth-ratio") > 0;
+        bool breadthRatio = vm.count("breadth-ratio") > 0;
 
         filterAndAssignBatch(
           threadsManager, liteTree, reads1, reads2,
           dust_threshold, discard_threshold, maskReadsEnds,
           ambiguousScoreThreshold, ambiguousScoreThresholdRatio,
-          maximumFamilies, breathRatio, batchSize, prefix);
+          maximumFamilies, breadthRatio, batchSize, prefix);
         
         exit(0);
       }
@@ -1679,22 +1719,22 @@ int main(int argc, char *argv[]) {
         int ambiguousScoreThreshold = vm["ambiguous-score-threshold"].as<int>();
         double ambiguousScoreThresholdRatio = vm["ambiguous-score-threshold-ratio"].as<double>();
 
-        bool breathRatio = vm.count("breadth-ratio") > 0;
-        std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breaths;
-        threadsManager.assignReads(assignedReadsByNode, breaths, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio, breathRatio);
+        bool breadthRatio = vm.count("breadth-ratio") > 0;
+        std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breadths;
+        threadsManager.assignReads(assignedReadsByNode, breadths, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio, breadthRatio);
 
 
-        if (breathRatio) {
-          std::ofstream breathsOut(prefix + ".mgsr.breaths.out");
-          breathsOut << "NodeId\tTotalRefSeeds\tObservedBreadthCount\tObservedBreadthRatio\tTotalDepth\tMeanDepth\tExpectedBreadthRatio\tObservedToExpectedBreadthRatio" << std::endl;
-          for (const auto& [node, breathInfo] : breaths) {
-            breathsOut << node->identifier;
+        if (breadthRatio) {
+          std::ofstream breadthsOut(prefix + ".mgsr.breadths.out");
+          breadthsOut << "NodeId\tTotalRefSeeds\tObservedBreadthCount\tObservedBreadthRatio\tTotalDepth\tMeanDepth\tExpectedBreadthRatio\tObservedToExpectedBreadthRatio" << std::endl;
+          for (const auto& [node, breadthInfo] : breadths) {
+            breadthsOut << node->identifier;
             for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
-              breathsOut << "," << identicalNodeId;
+              breadthsOut << "," << identicalNodeId;
             }
-            breathsOut << "\t" << breathInfo.totalRefSeeds << "\t" << breathInfo.observedBreadthCount << "\t" << breathInfo.observedBreadthRatio << "\t" << breathInfo.totalDepth << "\t" << breathInfo.meanDepth << "\t" << breathInfo.expectedBreadthRatio << "\t" << breathInfo.observedToExpectedBreadthRatio << std::endl;
+            breadthsOut << "\t" << breadthInfo.totalRefSeeds << "\t" << breadthInfo.observedBreadthCount << "\t" << breadthInfo.observedBreadthRatio << "\t" << breadthInfo.totalDepth << "\t" << breadthInfo.meanDepth << "\t" << breadthInfo.expectedBreadthRatio << "\t" << breadthInfo.observedToExpectedBreadthRatio << std::endl;
           }
-          breathsOut.close();
+          breadthsOut.close();
         }
 
         std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
