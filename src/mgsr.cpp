@@ -2143,6 +2143,9 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(
   [&uniqueReads, &seqToIndexVec](size_t i1, size_t i2) {
     const auto& lhs = uniqueReads[i1].seedmersList;
     const auto& rhs = uniqueReads[i2].seedmersList;
+    const size_t lhsTotalSeedmers = uniqueReads[i1].totalSeedmers;
+    const size_t rhsTotalSeedmers = uniqueReads[i2].totalSeedmers;
+    if (lhsTotalSeedmers != rhsTotalSeedmers) return lhsTotalSeedmers < rhsTotalSeedmers;
     const size_t minSize = std::min(lhs.size(), rhs.size());
     for (size_t i = 0; i < minSize; ++i) {
       if (lhs[i].hash != rhs[i].hash) return lhs[i].hash < rhs[i].hash;
@@ -2165,10 +2168,12 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(
   for (size_t i = 1; i < sortedUniqueReadsIndices.size(); ++i) {
     const size_t sortedIdx = sortedUniqueReadsIndices[i];
     const auto& currSeedmers = uniqueReads[sortedIdx].seedmersList;
+    const size_t currTotalSeedmers = uniqueReads[sortedIdx].totalSeedmers;
     const auto& prevSeedmers = reads.back().seedmersList;
+    const size_t prevTotalSeedmers = reads.back().totalSeedmers;
     bool isDuplicate = false;
 
-    if (currSeedmers.size() == prevSeedmers.size()) {
+    if (currSeedmers.size() == prevSeedmers.size() && currTotalSeedmers == prevTotalSeedmers) {
       const size_t n = currSeedmers.size();
       isDuplicate = true;
       for (size_t j = 0; j < n && isDuplicate; ++j) {

@@ -809,7 +809,6 @@ void filterAndAssignBatch(
     placer.scoreReadsBatch(discardThreshold);
     auto endScoring = std::chrono::high_resolution_clock::now();
 
-
     size_t& numDiscarded = batch->numReadsDiscarded;
     size_t& numUnmapped = batch->numReadsUnmapped;
     for (size_t i = 0; i < batch->reads.size(); ++i) {
