@@ -2139,22 +2139,22 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(
   // the prefix scan exhausts both lists equally.
   std::vector<size_t> sortedUniqueReadsIndices(uniqueReads.size());
   std::iota(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(), 0);
-  tbb::parallel_sort(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(),
-    [&uniqueReads](size_t i1, size_t i2) {
-      const auto& lhs = uniqueReads[i1].seedmersList;
-      const auto& rhs = uniqueReads[i2].seedmersList;
-      const size_t minSize = std::min(lhs.size(), rhs.size());
-      for (size_t i = 0; i < minSize; ++i) {
-        if (lhs[i].hash != rhs[i].hash) return lhs[i].hash < rhs[i].hash;
-      }
-      if (lhs.size() != rhs.size()) return lhs.size() < rhs.size();
-      // full equality on hashes and sizes — tiebreak on position/orientation
-      for (size_t i = 0; i < lhs.size(); ++i) {
-        if (lhs[i].rev != rhs[i].rev) return lhs[i].rev < rhs[i].rev;
-        if (lhs[i].iorder != rhs[i].iorder) return lhs[i].iorder < rhs[i].iorder;
-      }
-      return false;
-    });
+  std::stable_sort(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(),
+  [&uniqueReads, &seqToIndexVec](size_t i1, size_t i2) {
+    const auto& lhs = uniqueReads[i1].seedmersList;
+    const auto& rhs = uniqueReads[i2].seedmersList;
+    const size_t minSize = std::min(lhs.size(), rhs.size());
+    for (size_t i = 0; i < minSize; ++i) {
+      if (lhs[i].hash != rhs[i].hash) return lhs[i].hash < rhs[i].hash;
+    }
+    if (lhs.size() != rhs.size()) return lhs.size() < rhs.size();
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i].rev != rhs[i].rev) return lhs[i].rev < rhs[i].rev;
+      if (lhs[i].iorder != rhs[i].iorder) return lhs[i].iorder < rhs[i].iorder;
+    }
+    // final tiebreaker: use the original read sequence index
+    return seqToIndexVec[i1].second[0] < seqToIndexVec[i2].second[0];
+  });
 
   reads.reserve(uniqueReads.size());
   readDuplicatesIndex.reserve(uniqueReads.size());

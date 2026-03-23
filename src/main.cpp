@@ -743,6 +743,7 @@ void filterAndAssignBatch(
 
     size_t numReadsUnmapped;
     size_t numReadsDiscarded;
+    size_t numReadsOverMaximumFamilies;
 
     double readProcessingTime;
     double scoringTime;
@@ -790,8 +791,9 @@ void filterAndAssignBatch(
         fc.stop();
         return nullptr;
       }
-      batch->reads.shrink_to_fit();
-      batch->readDuplicatesIndex.shrink_to_fit();
+      batch->sequences.shrink_to_fit();
+      batch->names.shrink_to_fit();
+      batch->quals.shrink_to_fit();
       return batch;
     }) &
 
@@ -807,7 +809,7 @@ void filterAndAssignBatch(
     placer.scoreReadsBatch(discardThreshold);
     auto endScoring = std::chrono::high_resolution_clock::now();
 
-    auto startAssigning = std::chrono::high_resolution_clock::now();
+
     size_t& numDiscarded = batch->numReadsDiscarded;
     size_t& numUnmapped = batch->numReadsUnmapped;
     for (size_t i = 0; i < batch->reads.size(); ++i) {
@@ -819,8 +821,11 @@ void filterAndAssignBatch(
         numDiscarded += batch->readDuplicatesIndex[i].size();
       }
     }
+    auto startAssigning = std::chrono::high_resolution_clock::now();
     std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breaths;
     placer.assignReadsBatch(batch->assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+
+
     auto endAssigning = std::chrono::high_resolution_clock::now();
 
     batch->readProcessingTime = std::chrono::duration<double>(endReadProcessing - startReadProcessing).count();
@@ -829,7 +834,7 @@ void filterAndAssignBatch(
     return batch;
   }) &
 
-  tbb::make_filter<Batch*, void>(tbb::filter::serial_out_of_order, [&](Batch* batch) {
+  tbb::make_filter<Batch*, void>(tbb::filter::serial_in_order, [&](Batch* batch) {
     auto startPostProcessing = std::chrono::high_resolution_clock::now();
     readsCompleted += batch->sequences.size();
     totalReadsUnmapped += batch->numReadsUnmapped;
@@ -860,6 +865,9 @@ void filterAndAssignBatch(
     std::cout << readsCompleted << " total reads processed | "
               << batch->sequences.size() << " reads processed | "
               << batch->numReadsAssigned << " reads assigned and written to fastq file | "
+              << batch->numReadsUnmapped << " reads unmapped | "
+              << batch->numReadsDiscarded << " reads discarded | "
+              << batch->numReadsOverMaximumFamilies << " reads over maximum families | "
               << batch->readProcessingTime << " seconds (read processing) | "
               << batch->scoringTime << " seconds (scoring) | "
               << batch->assigningTime << " seconds (assigning) | "
