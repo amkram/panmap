@@ -722,7 +722,16 @@ void filterAndAssignBatch(
     return;
   }
 
+  std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
+  if (!assignedReadsOut.is_open()) {
+    logging::err("Failed to open assigned reads output file: {}", prefix + ".mgsr.assignedReads.out");
+    return;
+  }
+
+  std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> allAssignedReadsByNode;
+
   struct Batch {
+    size_t batchIndex;
     std::vector<std::string> sequences;
     std::vector<std::string> names;
     std::vector<std::string> quals;
@@ -738,15 +747,21 @@ void filterAndAssignBatch(
     double readProcessingTime;
     double scoringTime;
     double assigningTime;
+    double postProcessingTime;
   };
 
   size_t batchesCompleted = 0;
   size_t readsCompleted = 0;
+  size_t totalReadsUnmapped = 0;
+  size_t totalReadsDiscarded = 0;
+  size_t totalFastqReadsWritten = 0;
 
+  size_t batchIndex = 0;
   tbb::parallel_pipeline(
     maxLiveTokens,
     tbb::make_filter<void, Batch*>(tbb::filter::serial_in_order, [&](tbb::flow_control& fc) -> Batch* {
       Batch* batch = new Batch();
+      batch->batchIndex = batchIndex++;
       batch->sequences.reserve(batchSize + 1);
       batch->names.reserve(batchSize + 1);
       batch->quals.reserve(batchSize + 1);
@@ -795,12 +810,13 @@ void filterAndAssignBatch(
     auto startAssigning = std::chrono::high_resolution_clock::now();
     size_t& numDiscarded = batch->numReadsDiscarded;
     size_t& numUnmapped = batch->numReadsUnmapped;
-    for (auto& read : batch->reads) {
+    for (size_t i = 0; i < batch->reads.size(); ++i) {
+      auto& read = batch->reads[i];
       if (read.maxScore == 0) {
-        ++numUnmapped;
+        numUnmapped += batch->readDuplicatesIndex[i].size();
       } else if (read.maxScore < read.discardThreshold) {
         read.maxScore = 0;
-        ++numDiscarded;
+        numDiscarded += batch->readDuplicatesIndex[i].size();
       }
     }
     std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breaths;
@@ -814,76 +830,63 @@ void filterAndAssignBatch(
   }) &
 
   tbb::make_filter<Batch*, void>(tbb::filter::serial_out_of_order, [&](Batch* batch) {
+    auto startPostProcessing = std::chrono::high_resolution_clock::now();
     readsCompleted += batch->sequences.size();
+    totalReadsUnmapped += batch->numReadsUnmapped;
+    totalReadsDiscarded += batch->numReadsDiscarded;
     ++batchesCompleted;
 
-    std::cout << batch->numReadsUnmapped << " reads unmapped... " << std::endl;
-    std::cout << batch->numReadsDiscarded << " reads discarded due to low parsimony score... " << std::endl;
-    std::cout << batch->reads.size() - batch->numReadsUnmapped - batch->numReadsDiscarded << " reads remain for node scoring and EM... " << std::endl;
 
-    std::ofstream readScoresOut(prefix + ".read_scores_info.tsv");
-    readScoresOut << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tOverMaximumFamilies\tRawReadsIndices" << std::endl;
-    for (size_t i = 0; i < batch->reads.size(); ++i) {
-      const auto& curRead = batch->reads[i];
-      if (curRead.maxScore == 0) continue;
-      readScoresOut << i << "\t" << batch->readDuplicatesIndex[i].size() << "\t" << curRead.totalSeedmers << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << curRead.overMaximumFamilies << "\t";
-      for (size_t j = 0; j < batch->readDuplicatesIndex[i].size(); ++j) {
-        if (j == 0) {
-          readScoresOut << batch->readDuplicatesIndex[i][j];
-        } else {
-          readScoresOut << "," << batch->readDuplicatesIndex[i][j];
-        }
-      }
-      readScoresOut << std::endl;
-    }
-    readScoresOut.close();
-
-    batch->numReadsAssigned = 0;
-    for (auto& [node, reads] : batch->assignedReadsByNode) {
-      batch->numReadsAssigned += reads.size();
-      for (size_t readIndex : reads) {
-        assignedReadsFastq << "@" << batch->names[readIndex] << "\n";
-        assignedReadsFastq << batch->sequences[readIndex] << "\n";
-        assignedReadsFastq << "+\n";
-        assignedReadsFastq << batch->quals[readIndex] << "\n";
-      }
-    }
-
-    std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
-    for (auto& [node, uniqueReadIndices] : batch->assignedReadsByNode) {
-      assignedReadsOut << node->identifier;
-      for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
-        assignedReadsOut << "," << identicalNodeId;
-      }
-      std::vector<size_t> sortedReadIndices;
-      for (size_t uniqueReadIndex : uniqueReadIndices) {
+    std::unordered_map<size_t, size_t> batchReadIndexToFastqIndex;
+    for (auto& [node, uniqueReads] : batch->assignedReadsByNode) {
+      for (size_t uniqueReadIndex : uniqueReads) {
         for (size_t readIndex : batch->readDuplicatesIndex[uniqueReadIndex]) {
-          sortedReadIndices.push_back(readIndex);
+          auto [it, inserted] = batchReadIndexToFastqIndex.emplace(readIndex, totalFastqReadsWritten);
+          if (inserted) {
+            assignedReadsFastq << "@" << batch->names[readIndex] << "\n";
+            assignedReadsFastq << batch->sequences[readIndex] << "\n";
+            assignedReadsFastq << "+\n";
+            assignedReadsFastq << batch->quals[readIndex] << "\n";
+            totalFastqReadsWritten++;
+          }
+          allAssignedReadsByNode[node].push_back(it->second);
         }
       }
-      std::sort(sortedReadIndices.begin(), sortedReadIndices.end());
-      assignedReadsOut << "\t" << sortedReadIndices.size() << "\t";
-
-      for (size_t i = 0; i < sortedReadIndices.size(); ++i) {
-        assignedReadsOut << sortedReadIndices[i];
-        if (i != sortedReadIndices.size() - 1) {
-          assignedReadsOut << ",";
-        }
-      }
-      assignedReadsOut << "\n";
     }
-    assignedReadsOut.close();
+    batch->numReadsAssigned = batchReadIndexToFastqIndex.size();
+    auto endPostProcessing = std::chrono::high_resolution_clock::now();
+    batch->postProcessingTime = std::chrono::duration<double>(endPostProcessing - startPostProcessing).count();
 
-    std::cout << readsCompleted << " reads processed | "
-              << batch->numReadsAssigned << " reads assigned | "
+    std::cout << readsCompleted << " total reads processed | "
+              << batch->sequences.size() << " reads processed | "
+              << batch->numReadsAssigned << " reads assigned and written to fastq file | "
               << batch->readProcessingTime << " seconds (read processing) | "
               << batch->scoringTime << " seconds (scoring) | "
-              << batch->assigningTime << " seconds (assigning)\n";
+              << batch->assigningTime << " seconds (assigning) | "
+              << batch->postProcessingTime << " seconds (post-processing)\n";
     // collect results ...
     delete batch;
   })
-  
   );
+
+  for (auto& [node, readIndices] : allAssignedReadsByNode) {
+    assignedReadsOut << node->identifier;
+    for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+      assignedReadsOut << "," << identicalNodeId;
+    }
+
+    std::sort(readIndices.begin(), readIndices.end());
+    assignedReadsOut << "\t" << readIndices.size() << "\t";
+
+    for (size_t i = 0; i < readIndices.size(); ++i) {
+      assignedReadsOut << readIndices[i];
+      if (i != readIndices.size() - 1) {
+        assignedReadsOut << ",";
+      }
+    }
+    assignedReadsOut << "\n";
+  }
+  assignedReadsOut.close();
 
 
   kseq_destroy(seq1);
@@ -893,6 +896,8 @@ void filterAndAssignBatch(
     fclose(fp2);
   }
   assignedReadsFastq.close();
+  std::cout << totalFastqReadsWritten << " reads written to fastq file" << std::endl;
+  assignedReadsOut.close();
 }
 
 
