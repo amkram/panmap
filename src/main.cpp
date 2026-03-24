@@ -869,7 +869,7 @@ void filterAndAssignBatch(
     return batch;
   }) &
 
-  tbb::make_filter<Batch*, void>(tbb::filter::serial_in_order, [&](Batch* batch) {
+  tbb::make_filter<Batch*, void>(tbb::filter::serial_out_of_order, [&](Batch* batch) {
     auto startPostProcessing = std::chrono::high_resolution_clock::now();
     readsCompleted += batch->sequences.size();
     totalReadsUnmapped += batch->numReadsUnmapped;
@@ -1060,6 +1060,7 @@ int main(int argc, char *argv[]) {
         ("discard", po::value<double>()->default_value(0), "Discard reads with maximum parsimony score < FLOAT * read_total_seed ")
         ("mask-read-ends", po::value<uint32_t>()->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
         ("filter-and-assign", "Filter and assign reads to nodes without running EM")
+        ("batch-files-path", po::value<std::string>(), "Path to tsv file containg batch file paths")
         ("batch-size", po::value<size_t>()->default_value(1000000), "Batch size for filtering and assigning reads")
         ("taxonomic-metadata", po::value<std::string>(), "Path to taxonomic metadata TSV file")
         ("maximum-families", po::value<size_t>()->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided")
@@ -1458,8 +1459,8 @@ int main(int argc, char *argv[]) {
     }
 
 
-
-    if (vm.count("mgsr-index") && !reads1.empty()) {
+    std::string batchFilesPath = vm.count("batch-files-path") ? vm["batch-files-path"].as<std::string>() : ""; 
+    if (vm.count("mgsr-index") && (!reads1.empty() || !batchFilesPath.empty())) {
       std::string mgsr_index_path = vm["mgsr-index"].as<std::string>();
       std::string taxonomicMetadataPath = vm.count("taxonomic-metadata") ? vm["taxonomic-metadata"].as<std::string>() : "";
       size_t maximumFamilies = taxonomicMetadataPath == "" ? 0 : vm["maximum-families"].as<size_t>();
@@ -1527,11 +1528,66 @@ int main(int argc, char *argv[]) {
         double ambiguousScoreThresholdRatio = vm["ambiguous-score-threshold-ratio"].as<double>();
         bool breadthRatio = vm.count("breadth-ratio") > 0;
 
-        filterAndAssignBatch(
-          threadsManager, liteTree, reads1, reads2,
-          dust_threshold, discard_threshold, maskReadsEnds,
-          ambiguousScoreThreshold, ambiguousScoreThresholdRatio,
-          maximumFamilies, breadthRatio, batchSize, prefix);
+        if (!reads1.empty()) {
+          filterAndAssignBatch(
+            threadsManager, liteTree, reads1, reads2,
+            dust_threshold, discard_threshold, maskReadsEnds,
+            ambiguousScoreThreshold, ambiguousScoreThresholdRatio,
+            maximumFamilies, breadthRatio, batchSize, prefix);
+        } else if (!batchFilesPath.empty()) {
+          validateInputFile(batchFilesPath, "batch files TSV");
+          std::ifstream batchIn(batchFilesPath);
+          if (!batchIn.is_open()) {
+            logging::err("Cannot open batch files TSV: {}", batchFilesPath);
+            exit(1);
+          }
+          std::string line;
+          size_t lineNum = 0;
+          while (std::getline(batchIn, line)) {
+            ++lineNum;
+            boost::trim(line);
+            if (line.empty() || line[0] == '#') {
+              continue;
+            }
+            std::vector<std::string> cols;
+            boost::split(cols, line, boost::is_any_of("\t"), boost::token_compress_on);
+            for (auto &c : cols) {
+              boost::trim(c);
+            }
+            while (!cols.empty() && cols.back().empty()) {
+              cols.pop_back();
+            }
+            if (cols.size() == 2) {
+              const std::string &rowReads1 = cols[0];
+              const std::string &rowPrefix = cols[1];
+              validateInputFile(rowReads1, "reads1 (batch TSV)");
+              logging::info("filter-and-assign batch line {}: reads1={}, prefix={}",
+                            lineNum, rowReads1, rowPrefix);
+              filterAndAssignBatch(
+                  threadsManager, liteTree, rowReads1, "",
+                  dust_threshold, discard_threshold, maskReadsEnds,
+                  ambiguousScoreThreshold, ambiguousScoreThresholdRatio,
+                  maximumFamilies, breadthRatio, batchSize, rowPrefix);
+            } else if (cols.size() == 3) {
+              const std::string &rowReads1 = cols[0];
+              const std::string &rowReads2 = cols[1];
+              const std::string &rowPrefix = cols[2];
+              validateInputFile(rowReads1, "reads1 (batch TSV)");
+              validateInputFile(rowReads2, "reads2 (batch TSV)");
+              logging::info("filter-and-assign batch line {}: reads1={}, reads2={}, prefix={}",
+                            lineNum, rowReads1, rowReads2, rowPrefix);
+              filterAndAssignBatch(
+                  threadsManager, liteTree, rowReads1, rowReads2,
+                  dust_threshold, discard_threshold, maskReadsEnds,
+                  ambiguousScoreThreshold, ambiguousScoreThresholdRatio,
+                  maximumFamilies, breadthRatio, batchSize, rowPrefix);
+            } else {
+              logging::err("Batch TSV {} line {}: expected 2 or 3 tab-separated columns, got {}",
+                           batchFilesPath, lineNum, cols.size());
+              exit(1);
+            }
+          }
+        }
         
         exit(0);
       }
