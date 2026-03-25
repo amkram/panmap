@@ -9,6 +9,7 @@
 #include <tbb/parallel_sort.h>
 #include <tbb/parallel_for.h>
 #include <tbb/global_control.h>
+#include <tbb/enumerable_thread_specific.h>
 #include <random>
 #include <numeric>
 #include <algorithm>
@@ -840,18 +841,26 @@ void mgsr::MgsrLiteTree::initialize(
 
   size_t seedInfos_chunkSize = (seedHashesReader.size() + numThreads - 1) / numThreads;
   std::cerr << "Start to read in seedInfos" << std::endl;
+  tbb::enumerable_thread_specific<std::unordered_set<size_t>> localRefSeedHashSets;
   tbb::parallel_for(tbb::blocked_range<size_t>(0, seedHashesReader.size(), seedInfos_chunkSize),
     [&](const tbb::blocked_range<size_t>& range) {
+      auto& localRefSeedHashSet = localRefSeedHashSets.local();
       for (size_t i = range.begin(); i < range.end(); i++) {
         auto& seed = seedInfos[i];
         seed.hash = seedHashesReader[i];
         seed.isReverse = seedIsReverseReader[i];
+        localRefSeedHashSet.insert(seed.hash);
         if (seedStartPosReader.size() > 0) {
           seed.startPos = seedStartPosReader[i];
           seed.endPos = seedEndPosReader[i];
         }
       }
     }, tbb::simple_partitioner());
+  refSeedHashSet.reserve(seedHashesReader.size());
+  for (auto& local : localRefSeedHashSets) {
+    refSeedHashSet.merge(local);
+  }
+
   std::cerr << "Successfully read in seedInfos, size: " << seedInfos.size() << std::endl;
 
   seedDeltas.resize(perNodeChangesReader.size());

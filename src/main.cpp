@@ -139,6 +139,7 @@ struct Config {
     double ambiguousScoreThresholdRatio = 0.0;
     int ambiguousScoreThreshold = 0;
     bool breadthRatio = false;
+    bool pseudochain = false;
     std::string batchFilesPath;
     size_t batchSize = 1000000;
     
@@ -1293,9 +1294,12 @@ void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& thread
       curThreadPlacer.setAllSeedmerHashesSet(threadsManager.allSeedmerHashesSet);
       
       curThreadPlacer.setProgressTracker(&progressTracker, i);
-      // curThreadPlacer.placeReads();
+      if (cfg.pseudochain) {
+        curThreadPlacer.placeReads();
+      } else {
+        curThreadPlacer.placeReads();
+      }
 
-      curThreadPlacer.scoreReads();
 
       if (i == 0) {
         threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
@@ -2637,11 +2641,12 @@ int main(int argc, char** argv) {
         ("discard", po::value<double>(&cfg.discard)->default_value(0.0), "Discard reads with maximum parsimony score < FLOAT * read_total_seed (default 0, i.e. no discard)")
         ("mask-read-ends", po::value<uint32_t>(&cfg.maskReadEnds)->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
         ("taxonomic-metadata", po::value<std::string>(&cfg.taxonomicMetadata), "Path to taxonomic metadata TSV file")
-        ("maximum-families", po::value<size_t>(&cfg.maximumFamilies)->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided");
-        ("ambiguous-score-threshold-ratio", po::value<double>(&cfg.ambiguousScoreThresholdRatio)->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families");
-        ("ambiguous-score-threshold", po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families");
-        ("breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio");
-        ("batch-files-path", po::value<std::string>(&cfg.batchFilesPath), "Path to tsv file containg batch file paths");
+        ("maximum-families", po::value<size_t>(&cfg.maximumFamilies)->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided")
+        ("ambiguous-score-threshold-ratio", po::value<double>(&cfg.ambiguousScoreThresholdRatio)->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families")
+        ("ambiguous-score-threshold", po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families")
+        ("breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")
+        ("pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")
+        ("batch-files-path", po::value<std::string>(&cfg.batchFilesPath), "Path to tsv file containg batch file paths")
         ("batch-size", po::value<size_t>(&cfg.batchSize)->default_value(1000000), "Batch size for filtering and assigning reads");
 
     po::options_description developer("Developer");
