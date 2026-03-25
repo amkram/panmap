@@ -12,6 +12,7 @@
 #include <boost/algorithm/string.hpp>
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
+#include <tbb/tbb.h>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -135,7 +136,11 @@ struct Config {
     uint32_t maskReadEnds = 0;
     std::string taxonomicMetadata;
     size_t maximumFamilies = 1;
-    
+    double ambiguousScoreThresholdRatio = 0.0;
+    int ambiguousScoreThreshold = 0;
+    bool breadthRatio = false;
+    std::string batchFilesPath;
+    size_t batchSize = 1000000;
     
     // Utility modes
     std::string randomSeed;
@@ -1303,6 +1308,506 @@ void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& thread
   std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
 }
 
+bool isFileReadable(const std::string &path) {
+  std::ifstream file(path);
+  return file.good();
+}
+
+
+void validateInputFile(const std::string &path,
+  const std::string &description) {
+if (path.empty())
+throw std::runtime_error(description + " path is empty");
+if (!fs::exists(path))
+throw std::runtime_error(description + " not found: " + path);
+if (!isFileReadable(path))
+throw std::runtime_error("Cannot read " + description + ": " + path);
+}
+
+static bool isGzipped(const std::string& path) {
+  if (path.size() >= 3 && path.compare(path.size() - 3, 3, ".gz") == 0)
+    return true;
+  unsigned char buf[2] = {0, 0};
+  std::ifstream f(path, std::ios::binary);
+  if (f.read(reinterpret_cast<char*>(buf), 2))
+    return buf[0] == 0x1f && buf[1] == 0x8b;
+  return false;
+}
+
+
+struct FastqFile {
+  FILE* fp;
+  bool isPopen;
+
+  FastqFile(const std::string& path) : fp(nullptr), isPopen(false) {
+    if (isGzipped(path)) {
+      std::string cmd = "gzip -dc '" + path + "'";
+      fp = popen(cmd.c_str(), "r");
+      isPopen = true;
+    } else {
+      fp = fopen(path.c_str(), "r");
+      isPopen = false;
+    }
+    if (!fp)
+      throw std::runtime_error("Failed to open FASTQ file: " + path);
+  }
+
+  ~FastqFile() {
+    if (fp) {
+      if (isPopen) pclose(fp);
+      else fclose(fp);
+    }
+  }
+
+  FastqFile(const FastqFile&) = delete;
+  FastqFile& operator=(const FastqFile&) = delete;
+};
+
+void filterAndAssignBatch(
+  mgsr::ThreadsManager &threadsManager, mgsr::MgsrLiteTree &T,
+  const std::string& readPath1, const std::string& readPath2,
+  double dustThreshold, double discardThreshold, uint32_t maskReadsEnds,
+  int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio,
+  size_t maximumFamilies, double breadthRatio,
+  size_t batchSize, const std::string& prefix
+) {
+  size_t maxLiveTokens = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism) + 2;
+  FastqFile fq1(readPath1);
+  kseq_t *seq1 = kseq_init(fileno(fq1.fp));
+
+  std::unique_ptr<FastqFile> fq2;
+  kseq_t *seq2 = nullptr;
+  bool pairedEnd = !readPath2.empty();
+  if (pairedEnd) {
+    fq2 = std::make_unique<FastqFile>(readPath2);
+    seq2 = kseq_init(fileno(fq2->fp));
+  }
+  std::ofstream assignedReadsFastq(prefix + ".mgsr.assignedReads.fastq");
+  if (!assignedReadsFastq.is_open()) {
+    logging::err("Failed to open assigned reads fastq file: {}", prefix + ".mgsr.assignedReads.fastq");
+    return;
+  }
+
+  std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
+  if (!assignedReadsOut.is_open()) {
+    logging::err("Failed to open assigned reads output file: {}", prefix + ".mgsr.assignedReads.out");
+    return;
+  }
+
+  std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> allAssignedReadsByNode;
+
+  struct Batch {
+    size_t batchIndex;
+    std::vector<std::string> sequences;
+    std::vector<std::string> names;
+    std::vector<std::string> quals;
+    std::vector<mgsr::Read> reads;
+    std::vector<std::vector<size_t>> readDuplicatesIndex;
+    
+    std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
+    size_t numReadsAssigned;
+
+    size_t numReadsUnmapped;
+    size_t numReadsDiscarded;
+    size_t numReadsOverMaximumFamilies;
+
+    double readProcessingTime;
+    double scoringTime;
+    double assigningTime;
+    double postProcessingTime;
+  };
+
+  size_t batchesCompleted = 0;
+  size_t readsCompleted = 0;
+  size_t totalReadsUnmapped = 0;
+  size_t totalReadsDiscarded = 0;
+  size_t totalFastqReadsWritten = 0;
+
+  size_t batchIndex = 0;
+  tbb::parallel_pipeline(
+    maxLiveTokens,
+    tbb::make_filter<void, Batch*>(tbb::filter::serial_in_order, [&](tbb::flow_control& fc) -> Batch* {
+      Batch* batch = new Batch();
+      batch->batchIndex = batchIndex++;
+      batch->sequences.reserve(batchSize + 1);
+      batch->names.reserve(batchSize + 1);
+      batch->quals.reserve(batchSize + 1);
+      int l1;
+      if (pairedEnd) {
+        int l2;
+        while ((l1 = kseq_read(seq1)) >= 0 && (l2 = kseq_read(seq2)) >= 0) {
+          batch->sequences.emplace_back(seq1->seq.s);
+          batch->names.emplace_back(seq1->name.s);
+          batch->quals.emplace_back(seq1->qual.s);
+          batch->sequences.emplace_back(seq2->seq.s);
+          batch->names.emplace_back(seq2->name.s);
+          batch->quals.emplace_back(seq2->qual.s);
+          if (batch->sequences.size() >= batchSize) break;
+        }
+      } else {
+        while ((l1 = kseq_read(seq1)) >= 0) {
+          batch->sequences.emplace_back(seq1->seq.s);
+          batch->names.emplace_back(seq1->name.s);
+          batch->quals.emplace_back(seq1->qual.s);
+          if (batch->sequences.size() >= batchSize) break;
+        }
+      }
+      if (batch->sequences.empty()) {
+        delete batch;
+        fc.stop();
+        return nullptr;
+      }
+      batch->sequences.shrink_to_fit();
+      batch->names.shrink_to_fit();
+      batch->quals.shrink_to_fit();
+      return batch;
+    }) &
+
+  tbb::make_filter<Batch*, Batch*>(tbb::filter::parallel, [&](Batch* batch) -> Batch* {
+    mgsr::mgsrPlacer placer(&T, threadsManager, false, 0);
+    placer.readScoreDeltasBatch.resize(T.getNumActiveNodes());
+
+    auto startReadProcessing = std::chrono::high_resolution_clock::now();
+    placer.initializeQueryDataBatch(batch->sequences, batch->reads, batch->readDuplicatesIndex, dustThreshold, discardThreshold, maskReadsEnds);
+    auto endReadProcessing = std::chrono::high_resolution_clock::now();
+
+    auto startScoring = std::chrono::high_resolution_clock::now();
+    placer.scoreReadsBatch(discardThreshold);
+    auto endScoring = std::chrono::high_resolution_clock::now();
+
+    size_t& numDiscarded = batch->numReadsDiscarded;
+    size_t& numUnmapped = batch->numReadsUnmapped;
+    for (size_t i = 0; i < batch->reads.size(); ++i) {
+      auto& read = batch->reads[i];
+      if (read.maxScore == 0) {
+        numUnmapped += batch->readDuplicatesIndex[i].size();
+      } else if (read.maxScore < read.discardThreshold) {
+        read.maxScore = 0;
+        numDiscarded += batch->readDuplicatesIndex[i].size();
+      }
+    }
+    auto startAssigning = std::chrono::high_resolution_clock::now();
+    placer.assignReadsBatch(batch->assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+
+
+    auto endAssigning = std::chrono::high_resolution_clock::now();
+
+    batch->readProcessingTime = std::chrono::duration<double>(endReadProcessing - startReadProcessing).count();
+    batch->scoringTime = std::chrono::duration<double>(endScoring - startScoring).count();
+    batch->assigningTime = std::chrono::duration<double>(endAssigning - startAssigning).count();
+    return batch;
+  }) &
+
+  tbb::make_filter<Batch*, void>(tbb::filter::serial_out_of_order, [&](Batch* batch) {
+    auto startPostProcessing = std::chrono::high_resolution_clock::now();
+    readsCompleted += batch->sequences.size();
+    totalReadsUnmapped += batch->numReadsUnmapped;
+    totalReadsDiscarded += batch->numReadsDiscarded;
+    ++batchesCompleted;
+
+
+    std::unordered_map<size_t, size_t> batchReadIndexToFastqIndex;
+    for (auto& [node, uniqueReads] : batch->assignedReadsByNode) {
+      for (size_t uniqueReadIndex : uniqueReads) {
+        for (size_t readIndex : batch->readDuplicatesIndex[uniqueReadIndex]) {
+          auto [it, inserted] = batchReadIndexToFastqIndex.emplace(readIndex, totalFastqReadsWritten);
+          if (inserted) {
+            assignedReadsFastq << "@" << batch->names[readIndex] << "\n";
+            assignedReadsFastq << batch->sequences[readIndex] << "\n";
+            assignedReadsFastq << "+\n";
+            assignedReadsFastq << batch->quals[readIndex] << "\n";
+            totalFastqReadsWritten++;
+          }
+          allAssignedReadsByNode[node].push_back(it->second);
+        }
+      }
+    }
+    batch->numReadsAssigned = batchReadIndexToFastqIndex.size();
+    auto endPostProcessing = std::chrono::high_resolution_clock::now();
+    batch->postProcessingTime = std::chrono::duration<double>(endPostProcessing - startPostProcessing).count();
+
+    std::cout << readsCompleted << " total reads processed | "
+              << batch->sequences.size() << " reads processed | "
+              << batch->numReadsAssigned << " reads assigned and written to fastq file | "
+              << batch->numReadsUnmapped << " reads unmapped | "
+              << batch->numReadsDiscarded << " reads discarded | "
+              << batch->numReadsOverMaximumFamilies << " reads over maximum families | "
+              << batch->readProcessingTime << " seconds (read processing) | "
+              << batch->scoringTime << " seconds (scoring) | "
+              << batch->assigningTime << " seconds (assigning) | "
+              << batch->postProcessingTime << " seconds (post-processing)\n";
+    // collect results ...
+    delete batch;
+  })
+  );
+
+  kseq_destroy(seq1);
+  if (pairedEnd) {
+    kseq_destroy(seq2);
+  }
+  assignedReadsFastq.close();
+
+  for (auto& [node, readIndices] : allAssignedReadsByNode) {
+    assignedReadsOut << node->identifier;
+    for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+      assignedReadsOut << "," << identicalNodeId;
+    }
+
+    std::sort(readIndices.begin(), readIndices.end());
+    assignedReadsOut << "\t" << readIndices.size() << "\t";
+
+    for (size_t i = 0; i < readIndices.size(); ++i) {
+      assignedReadsOut << readIndices[i];
+      if (i != readIndices.size() - 1) {
+        assignedReadsOut << ",";
+      }
+    }
+    assignedReadsOut << "\n";
+  }
+  assignedReadsOut.close();
+  std::cout << totalFastqReadsWritten << " reads written to fastq file" << std::endl;
+
+  // Calculate breadth from assigned reads
+  if (breadthRatio) {
+    std::cout << "Calculating breadth ratio from assigned reads..." << std::endl;
+    FILE *fpAssigned = fopen(std::string(prefix + ".mgsr.assignedReads.fastq").c_str(), "r");
+    kseq_t *seqAssigned = kseq_init(fileno(fpAssigned));
+    std::vector<std::string> assignedReads;
+    assignedReads.reserve(totalFastqReadsWritten);
+    int l;
+    while ((l = kseq_read(seqAssigned)) >= 0) {
+      assignedReads.emplace_back(seqAssigned->seq.s);
+    }
+    kseq_destroy(seqAssigned);
+    fclose(fpAssigned);
+    std::cout << "Read in " << assignedReads.size() << " assigned reads" << std::endl;
+    if (!assignedReads.empty()) {
+      mgsr::mgsrPlacer placer(&T, threadsManager, false, 0);
+      placer.readScoreDeltasBatch.resize(T.getNumActiveNodes());
+  
+      std::vector<mgsr::Read> reads;
+      std::vector<std::vector<size_t>> readDuplicatesIndex;
+      placer.initializeQueryDataBatch(assignedReads, reads, readDuplicatesIndex, dustThreshold, discardThreshold, maskReadsEnds);
+  
+      placer.scoreReadsBatch(discardThreshold);
+  
+      std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
+      placer.assignReadsBatch(assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+      std::unordered_map<size_t, int64_t> refSeedsCount;
+      std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breadths;
+      placer.calculateBreadthRatio(T.root, refSeedsCount, breadths, assignedReadsByNode);
+  
+      std::ofstream breadthsOut(prefix + ".mgsr.breadths.out");
+      breadthsOut << "NodeId\tTotalRefSeeds\tObservedBreadthCount\tObservedBreadthRatio\tTotalDepth\tMeanDepth\tExpectedBreadthRatio\tObservedToExpectedBreadthRatio" << std::endl;
+      for (const auto& [node, breadthInfo] : breadths) {
+        breadthsOut << node->identifier;
+        for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+          breadthsOut << "," << identicalNodeId;
+        }
+        breadthsOut << "\t" << breadthInfo.totalRefSeeds << "\t" << breadthInfo.observedBreadthCount << "\t" << breadthInfo.observedBreadthRatio << "\t" << breadthInfo.totalDepth << "\t" << breadthInfo.meanDepth << "\t" << breadthInfo.expectedBreadthRatio << "\t" << breadthInfo.observedToExpectedBreadthRatio << std::endl;
+      }
+      breadthsOut.close();
+    } else {
+      std::cout << "No assigned reads found" << std::endl;
+      std::ofstream breadthsOut(prefix + ".mgsr.breadths.out");
+      breadthsOut << "NodeId\tTotalRefSeeds\tObservedBreadthCount\tObservedBreadthRatio\tTotalDepth\tMeanDepth\tExpectedBreadthRatio\tObservedToExpectedBreadthRatio" << std::endl;
+      breadthsOut.close();
+    }
+  }
+}
+
+bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
+  auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
+
+  if (cfg.breadthRatio) {
+    auto start_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
+    T.calculateRefSeedCounts();
+    auto end_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
+    auto duration_calculateRefSeedCounts = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_calculateRefSeedCounts - start_time_calculateRefSeedCounts);
+    std::cout << "Calculated reference seed counts in " << static_cast<double>(duration_calculateRefSeedCounts.count()) / 1000.0 << "s\n" << std::endl;
+  }
+
+  auto start_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+  T.toRefSeedDeltas();
+  auto end_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+  auto duration_toRefSeedDeltas = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_toRefSeedDeltas - start_time_toRefSeedDeltas);
+  std::cout << "Converted to reference seed deltas in " << static_cast<double>(duration_toRefSeedDeltas.count()) / 1000.0 << "s\n" << std::endl;
+
+  if (!cfg.reads1.empty()) {
+    filterAndAssignBatch(
+      threadsManager, T, cfg.reads1, cfg.reads2,
+      cfg.dust, cfg.discard, cfg.maskReadEnds,
+      cfg.ambiguousScoreThreshold, cfg.ambiguousScoreThresholdRatio,
+      cfg.maximumFamilies, cfg.breadthRatio, cfg.batchSize, cfg.output);
+  } else if (!cfg.batchFilesPath.empty()) {
+    validateInputFile(cfg.batchFilesPath, "batch files TSV");
+    std::ifstream batchIn(cfg.batchFilesPath);
+    if (!batchIn.is_open()) {
+      logging::err("Cannot open batch files TSV: {}", cfg.batchFilesPath);
+      exit(1);
+    }
+    std::string line;
+    size_t lineNum = 0;
+    while (std::getline(batchIn, line)) {
+      ++lineNum;
+      boost::trim(line);
+      if (line.empty() || line[0] == '#') {
+        continue;
+      }
+      std::vector<std::string> cols;
+      boost::split(cols, line, boost::is_any_of("\t"), boost::token_compress_on);
+      for (auto &c : cols) {
+        boost::trim(c);
+      }
+      while (!cols.empty() && cols.back().empty()) {
+        cols.pop_back();
+      }
+      if (cols.size() == 2) {
+        const std::string &rowReads1 = cols[0];
+        const std::string &rowPrefix = cols[1];
+        validateInputFile(rowReads1, "reads1 (batch TSV)");
+        logging::info("filter-and-assign batch line {}: reads1={}, prefix={}",
+                      lineNum, rowReads1, rowPrefix);
+        filterAndAssignBatch(
+            threadsManager, T, rowReads1, "",
+            cfg.dust, cfg.discard, cfg.maskReadEnds,
+            cfg.ambiguousScoreThreshold, cfg.ambiguousScoreThresholdRatio,
+            cfg.maximumFamilies, cfg.breadthRatio, cfg.batchSize, rowPrefix);
+      } else if (cols.size() == 3) {
+        const std::string &rowReads1 = cols[0];
+        const std::string &rowReads2 = cols[1];
+        const std::string &rowPrefix = cols[2];
+        validateInputFile(rowReads1, "reads1 (batch TSV)");
+        validateInputFile(rowReads2, "reads2 (batch TSV)");
+        logging::info("filter-and-assign batch line {}: reads1={}, reads2={}, prefix={}",
+                      lineNum, rowReads1, rowReads2, rowPrefix);
+        filterAndAssignBatch(
+            threadsManager, T, rowReads1, rowReads2,
+            cfg.dust, cfg.discard, cfg.maskReadEnds,
+            cfg.ambiguousScoreThreshold, cfg.ambiguousScoreThresholdRatio,
+            cfg.maximumFamilies, cfg.breadthRatio, cfg.batchSize, rowPrefix);
+      } else {
+        logging::err("Batch TSV {} line {}: expected 2 or 3 tab-separated columns, got {}",
+                     cfg.batchFilesPath, lineNum, cols.size());
+        return false;
+      }
+    }
+  }
+  auto end_time_filterAndAssign = std::chrono::high_resolution_clock::now();
+  auto duration_filterAndAssign = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_filterAndAssign - start_time_filterAndAssign);
+  std::cout << "Filter and assign took " << static_cast<double>(duration_filterAndAssign.count()) / 1000.0 << "s\n" << std::endl;
+  return true;
+}
+
+bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
+  auto start_time_deconvolution = std::chrono::high_resolution_clock::now();
+
+  auto start_time_initializeQueryData = std::chrono::high_resolution_clock::now();
+  threadsManager.initializeQueryData(cfg.reads1, cfg.reads2, cfg.ampliconDepth, cfg.dust, cfg.maskReadEnds);
+  auto end_time_initializeQueryData = std::chrono::high_resolution_clock::now();
+  auto duration_initializeQueryData = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_initializeQueryData - start_time_initializeQueryData);
+  std::cout << "Initialize query data took " << static_cast<double>(duration_initializeQueryData.count()) / 1000.0 << "s\n" << std::endl;
+
+  // compute overlap coefficients
+  {
+    bool lowMemory = false;
+    mgsr::mgsrPlacer placer(&T, threadsManager, lowMemory, 0);
+    auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
+    
+    T.fillOCRanks(overlapCoefficients);
+
+    if (cfg.writeOCRanks) {
+      writeOCRanks(cfg.output + ".overlapCoefficients.tsv", overlapCoefficients);
+    }
+  }
+
+  auto start_time_collapseIdenticalScoringNodes = std::chrono::high_resolution_clock::now();
+  T.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
+  auto end_time_collapseIdenticalScoringNodes = std::chrono::high_resolution_clock::now();
+  auto duration_collapseIdenticalScoringNodes = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_collapseIdenticalScoringNodes - start_time_collapseIdenticalScoringNodes);
+  std::cout << "Collapsed identical scoring nodes in " << static_cast<double>(duration_collapseIdenticalScoringNodes.count()) / 1000.0 << "s\n" << std::endl;
+
+  scoreReadsMultiThreaded(T, threadsManager, cfg);
+
+  if (cfg.writeMetaReadScoresUnfiltered) {
+    writeMetaReadScoresUnfiltered(cfg.output + ".read_scores_info.unfiltered.tsv", threadsManager);
+  }
+
+  double discard_threshold = cfg.discard;
+  size_t num_discarded = 0;
+  size_t num_unmapped = 0;
+  for (auto& read : threadsManager.reads) {
+    if (read.maxScore == 0) {
+      ++num_unmapped;
+    } else if (read.maxScore < static_cast<int>(read.seedmersList.size() * discard_threshold)) {
+      read.maxScore = 0;
+      ++num_discarded;
+    }
+  }
+  std::cout << num_unmapped << " reads unmapped... " << std::endl;
+  std::cout << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
+  std::cout << threadsManager.reads.size() - num_unmapped - num_discarded << " reads mapped to nodes..." << std::endl;
+  if (threadsManager.reads.size() - num_unmapped - num_discarded == 0) {
+    std::cerr << "No reads remain for node scoring and EM after discarding low-score reads... Exiting... " << std::endl;
+    return true;
+  }
+
+  T.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
+  mgsr::squareEM squareEM(threadsManager, T, cfg.output, cfg.topOc, cfg.emConvergenceThreshold, cfg.emDeltaThreshold, cfg.emMaximumIterations, false, cfg.emLeavesOnly);
+  
+  auto start_time_squareEM = std::chrono::high_resolution_clock::now();
+
+  for (size_t i = 0; i < cfg.emMaximumRounds; ++i) {
+    squareEM.runSquareEM();
+    std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
+    bool removed = squareEM.removeLowPropNodes();
+    std::cout << squareEM.nodes.size() << std::endl;
+    if (!removed) {
+      break;
+    }
+  }
+  std::cout << std::endl;
+
+  auto end_time_squareEM = std::chrono::high_resolution_clock::now();
+  auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
+  std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
+
+
+  std::vector<uint64_t> indices(squareEM.nodes.size());
+  std::iota(indices.begin(), indices.end(), 0);
+  std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
+    return squareEM.props[i] > squareEM.props[j];
+  });
+
+  std::cout << "writing abundance file: " << cfg.output + ".mgsr.abundance.out" << std::endl;
+  std::ofstream abundanceOutput(cfg.output + ".mgsr.abundance.out");
+  abundanceOutput << std::setprecision(5) << std::fixed;
+  for (size_t i = 0; i < indices.size(); ++i) {
+    size_t index = indices[i];
+    abundanceOutput << squareEM.nodes[index];
+    for (const auto& member : T.allLiteNodes.at(squareEM.nodes[index])->identicalNodeIdentifiers) {
+      abundanceOutput << "," << member;
+    }
+    if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
+      for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
+        abundanceOutput << "," << member;
+        for (const auto& identicalMember : T.allLiteNodes.at(member)->identicalNodeIdentifiers) {
+          abundanceOutput << "," << identicalMember;
+        }
+      }
+    }
+    abundanceOutput << "\t" << squareEM.props[index] << std::endl;
+  }
+  abundanceOutput.close();
+
+
+  if (cfg.writeMetaReadScoresFiltered) {
+    writeMetaReadScoresFiltered(cfg.output + ".read_scores_info.filtered.tsv", threadsManager);
+  }
+
+  return true;
+}
+
 bool runMetagenomic(const Config& cfg) {
   std::cout << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads << std::endl;
 
@@ -1325,6 +1830,16 @@ bool runMetagenomic(const Config& cfg) {
 
   if (!cfg.reads2.empty() && !fs::exists(cfg.reads2)) {
     std::cerr << "Error: Reads2 file " << cfg.reads2 << " does not exist" << std::endl;
+    return false;
+  }
+
+  if (cfg.dust > 100.0) {
+    std::cerr << "Error: --dust must be <= 100" << std::endl;
+    return false;
+  }
+
+  if (cfg.discard < 0.0 || cfg.discard > 1.0) {
+    std::cerr << "Error: --discard must be between 0 and 1" << std::endl;
     return false;
   }
   
@@ -1356,187 +1871,26 @@ bool runMetagenomic(const Config& cfg) {
   LiteIndex::Reader indexReader = baseReader->getRoot<LiteIndex>();
 
   bool lowMemory = false;
-
-
+  // initialize tree
   mgsr::MgsrLiteTree T;
   T.initialize(indexReader, cfg.taxonomicMetadata, cfg.taxonomicMetadata.empty() ? 0 : cfg.maximumFamilies, cfg.threads, lowMemory, true);
 
+  // initialize threads manager
   mgsr::ThreadsManager threadsManager(&T, cfg.output, cfg.threads, cfg.maskSeeds, cfg.maskReads, cfg.maskSeedsRelativeFrequency, cfg.maskReadsRelativeFrequency, !cfg.noProgress, lowMemory);
   threadsManager.initializeMGSRIndex(T.k, T.s, T.t, T.l, T.openSyncmer);
 
-  threadsManager.initializeQueryData(cfg.reads1, cfg.reads2, cfg.ampliconDepth, cfg.dust, cfg.maskReadEnds);
-
-  if (!cfg.filterAndAssign) {
-    mgsr::mgsrPlacer placer(&T, threadsManager, lowMemory, 0);
-    auto overlapCoefficients = placer.computeOverlapCoefficients(threadsManager.allSeedmerHashesSet);
-    
-    T.fillOCRanks(overlapCoefficients);
-
-    if (cfg.writeOCRanks) {
-      writeOCRanks(cfg.output + ".overlapCoefficients.tsv", overlapCoefficients);
-    }
-  }
-  
-  T.collapseIdenticalScoringNodes(threadsManager.allSeedmerHashesSet);
-
-  scoreReadsMultiThreaded(T, threadsManager, cfg);
-
-  if (cfg.writeMetaReadScoresUnfiltered) {
-    writeMetaReadScoresUnfiltered(cfg.output + ".read_scores_info.unfiltered.tsv", threadsManager);
-  }
-
-  double discard_threshold = cfg.discard;
-  size_t num_discarded = 0;
-  size_t num_unmapped = 0;
-  for (auto& read : threadsManager.reads) {
-    if (read.maxScore == 0) {
-      ++num_unmapped;
-    } else if (read.maxScore < static_cast<int>(read.seedmersList.size() * discard_threshold)) {
-      read.maxScore = 0;
-      ++num_discarded;
-    }
-  }
-  std::cout << num_unmapped << " reads unmapped... " << std::endl;
-  std::cout << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
-  std::cout << threadsManager.reads.size() - num_unmapped - num_discarded << " reads mapped to nodes..." << std::endl;
-  if (threadsManager.reads.size() - num_unmapped - num_discarded == 0) {
-    std::cerr << "No reads remain for node scoring and EM after discarding low-score reads... Exiting... " << std::endl;
-    return true;
-  }
-
-
-
+  // filterAndAssign
   if (cfg.filterAndAssign) {
-    // Remove score updates of unmapped reads
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, threadsManager.threadRanges.size()), [&](const tbb::blocked_range<size_t>& rangeIndex){
-      for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
-        auto [start, end] = threadsManager.threadRanges[i];
-        std::span<mgsr::Read> curThreadReads(threadsManager.reads.data() + start, end - start);
-
-        for (auto [_, node] : T.allLiteNodes) {
-          auto& curThreadNodeScoreDeltas = node->readScoreDeltas[i];
-          curThreadNodeScoreDeltas.erase(
-            std::remove_if(curThreadNodeScoreDeltas.begin(), curThreadNodeScoreDeltas.end(),
-              [&curThreadReads](const mgsr::readScoreDelta& delta) {
-                return curThreadReads[delta.readIndex].maxScore == 0;
-              }),
-            curThreadNodeScoreDeltas.end()
-          );
-        }
-      }
-    });
-
-    std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
-    threadsManager.assignReads(assignedReadsByNode, cfg.maximumFamilies);
-
-    std::ofstream assignedReadsOut(cfg.output + ".mgsr.assignedReads.out");
-    for (auto& [node, readIndices] : assignedReadsByNode) {
-      assignedReadsOut << node->identifier;
-      for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
-        assignedReadsOut << "," << identicalNodeId;
-      }
-      assignedReadsOut << "\t" << readIndices.size() << "\t";
-      std::sort(readIndices.begin(), readIndices.end());
-      for (size_t i = 0; i < readIndices.size(); ++i) {
-        assignedReadsOut << readIndices[i];
-        if (i != readIndices.size() - 1) {
-          assignedReadsOut << ",";
-        }
-      }
-      assignedReadsOut << "\n";
+    if (!runFilterAndAssign(T, threadsManager, cfg)) {
+      return false;
     }
-    assignedReadsOut.close();
+    return true; // great success!
   } else {
-    T.seedInfos.clear(); // no longer needed. clear memory to prep for EM.
-    mgsr::squareEM squareEM(threadsManager, T, cfg.output, cfg.topOc, cfg.emConvergenceThreshold, cfg.emDeltaThreshold, cfg.emMaximumIterations, false, cfg.emLeavesOnly);
-    
-    auto start_time_squareEM = std::chrono::high_resolution_clock::now();
-
-    for (size_t i = 0; i < cfg.emMaximumRounds; ++i) {
-      squareEM.runSquareEM();
-      std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size() << " to ";
-      bool removed = squareEM.removeLowPropNodes();
-      std::cout << squareEM.nodes.size() << std::endl;
-      if (!removed) {
-        break;
-      }
+    if (!runDeconvolution(T, threadsManager, cfg)) {
+      return false;
     }
-    std::cout << std::endl;
-
-    auto end_time_squareEM = std::chrono::high_resolution_clock::now();
-    auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
-    std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
-
-
-    std::vector<uint64_t> indices(squareEM.nodes.size());
-    std::iota(indices.begin(), indices.end(), 0);
-    std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
-      return squareEM.props[i] > squareEM.props[j];
-    });
-
-    std::cout << "writing abundance file: " << cfg.output + ".mgsr.abundance.out" << std::endl;
-    std::ofstream abundanceOutput(cfg.output + ".mgsr.abundance.out");
-    abundanceOutput << std::setprecision(5) << std::fixed;
-    for (size_t i = 0; i < indices.size(); ++i) {
-      size_t index = indices[i];
-      abundanceOutput << squareEM.nodes[index];
-      for (const auto& member : T.allLiteNodes.at(squareEM.nodes[index])->identicalNodeIdentifiers) {
-        abundanceOutput << "," << member;
-      }
-      if (squareEM.identicalGroups.find(squareEM.nodes[index]) != squareEM.identicalGroups.end()) {
-        for (const auto& member : squareEM.identicalGroups[squareEM.nodes[index]]) {
-          abundanceOutput << "," << member;
-          for (const auto& identicalMember : T.allLiteNodes.at(member)->identicalNodeIdentifiers) {
-            abundanceOutput << "," << identicalMember;
-          }
-        }
-      }
-      abundanceOutput << "\t" << squareEM.props[index] << std::endl;
-    }
-    abundanceOutput.close();
-
-    std::vector<std::vector<size_t>> assignedReadsIndices(indices.size());
-    std::vector<size_t> readIndexOffset(threadsManager.reads.size(), 0);
-    for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
-      readIndexOffset[i] = i;
-    }
-    for (size_t i = 0; i < indices.size(); ++i) {
-      size_t index = indices[i];
-      const auto& nodeId = squareEM.nodes[index];
-      auto curNodeScores = threadsManager.getScoresAtNode(nodeId, readIndexOffset);
-      for (size_t j = 0; j < curNodeScores.size(); ++j) {
-        const auto& curRead = threadsManager.reads[j];
-        if (curRead.maxScore != 0 && curNodeScores[j] == curRead.maxScore) {
-          for (const auto& rawReadIndex : threadsManager.readSeedmersDuplicatesIndex[j]) {
-            assignedReadsIndices[i].push_back(rawReadIndex);
-          }
-        }
-      }
-      if (assignedReadsIndices[i].size() > 0) {
-        std::sort(assignedReadsIndices[i].begin(), assignedReadsIndices[i].end());
-      }
-    }
-    std::ofstream assignedReadsOutput(cfg.output + ".mgsr.assignedReads.out");
-    for (size_t i = 0; i < indices.size(); ++i) {
-      size_t index = indices[i];
-      assignedReadsOutput << squareEM.nodes[index] << "\t" << assignedReadsIndices[i].size() << "\t";
-      for (size_t j = 0; j < assignedReadsIndices[i].size(); ++j) {
-        if (j == 0) {
-          assignedReadsOutput << assignedReadsIndices[i][j];
-        } else {
-          assignedReadsOutput << "," << assignedReadsIndices[i][j];
-        }
-      }
-      assignedReadsOutput << std::endl;
-    }
-    assignedReadsOutput.close();
+    return true; // great success!
   }
-
-  if (cfg.writeMetaReadScoresFiltered) {
-    writeMetaReadScoresFiltered(cfg.output + ".read_scores_info.filtered.tsv", threadsManager);
-  }
-
-
   
   return true;
 }
@@ -2284,6 +2638,11 @@ int main(int argc, char** argv) {
         ("mask-read-ends", po::value<uint32_t>(&cfg.maskReadEnds)->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
         ("taxonomic-metadata", po::value<std::string>(&cfg.taxonomicMetadata), "Path to taxonomic metadata TSV file")
         ("maximum-families", po::value<size_t>(&cfg.maximumFamilies)->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if taxonomic-metadata is provided");
+        ("ambiguous-score-threshold-ratio", po::value<double>(&cfg.ambiguousScoreThresholdRatio)->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families");
+        ("ambiguous-score-threshold", po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families");
+        ("breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio");
+        ("batch-files-path", po::value<std::string>(&cfg.batchFilesPath), "Path to tsv file containg batch file paths");
+        ("batch-size", po::value<size_t>(&cfg.batchSize)->default_value(1000000), "Batch size for filtering and assigning reads");
 
     po::options_description developer("Developer");
     developer.add_options()

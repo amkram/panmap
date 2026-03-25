@@ -272,6 +272,14 @@ struct refSeedChange {
   uint32_t currentCount;
 };
 
+struct seedCountDelta {
+  size_t seedHash;
+  uint32_t parentCountFwd;
+  uint32_t parentCountRev;
+  uint32_t currentCountFwd;
+  uint32_t currentCountRev;
+};
+
 class MgsrLiteNode {
 public:
   std::string identifier;
@@ -286,6 +294,7 @@ public:
   uint32_t collapsedDfsIndex;
   MgsrLiteNode* nextNodeDfsCollapsed = nullptr;
 
+  size_t totalRefSeeds = 0;
   size_t ocRank = std::numeric_limits<size_t>::max();
 
   std::unordered_set<int> familyIndices;
@@ -322,6 +331,7 @@ public:
   std::vector<std::vector<readScoreDeltaLowMemory>> readScoreDeltasLowMemory;
 
   std::vector<refSeedChange> refSeedChanges;
+  std::vector<seedCountDelta> seedCountDeltas;
   std::vector<std::pair<uint32_t, bool>> seedDeltas;
   std::vector<std::tuple<uint32_t, uint32_t, bool>> gapRunDeltas; 
   std::vector<uint32_t> invertedBlocks;
@@ -380,6 +390,7 @@ public:
   size_t numThreads;
 
   // mutation structures...
+  std::unordered_set<size_t> refSeedHashSet;
   std::vector<seeding::uniqueKminmer_t> seedInfos;
 
   ~MgsrLiteTree() {
@@ -394,6 +405,12 @@ public:
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
   void setCollapsedDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
+
+  void calculateRefSeedCounts();
+  void calculateRefSeedCountsHelper(MgsrLiteNode* node, std::unordered_map<size_t, int64_t>& refSeedCounts);
+
+  void toRefSeedDeltasHelper(MgsrLiteNode* node, std::unordered_map<size_t, std::pair<int32_t, int32_t>>& refSeedCounts);
+  void toRefSeedDeltas();
 
   void fillOCRanks(std::vector<std::pair<std::string, double>>& overlapCoefficients);
   void fillFamilyIndices(size_t maximumFamilies);
@@ -461,6 +478,7 @@ struct EPPNodeRange {
 class Read {
   public:
     std::vector<readSeedmer> seedmersList;
+    uint32_t totalSeedmers = 0;
     std::string seedmerMatches;
     bool seen = false;
     std::vector<SeedmerState> seedmerStates;
@@ -470,6 +488,8 @@ class Read {
     ReadType readType = ReadType::PASS;
     int32_t maxScore = 0;
     bool maxScoreRev;
+    bool keepForFilterAndAssign = false;
+    int32_t discardThreshold = 0;
 
     std::unordered_set<int> familyIndices;
     bool overMaximumFamilies = false;
@@ -614,6 +634,16 @@ struct kminmerCoverageBacktrack {
 struct ModifiedReadInfo {
   int32_t forwardOriginalScore;
   int32_t reverseOriginalScore;
+};
+
+struct breadthInfo {
+  size_t totalRefSeeds;
+  size_t observedBreadthCount;
+  double observedBreadthRatio;
+  size_t totalDepth;
+  double meanDepth;
+  double expectedBreadthRatio;
+  double observedToExpectedBreadthRatio;
 };
 
 
@@ -787,6 +817,8 @@ class mgsrPlacer {
     absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
     absl::flat_hash_set<size_t>* allSeedmerHashesSet;
 
+    std::vector<std::vector<readScoreDelta>> readScoreDeltasBatch;
+
     // current query score index structures
     std::vector<int32_t> readScores;
     std::vector<std::pair<int64_t, int64_t>> kminmerMatches;
@@ -849,6 +881,14 @@ class mgsrPlacer {
     }
     void initializeMGSRIndex(int k, int s, int t, int l, bool openSyncmer);
     void initializeQueryData(std::span<mgsr::Read> reads, bool fast_mode = false);
+    void initializeQueryDataBatch(
+      const std::vector<std::string>& readSequences,
+      std::vector<mgsr::Read>& reads,
+      std::vector<std::vector<size_t>>& readDuplicatesIndex,
+      double dustThreshold,
+      double discardThreshold,
+      uint32_t maskReadsEnds
+    );
     void preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex);
     void setAllSeedmerHashesSet(absl::flat_hash_set<size_t>& allSeedmerHashesSet) { this->allSeedmerHashesSet = &allSeedmerHashesSet; }
 
@@ -873,6 +913,16 @@ class mgsrPlacer {
     void scoreReadsHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode);
     void scoreReads();
 
+
+    void scoreReadsBatchHelper(MgsrLiteNode* node, MgsrLiteNode*& processingNode, double discard_threshold);
+    void scoreReadsBatch(double discard_threshold);
+
+    void calculateBreadthRatio(
+      MgsrLiteNode* node,
+      std::unordered_map<size_t, int64_t>& refSeedsCount,
+      std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>>& breaths,
+      const std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode
+    );
 
     void calculateEppHelper(MgsrLiteNode* node);
     void calculateEpp();
@@ -915,6 +965,14 @@ class mgsrPlacer {
     bool identicalReadScores(const std::string& node1, const std::string& node2, bool fast_mode = false) const;
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
+
+    void assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
+    void assignReadsBatchHelper(
+      mgsr::MgsrLiteNode* node,
+      std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
+      std::unordered_set<size_t>& mpsReadSet
+    );
+    void checkFamilyIndicesBatch(MgsrLiteNode* node, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
 
     void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies);
     void assignReadsHelper(

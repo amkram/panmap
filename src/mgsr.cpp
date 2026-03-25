@@ -1059,6 +1059,139 @@ void mgsr::MgsrLiteTree::initialize(
 
 }
 
+void mgsr::MgsrLiteTree::calculateRefSeedCountsHelper(
+  MgsrLiteNode* node,
+  std::unordered_map<size_t, int64_t>& refSeedsCount
+) {
+  const auto& curSeedDeltas = node->seedDeltas;
+  const auto& seedInfos = this->seedInfos;
+
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+
+    auto [it, inserted] = refSeedsCount.try_emplace(seedHash, 0);
+    if (toDelete) {
+      it->second--;
+    } else {
+      it->second++;
+    }
+
+    if (it->second == 0) {
+      refSeedsCount.erase(it);
+    }
+  }
+
+  node->totalRefSeeds = refSeedsCount.size();
+
+
+  // Recursively calculate breadth ratio for children
+  for (auto child : node->collapsedChildren) {
+    calculateRefSeedCountsHelper(child, refSeedsCount);
+  }
+
+  // backtrack
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+
+    auto [it, inserted] = refSeedsCount.try_emplace(seedHash, 0);
+    if (toDelete) {
+      it->second++;
+    } else {
+      it->second--;
+    }
+
+    if (it->second == 0) {
+      refSeedsCount.erase(it);
+    }
+  }
+
+}
+
+void mgsr::MgsrLiteTree::calculateRefSeedCounts() {
+  std::unordered_map<size_t, int64_t> refSeedCounts;
+  calculateRefSeedCountsHelper(root, refSeedCounts);
+}
+
+void mgsr::MgsrLiteTree::toRefSeedDeltasHelper(
+  MgsrLiteNode* node,
+  std::unordered_map<size_t, std::pair<int32_t, int32_t>>& refSeedCounts
+) {
+  auto& curSeedDeltas = node->seedDeltas;
+  auto& seedCountDeltas = node->seedCountDeltas;
+  const auto& seedInfos = this->seedInfos;
+
+  std::unordered_map<size_t, std::pair<int32_t, int32_t>> parSeedCounts;
+  for (const auto& [seedIndex, toDelete] : curSeedDeltas) {
+    const size_t seedHash = seedInfos[seedIndex].hash;
+    const bool    seedRev = seedInfos[seedIndex].isReverse;
+    
+    auto [parSeedCountsIt, parSeedCountsInserted] = parSeedCounts.try_emplace(seedHash, 0, 0);
+    auto [refSeedCountsIt, refSeedCountsInserted] = refSeedCounts.try_emplace(seedHash, 0, 0);
+    if (parSeedCountsInserted && !refSeedCountsInserted) {
+      parSeedCountsIt->second.first = refSeedCountsIt->second.first;
+      parSeedCountsIt->second.second = refSeedCountsIt->second.second;
+    }
+
+    if (toDelete) {
+      if (seedRev) {
+        --refSeedCountsIt->second.second;
+      } else {
+        --refSeedCountsIt->second.first;
+      }
+    } else {
+      if (seedRev) {
+        ++refSeedCountsIt->second.second;
+      } else {
+        ++refSeedCountsIt->second.first;
+      }
+    }
+  }
+
+  seedCountDeltas.reserve(parSeedCounts.size());
+  for (const auto [seedHash, parSeedCount] : parSeedCounts) {
+    auto refSeedCountsIt = refSeedCounts.find(seedHash);
+    
+    if (refSeedCountsIt == refSeedCounts.end()) {
+      std::cerr << "Error: seed hash " << seedHash << " not found in refSeedCounts!" << std::endl;
+      exit(1);
+    }
+
+    auto& [currentCountFwd, currentCountRev] = refSeedCountsIt->second;
+
+    if (currentCountFwd < 0 || currentCountRev < 0) {
+      std::cerr << "Error: refSeedCountsIt->second.first < 0 || refSeedCountsIt->second.second < 0!" << std::endl;
+      exit(1);
+    }
+
+    seedCountDeltas.emplace_back(seedHash, parSeedCount.first, parSeedCount.second, currentCountFwd, currentCountRev);
+
+    if (currentCountFwd == 0 && currentCountRev == 0) {
+      refSeedCounts.erase(refSeedCountsIt);
+    }
+  }
+
+  curSeedDeltas = {};
+  parSeedCounts = {};
+
+  for (MgsrLiteNode* child : node->children) {
+    toRefSeedDeltasHelper(child, refSeedCounts);
+  }
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : seedCountDeltas) {
+    if (parentCountFwd == 0 && parentCountRev == 0) {
+      refSeedCounts.erase(seedHash);
+    } else {
+      refSeedCounts[seedHash] = {parentCountFwd, parentCountRev};
+    }
+  }
+
+}
+
+void mgsr::MgsrLiteTree::toRefSeedDeltas() {
+  std::unordered_map<size_t, std::pair<int32_t, int32_t>> refSeedCounts;
+  toRefSeedDeltasHelper(root, refSeedCounts);
+}
+
 void mgsr::MgsrLiteTree::collapseNode(mgsr::MgsrLiteNode* node) {
   if (node == root) return;
   auto& parent = node->collapsedParent;
@@ -2001,6 +2134,204 @@ double mgsr::getDust(const std::string& seq, int windowSize) {
   } else {
     return 0.0;
   }
+}
+
+void mgsr::mgsrPlacer::initializeQueryDataBatch(
+  const std::vector<std::string>& readSequences,
+  std::vector<mgsr::Read>& reads,
+  std::vector<std::vector<size_t>>& readDuplicatesIndex,
+  double dustThreshold,
+  double discardThreshold,
+  uint32_t maskReadsEnds
+) {
+  const auto& refSeedHashSet = liteTree->refSeedHashSet;
+
+  std::vector<double> readDust;
+  if (dustThreshold < 100) {
+    readDust.resize(readSequences.size());
+    for (size_t i = 0; i < readSequences.size(); ++i) {
+      readDust[i] = mgsr::getDust(readSequences[i], 64);
+    }
+  }
+
+  // Build directly as vector of pairs, skipping intermediate unordered_map.
+  // Use a flat hash map (unordered_map with string_view) to track insertion
+  // order into seqToIndexVec, then discard it.
+  std::vector<std::pair<std::string_view, std::vector<size_t>>> seqToIndexVec;
+  {
+    std::unordered_map<std::string_view, size_t> seqToVecPos;
+    seqToVecPos.reserve(readSequences.size());
+    for (size_t i = 0; i < readSequences.size(); ++i) {
+      double curDust = dustThreshold < 100 ? readDust[i] : 0.0;
+      if (curDust != 0 && curDust > dustThreshold) continue;
+      auto [it, inserted] = seqToVecPos.try_emplace(readSequences[i], seqToIndexVec.size());
+      if (inserted) seqToIndexVec.emplace_back(readSequences[i], std::vector<size_t>{});
+      seqToIndexVec[it->second].second.push_back(i);
+    }
+  }
+
+  std::vector<mgsr::Read> uniqueReads(seqToIndexVec.size());
+  for (size_t i = 0; i < seqToIndexVec.size(); ++i) {
+    const auto& seq = seqToIndexVec[i].first;
+    mgsr::Read& curRead = uniqueReads[i];
+    const auto& syncmers = seeding::rollingSyncmers(seq, k, s, openSyncmer, t, false);
+    curRead.seedmersList.reserve(syncmers.size());
+    if (syncmers.size() < l) continue;
+
+    size_t forwardRolledHash = 0;
+    size_t reverseRolledHash = 0;
+
+    if (l == 1) {
+      if (std::get<1>(syncmers[0])) {
+        reverseRolledHash = std::get<0>(syncmers[0]);
+        forwardRolledHash = std::numeric_limits<size_t>::max();
+      } else {
+        forwardRolledHash = std::get<0>(syncmers[0]);
+        reverseRolledHash = std::numeric_limits<size_t>::max();
+      }
+    } else {
+      for (size_t j = 0; j < l; ++j) {
+        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmers[j]);
+        reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmers[l-j-1]);
+      }
+    }
+
+    uint32_t iorder = 0;
+    if (forwardRolledHash != reverseRolledHash) {
+      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+      if (refSeedHashSet.count(minHash)) {
+        // try_emplace avoids double-lookup: inserts and returns iterator in one shot
+        curRead.uniqueSeedmers.try_emplace(minHash, std::vector<uint32_t>{iorder});
+        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+          minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1,
+          reverseRolledHash < forwardRolledHash, iorder});
+        ++iorder;
+      }
+      ++curRead.totalSeedmers;
+    }
+
+    for (size_t j = 1; j + l <= syncmers.size(); ++j) {
+      if (l == 1) {
+        if (std::get<1>(syncmers[j])) {
+          reverseRolledHash = std::get<0>(syncmers[j]);
+          forwardRolledHash = std::numeric_limits<size_t>::max();
+        } else {
+          forwardRolledHash = std::get<0>(syncmers[j]);
+          reverseRolledHash = std::numeric_limits<size_t>::max();
+        }
+        if (forwardRolledHash == reverseRolledHash) {
+          std::cerr << "Error: palindromic syncmers returned during query sketching..." << std::endl;
+          exit(1);
+        }
+      } else {
+        const size_t prevHash = std::get<0>(syncmers[j-1]);
+        const size_t nextHash = std::get<0>(syncmers[j+l-1]);
+        forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevHash, k * l) ^ nextHash;
+        reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevHash, k) ^ seeding::rol(nextHash, k * (l-1));
+      }
+
+      if (forwardRolledHash == reverseRolledHash) continue;
+
+      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
+      ++curRead.totalSeedmers;
+
+      if (!refSeedHashSet.count(minHash)) continue;
+
+      // try_emplace: single lookup, constructs in-place on insertion
+      auto [it, inserted] = curRead.uniqueSeedmers.try_emplace(minHash, std::vector<uint32_t>{});
+      if (inserted) {
+        it->second.push_back(iorder);
+        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+          minHash, std::get<3>(syncmers[j]), std::get<3>(syncmers[j+l-1])+k-1,
+          reverseRolledHash < forwardRolledHash, iorder});
+      } else {
+        it->second.push_back(iorder);
+        curRead.seedmersList.emplace_back(mgsr::readSeedmer{
+          it->first, std::get<3>(syncmers[j]), std::get<3>(syncmers[j+l-1])+k-1,
+          reverseRolledHash < forwardRolledHash, iorder});
+      }
+      ++iorder;
+    }
+
+    curRead.discardThreshold = static_cast<int32_t>(discardThreshold * curRead.totalSeedmers);
+    if (static_cast<int32_t>(curRead.seedmersList.size()) < curRead.discardThreshold) {
+      curRead.seedmersList = {};
+      curRead.uniqueSeedmers = {};
+    }
+  }
+
+  // Sort indices. The comparator is restructured to avoid redundant
+  // lexicographical_compare: the prefix scan already establishes order for
+  // most pairs, so fall through to the positional tiebreaker only when
+  // the prefix scan exhausts both lists equally.
+  std::vector<size_t> sortedUniqueReadsIndices(uniqueReads.size());
+  std::iota(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(), 0);
+  std::stable_sort(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(),
+  [&uniqueReads, &seqToIndexVec](size_t i1, size_t i2) {
+    const auto& lhs = uniqueReads[i1].seedmersList;
+    const auto& rhs = uniqueReads[i2].seedmersList;
+    const size_t lhsTotalSeedmers = uniqueReads[i1].totalSeedmers;
+    const size_t rhsTotalSeedmers = uniqueReads[i2].totalSeedmers;
+    if (lhsTotalSeedmers != rhsTotalSeedmers) return lhsTotalSeedmers < rhsTotalSeedmers;
+    const size_t minSize = std::min(lhs.size(), rhs.size());
+    for (size_t i = 0; i < minSize; ++i) {
+      if (lhs[i].hash != rhs[i].hash) return lhs[i].hash < rhs[i].hash;
+    }
+    if (lhs.size() != rhs.size()) return lhs.size() < rhs.size();
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i].rev != rhs[i].rev) return lhs[i].rev < rhs[i].rev;
+      if (lhs[i].iorder != rhs[i].iorder) return lhs[i].iorder < rhs[i].iorder;
+    }
+    // final tiebreaker: use the original read sequence index
+    return seqToIndexVec[i1].second[0] < seqToIndexVec[i2].second[0];
+  });
+
+  reads.reserve(uniqueReads.size());
+  readDuplicatesIndex.reserve(uniqueReads.size());
+
+  reads.emplace_back(std::move(uniqueReads[sortedUniqueReadsIndices[0]]));
+  readDuplicatesIndex.emplace_back(seqToIndexVec[sortedUniqueReadsIndices[0]].second);
+
+  for (size_t i = 1; i < sortedUniqueReadsIndices.size(); ++i) {
+    const size_t sortedIdx = sortedUniqueReadsIndices[i];
+    const auto& currSeedmers = uniqueReads[sortedIdx].seedmersList;
+    const size_t currTotalSeedmers = uniqueReads[sortedIdx].totalSeedmers;
+    const auto& prevSeedmers = reads.back().seedmersList;
+    const size_t prevTotalSeedmers = reads.back().totalSeedmers;
+    bool isDuplicate = false;
+
+    if (currSeedmers.size() == prevSeedmers.size() && currTotalSeedmers == prevTotalSeedmers) {
+      const size_t n = currSeedmers.size();
+      isDuplicate = true;
+      for (size_t j = 0; j < n && isDuplicate; ++j) {
+        isDuplicate = (currSeedmers[j].hash   == prevSeedmers[j].hash &&
+                        currSeedmers[j].rev    == prevSeedmers[j].rev  &&
+                        currSeedmers[j].iorder == prevSeedmers[j].iorder);
+      }
+    }
+
+    if (!isDuplicate) {
+      reads.emplace_back(std::move(uniqueReads[sortedIdx]));
+      readDuplicatesIndex.emplace_back(std::vector<size_t>{});
+    }
+    for (const size_t idx : seqToIndexVec[sortedIdx].second) {
+      readDuplicatesIndex.back().push_back(idx);
+    }
+  }
+
+  reads.shrink_to_fit();
+  readDuplicatesIndex.shrink_to_fit();
+
+  for (uint32_t i = 0; i < reads.size(); ++i) {
+    const auto& sl = reads[i].seedmersList;
+    for (uint32_t j = 0; j < sl.size(); ++j) {
+      seedmerToReads[sl[j].hash].emplace_back(i, j);
+    }
+  }
+
+  this->reads = reads;
+  this->readSeedmersDuplicatesIndex = readDuplicatesIndex;
+  readScores.resize(reads.size(), 0);
 }
 
 void mgsr::ThreadsManager::initializeQueryData(
@@ -6566,6 +6897,154 @@ void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector
   assignReadsHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
 }
 
+void mgsr::mgsrPlacer::assignReadsBatchHelper(
+  mgsr::MgsrLiteNode* node,
+  std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
+  std::unordered_set<size_t>& mpsReadSet
+) {
+  const auto& curNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
+  
+  std::vector<std::pair<uint32_t, bool>> mpsReadSetBacktrack;
+  mpsReadSetBacktrack.reserve(curNodeScoreDeltas.size());
+
+  for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
+    const auto& curRead = reads[readIndex];
+    auto curMaxScore = curRead.maxScore;
+    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+
+    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+
+    auto readIt = mpsReadSet.find(readIndex);
+    if (scoreDelta == curMaxScore) {
+      if (readIt == mpsReadSet.end()) {
+        mpsReadSet.insert(readIndex);
+        mpsReadSetBacktrack.emplace_back(readIndex, false);
+
+      }
+    } else {
+      if (readIt != mpsReadSet.end()) {
+        mpsReadSet.erase(readIt);
+        mpsReadSetBacktrack.emplace_back(readIndex, true);
+      }
+    }
+  }
+
+  if (!mpsReadSet.empty()) {
+    assignedReadsByNode[node].insert(assignedReadsByNode[node].end(), mpsReadSet.begin(), mpsReadSet.end());
+  }
+
+  for (auto child : node->collapsedChildren) {
+    assignReadsBatchHelper(child, assignedReadsByNode, mpsReadSet);
+  }
+
+  for (const auto& [readIndex, erased] : mpsReadSetBacktrack) {
+    if (erased) {
+      mpsReadSet.insert(readIndex);
+    } else {
+      mpsReadSet.erase(readIndex);
+    }
+  }
+}
+
+void mgsr::mgsrPlacer::checkFamilyIndicesBatch(MgsrLiteNode* node, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
+  const auto& curNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
+  
+  for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
+    auto& curRead = reads[readIndex];
+    auto curMaxScore = curRead.maxScore;
+    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+
+
+    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+
+    int curAmbiguousScoreThreshold = std::max(ambiguousScoreThreshold, static_cast<int>(curMaxScore * ambiguousScoreThresholdRatio));
+
+    if (scoreDelta == curMaxScore || scoreDelta >= std::max(0, static_cast<int>(curMaxScore) - curAmbiguousScoreThreshold)) {
+      bool exceeded = node->overMaximumFamilies;
+      if (!exceeded) {
+        curRead.familyIndices.insert(node->familyIndices.begin(), node->familyIndices.end());
+        exceeded = curRead.familyIndices.size() > maximumFamilies;
+      }
+      if (exceeded) {
+        curRead.overMaximumFamilies = true;
+        curRead.familyIndices.clear();
+      }
+    }
+  }
+
+  for (auto child : node->collapsedChildren) {
+    checkFamilyIndicesBatch(child, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+  }
+}
+
+void mgsr::mgsrPlacer::assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
+  std::unordered_set<size_t> mpsReadSet;
+  checkFamilyIndicesBatch(liteTree->root, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+  assignReadsBatchHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
+}
+
+
+void mgsr::mgsrPlacer::calculateBreadthRatio(
+  MgsrLiteNode* node,
+  std::unordered_map<size_t, int64_t>& refSeedsCount,
+  std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>>& breaths,
+  const std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode
+) {
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : node->seedCountDeltas) {
+    size_t parentCount = parentCountFwd + parentCountRev;
+    size_t currentCount = currentCountFwd + currentCountRev;
+    if (currentCount == 0) {
+      refSeedsCount.erase(seedHash);
+    } else {
+      refSeedsCount[seedHash] = currentCount;
+    }
+  }
+
+  std::unordered_map<size_t, size_t> seedHitCounts;
+  size_t totalDepth = 0;
+  auto assignedReadsByNodeIt = assignedReadsByNode.find(node);
+  if (assignedReadsByNodeIt != assignedReadsByNode.end()) {
+    for (const auto& readIndex : assignedReadsByNodeIt->second) {
+      const auto& curRead = reads[readIndex];
+      const auto& curDuplicates = readSeedmersDuplicatesIndex[readIndex].size();
+      for (const auto& [seedHash, _] : curRead.uniqueSeedmers) {
+        if (refSeedsCount.find(seedHash) != refSeedsCount.end()) {
+          seedHitCounts[seedHash] += curDuplicates;
+          totalDepth += curDuplicates;
+        }
+      }
+    }
+  }
+
+  size_t totalRefSeeds = node->totalRefSeeds;
+  size_t observedBreadthCount = seedHitCounts.size();
+  double observedBreadthRatio = totalRefSeeds > 0 ? static_cast<double>(observedBreadthCount) / static_cast<double>(totalRefSeeds) : 0.0;
+  double meanDepth = totalRefSeeds > 0 ? static_cast<double>(totalDepth) / static_cast<double>(totalRefSeeds) : 0.0;
+  double expectedBreadthRatio = meanDepth > 0 ? 1.0 - std::exp(-meanDepth) : 0.0;
+  double observedToExpectedBreadthRatio = expectedBreadthRatio > 0 ? observedBreadthRatio / expectedBreadthRatio : 0.0;
+
+  breaths.emplace_back(node, mgsr::breadthInfo{totalRefSeeds, observedBreadthCount, observedBreadthRatio, totalDepth, meanDepth, expectedBreadthRatio, observedToExpectedBreadthRatio});
+
+  std::cerr << "\rCalculating breadth ratio at DFS index " << node->collapsedDfsIndex << " / " << liteTree->getNumActiveNodes() << std::flush;
+
+  // Recursively calculate breadth ratio for children
+  for (auto child : node->collapsedChildren) {
+    calculateBreadthRatio(child, refSeedsCount, breaths, assignedReadsByNode);
+  }
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : node->seedCountDeltas) {
+    size_t parentCount = parentCountFwd + parentCountRev;
+    size_t currentCount = currentCountFwd + currentCountRev;
+    if (parentCount == 0) {
+      refSeedsCount.erase(seedHash);
+    } else {
+      refSeedsCount[seedHash] = parentCount;
+    }
+  }
+
+}
+
 void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies) {
   std::vector<std::unordered_map<MgsrLiteNode*, std::vector<size_t>>> assignedReadsByNodePerThread(threadRanges.size());
 
@@ -7475,6 +7954,115 @@ void mgsr::mgsrPlacer::scoreReads() {
   scoreReadsHelper(liteTree->root, processingNode);
 }
 
+void mgsr::mgsrPlacer::scoreReadsBatchHelper(
+  mgsr::MgsrLiteNode* node,
+  mgsr::MgsrLiteNode*& processingNode,
+  double discard_threshold
+) {
+  if (progressBar && progressTracker) {
+    progressTracker->incrementProgress(threadId);
+  }
+
+  processingNode = node;
+  std::unordered_map<uint32_t, mgsr::ModifiedReadInfo> modifiedReads;
+
+  
+  size_t totalReadsToKeep = 0;
+  auto updateReadsForSeed = [&](size_t seedHash, bool seedRev, int scoreDelta) {
+    auto seedmerToReadsIt = seedmerToReads.find(seedHash);
+    if (seedmerToReadsIt == seedmerToReads.end()) return;
+    
+    for (const auto& pair : seedmerToReadsIt->second) {
+      const uint32_t readIndex = pair.first;
+      const uint32_t seedmerIndexOnRead = pair.second;
+      auto& read = reads[readIndex];
+      
+      if (read.readType != mgsr::ReadType::PASS) continue;
+      
+      modifiedReads.try_emplace(readIndex, mgsr::ModifiedReadInfo{
+        read.numForwardMatching, read.numReverseMatching
+      });
+      
+      if (read.seedmersList[seedmerIndexOnRead].rev == seedRev) {
+        read.numForwardMatching += scoreDelta;
+      } else {
+        read.numReverseMatching += scoreDelta;
+      }
+
+      if (read.keepForFilterAndAssign) {
+        totalReadsToKeep++;
+      } else if (std::max(read.numForwardMatching, read.numReverseMatching) >= read.discardThreshold) {
+        totalReadsToKeep++;
+        read.keepForFilterAndAssign = true;
+      }
+    }
+  };
+
+
+  for (const auto [seedHash, parentCountFwd, parentCountRev, currentCountFwd, currentCountRev] : node->seedCountDeltas) {
+    if (seedmerToReads.find(seedHash) == seedmerToReads.end()) {
+      continue;
+    }
+    if (parentCountFwd == 0 && currentCountFwd > 0) {
+      updateReadsForSeed(seedHash, false, 1);
+    } else if (parentCountFwd > 0 && currentCountFwd == 0) {
+      updateReadsForSeed(seedHash, false, -1);
+    }
+    if (parentCountRev == 0 && currentCountRev > 0) {
+      updateReadsForSeed(seedHash, true, 1);
+    } else if (parentCountRev > 0 && currentCountRev == 0) {
+      updateReadsForSeed(seedHash, true, -1);
+    }
+  }
+
+  
+  // STORE READ SCORE INDEX
+  if (!modifiedReads.empty()) {
+    auto& currentNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
+    if (!currentNodeScoreDeltas.empty()) {
+      std::cerr << "Error: currentNodeScoreDeltas is not empty" << std::endl;
+      exit(1);
+    }
+    currentNodeScoreDeltas.reserve(totalReadsToKeep);
+    for (const auto& [readIndex, _] : modifiedReads) {
+      auto& curRead = reads[readIndex];
+      if (curRead.readType != mgsr::ReadType::PASS) continue;
+
+      auto& maxScore = curRead.maxScore;
+
+      int32_t newScore = std::max(curRead.numForwardMatching, curRead.numReverseMatching);
+
+      if (curRead.keepForFilterAndAssign) {
+        currentNodeScoreDeltas.emplace_back(readIndex, newScore);
+      }
+
+
+      if (newScore > maxScore) {
+        maxScore = newScore;
+        curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
+      }
+    }
+    currentNodeScoreDeltas.shrink_to_fit();
+  }
+
+  
+  for (MgsrLiteNode *child : node->collapsedChildren) {
+    scoreReadsBatchHelper(child, processingNode, discard_threshold);
+  }
+
+  for (const auto& [readIndex, modifiedReadInfo] : modifiedReads) {
+    auto& curRead = reads[readIndex];
+    curRead.numForwardMatching = modifiedReadInfo.forwardOriginalScore;
+    curRead.numReverseMatching = modifiedReadInfo.reverseOriginalScore;
+  }
+
+}
+
+void mgsr::mgsrPlacer::scoreReadsBatch(double discard_threshold) {
+  MgsrLiteNode* processingNode = nullptr;
+  scoreReadsBatchHelper(liteTree->root, processingNode, discard_threshold);
+}
+
 
 void mgsr::mgsrPlacer::preallocateHashCoordInfoCacheTable(uint32_t startReadIndex, uint32_t endReadIndex) {
   std::unordered_set<size_t> uniqueHashes;
@@ -7901,14 +8489,53 @@ mgsr::squareEM::squareEM(
 
   std::vector<mgsr::MgsrLiteNode*> probableNodes;
   if (overlapCoefficientCutoff > 0) {
+    std::vector<mgsr::MgsrLiteNode*> nodesVec;
+    nodesVec.reserve(liteTree.allLiteNodes.size());
     for (const auto& [identifier, node] : liteTree.allLiteNodes) {
-      if (liteTree.detachedNodes.find(node) == liteTree.detachedNodes.end() &&
-          node->ocRank <= overlapCoefficientCutoff - 1
-      ) {
+      if (liteTree.detachedNodes.find(node) == liteTree.detachedNodes.end()) {
+        nodesVec.push_back(node);
+      }
+    }
+    std::sort(nodesVec.begin(), nodesVec.end(), [](const auto& a, const auto& b) {
+      return a->ocRank < b->ocRank;
+    });
+
+    if (emLeavesOnly) {
+      size_t previousRank = std::numeric_limits<size_t>::max();
+      size_t numUniqueRanks = 0;
+      for (const auto& node : nodesVec) {
+        // check if node is a leaf
+        bool isLeaf = false;
+        if (node->identifier.substr(0, 5) != "node_") isLeaf = true;
+        for (const auto& identicalNodeIdentifier : node->identicalNodeIdentifiers) {
+          if (identicalNodeIdentifier.substr(0, 5) != "node_") isLeaf = true;
+        }
+        if (!isLeaf) continue;
+        
+        if (node->ocRank != previousRank) {
+          previousRank = node->ocRank;
+          numUniqueRanks++;
+          if (numUniqueRanks > overlapCoefficientCutoff) {
+            break;
+          }
+        }
+        probableNodes.push_back(node);
+      }
+    } else {
+      size_t previousRank = std::numeric_limits<size_t>::max();
+      size_t numUniqueRanks = 0;
+      for (const auto& node : nodesVec) {
+        if (node->ocRank != previousRank) {
+          previousRank = node->ocRank;
+          numUniqueRanks++;
+          if (numUniqueRanks > overlapCoefficientCutoff) {
+            break;
+          }
+        }
         probableNodes.push_back(node);
       }
     }
-    std::cout << "Overlap coefficients selected " << probableNodes.size() << " nodes" << std::endl;
+    std::cout << "Overlap coefficients selected " << probableNodes.size() << " nodes, emLeavesOnly: " << emLeavesOnly << std::endl;
   } else if (useReadWeightedScores) {
     for (const auto& [identifier, node] : liteTree.allLiteNodes) {
       if (node->selected || node->selectedNeighbor) {
