@@ -378,6 +378,11 @@ public:
 
   std::string debugNodeID = "";
   std::unordered_map<std::string, double> trueAbundances;
+
+  std::vector<MgsrLiteNode*> eulerNodes;
+  std::vector<size_t> eulerDepth;
+  std::vector<size_t> eulerFirstOccurrence;
+  std::vector<std::vector<size_t>> rmqIndexTable;
   
   // parameters
   int k;
@@ -401,6 +406,12 @@ public:
   
   void cleanup();
   void initialize(LiteIndex::Reader indexReader, const std::string& taxonomicMetadataPath, size_t maximumFamilies, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
+  
+  void buildEulerTour();
+  void fillEulerTour(MgsrLiteNode* node, size_t depth);
+  size_t minByDepth(size_t a, size_t b);
+  MgsrLiteNode* findLCA(MgsrLiteNode* u, MgsrLiteNode* v);
+
   void collapseEmptyNodes(bool ignoreGapRunDeltas);
   void collapseIdenticalScoringNodes(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
   void setDfsIndex(mgsr::MgsrLiteNode* node, mgsr::MgsrLiteNode*& prevNode, uint32_t& dfsIndex);
@@ -497,9 +508,8 @@ class Read {
     int32_t epp = 0;
     int32_t numForwardMatching = 0;
     int32_t numReverseMatching = 0;
+    MgsrLiteNode* lcaNode = nullptr;
     MgsrLiteNode* lastParsimoniousNode = nullptr;
-    std::unordered_map<std::string, std::pair<double, std::vector<EPPNodeRange>>> eppNodeRangesBySeedmerMatches;
-    std::unordered_map<std::string, std::pair<double, std::vector<EPPNodeRange>>>::iterator lastParsimoniousEppNodeRangesBySeedmerMatchesIt;
     std::vector<EPPNodeRange> eppNodeRanges;
 };
 
@@ -966,7 +976,7 @@ class mgsrPlacer {
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
 
-    void assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
+    void assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByLCANode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
     void assignReadsBatchHelper(
       mgsr::MgsrLiteNode* node,
       std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
