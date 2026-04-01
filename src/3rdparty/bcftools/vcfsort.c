@@ -43,6 +43,13 @@
 #include "../samtools/htslib-1.20/htslib/hts_os.h"
 #include "../samtools/htslib-1.20/htslib/hts_defs.h"
 #include "../samtools/htslib-1.20/htslib/bgzf.h"
+// Compatibility shims for htslib < 1.21
+#ifndef bgzf_write_small
+#define bgzf_write_small(fp, data, length) bgzf_write((fp), (data), (length))
+#endif
+#ifndef bgzf_read_small
+#define bgzf_read_small(fp, data, length) bgzf_read((fp), (data), (length))
+#endif
 #include "kheap.h"
 #include "bcftools.h"
 

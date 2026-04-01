@@ -1236,7 +1236,7 @@ void index_single_mode::IndexBuilder::buildIndex() {
 
   for (size_t seg = 0; seg < numSegments; seg++) {
     auto segStart = seg * CAPNP_SPLIT;
-    auto segEnd = std::min(segStart + CAPNP_SPLIT, totalChanges);
+    auto segEnd = std::min((uint64_t)(segStart + CAPNP_SPLIT), totalChanges);
     auto segSize = segEnd - segStart;
     seedChangeHashesBuilder.init(seg, segSize);
     seedChangeParentCountsBuilder.init(seg, segSize);
@@ -2582,7 +2582,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   
   for (size_t seg = 0; seg < numSegments; seg++) {
     auto segStart = seg * CAPNP_SPLIT;
-    auto segEnd = std::min(segStart + CAPNP_SPLIT, totalChanges);
+    auto segEnd = std::min((uint64_t)(segStart + CAPNP_SPLIT), totalChanges);
     auto segSize = segEnd - segStart;
     seedChangeHashesBuilder.init(seg, segSize);
     seedChangeParentCountsBuilder.init(seg, segSize);
