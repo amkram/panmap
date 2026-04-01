@@ -418,7 +418,7 @@ set(HTSLIB_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/htslib_install)
 ExternalProject_Add(htslib_ext
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20
     CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-libdeflate
-    BUILD_COMMAND make -j
+    BUILD_COMMAND make -j lib-static
     INSTALL_COMMAND make install
     BUILD_IN_SOURCE 1 # htslib needs to be built in source
     UPDATE_COMMAND "" # Don't try to update the source
