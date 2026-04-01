@@ -1065,7 +1065,55 @@ void mgsr::MgsrLiteTree::initialize(
     auto curPrevNode = root;
     setDfsIndex(root, curPrevNode, dfsIndex);
   }
+}
 
+void mgsr::MgsrLiteTree::fillEulerTour(MgsrLiteNode* node, size_t depth) {
+  eulerFirstOccurrence[node->collapsedDfsIndex] = eulerNodes.size();
+  eulerNodes.push_back(node);
+  eulerDepth.push_back(depth);
+
+  for (auto child : node->collapsedChildren) {
+    fillEulerTour(child, depth + 1);
+    eulerNodes.push_back(node);
+    eulerDepth.push_back(depth);
+  }
+
+}
+
+size_t mgsr::MgsrLiteTree::minByDepth(size_t a, size_t b) {
+  return eulerDepth[a] < eulerDepth[b] ? a : b;
+}
+
+void mgsr::MgsrLiteTree::buildEulerTour() {
+  size_t numNodes = this->getNumActiveNodes();
+  eulerNodes.reserve(2 * numNodes);
+  eulerDepth.reserve(2 * numNodes);
+  eulerFirstOccurrence.resize(numNodes);
+
+  fillEulerTour(root, 0);
+
+  size_t eulerSize = eulerNodes.size();
+  size_t log_eulerSize = static_cast<size_t>(std::log2(eulerSize)) + 1;
+  rmqIndexTable.assign(log_eulerSize + 1, std::vector<size_t>(eulerSize));
+
+  for (size_t i = 0; i < eulerSize; ++i) {
+    rmqIndexTable[0][i] = i;
+  }
+
+  for (size_t k = 1; (1u << k) <= eulerSize; ++k) {
+    for (size_t i = 0; i + (1u << k) <= eulerSize; ++i) {
+      rmqIndexTable[k][i] = minByDepth(rmqIndexTable[k - 1][i], rmqIndexTable[k - 1][i + (1u << (k - 1))]);
+    }
+  }
+}
+
+mgsr::MgsrLiteNode* mgsr::MgsrLiteTree::findLCA(MgsrLiteNode* u, MgsrLiteNode* v) {
+  size_t l = eulerFirstOccurrence[u->collapsedDfsIndex];
+  size_t r = eulerFirstOccurrence[v->collapsedDfsIndex];
+  if (l > r) std::swap(l, r);
+  size_t k = static_cast<size_t>(std::log2(r - l + 1));
+  size_t idx = minByDepth(rmqIndexTable[k][l], rmqIndexTable[k][r - (1u << k) + 1]);
+  return eulerNodes[idx];
 }
 
 void mgsr::MgsrLiteTree::calculateRefSeedCountsHelper(
@@ -2340,7 +2388,7 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(
 
   this->reads = reads;
   this->readSeedmersDuplicatesIndex = readDuplicatesIndex;
-  readScores.resize(reads.size(), 0);
+  // readScores.resize(reads.size(), 0);
 }
 
 void mgsr::ThreadsManager::initializeQueryData(
@@ -6917,7 +6965,7 @@ void mgsr::mgsrPlacer::assignReadsBatchHelper(
   mpsReadSetBacktrack.reserve(curNodeScoreDeltas.size());
 
   for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
-    const auto& curRead = reads[readIndex];
+    auto& curRead = reads[readIndex];
     auto curMaxScore = curRead.maxScore;
     auto curOverMaximumFamilies = curRead.overMaximumFamilies;
 
@@ -6928,8 +6976,8 @@ void mgsr::mgsrPlacer::assignReadsBatchHelper(
       if (readIt == mpsReadSet.end()) {
         mpsReadSet.insert(readIndex);
         mpsReadSetBacktrack.emplace_back(readIndex, false);
-
       }
+      curRead.lcaNode = curRead.lcaNode == nullptr ? node : liteTree->findLCA(curRead.lcaNode, node);
     } else {
       if (readIt != mpsReadSet.end()) {
         mpsReadSet.erase(readIt);
@@ -6986,10 +7034,27 @@ void mgsr::mgsrPlacer::checkFamilyIndicesBatch(MgsrLiteNode* node, size_t maximu
   }
 }
 
-void mgsr::mgsrPlacer::assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
+void mgsr::mgsrPlacer::assignReadsBatch(
+  std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
+  std::unordered_map<MgsrLiteNode*,std::vector<size_t>>& assignedReadsByLCANode,
+  size_t maximumFamilies,
+  int ambiguousScoreThreshold,
+  double ambiguousScoreThresholdRatio
+) {
   std::unordered_set<size_t> mpsReadSet;
   checkFamilyIndicesBatch(liteTree->root, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
   assignReadsBatchHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
+
+  for (size_t i = 0; i < reads.size(); ++i) {
+    auto& curRead = reads[i];
+    auto curMaxScore = curRead.maxScore;
+    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+
+    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+
+    assignedReadsByLCANode[curRead.lcaNode].push_back(i);
+  }
+
 }
 
 
