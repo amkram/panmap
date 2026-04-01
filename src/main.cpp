@@ -1386,19 +1386,17 @@ void filterAndAssignBatch(
     fq2 = std::make_unique<FastqFile>(readPath2);
     seq2 = kseq_init(fileno(fq2->fp));
   }
+
+
+
   std::ofstream assignedReadsFastq(prefix + ".mgsr.assignedReads.fastq");
   if (!assignedReadsFastq.is_open()) {
     logging::err("Failed to open assigned reads fastq file: {}", prefix + ".mgsr.assignedReads.fastq");
     return;
   }
 
-  std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
-  if (!assignedReadsOut.is_open()) {
-    logging::err("Failed to open assigned reads output file: {}", prefix + ".mgsr.assignedReads.out");
-    return;
-  }
-
   std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> allAssignedReadsByNode;
+  std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> allAssignedReadsByLCANode;
 
   struct Batch {
     size_t batchIndex;
@@ -1409,6 +1407,8 @@ void filterAndAssignBatch(
     std::vector<std::vector<size_t>> readDuplicatesIndex;
     
     std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
+    std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByLCANode;
+
     size_t numReadsAssigned;
 
     size_t numReadsUnmapped;
@@ -1491,8 +1491,7 @@ void filterAndAssignBatch(
       }
     }
     auto startAssigning = std::chrono::high_resolution_clock::now();
-    placer.assignReadsBatch(batch->assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
-
+    placer.assignReadsBatch(batch->assignedReadsByNode, batch->assignedReadsByLCANode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
 
     auto endAssigning = std::chrono::high_resolution_clock::now();
 
@@ -1509,7 +1508,7 @@ void filterAndAssignBatch(
     totalReadsDiscarded += batch->numReadsDiscarded;
     ++batchesCompleted;
 
-
+  
     std::unordered_map<size_t, size_t> batchReadIndexToFastqIndex;
     for (auto& [node, uniqueReads] : batch->assignedReadsByNode) {
       for (size_t uniqueReadIndex : uniqueReads) {
@@ -1523,6 +1522,19 @@ void filterAndAssignBatch(
             totalFastqReadsWritten++;
           }
           allAssignedReadsByNode[node].push_back(it->second);
+        }
+      }
+    }
+
+    for (auto& [node, uniqueReads] : batch->assignedReadsByLCANode) {
+      for (size_t uniqueReadIndex : uniqueReads) {
+        for (size_t readIndex : batch->readDuplicatesIndex[uniqueReadIndex]) {
+          auto [it, inserted] = batchReadIndexToFastqIndex.emplace(readIndex, totalFastqReadsWritten);
+          if (inserted) {
+            std::cerr << "Read index " << readIndex << " not found in batchReadIndexToFastqIndex" << std::endl;
+            exit(1);
+          }
+          allAssignedReadsByLCANode[node].push_back(it->second);
         }
       }
     }
@@ -1551,6 +1563,11 @@ void filterAndAssignBatch(
   }
   assignedReadsFastq.close();
 
+  std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
+  if (!assignedReadsOut.is_open()) {
+    logging::err("Failed to open assigned reads output file: {}", prefix + ".mgsr.assignedReads.out");
+    return;
+  }
   for (auto& [node, readIndices] : allAssignedReadsByNode) {
     assignedReadsOut << node->identifier;
     for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
@@ -1570,6 +1587,33 @@ void filterAndAssignBatch(
   }
   assignedReadsOut.close();
   std::cout << totalFastqReadsWritten << " reads written to fastq file" << std::endl;
+
+
+  std::ofstream assignedReadsLCANodeOut(prefix + ".mgsr.assignedReadsLCANode.out");
+  if (!assignedReadsLCANodeOut.is_open()) {
+    logging::err("Failed to open assigned reads LCA node output file: {}", prefix + ".mgsr.assignedReadsLCANode.out");
+    return;
+  }
+  for (auto& [node, readIndices] : allAssignedReadsByLCANode) {
+    assignedReadsLCANodeOut << node->identifier;
+    for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+      assignedReadsLCANodeOut << "," << identicalNodeId;
+    }
+
+    std::sort(readIndices.begin(), readIndices.end());
+    assignedReadsLCANodeOut << "\t" << readIndices.size() << "\t";
+
+    for (size_t i = 0; i < readIndices.size(); ++i) {
+      assignedReadsLCANodeOut << readIndices[i];
+      if (i != readIndices.size() - 1) {
+        assignedReadsLCANodeOut << ",";
+      }
+    }
+    assignedReadsLCANodeOut << "\n";
+  }
+
+  assignedReadsLCANodeOut.close();
+
 
   // Calculate breadth from assigned reads
   if (breadthRatio) {
@@ -1596,7 +1640,8 @@ void filterAndAssignBatch(
       placer.scoreReadsBatch(discardThreshold);
   
       std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByNode;
-      placer.assignReadsBatch(assignedReadsByNode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+      std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByLCANode;
+      placer.assignReadsBatch(assignedReadsByNode, assignedReadsByLCANode, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
       std::unordered_map<size_t, int64_t> refSeedsCount;
       std::vector<std::pair<mgsr::MgsrLiteNode*, mgsr::breadthInfo>> breadths;
       placer.calculateBreadthRatio(T.root, refSeedsCount, breadths, assignedReadsByNode);
@@ -1622,6 +1667,12 @@ void filterAndAssignBatch(
 
 bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
   auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
+
+  auto start_time_buildEulerTour = std::chrono::high_resolution_clock::now();
+  T.buildEulerTour();
+  auto end_time_buildEulerTour = std::chrono::high_resolution_clock::now();
+  auto duration_buildEulerTour = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_buildEulerTour - start_time_buildEulerTour);
+  std::cout << "Built Euler tour in " << static_cast<double>(duration_buildEulerTour.count()) / 1000.0 << "s\n" << std::endl;
 
   if (cfg.breadthRatio) {
     auto start_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
@@ -1827,7 +1878,8 @@ bool runMetagenomic(const Config& cfg) {
     return false;
   }
 
-  if (cfg.reads1.empty() || !fs::exists(cfg.reads1)) {
+
+  if (cfg.batchFilesPath.empty() && (cfg.reads1.empty() || !fs::exists(cfg.reads1))) {
     std::cerr << "Error: Reads1 file " << cfg.reads1 << " does not exist" << std::endl;
     return false;
   }
