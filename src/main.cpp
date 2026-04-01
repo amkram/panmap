@@ -1878,7 +1878,8 @@ bool runMetagenomic(const Config& cfg) {
     return false;
   }
 
-  if (cfg.reads1.empty() || !fs::exists(cfg.reads1)) {
+
+  if (cfg.batchFilesPath.empty() && (cfg.reads1.empty() || !fs::exists(cfg.reads1))) {
     std::cerr << "Error: Reads1 file " << cfg.reads1 << " does not exist" << std::endl;
     return false;
   }
