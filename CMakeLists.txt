@@ -33,30 +33,37 @@ set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/external_cache" CACHE PATH "Cache
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Set TBB_DIR to match old build
-set(TBB_DIR ${CMAKE_CURRENT_BINARY_DIR}/oneTBB-2019_U9)
+if(APPLE)
+    # Use system TBB on macOS (oneTBB 2019_U9 does not support ARM)
+    find_package(TBB REQUIRED)
+    set(TBB_LIBRARY TBB::tbb)
+    add_custom_target(tbb_build) # no-op target for dependency compatibility
+else()
+    set(TBB_DIR ${CMAKE_CURRENT_BINARY_DIR}/oneTBB-2019_U9)
 
-# Download and configure TBB
-FetchContent_Declare(
-    tbb
-    URL https://github.com/oneapi-src/oneTBB/archive/2019_U9.tar.gz
-)
-FetchContent_MakeAvailable(tbb)
+    # Download and configure TBB
+    FetchContent_Declare(
+        tbb
+        URL https://github.com/oneapi-src/oneTBB/archive/2019_U9.tar.gz
+    )
+    FetchContent_MakeAvailable(tbb)
 
-# Build TBB from source
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so
-    COMMAND ${CMAKE_COMMAND} -E env "CXXFLAGS=-Wno-changes-meaning" make -C ${tbb_SOURCE_DIR} -j compiler=gcc
-    COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib
-    COMMAND cp ${tbb_SOURCE_DIR}/build/*_release/libtbb.so* ${CMAKE_CURRENT_BINARY_DIR}/lib/
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
+    # Build TBB from source
+    add_custom_command(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so
+        COMMAND ${CMAKE_COMMAND} -E env "CXXFLAGS=-Wno-changes-meaning" make -C ${tbb_SOURCE_DIR} -j compiler=gcc
+        COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib
+        COMMAND cp ${tbb_SOURCE_DIR}/build/*_release/libtbb.so* ${CMAKE_CURRENT_BINARY_DIR}/lib/
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
 
-add_custom_target(tbb_build DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so)
+    add_custom_target(tbb_build DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so)
 
-# Set up TBB library path
-set(TBB_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so")
-# Set up TBB include directories
-include_directories(${tbb_SOURCE_DIR}/include)
+    # Set up TBB library path
+    set(TBB_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so")
+    # Set up TBB include directories
+    include_directories(${tbb_SOURCE_DIR}/include)
+endif()
 
 # Download and configure jsoncpp
 FetchContent_Declare(
@@ -75,22 +82,24 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(spdlog)
 
 # Pull in Abseil for flat_hash_map
-FetchContent_Declare(
-    absl
-    GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-    GIT_TAG 20230802.1 # Use a specific tag for stability
-)
-FetchContent_MakeAvailable(absl)
+if(APPLE)
+    find_package(absl REQUIRED)
+else()
+    FetchContent_Declare(
+        absl
+        GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+        GIT_TAG 20230802.1 # Use a specific tag for stability
+    )
+    FetchContent_MakeAvailable(absl)
+endif()
 
 # Find Protobuf
 find_package(Protobuf REQUIRED)
 if(NOT Protobuf_FOUND)
     message(FATAL_ERROR "Protobuf not found")
 endif()
-
-# Force the correct protobuf library path
-set(Protobuf_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprotobuf.so")
-set(Protobuf_INCLUDE_DIRS "/usr/include")
+# Use find_library to get a concrete path (avoids IMPORTED target scope issues)
+find_library(PROTOBUF_LIB_PATH NAMES protobuf REQUIRED)
 
 # Include TBB and jsoncpp headers
 include_directories(${tbb_SOURCE_DIR}/include)
@@ -223,14 +232,20 @@ endfunction()
 add_library(jsoncpp INTERFACE)
 
 # Fetch the panman source code (clone only, disable update)
+if(APPLE)
+    set(PANMAN_TBB_COMPAT "true")
+else()
+    set(PANMAN_TBB_COMPAT "false")
+endif()
 FetchContent_Declare(
     panman
     GIT_REPOSITORY https://github.com/TurakhiaLab/panman
     GIT_TAG main
     GIT_SHALLOW TRUE
     UPDATE_COMMAND ""
-    PATCH_COMMAND sed -i "15d" <SOURCE_DIR>/src/panmanUtils.cpp &&
-                  sed -i "s/PROJECT_VERSION/\\\"1.0\\\"/g" <SOURCE_DIR>/src/panmanUtils.cpp
+    PATCH_COMMAND sed -i.bak "15d" <SOURCE_DIR>/src/panmanUtils.cpp &&
+                  sed -i.bak "s/PROJECT_VERSION/\\\"1.0\\\"/g" <SOURCE_DIR>/src/panmanUtils.cpp &&
+                  sh ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_panman.sh <SOURCE_DIR> ${PANMAN_TBB_COMPAT}
 )
 
 # Force the population of the content
@@ -268,16 +283,17 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 find_package(Protobuf REQUIRED)
 if(Protobuf_FOUND)
     message(STATUS "Using Protocol Buffers ${Protobuf_VERSION}")
-  endif()
+endif()
 
-# Force the correct protobuf library path
-set(Protobuf_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprotobuf.so")
-set(Protobuf_INCLUDE_DIRS "/usr/include")
+# Find library paths explicitly to avoid linker search path issues
+find_library(PANMAN_PROTOBUF_LIB NAMES protobuf REQUIRED)
+find_library(PANMAN_CAPNP_LIB NAMES capnp REQUIRED)
+find_library(PANMAN_KJ_LIB NAMES kj REQUIRED)
 
 include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
 # Generate Protocol Buffers
-set(PROTO_FILES 
+set(PROTO_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/panman.proto"
     "${CMAKE_CURRENT_SOURCE_DIR}/usher.proto"
 )
@@ -315,7 +331,7 @@ set(PANMAN_CAPNP_CPP "${CMAKE_CURRENT_BINARY_DIR}/panman.capnp.c++")
 
 add_custom_command(
     OUTPUT "${PANMAN_CAPNP_H}" "${PANMAN_CAPNP_CPP}"
-    COMMAND ${CAPNP_EXECUTABLE} compile -o${CAPNPC_CXX_EXECUTABLE} 
+    COMMAND ${CAPNP_EXECUTABLE} compile -o${CAPNPC_CXX_EXECUTABLE}
             --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
             ${PANMAN_CAPNP_SRC}
             -I${CMAKE_CURRENT_SOURCE_DIR}
@@ -337,10 +353,10 @@ add_dependencies(panmanUtils generate_panman_capnp_extern)
 
 # Link dependencies for the library
 target_link_libraries(panman_lib
-    capnp
-    kj
+    ${PANMAN_CAPNP_LIB}
+    ${PANMAN_KJ_LIB}
     jsoncpp_lib
-    ${Protobuf_LIBRARIES}
+    ${PANMAN_PROTOBUF_LIB}
     ${Boost_LIBRARIES}
     ${TBB_LIBRARY}
     pthread
@@ -349,10 +365,10 @@ target_link_libraries(panman_lib
 # Link dependencies for the executable (including the library)
 target_link_libraries(panmanUtils
     panman_lib
-    capnp
-    kj
+    ${PANMAN_CAPNP_LIB}
+    ${PANMAN_KJ_LIB}
     jsoncpp_lib
-    ${Protobuf_LIBRARIES}
+    ${PANMAN_PROTOBUF_LIB}
     ${Boost_LIBRARIES}
     ${TBB_LIBRARY}
     pthread
@@ -397,9 +413,14 @@ endif()
 add_dependencies(panman panman_lib)
 
 # Define the Minimap2 build target
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    set(MINIMAP2_MAKE_ARGS "arm_neon=1" "aarch64=1")
+else()
+    set(MINIMAP2_MAKE_ARGS "")
+endif()
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j
+    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j ${MINIMAP2_MAKE_ARGS}
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}/bin/minimap2
@@ -558,7 +579,7 @@ set(PANMAP_SOURCES_MAIN
 )
 
 # Find required packages before using them
-find_package(Boost COMPONENTS program_options iostreams filesystem date_time system REQUIRED)
+find_package(Boost COMPONENTS program_options iostreams filesystem date_time REQUIRED)
 find_package(ZLIB REQUIRED)
 
 # Use FetchContent to get latest zstd with all modern features
@@ -731,11 +752,10 @@ target_link_libraries(panmap PRIVATE
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
     jsoncpp_lib
-    ${Protobuf_LIBRARIES}
+    ${PROTOBUF_LIB_PATH}
     Boost::program_options
     Boost::iostreams
     Boost::filesystem
-    Boost::system
     ZLIB::ZLIB
     libzstd_static
     ${TBB_LIBRARY}
