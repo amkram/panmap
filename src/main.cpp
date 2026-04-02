@@ -1308,7 +1308,7 @@ void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& thread
       if (cfg.pseudochain) {
         curThreadPlacer.placeReads();
       } else {
-        curThreadPlacer.placeReads();
+        curThreadPlacer.scoreReads();
       }
 
 
