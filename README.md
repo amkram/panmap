@@ -15,6 +15,7 @@ Given a pangenome (in [PanMAN](https://github.com/TurakhiaLab/panman) format) an
 
 ```bash
 docker build -t panmap .
+docker run panmap panmap -h
 ```
 
 See below for building from source.
