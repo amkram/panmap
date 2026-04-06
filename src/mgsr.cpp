@@ -1836,14 +1836,9 @@ void mgsr::extractReadSequences(
     readNames.resize(1);
   }
 
-  FILE *fp;
   kseq_t *seq;
-  fp = fopen(readPath1.c_str(), "r");
-  if(!fp){
-    std::cerr << "Error: File " << readPath1 << " not found" << std::endl;
-    exit(0);
-  }
-  seq = kseq_init(fileno(fp));
+  mgsr::FastqFile fq1(readPath1);
+  seq = kseq_init(fileno(fq1.fp));
   int line;
   while ((line = kseq_read(seq)) >= 0) {
     std::string readIdentifier = seq->name.s;
@@ -1866,12 +1861,8 @@ void mgsr::extractReadSequences(
     }
   }
   if (readPath2.size() > 0) {
-    fp = fopen(readPath2.c_str(), "r");
-    if(!fp){
-      std::cerr << "Error: File " << readPath2 << " not found" << std::endl;
-      exit(0);
-    }
-    seq = kseq_init(fileno(fp));
+    mgsr::FastqFile fq2(readPath2);
+    seq = kseq_init(fileno(fq2.fp));
 
     size_t forwardReads = 0;
     for (const auto& groupReads : readSequences) {
@@ -2440,25 +2431,6 @@ void mgsr::ThreadsManager::initializeQueryData(
   size_t numMaskReads = 0;
   size_t numMaskSeeds = 0;
 
-
-  std::ofstream indicesToNamesOut(prefix + ".read_indices_to_names.tsv");
-  size_t curReadIndex = 0;
-  for (size_t groupId = 0; groupId < readSequencesByGroup.size(); ++groupId) {
-    const auto& readNames = readNamesByGroup[groupId];
-    if (dustThreshold == 100) {
-      for (size_t i = 0; i < readNames.size(); ++i) {
-        indicesToNamesOut << curReadIndex << "\t" << readNames[i] << "\n";
-        ++curReadIndex;
-      }
-    } else {
-      const auto& readDust = readDustByGroup[groupId];
-      for (size_t i = 0; i < readNames.size(); ++i) {
-        indicesToNamesOut << curReadIndex << "\t" << readNames[i] << "\t" << readDust[i] << "\t" << (readDust[i] <= dustThreshold ? "1" : "0") << "\n";
-        ++curReadIndex;
-      }
-    }
-  }
-  indicesToNamesOut.close();
 
   std::vector<std::vector<mgsr::Read>> readsByGroup(readSequencesByGroup.size());
   std::vector<std::vector<std::vector<size_t>>> readSeedmersDuplicatesIndexByGroup(readSequencesByGroup.size());

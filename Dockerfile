@@ -23,20 +23,16 @@ RUN apt-get update && apt-get install -y \
   libeigen3-dev \
   && rm -rf /var/lib/apt/lists/*
 
-# dirty fix for samtools build...
-RUN cd /tmp && \
-  wget https://github.com/samtools/htslib/releases/download/1.20/htslib-1.20.tar.bz2 && \
-  tar -xjf htslib-1.20.tar.bz2 && \
-  cd htslib-1.20 && \
-  ./configure --prefix=/usr/local --disable-lzma --disable-bz2 --disable-libcurl && \
-  make -j$(nproc) && \
-  make install && \
-  ldconfig && \
-  cd / && \
-  rm -rf /tmp/htslib-1.20*
 
-WORKDIR /panmap
+WORKDIR /home
 
-RUN echo 'PS1="\[\033[01;32m\]tiger\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ "' >> ~/.bashrc
+RUN cd /home && \
+  git clone https://github.com/amkram/panmap.git && \
+  mkdir -p /home/panmap/build && \
+  cd /home/panmap/build && \
+  cmake .. && make -j 4 
 
-CMD ["/bin/bash"]
+ENV PATH="/home/panmap/build/bin:${PATH}"
+
+CMD ["panmap"]
+
