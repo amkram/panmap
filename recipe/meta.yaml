@@ -41,6 +41,9 @@ requirements:
     - libdeflate
     - eigen
 
+  run:
+    - libboost
+
 test:
   commands:
     - panmap --help
