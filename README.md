@@ -63,37 +63,21 @@ panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
 
 **Metagenomic mode, estimating SARS-CoV-2 lineage abundances:**
 
-For this, you need to have installed minimap2, samtools, ivar, and pangolin.
-
-First step is to fetch some reads and preprocess them:
+First step is to build an index for metagenomics mode:
 
 ```bash
-mkdir example_run && cd example_run
-prefetch SRR19707934 && fasterq-dump SRR19707934
-minimap2 -a --sam-hit-only --MD -2 -x sr ../examples/data/NC_045512v2.fa SRR19707934_1.fastq SRR19707934_2.fastq > SRR19707934.sam
-samtools sort -o SRR19707934.sorted.bam SRR19707934.sam -@ 8
-ivar trim -e -b ../examples/data/SNAPaddtlCov.bed -p SRR19707934.trimmed.bam -i SRR19707934.sorted.bam -q 1 -m 80 -x 3
-samtools sort -o SRR19707934.trimmed.sorted.bam SRR19707934.trimmed.bam -@ 8
-python3 ../scripts/trim_and_stack_amplicon.py stack SRR19707934.sorted.bam ../examples/data/SNAPaddtlCov.bed -o SRR19707934.amplicon_stacks.tsv
-samtools fastq --no-sc SRR19707934.trimmed.sorted.bam > SRR19707934.trimmed.fastq
-```
-
-Then build an index and run panmap:
-
-```bash
+make example_run && cd example_run
 ../build/bin/panmap ../examples/data/sars_20000_twilight_dipper.panman --index-mgsr sars_20000_twilight_dipper.idx 
-../build/bin/panmap  ../examples/data/sars_20000_twilight_dipper.panman  SRR19707934.trimmed.fastq --meta --index sars_20000_twilight_dipper.idx --amplicon-depth SRR19707934.amplicon_stacks.tsv --mask-reads-relative-frequency 0.01 em-delta-threshold  0.00001 --output SRR19707934 --threads 8
 ```
 
-Panmap outputs an abundance file `SRR19707934.mgsr.abundance.out` containing the estimated abundances of nodes.
-
-To get the lineage proportions, we can retrieve the sequences from the PanMAN and use pangolin to identify their lineages:
+Then run panmap with the `--meta` option:
 
 ```bash
-../build/bin/panmap ../examples/data/sars_20000_twilight_dipper.panman --dump-sequences "$(cut -f1 SRR19707934.mgsr.abundance.out | tr ',' '\n' | grep '\S' | tr '\n' ' ' | sed 's/ $//g')" --output SRR19707934
-pangolin pangolin SRR19707934.dump-sequences.fa --outfile SRR19707934.pangolin.csv
-python3 ../scripts/assign_lineage.py SRR19707934.mgsr.abundance.out SRR19707934.pangolin.csv > SRR19707934.mgsr.lineage.abundance.out
+../build/bin/panmap  ../examples/data/sars_20000_twilight_dipper.panman  ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R1.fastq.gz ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R2.fastq.gz --meta --index sars_20000_twilight_dipper.idx   --threads 8 --em-delta-threshold 0.00001
 ```
+
+Reads used above were simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples, refer to README
+in [examples/wastewater](examples/wastewater) for more details.
 
 **Metagenomic mode, filter and assign reads:**
 
