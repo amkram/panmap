@@ -1339,44 +1339,6 @@ if (!isFileReadable(path))
 throw std::runtime_error("Cannot read " + description + ": " + path);
 }
 
-static bool isGzipped(const std::string& path) {
-  if (path.size() >= 3 && path.compare(path.size() - 3, 3, ".gz") == 0)
-    return true;
-  unsigned char buf[2] = {0, 0};
-  std::ifstream f(path, std::ios::binary);
-  if (f.read(reinterpret_cast<char*>(buf), 2))
-    return buf[0] == 0x1f && buf[1] == 0x8b;
-  return false;
-}
-
-
-struct FastqFile {
-  FILE* fp;
-  bool isPopen;
-
-  FastqFile(const std::string& path) : fp(nullptr), isPopen(false) {
-    if (isGzipped(path)) {
-      std::string cmd = "gzip -dc '" + path + "'";
-      fp = popen(cmd.c_str(), "r");
-      isPopen = true;
-    } else {
-      fp = fopen(path.c_str(), "r");
-      isPopen = false;
-    }
-    if (!fp)
-      throw std::runtime_error("Failed to open FASTQ file: " + path);
-  }
-
-  ~FastqFile() {
-    if (fp) {
-      if (isPopen) pclose(fp);
-      else fclose(fp);
-    }
-  }
-
-  FastqFile(const FastqFile&) = delete;
-  FastqFile& operator=(const FastqFile&) = delete;
-};
 
 void filterAndAssignBatch(
   mgsr::ThreadsManager &threadsManager, mgsr::MgsrLiteTree &T,
@@ -1387,14 +1349,14 @@ void filterAndAssignBatch(
   size_t batchSize, const std::string& prefix
 ) {
   size_t maxLiveTokens = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism) + 2;
-  FastqFile fq1(readPath1);
+  mgsr::FastqFile fq1(readPath1);
   kseq_t *seq1 = kseq_init(fileno(fq1.fp));
 
-  std::unique_ptr<FastqFile> fq2;
+  std::unique_ptr<mgsr::FastqFile> fq2;
   kseq_t *seq2 = nullptr;
   bool pairedEnd = !readPath2.empty();
   if (pairedEnd) {
-    fq2 = std::make_unique<FastqFile>(readPath2);
+    fq2 = std::make_unique<mgsr::FastqFile>(readPath2);
     seq2 = kseq_init(fileno(fq2->fp));
   }
 
