@@ -16,6 +16,8 @@ source:
 
 build:
   number: 0
+  run_exports:
+    - {{ pin_subpackage(name, max_pin="x.x") }}
 
 requirements:
   build:
@@ -39,17 +41,6 @@ requirements:
     - docopt.cpp
     - libdeflate
     - eigen
-  run:
-    - boost-cpp
-    - libprotobuf
-    - tbb
-    - capnproto >=1.0
-    - jsoncpp
-    - spdlog
-    - fmt
-    - libabseil
-    - zstd
-    - libdeflate
 
 test:
   commands:
