@@ -37,7 +37,6 @@ requirements:
     - jsoncpp
     - spdlog
     - zstd
-    - docopt.cpp
     - libdeflate
     - eigen
 

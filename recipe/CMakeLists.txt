@@ -25,8 +25,6 @@ find_library(CAPNP_LIBRARY NAMES capnp REQUIRED)
 find_library(KJ_LIBRARY NAMES kj REQUIRED)
 find_library(DEFLATE_LIBRARY NAMES deflate REQUIRED)
 find_library(ZSTD_LIBRARY NAMES zstd REQUIRED)
-find_library(DOCOPT_LIBRARY NAMES docopt REQUIRED)
-
 find_program(CAPNP_EXECUTABLE NAMES capnp REQUIRED)
 find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++ REQUIRED)
 
@@ -304,7 +302,6 @@ target_link_libraries(panmap PRIVATE
     minimap2
     samtools
     htslib
-    ${DOCOPT_LIBRARY}
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
     jsoncpp_lib

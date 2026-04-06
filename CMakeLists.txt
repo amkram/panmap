@@ -717,17 +717,6 @@ target_include_directories(panmap PUBLIC ${HTSLIB_INSTALL_DIR}/include)
 # Link spdlog (provides its own includes)
 target_link_libraries(panmap PRIVATE spdlog::spdlog)
 
-# Add other FetchContent dependencies
-FetchContent_Declare(
-    docopt
-    GIT_REPOSITORY https://github.com/docopt/docopt.cpp
-    GIT_TAG master
-)
-FetchContent_MakeAvailable(docopt)
-if(TARGET docopt)
-    target_compile_options(docopt PRIVATE -w -m64 -mtune=generic)
-endif()
-
 # Pull in libdeflate
 FetchContent_Declare(deflate
     GIT_REPOSITORY https://github.com/ebiggers/libdeflate
@@ -746,8 +735,7 @@ target_link_libraries(panmap PRIVATE
     bcftools
     minimap2 
     samtools 
-    htslib 
-    docopt
+    htslib
     # Link system capnp libs directly
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
