@@ -1,0 +1,64 @@
+context:
+  version: "0.1.0"
+  panman_version: "0.1.4"
+
+package:
+  name: panmap
+  version: ${{ version }}
+
+source:
+  - url: https://github.com/amkram/panmap/archive/v${{ version }}.tar.gz
+    sha256: fd00bcf2bbf70918d2e79590975f973b653156c91e085b89fdba2b2b8917025e
+    target_directory: panmap
+  - url: https://github.com/TurakhiaLab/panman/archive/refs/tags/v${{ panman_version }}.tar.gz
+    sha256: 6e987799cd4f713f88b6e3ddafa9b59798a210c8ff1d8b59381bbc5fd2661c72
+    target_directory: panman
+
+build:
+  number: 0
+  script: build.sh
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ compiler('cxx') }}
+    - cmake
+    - make
+    - autoconf
+    - automake
+    - libtool
+  host:
+    - zlib
+    - boost-cpp
+    - libprotobuf
+    - tbb-devel
+    - capnproto >=1.0
+    - jsoncpp
+    - spdlog
+    - abseil-cpp
+    - zstd
+    - docopt.cpp
+    - libdeflate
+    - eigen
+  run:
+    - boost-cpp
+    - libprotobuf
+    - tbb
+    - capnproto >=1.0
+    - jsoncpp
+    - spdlog
+    - fmt
+    - libabseil
+    - zstd
+    - libdeflate
+
+tests:
+  - script:
+      - panmap --help
+
+about:
+  homepage: https://github.com/amkram/panmap
+  license: MIT
+  license_file: panmap/LICENSE
+  summary: Pangenome-based sequence placement, alignment, and genotyping
+  repository: https://github.com/amkram/panmap
