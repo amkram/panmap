@@ -2260,7 +2260,7 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(
         // try_emplace avoids double-lookup: inserts and returns iterator in one shot
         curRead.uniqueSeedmers.try_emplace(minHash, std::vector<uint32_t>{iorder});
         curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-          minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1,
+          minHash, (uint32_t)std::get<3>(syncmers[0]), (uint32_t)(std::get<3>(syncmers[l-1])+k-1),
           reverseRolledHash < forwardRolledHash, iorder});
         ++iorder;
       }
@@ -2299,12 +2299,12 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(
       if (inserted) {
         it->second.push_back(iorder);
         curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-          minHash, std::get<3>(syncmers[j]), std::get<3>(syncmers[j+l-1])+k-1,
+          minHash, (uint32_t)std::get<3>(syncmers[j]), (uint32_t)(std::get<3>(syncmers[j+l-1])+k-1),
           reverseRolledHash < forwardRolledHash, iorder});
       } else {
         it->second.push_back(iorder);
         curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-          it->first, std::get<3>(syncmers[j]), std::get<3>(syncmers[j+l-1])+k-1,
+          it->first, (uint32_t)std::get<3>(syncmers[j]), (uint32_t)(std::get<3>(syncmers[j+l-1])+k-1),
           reverseRolledHash < forwardRolledHash, iorder});
       }
       ++iorder;
@@ -2527,7 +2527,7 @@ void mgsr::ThreadsManager::initializeQueryData(
           size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
           curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
           curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-            minHash, std::get<3>(syncmers[0]), std::get<3>(syncmers[l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+            minHash, (uint32_t)std::get<3>(syncmers[0]), (uint32_t)(std::get<3>(syncmers[l-1])+k-1), reverseRolledHash < forwardRolledHash, iorder});
           ++iorder;
         }
 
@@ -2565,12 +2565,12 @@ void mgsr::ThreadsManager::initializeQueryData(
             if (uniqueSeedmersIt == curRead.uniqueSeedmers.end()) {
               curRead.uniqueSeedmers.emplace(minHash, std::vector<uint32_t>{iorder});
               curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-                minHash, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+                minHash, (uint32_t)std::get<3>(syncmers[i]), (uint32_t)(std::get<3>(syncmers[i+l-1])+k-1), reverseRolledHash < forwardRolledHash, iorder});
               ++iorder;
             } else {
               uniqueSeedmersIt->second.push_back(iorder);
               curRead.seedmersList.emplace_back(mgsr::readSeedmer{
-                uniqueSeedmersIt->first, std::get<3>(syncmers[i]), std::get<3>(syncmers[i+l-1])+k-1, reverseRolledHash < forwardRolledHash, iorder});
+                uniqueSeedmersIt->first, (uint32_t)std::get<3>(syncmers[i]), (uint32_t)(std::get<3>(syncmers[i+l-1])+k-1), reverseRolledHash < forwardRolledHash, iorder});
               ++iorder;
             }
           }
@@ -5216,7 +5216,7 @@ void mgsr::mgsrPlacer::initializeReadMinichains(mgsr::Read& curRead) {
         uint64_t curEnd = i;
         bool rev = qrev != liteTree->seedInfos[curRefPositionIt->second].isReverse;
         c = extendMinichain(curRefPositionIt, curRead, curEnd, rev, qidx, c);
-        curMinichains.push_back({i, curEnd, rev});
+        curMinichains.push_back({(uint32_t)i, (uint32_t)curEnd, rev});
       } else {
         // duplicates.insert(i);
       }
@@ -5561,7 +5561,7 @@ void mgsr::mgsrPlacer::removeFromMinichains(std::vector<mgsr::Minichain>& curMin
         }
       } else {
         currentOriginalMinichainIt->endIndex = removeRangeBeg - 1;
-        curMinichains.insert(currentOriginalMinichainIt+1, {removeRangeEnd + 1, currentOriginalMinichainEnd, currentOriginalMinichainRev});
+        curMinichains.insert(currentOriginalMinichainIt+1, {(uint32_t)(removeRangeEnd + 1), (uint32_t)currentOriginalMinichainEnd, currentOriginalMinichainRev});
       }
     }
   }
@@ -5592,7 +5592,7 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex, const std::vector
         // match to no match -> remove from minichains
         {
           extendChainRemoval(c, curEnd, affectedSeedmerInfos, curSeedmerList.size() - 1);
-          mgsr::Minichain minichain = {affectedSeedmerIndex, curEnd, false};
+          mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, false};
           auto& curMinichainsToRemove = minichainsToRemove[curMinichainsToRemoveIndex];
           curMinichainsToRemove.first = minichain;
           ++curMinichainsToRemoveIndex;
@@ -5607,7 +5607,7 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex, const std::vector
           auto positionItFromCurrentHash = hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
           extendChainAddition(c, curEnd, affectedSeedmerInfos, rev, positionItFromCurrentHash, readIndex);
           // encode minichain_t
-          mgsr::Minichain minichain = {affectedSeedmerIndex, curEnd, rev};
+          mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, rev};
           auto& curMinichainToAdd = minichainsToAdd[curMinichainsToAddIndex];
           curMinichainToAdd.first = minichain;
           ++curMinichainsToAddIndex;
@@ -5621,7 +5621,7 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex, const std::vector
           auto positionItFromCurrentHash = hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
           extendChainUpdate(c, curEnd, affectedSeedmerInfos, rev, positionItFromCurrentHash, readIndex);
           // encode minichain_t
-          mgsr::Minichain minichain = {affectedSeedmerIndex, curEnd, rev};
+          mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, rev};
           auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
           curMinichainToUpdate.first = minichain;
           ++curMinichainsToUpdateIndex;
@@ -5685,7 +5685,7 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<mgsr
       /*chaining debug*/if (false) std::cout << "\tRead is allUniqueToNonUnique... removing minichains" << std::endl;
       extendChainRemoval(c, curEnd, affectedSeedmerInfos, curSeedmerList.size() - 1);
       // encode minichain_t
-      mgsr::Minichain minichain = {affectedSeedmerIndex, curEnd, false};
+      mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, false};
       /*chaining debug*/if (false) std::cout << "\t\tRemoving minichain: " << affectedSeedmerIndex << " " << curEnd << " " << 0ULL << "... encoded to " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
       auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
       curMinichainToUpdate.first = minichain;
@@ -5699,7 +5699,7 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<mgsr
       auto positionItFromCurrentHash = hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
       extendChainAddition(c, curEnd, affectedSeedmerInfos, rev, positionItFromCurrentHash, readIndex);
       // encode minichain_t
-      mgsr::Minichain minichain = {affectedSeedmerIndex, curEnd, rev};
+      mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, rev};
       /*chaining debug*/if (false) std::cout << "\t\tAdding minichain: " << affectedSeedmerIndex << " " << curEnd << " " << rev << "... encoded to " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
       auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
       curMinichainToUpdate.first = minichain;
@@ -7886,7 +7886,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
 
       currentNodeScoreDeltasGrouped.emplace_back(mgsr::readScoreDeltaLowMemory{
         .readIndex = readIndex,
-        .scoreDelta = newScore
+        .scoreDelta = (int16_t)newScore
       });
       auto currentGroup = &currentNodeScoreDeltasGrouped.back();
       for (size_t i = 1; i < modifiedReadIndices.size(); ++i) {
@@ -7925,7 +7925,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(
         if (startNew) {
           currentNodeScoreDeltasGrouped.emplace_back(mgsr::readScoreDeltaLowMemory{
             .readIndex = readIndex,
-            .scoreDelta = newScore
+            .scoreDelta = (int16_t)newScore
           });
           currentGroup = &currentNodeScoreDeltasGrouped.back();
         } else {

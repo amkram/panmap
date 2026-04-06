@@ -13,6 +13,17 @@
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
 #include <tbb/tbb.h>
+// Compatibility shim: oneTBB 2021+ uses tbb::filter_mode enum class.
+// TBB 2019 uses tbb::filter::serial_in_order nested enum.
+#if defined(TBB_VERSION_MAJOR) && TBB_VERSION_MAJOR >= 2021
+#  define TBB_FILTER_SERIAL_IN_ORDER    tbb::filter_mode::serial_in_order
+#  define TBB_FILTER_PARALLEL           tbb::filter_mode::parallel
+#  define TBB_FILTER_SERIAL_OUT_OF_ORDER tbb::filter_mode::serial_out_of_order
+#else
+#  define TBB_FILTER_SERIAL_IN_ORDER    tbb::filter::serial_in_order
+#  define TBB_FILTER_PARALLEL           tbb::filter::parallel
+#  define TBB_FILTER_SERIAL_OUT_OF_ORDER tbb::filter::serial_out_of_order
+#endif
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -1430,7 +1441,7 @@ void filterAndAssignBatch(
   size_t batchIndex = 0;
   tbb::parallel_pipeline(
     maxLiveTokens,
-    tbb::make_filter<void, Batch*>(tbb::filter::serial_in_order, [&](tbb::flow_control& fc) -> Batch* {
+    tbb::make_filter<void, Batch*>(TBB_FILTER_SERIAL_IN_ORDER, [&](tbb::flow_control& fc) -> Batch* {
       Batch* batch = new Batch();
       batch->batchIndex = batchIndex++;
       batch->sequences.reserve(batchSize + 1);
@@ -1467,7 +1478,7 @@ void filterAndAssignBatch(
       return batch;
     }) &
 
-  tbb::make_filter<Batch*, Batch*>(tbb::filter::parallel, [&](Batch* batch) -> Batch* {
+  tbb::make_filter<Batch*, Batch*>(TBB_FILTER_PARALLEL, [&](Batch* batch) -> Batch* {
     mgsr::mgsrPlacer placer(&T, threadsManager, false, 0);
     placer.readScoreDeltasBatch.resize(T.getNumActiveNodes());
 
@@ -1501,7 +1512,7 @@ void filterAndAssignBatch(
     return batch;
   }) &
 
-  tbb::make_filter<Batch*, void>(tbb::filter::serial_out_of_order, [&](Batch* batch) {
+  tbb::make_filter<Batch*, void>(TBB_FILTER_SERIAL_OUT_OF_ORDER, [&](Batch* batch) {
     auto startPostProcessing = std::chrono::high_resolution_clock::now();
     readsCompleted += batch->sequences.size();
     totalReadsUnmapped += batch->numReadsUnmapped;

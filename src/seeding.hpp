@@ -2,7 +2,9 @@
 
 // Include SIMD headers in global namespace
 #include <cstdint>
-#include <immintrin.h> // For SIMD intrinsics
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
+#include <immintrin.h> // For SIMD intrinsics (x86 only)
+#endif
 
 // Other includes
 #include <algorithm>
