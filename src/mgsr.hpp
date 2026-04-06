@@ -174,6 +174,45 @@ struct PairHash {
   }
 };
 
+inline bool isGzipped(const std::string& path) {
+  if (path.size() >= 3 && path.compare(path.size() - 3, 3, ".gz") == 0)
+    return true;
+  unsigned char buf[2] = {0, 0};
+  std::ifstream f(path, std::ios::binary);
+  if (f.read(reinterpret_cast<char*>(buf), 2))
+    return buf[0] == 0x1f && buf[1] == 0x8b;
+  return false;
+}
+
+
+struct FastqFile {
+  FILE* fp;
+  bool isPopen;
+
+  FastqFile(const std::string& path) : fp(nullptr), isPopen(false) {
+    if (isGzipped(path)) {
+      std::string cmd = "gzip -dc '" + path + "'";
+      fp = popen(cmd.c_str(), "r");
+      isPopen = true;
+    } else {
+      fp = fopen(path.c_str(), "r");
+      isPopen = false;
+    }
+    if (!fp)
+      throw std::runtime_error("Failed to open FASTQ file: " + path);
+  }
+
+  ~FastqFile() {
+    if (fp) {
+      if (isPopen) pclose(fp);
+      else fclose(fp);
+    }
+  }
+
+  FastqFile(const FastqFile&) = delete;
+  FastqFile& operator=(const FastqFile&) = delete;
+};
+
 
 typedef uint64_t minichain_t;
 
