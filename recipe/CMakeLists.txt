@@ -189,7 +189,7 @@ endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j ${MINIMAP2_MAKE_ARGS}
+    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j "CPPFLAGS=-I${CMAKE_INSTALL_PREFIX}/include" "LDFLAGS=-L${CMAKE_INSTALL_PREFIX}/lib" ${MINIMAP2_MAKE_ARGS}
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
     COMMAND rm -f ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/*.o
