@@ -30,7 +30,7 @@ requirements:
     - libtool
   host:
     - zlib
-    - boost-cpp
+    - libboost-devel
     - libprotobuf
     - tbb-devel
     - capnproto >=1.0
@@ -39,9 +39,6 @@ requirements:
     - zstd
     - libdeflate
     - eigen
-
-  run:
-    - libboost
 
 test:
   commands:
