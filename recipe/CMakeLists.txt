@@ -224,9 +224,11 @@ ExternalProject_Add(samtools_ext
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools ${SAMTOOLS_BUILD_DIR}
     BUILD_COMMAND ${CMAKE_COMMAND} -E env
-        "LDFLAGS=-L${HTSLIB_INSTALL_DIR}/lib -lz -lpthread"
-        LD_LIBRARY_PATH=${HTSLIB_INSTALL_DIR}/lib
-        CPPFLAGS=-I${HTSLIB_INSTALL_DIR}/include
+        "CC=${CMAKE_C_COMPILER}"
+        "LDFLAGS=-L${HTSLIB_INSTALL_DIR}/lib -L${CMAKE_INSTALL_PREFIX}/lib -lz -lpthread"
+        "LD_LIBRARY_PATH=${HTSLIB_INSTALL_DIR}/lib:${CMAKE_INSTALL_PREFIX}/lib"
+        "CPPFLAGS=-I${HTSLIB_INSTALL_DIR}/include -I${CMAKE_INSTALL_PREFIX}/include"
+        "CFLAGS=-I${CMAKE_INSTALL_PREFIX}/include"
         sh -c "cd ${SAMTOOLS_BUILD_DIR} && autoheader && autoconf && ./configure --with-htslib=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic --without-curses && make libst.a"
     INSTALL_COMMAND ""
     BUILD_IN_SOURCE 0
