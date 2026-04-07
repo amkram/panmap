@@ -36,7 +36,6 @@ requirements:
     - spdlog
     - abseil-cpp
     - zstd
-    - docopt.cpp
     - libdeflate
     - eigen
   run:

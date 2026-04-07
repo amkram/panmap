@@ -4,7 +4,7 @@ project(panmap VERSION 0.1.0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
 
 include(ExternalProject)
 include(GNUInstallDirs)
@@ -25,7 +25,6 @@ find_library(CAPNP_LIBRARY NAMES capnp REQUIRED)
 find_library(KJ_LIBRARY NAMES kj REQUIRED)
 find_library(DEFLATE_LIBRARY NAMES deflate REQUIRED)
 find_library(ZSTD_LIBRARY NAMES zstd REQUIRED)
-find_library(DOCOPT_LIBRARY NAMES docopt REQUIRED)
 
 find_program(CAPNP_EXECUTABLE NAMES capnp REQUIRED)
 find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++ REQUIRED)
@@ -103,7 +102,7 @@ execute_process(
 file(WRITE "${PANMAN_SOURCE_DIR}/CMakeLists.txt" [=[
 cmake_minimum_required(VERSION 3.8)
 project(panmanUtils)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 find_package(Protobuf REQUIRED)
@@ -304,7 +303,6 @@ target_link_libraries(panmap PRIVATE
     minimap2
     samtools
     htslib
-    ${DOCOPT_LIBRARY}
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
     jsoncpp_lib

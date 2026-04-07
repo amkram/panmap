@@ -1,3 +1,0 @@
-src/kj/filesystem-disk-win32.lo: src/kj/filesystem-disk-win32.c++ \
- /usr/include/stdc-predef.h
-/usr/include/stdc-predef.h:
