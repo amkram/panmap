@@ -1,5 +1,5 @@
-#!/bin/bash
-set -ex
+#!/usr/bin/env bash
+set -eux
 
 # Copy the recipe's CMakeLists.txt over the upstream one
 cp -f "${RECIPE_DIR}/CMakeLists.txt" "${SRC_DIR}/panmap/CMakeLists.txt"
@@ -19,6 +19,12 @@ cat > "${SRC_DIR}/panmap/external/panman/src/version.hpp" <<'VEOF'
 #define PMAT_VERSION "1.0.0"
 #endif
 VEOF
+
+# Revert bcftools include paths from vendored htslib to system htslib
+# (upstream bcftools uses <htslib/...>, panmap's fork rewrote them to relative paths)
+find "${SRC_DIR}/panmap/src/3rdparty/bcftools" \( -name "*.c" -o -name "*.h" \) \
+    -exec sed -i.bak 's|"../samtools/htslib-1.20/htslib/\([^"]*\)"|<htslib/\1>|g' {} +
+find "${SRC_DIR}/panmap/src/3rdparty/bcftools" -name "*.bak" -delete
 
 cd "${SRC_DIR}/panmap"
 
@@ -58,3 +64,4 @@ cmake --build build -j "${CPU_COUNT}"
 
 install -d "${PREFIX}/bin"
 install -v -m 0755 build/bin/panmap "${PREFIX}/bin/"
+install -v -m 0755 build/panman-build/panmanUtils "${PREFIX}/bin/"

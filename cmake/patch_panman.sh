@@ -28,4 +28,14 @@ HEREDOC
     sed -i.bak '1i\
 #include "pair_hash_compat.hpp"
 ' "$SRCDIR/src/common.hpp"
+
+    # Fix parallel_reduce identity type mismatch (oneTBB 2022+ C++20 concepts
+    # require exact type match: 0 is int but lambda returns size_t).
+    # Also fix lambda taking non-const range ref (oneTBB requires const Range&).
+    if [ -f "$SRCDIR/src/summary.cpp" ]; then
+        sed -i.bak \
+            -e 's/children\.size()), 0,/children.size()), (size_t)0,/g' \
+            -e 's/\](tbb::blocked_range<size_t>\& r,/](const tbb::blocked_range<size_t>\& r,/g' \
+            "$SRCDIR/src/summary.cpp"
+    fi
 fi

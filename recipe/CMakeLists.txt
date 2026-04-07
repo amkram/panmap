@@ -4,9 +4,8 @@ project(panmap VERSION 0.1.0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
 
-include(ExternalProject)
 include(GNUInstallDirs)
 
 # ===== Find all system packages =====
@@ -25,7 +24,8 @@ find_library(CAPNP_LIBRARY NAMES capnp REQUIRED)
 find_library(KJ_LIBRARY NAMES kj REQUIRED)
 find_library(DEFLATE_LIBRARY NAMES deflate REQUIRED)
 find_library(ZSTD_LIBRARY NAMES zstd REQUIRED)
-
+find_library(HTS_LIBRARY NAMES hts REQUIRED)
+find_path(HTS_INCLUDE_DIR htslib/hts.h REQUIRED)
 find_program(CAPNP_EXECUTABLE NAMES capnp REQUIRED)
 find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++ REQUIRED)
 
@@ -102,7 +102,7 @@ execute_process(
 file(WRITE "${PANMAN_SOURCE_DIR}/CMakeLists.txt" [=[
 cmake_minimum_required(VERSION 3.8)
 project(panmanUtils)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -Wno-unused-function -Wno-deprecated-declarations -w")
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 find_package(Protobuf REQUIRED)
@@ -190,7 +190,7 @@ endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j ${MINIMAP2_MAKE_ARGS}
+    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j libminimap2.a "CPPFLAGS=-I${CMAKE_INSTALL_PREFIX}/include" ${MINIMAP2_MAKE_ARGS}
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
     COMMAND rm -f ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/*.o
@@ -202,41 +202,12 @@ add_custom_target(minimap2_target
     COMMENT "Building minimap2 library"
 )
 
-# Htslib
-set(HTSLIB_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/htslib_install)
-ExternalProject_Add(htslib_ext
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20
-    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${HTSLIB_INSTALL_DIR}
-        --disable-lzma --disable-bz2 --disable-libcurl --disable-libdeflate
-    BUILD_COMMAND make -j lib-static
-    INSTALL_COMMAND make install
-    BUILD_IN_SOURCE 1
-    UPDATE_COMMAND ""
+# Htslib (system/conda package)
+add_library(htslib SHARED IMPORTED GLOBAL)
+set_target_properties(htslib PROPERTIES
+    IMPORTED_LOCATION "${HTS_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${HTS_INCLUDE_DIR}"
 )
-add_library(htslib STATIC IMPORTED GLOBAL)
-set_target_properties(htslib PROPERTIES IMPORTED_LOCATION ${HTSLIB_INSTALL_DIR}/lib/libhts.a)
-add_dependencies(htslib htslib_ext)
-
-# Samtools
-set(SAMTOOLS_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/samtools_build)
-ExternalProject_Add(samtools_ext
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools
-    BINARY_DIR ${SAMTOOLS_BUILD_DIR}
-    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools ${SAMTOOLS_BUILD_DIR}
-    BUILD_COMMAND ${CMAKE_COMMAND} -E env
-        "LDFLAGS=-L${HTSLIB_INSTALL_DIR}/lib -lz -lpthread"
-        LD_LIBRARY_PATH=${HTSLIB_INSTALL_DIR}/lib
-        CPPFLAGS=-I${HTSLIB_INSTALL_DIR}/include
-        sh -c "cd ${SAMTOOLS_BUILD_DIR} && autoheader && autoconf && ./configure --with-htslib=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic --without-curses && make libst.a"
-    INSTALL_COMMAND ""
-    BUILD_IN_SOURCE 0
-    UPDATE_COMMAND ""
-    DEPENDS htslib_ext
-)
-add_library(samtools STATIC IMPORTED GLOBAL)
-set_target_properties(samtools PROPERTIES IMPORTED_LOCATION "${SAMTOOLS_BUILD_DIR}/libst.a")
-add_dependencies(samtools samtools_ext)
 
 # BWA
 set(BWA_SOURCES
@@ -263,7 +234,7 @@ set(BWA_SOURCES
 file(GLOB BCFTOOLS_SOURCES src/3rdparty/bcftools/*.c)
 
 # Build dependency targets
-add_custom_target(build-deps DEPENDS htslib_ext samtools_ext minimap2_target capnp_tools)
+add_custom_target(build-deps DEPENDS minimap2_target capnp_tools)
 
 add_library(minimap2 STATIC IMPORTED)
 set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a")
@@ -275,6 +246,7 @@ target_compile_options(bwa PRIVATE -fPIC -w)
 
 add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
 target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
+target_include_directories(bcftools PRIVATE ${HTS_INCLUDE_DIR})
 target_compile_options(bcftools PRIVATE -fPIC -w)
 
 # ===== panmap executable =====
@@ -292,7 +264,7 @@ target_sources(panmap PRIVATE ${LITE_CAPNP_GEN_CPP})
 target_include_directories(panmap PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
-    ${HTSLIB_INSTALL_DIR}/include
+    ${HTS_INCLUDE_DIR}
 )
 
 target_link_libraries(panmap PRIVATE
@@ -301,7 +273,6 @@ target_link_libraries(panmap PRIVATE
     bwa
     bcftools
     minimap2
-    samtools
     htslib
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
