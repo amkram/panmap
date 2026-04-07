@@ -1,12 +1,22 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.14)
 
 project(panmap VERSION 0.1.0)
+
+# Suppress deprecation warnings for policies we handle
+cmake_policy(SET CMP0169 OLD)  # Allow FetchContent_Populate (needed for panman patching)
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)  # Use FindBoost module
+endif()
 
 # Export compile_commands.json for clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(APPLE)
+    set(CMAKE_MACOSX_RPATH ON)
+endif()
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # Project options
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
@@ -16,7 +26,7 @@ option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" OFF)
 
 # Set consistent compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 
 include(FetchContent)
 include(ExternalProject)
@@ -66,6 +76,8 @@ else()
 endif()
 
 # Download and configure jsoncpp
+set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     jsoncpp
     GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
@@ -99,28 +111,32 @@ if(NOT Protobuf_FOUND)
     message(FATAL_ERROR "Protobuf not found")
 endif()
 # Use find_library to get a concrete path (avoids IMPORTED target scope issues)
-find_library(PROTOBUF_LIB_PATH NAMES protobuf REQUIRED)
+set(PROTOBUF_LIB_PATH ${PROTOBUF_LIBRARY})
 
 # Include TBB and jsoncpp headers
 include_directories(${tbb_SOURCE_DIR}/include)
 include_directories(${jsoncpp_SOURCE_DIR}/include)
 include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
-# Setup for CapnProto using system-installed tools
-find_program(CAPNP_EXECUTABLE NAMES capnp)
-find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++)
+# Build CapnProto from bundled source
+set(CAPNP_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto)
+set(CAPNP_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/capnp_install)
+ExternalProject_Add(capnp_tools
+    SOURCE_DIR ${CAPNP_SOURCE_DIR}
+    CMAKE_ARGS
+        -DCMAKE_INSTALL_PREFIX=${CAPNP_INSTALL_DIR}
+        -DCMAKE_BUILD_TYPE=Release
+        -DBUILD_TESTING=OFF
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release -j
+    INSTALL_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target install
+)
+set(CAPNP_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnp)
+set(CAPNPC_CXX_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnpc-c++)
+set(CAPNP_SCHEMA_DIR ${CAPNP_INSTALL_DIR}/include)
 
-if(NOT CAPNP_EXECUTABLE OR NOT CAPNPC_CXX_EXECUTABLE)
-    message(FATAL_ERROR "CapnProto executables not found. Please install CapnProto.")
-endif()
+message(STATUS "Building CapnProto from bundled source")
 
-message(STATUS "Using CapnProto tools: ${CAPNP_EXECUTABLE}, ${CAPNPC_CXX_EXECUTABLE}")
-
-# Create a dummy target for consistency with the rest of the build
-add_custom_target(capnp_tools ALL)
-
-# Set up CapnProto include directories
-include_directories(/usr/local/include)
+include_directories(${CAPNP_INSTALL_DIR}/include)
 
 # Add index_lite.capnp generation (the only capnp schema used)
 set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/index_lite.capnp")
@@ -133,6 +149,7 @@ add_custom_command(
     COMMAND ${CAPNP_EXECUTABLE}
         compile
         -o${CAPNPC_CXX_EXECUTABLE}
+        -I${CAPNP_SCHEMA_DIR}
         --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
         ${LITE_CAPNP_SRC_FILE}
     DEPENDS ${LITE_CAPNP_SRC_FILE} capnp_tools
@@ -193,7 +210,7 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/TBBConfig.cmake "
 set(TBB_FOUND TRUE)
 set(TBB_INCLUDE_DIRS \"${TBB_DIR}/include\")
 set(TBB_LIBRARIES \"${TBB_LIBRARY}\")
-set(TBB_LIBRARY_DIRS \"/usr/lib/x86_64-linux-gnu\")
+set(TBB_LIBRARY_DIRS \"${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\")
 
 if(NOT TARGET TBB::tbb)
     add_library(TBB::tbb SHARED IMPORTED)
@@ -276,7 +293,7 @@ if(NOT panman_POPULATED)
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt" [=[
 cmake_minimum_required (VERSION 3.8)
 project(panmanUtils)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 # Protobuf
@@ -286,9 +303,9 @@ if(Protobuf_FOUND)
 endif()
 
 # Find library paths explicitly to avoid linker search path issues
-find_library(PANMAN_PROTOBUF_LIB NAMES protobuf REQUIRED)
-find_library(PANMAN_CAPNP_LIB NAMES capnp REQUIRED)
-find_library(PANMAN_KJ_LIB NAMES kj REQUIRED)
+set(PANMAN_PROTOBUF_LIB ${PROTOBUF_LIBRARY})
+set(PANMAN_CAPNP_LIB ${CAPNP_LIBRARY})
+set(PANMAN_KJ_LIB ${KJ_LIBRARY})
 
 include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
@@ -332,11 +349,12 @@ set(PANMAN_CAPNP_CPP "${CMAKE_CURRENT_BINARY_DIR}/panman.capnp.c++")
 add_custom_command(
     OUTPUT "${PANMAN_CAPNP_H}" "${PANMAN_CAPNP_CPP}"
     COMMAND ${CAPNP_EXECUTABLE} compile -o${CAPNPC_CXX_EXECUTABLE}
+            -I${CAPNP_SCHEMA_DIR}
             --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
             ${PANMAN_CAPNP_SRC}
             -I${CMAKE_CURRENT_SOURCE_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS "${PANMAN_CAPNP_SRC}"
+    DEPENDS "${PANMAN_CAPNP_SRC}" capnp_tools
     COMMENT "Generating C++ from panman.capnp"
 )
 
@@ -390,7 +408,6 @@ install(TARGETS panmanUtils panman_lib
     # Set up the include paths
     target_include_directories(panmanUtils PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}/include
-        ${CAPNP_BUILD_DIR}/include
         ${Boost_INCLUDE_DIRS}
     )
     
@@ -399,11 +416,7 @@ install(TARGETS panmanUtils panman_lib
     target_include_directories(panman INTERFACE
         ${panman_SOURCE_DIR}/src
         ${panman_BINARY_DIR}
-        ${CAPNP_BUILD_DIR}/include
     )
-    
-    # Create panman_capnp_obj target
-    add_library(panman_capnp_obj OBJECT IMPORTED)
     
     message(STATUS "Panman source directory: ${panman_SOURCE_DIR}")
     message(STATUS "Panman binary directory: ${panman_BINARY_DIR}")
@@ -479,60 +492,40 @@ add_dependencies(samtools samtools_ext)
 
 # Define BWA sources
 set(BWA_SOURCES
-    src/3rdparty/bwa/bwa.c
-    src/3rdparty/bwa/run.c
-    src/3rdparty/bwa/bwase.c
-    src/3rdparty/bwa/bwaseqio.c
-    src/3rdparty/bwa/bwt.c
-    src/3rdparty/bwa/bwtaln.c
-    src/3rdparty/bwa/bwtindex.c
-    src/3rdparty/bwa/bwt_gen.c
-    src/3rdparty/bwa/bwtsw2_core.c
-    src/3rdparty/bwa/bwtsw2_main.c
-    src/3rdparty/bwa/bwtsw2_aux.c
-    src/3rdparty/bwa/bwt_lite.c
-    src/3rdparty/bwa/bwtsw2_chain.c
-    src/3rdparty/bwa/fastmap.c
-    src/3rdparty/bwa/bwtsw2_pair.c
-    src/3rdparty/bwa/utils.c
-    src/3rdparty/bwa/bwape.c
-    src/3rdparty/bwa/kopen.c
-    src/3rdparty/bwa/pemerge.c
-    src/3rdparty/bwa/maxk.c
-    src/3rdparty/bwa/bwashm.c
-    src/3rdparty/bwa/bntseq.c
-    src/3rdparty/bwa/is.c
-    src/3rdparty/bwa/bwamem.c
-    src/3rdparty/bwa/bwamem_pair.c
-    src/3rdparty/bwa/bwamem_extra.c
-    src/3rdparty/bwa/malloc_wrap.c
-    src/3rdparty/bwa/QSufSort.c
-    src/3rdparty/bwa/bwt_gen.c
-    src/3rdparty/bwa/rope.c
-    src/3rdparty/bwa/kstring.c
-    src/3rdparty/bwa/ksw.c
-    src/3rdparty/bwa/bwt.c
     src/3rdparty/bwa/bamlite.c
     src/3rdparty/bwa/bntseq.c
-    src/3rdparty/bwa/bwashm.c
+    src/3rdparty/bwa/bwa.c
+    src/3rdparty/bwa/bwamem.c
+    src/3rdparty/bwa/bwamem_extra.c
+    src/3rdparty/bwa/bwamem_pair.c
+    src/3rdparty/bwa/bwape.c
     src/3rdparty/bwa/bwase.c
     src/3rdparty/bwa/bwaseqio.c
+    src/3rdparty/bwa/bwashm.c
+    src/3rdparty/bwa/bwt.c
+    src/3rdparty/bwa/bwt_gen.c
     src/3rdparty/bwa/bwt_lite.c
     src/3rdparty/bwa/bwtaln.c
+    src/3rdparty/bwa/bwtgap.c
     src/3rdparty/bwa/bwtindex.c
+    src/3rdparty/bwa/bwtsw2_aux.c
+    src/3rdparty/bwa/bwtsw2_chain.c
+    src/3rdparty/bwa/bwtsw2_core.c
+    src/3rdparty/bwa/bwtsw2_main.c
+    src/3rdparty/bwa/bwtsw2_pair.c
+    src/3rdparty/bwa/fastmap.c
     src/3rdparty/bwa/is.c
     src/3rdparty/bwa/kopen.c
     src/3rdparty/bwa/kstring.c
     src/3rdparty/bwa/ksw.c
-    src/3rdparty/bwa/utils.c
-    src/3rdparty/bwa/bwt_gen.c
-    src/3rdparty/bwa/rope.c
+    src/3rdparty/bwa/malloc_wrap.c
+    src/3rdparty/bwa/maxk.c
+    src/3rdparty/bwa/pemerge.c
+    src/3rdparty/bwa/QSufSort.c
     src/3rdparty/bwa/rle.c
-    src/3rdparty/bwa/bwtsw2_aux.c
-    src/3rdparty/bwa/bwtsw2_chain.c
-    src/3rdparty/bwa/bwtsw2_main.c
-    src/3rdparty/bwa/bwtsw2_pair.c
-    src/3rdparty/bwa/bwtgap.c
+    src/3rdparty/bwa/rope.c
+    src/3rdparty/bwa/run.c
+    src/3rdparty/bwa/utils.c
     src/mm_align.c
 )
 
@@ -714,9 +707,6 @@ target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${HTSLIB_INSTALL_DIR}/include)
 
-# Link spdlog (provides its own includes)
-target_link_libraries(panmap PRIVATE spdlog::spdlog)
-
 # Pull in libdeflate
 FetchContent_Declare(deflate
     GIT_REPOSITORY https://github.com/ebiggers/libdeflate
@@ -725,18 +715,19 @@ FetchContent_Declare(deflate
 FetchContent_MakeAvailable(deflate)
 
 # Find CapnProto libraries
-find_library(CAPNP_LIBRARY NAMES capnp PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu REQUIRED)
-find_library(KJ_LIBRARY NAMES kj PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu REQUIRED)
+# Use capnp/kj libraries from our ExternalProject build
+set(CAPNP_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libcapnp.a)
+set(KJ_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libkj.a)
 
 # Link libraries
-target_link_libraries(panmap PRIVATE 
+target_link_libraries(panmap PRIVATE
     panman
+    panman_lib
     bwa
     bcftools
-    minimap2 
-    samtools 
-    htslib 
-    # Link system capnp libs directly
+    minimap2
+    samtools
+    htslib
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
     jsoncpp_lib
@@ -747,12 +738,8 @@ target_link_libraries(panmap PRIVATE
     ZLIB::ZLIB
     libzstd_static
     ${TBB_LIBRARY}
-    spdlog::spdlog  # Add spdlog
-    # Link panman_lib directly to access the implementation of panmanUtils functions
-    panman_lib
-    # Fix libdeflate linking
+    spdlog::spdlog
     libdeflate_shared
-    # Link Abseil components
     absl::flat_hash_map
     m
     pthread

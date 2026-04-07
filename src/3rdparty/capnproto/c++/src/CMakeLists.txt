@@ -38,7 +38,7 @@ if(BUILD_TESTING)
   endif()
 
   # Sadly, we can't use the 'test' target, as that's coopted by ctest
-  # add_custom_target(check "${CMAKE_CTEST_COMMAND}" -V)
+  add_custom_target(check "${CMAKE_CTEST_COMMAND}" -V)
 endif()  # BUILD_TESTING
 
 # kj ===========================================================================

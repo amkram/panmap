@@ -3,12 +3,12 @@
 set -euo pipefail
 
 if [ "$1" != "package" ] && [ "$1" != "bump-major" ]; then
-  if (grep -r KJ_DBG c++/src | egrep -v '/debug(-test)?[.]' | grep -v 'See KJ_DBG\.$'); then
+  if (git grep -Er KJ_DBG c++/src | egrep -v '/debug(-test)?[.]' | grep -v 'See KJ_DBG\.$'); then
     echo '*** Error:  There are instances of KJ_DBG in the code.' >&2
     exit 1
   fi
 
-  if (egrep -r 'TODO\((now|soon)\)' *); then
+  if (git grep -Er 'TODO\((now|soon)\)' *); then
     echo '*** Error:  There are release-blocking TODOs in the code.' >&2
     exit 1
   fi

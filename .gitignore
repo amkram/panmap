@@ -1,51 +1,34 @@
+# Build artifacts
+build/
+external_cache/
 CMakeLists.txt.user
 CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
+CMakeFiles/
+CMakeScripts/
+Testing/
 Makefile
 cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
-_deps
-.cache
-.snakemake
-build
-external_cache
-src/3rdparty/samtools/config.h
-src/3rdparty/samtools/config.h.in
-src/3rdparty/samtools/config.log
-src/3rdparty/samtools/config.mk
-src/3rdparty/samtools/config.status
-*.map
-# Prerequisites
-*.d
+_deps/
 
-# Compiled Object files
+# Compiled objects
+*.d
 *.slo
 *.lo
 *.o
 *.obj
+*.pico
 
-panmans
-pan8
-workflow_output
-
-# Precompiled Headers
+# Precompiled headers
 *.gch
 *.pch
 
-# Compiled Dynamic libraries
+# Libraries
 *.so
 *.dylib
 *.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
 *.lai
 *.la
 *.a
@@ -56,13 +39,19 @@ workflow_output
 *.out
 *.app
 
-# pixi environments
-.pixi
-*.egg-info
+# Project-specific outputs
+panmans/
+pan8
+workflow_output/
+*.map
 
+# 3rdparty build artifacts
 src/3rdparty/minimap2/minimap2
-*.pico
-src/3rdparty/samtools/htslib-1.20/test/*
+src/3rdparty/samtools/config.h
+src/3rdparty/samtools/config.h.in
+src/3rdparty/samtools/config.log
+src/3rdparty/samtools/config.mk
+src/3rdparty/samtools/config.status
 src/3rdparty/samtools/htslib-1.20/annot-tsv
 src/3rdparty/samtools/htslib-1.20/bgzip
 src/3rdparty/samtools/htslib-1.20/config.log
@@ -74,10 +63,23 @@ src/3rdparty/samtools/htslib-1.20/htsfile
 src/3rdparty/samtools/htslib-1.20/htslib-uninstalled.pc
 src/3rdparty/samtools/htslib-1.20/tabix
 src/3rdparty/samtools/htslib-1.20/version.h
-
-# htslib build artifacts
 src/3rdparty/samtools/htslib-1.20/**/*.pico
-src/3rdparty/samtools/htslib-1.20/cram/*.pico
-src/3rdparty/samtools/htslib-1.20/htscodecs/**/*.pico
+
+# IDE / editor
+.vscode/
+.cache/
+.claude/
+
+# macOS
+.DS_Store
+
+# Python / environments
+.pixi/
 .venv/
+*.egg-info
+
+# Snakemake
+.snakemake/
+
+# Generated docs
 site/
