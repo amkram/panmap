@@ -7,27 +7,26 @@ Given a pangenome (in [PanMAN](https://github.com/TurakhiaLab/panman) format) an
 ### Modes
 
 - **Single-sample** (default): Places reads from a single sample, aligns to the best-matching reference, and genotypes variants (BAM + VCF output).
-- **Metagenomic** (`--meta`): Scores reads from a mixture sample against every node in the PanMAN, and uses the scoring informtion to estimate haplotype abundance or directly assign reads to nodes.
+- **Metagenomic** (`--meta`): Scores reads from a mixture sample against every node in the PanMAN, and uses the scoring information to estimate haplotype abundance or directly assign reads to nodes.
 
 
 
-### Installation with Docker (recommended)
+### Installation
 
-**Docker build**
+**Bioconda (recommended)**
+
+```bash
+conda install -c bioconda panmap
+```
+
+**Docker**
 
 ```bash
 docker build -t panmap .
 docker run --rm panmap panmap -h
 ```
 
-**Docker pull**
-
-```bash
-docker pull alanalohaucsc/panmap:latest
-docker run --rm panmap panmap -h
-```
-
-See below for building from source.
+See the [documentation](https://amkram.github.io/panmap/) for building from source.
 
 ## Usage
 
@@ -76,14 +75,20 @@ panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
 First step is to build an index for metagenomics mode:
 
 ```bash
-make example_run && cd example_run
-../build/bin/panmap ../examples/data/sars_20000_twilight_dipper.panman --index-mgsr sars_20000_twilight_dipper.idx 
+mkdir example_run && cd example_run
+
+panmap ../examples/data/sars_20000_twilight_dipper.panman \
+  --index-mgsr sars_20000_twilight_dipper.idx
 ```
 
 Then run panmap with the `--meta` option:
 
 ```bash
-../build/bin/panmap  ../examples/data/sars_20000_twilight_dipper.panman  ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R1.fastq.gz ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R2.fastq.gz --meta --index sars_20000_twilight_dipper.idx   --threads 8 --em-delta-threshold 0.00001
+panmap ../examples/data/sars_20000_twilight_dipper.panman \
+  ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R1.fastq.gz \
+  ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R2.fastq.gz \
+  --meta --index sars_20000_twilight_dipper.idx \
+  --threads 8 --em-delta-threshold 0.00001
 ```
 
 Reads used above were simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples, refer to README
@@ -95,13 +100,20 @@ We first build an index for the vertebrate mitochondrial PanMAN. We recommend us
 
 ```bash
 mkdir example_run && cd example_run
-../build/bin/panmap ../examples/data/v_mtdna.panman --index-mgsr v_mtdna.idx -k 15 -s 8 -l 1
+
+panmap ../examples/data/v_mtdna.panman \
+  --index-mgsr v_mtdna.idx -k 15 -s 8 -l 1
 ```
 
-Then we run panmap with the `--filter-and-assign` option to filter and assign reads to the PanMAN.
+Then run panmap with the `--filter-and-assign` option:
 
 ```bash
-../build/bin/panmap ../examples/data/v_mtdna.panman ../examples/data/subsampled.fastq.gz --meta -i v_mtdna.idx --filter-and-assign --discard 0.6 --dust 5 --taxonomic-metadata ../examples/data/v_mtdna.meta.tsv -t 4 --breadth-ratio --output subsampled
+panmap ../examples/data/v_mtdna.panman \
+  ../examples/data/subsampled.fastq.gz \
+  --meta -i v_mtdna.idx \
+  --filter-and-assign --discard 0.6 --dust 5 \
+  --taxonomic-metadata ../examples/data/v_mtdna.meta.tsv \
+  -t 4 --breadth-ratio --output subsampled
 ```
 
 This outputs 3 files:
@@ -110,18 +122,8 @@ This outputs 3 files:
 
 `.mgsr.assignedReads.out` file containing the number of reads assigned to each node and the indices of the reads assigned, with respect to the the `.mgsr.assignedReads.fastq` file
 
-`.mgsr.assignedReadsLCANode.out` file containg the number of reads assigned to the LCA node and the indices of the reads assigned. *As reads may be assigned to multiple nodes, the LCA node of a read if the LCA of all the nodes it was assigned to.*
+`.mgsr.assignedReadsLCANode.out` file containing the number of reads assigned to the LCA node and the indices of the reads assigned. *As reads may be assigned to multiple nodes, the LCA node of a read is the LCA of all the nodes it was assigned to.*
 
-### Advanced
+### Building from source
 
-#### Building from source:
-Dependencies:
-
-- `CMake >= 3.12`
-- `C++17 compiler`
-- `Protobuf (protobuf-compiler, libprotobuf-dev)`
-- `Boost (program_options, iostreams, filesystem, system, date_time)`
-- `zlib`
-- `Cap'n Proto (capnproto, libcapnp-dev)`
-- `Eigen3 (libeigen3-dev)`
-- `htslib 1.20`
+See the [installation docs](https://amkram.github.io/panmap/installation/) for dependencies and build instructions.

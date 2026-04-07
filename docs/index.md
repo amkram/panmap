@@ -16,7 +16,7 @@ panmap takes sequencing reads and a pangenome in [PanMAN](https://github.com/Tur
 
 ```bash
 # Install
-docker build -t panmap .
+conda install -c bioconda panmap
 
 # Place reads (stops after placement by default)
 panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample

@@ -55,7 +55,7 @@ panmap ../examples/data/sars_20000_twilight_dipper.panman \
   --index sars_20000_twilight_dipper.idx \
   --amplicon-depth SRR19707934.amplicon_stacks.tsv \
   --mask-reads-relative-frequency 0.01 \
-  em-delta-threshold 0.00001 \
+  --em-delta-threshold 0.00001 \
   --output SRR19707934 -t 8
 ```
 
