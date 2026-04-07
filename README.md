@@ -13,9 +13,18 @@ Given a pangenome (in [PanMAN](https://github.com/TurakhiaLab/panman) format) an
 
 ### Installation with Docker (recommended)
 
+**Docker build**
+
 ```bash
 docker build -t panmap .
-docker run panmap panmap -h
+docker run --rm panmap panmap -h
+```
+
+**Docker pull**
+
+```bash
+docker pull alanalohaucsc/panmap:latest
+docker run --rm panmap panmap -h
 ```
 
 See below for building from source.
