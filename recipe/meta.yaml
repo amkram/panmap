@@ -8,7 +8,7 @@ package:
 
 source:
   - url: https://github.com/amkram/panmap/archive/v{{ version }}.tar.gz
-    sha256: 43b852a7eae2c64ce68b555751070492b958386d06e12bd61807ad46126292c2
+    sha256: 5f9d925c348331478fdaa6b1bda6c3f07fc7640c6abdb15024401fab129cd40b
     folder: panmap
   - url: https://github.com/TurakhiaLab/panman/archive/refs/tags/v{{ panman_version }}.tar.gz
     sha256: 6e987799cd4f713f88b6e3ddafa9b59798a210c8ff1d8b59381bbc5fd2661c72
