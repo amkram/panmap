@@ -24,13 +24,13 @@ RUN apt-get update && apt-get install -y \
   && rm -rf /var/lib/apt/lists/*
 
 
-WORKDIR /home
+WORKDIR /home/panmap
 
-RUN cd /home && \
-  git clone https://github.com/amkram/panmap.git && \
-  mkdir -p /home/panmap/build && \
-  cd /home/panmap/build && \
-  cmake .. && make -j 4 
+COPY . .
+
+RUN mkdir -p build && \
+  cd build && \
+  cmake .. && make MAKEFLAGS= -j$(nproc)
 
 ENV PATH="/home/panmap/build/bin:${PATH}"
 
