@@ -16,7 +16,7 @@ option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" OFF)
 
 # Set consistent compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 
 include(FetchContent)
 include(ExternalProject)
@@ -193,7 +193,7 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/TBBConfig.cmake "
 set(TBB_FOUND TRUE)
 set(TBB_INCLUDE_DIRS \"${TBB_DIR}/include\")
 set(TBB_LIBRARIES \"${TBB_LIBRARY}\")
-set(TBB_LIBRARY_DIRS \"/usr/lib/x86_64-linux-gnu\")
+set(TBB_LIBRARY_DIRS \"${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}\")
 
 if(NOT TARGET TBB::tbb)
     add_library(TBB::tbb SHARED IMPORTED)
@@ -276,7 +276,7 @@ if(NOT panman_POPULATED)
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt" [=[
 cmake_minimum_required (VERSION 3.8)
 project(panmanUtils)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 # Protobuf
@@ -390,7 +390,6 @@ install(TARGETS panmanUtils panman_lib
     # Set up the include paths
     target_include_directories(panmanUtils PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}/include
-        ${CAPNP_BUILD_DIR}/include
         ${Boost_INCLUDE_DIRS}
     )
     
@@ -399,11 +398,7 @@ install(TARGETS panmanUtils panman_lib
     target_include_directories(panman INTERFACE
         ${panman_SOURCE_DIR}/src
         ${panman_BINARY_DIR}
-        ${CAPNP_BUILD_DIR}/include
     )
-    
-    # Create panman_capnp_obj target
-    add_library(panman_capnp_obj OBJECT IMPORTED)
     
     message(STATUS "Panman source directory: ${panman_SOURCE_DIR}")
     message(STATUS "Panman binary directory: ${panman_BINARY_DIR}")
@@ -479,60 +474,40 @@ add_dependencies(samtools samtools_ext)
 
 # Define BWA sources
 set(BWA_SOURCES
-    src/3rdparty/bwa/bwa.c
-    src/3rdparty/bwa/run.c
-    src/3rdparty/bwa/bwase.c
-    src/3rdparty/bwa/bwaseqio.c
-    src/3rdparty/bwa/bwt.c
-    src/3rdparty/bwa/bwtaln.c
-    src/3rdparty/bwa/bwtindex.c
-    src/3rdparty/bwa/bwt_gen.c
-    src/3rdparty/bwa/bwtsw2_core.c
-    src/3rdparty/bwa/bwtsw2_main.c
-    src/3rdparty/bwa/bwtsw2_aux.c
-    src/3rdparty/bwa/bwt_lite.c
-    src/3rdparty/bwa/bwtsw2_chain.c
-    src/3rdparty/bwa/fastmap.c
-    src/3rdparty/bwa/bwtsw2_pair.c
-    src/3rdparty/bwa/utils.c
-    src/3rdparty/bwa/bwape.c
-    src/3rdparty/bwa/kopen.c
-    src/3rdparty/bwa/pemerge.c
-    src/3rdparty/bwa/maxk.c
-    src/3rdparty/bwa/bwashm.c
-    src/3rdparty/bwa/bntseq.c
-    src/3rdparty/bwa/is.c
-    src/3rdparty/bwa/bwamem.c
-    src/3rdparty/bwa/bwamem_pair.c
-    src/3rdparty/bwa/bwamem_extra.c
-    src/3rdparty/bwa/malloc_wrap.c
-    src/3rdparty/bwa/QSufSort.c
-    src/3rdparty/bwa/bwt_gen.c
-    src/3rdparty/bwa/rope.c
-    src/3rdparty/bwa/kstring.c
-    src/3rdparty/bwa/ksw.c
-    src/3rdparty/bwa/bwt.c
     src/3rdparty/bwa/bamlite.c
     src/3rdparty/bwa/bntseq.c
-    src/3rdparty/bwa/bwashm.c
+    src/3rdparty/bwa/bwa.c
+    src/3rdparty/bwa/bwamem.c
+    src/3rdparty/bwa/bwamem_extra.c
+    src/3rdparty/bwa/bwamem_pair.c
+    src/3rdparty/bwa/bwape.c
     src/3rdparty/bwa/bwase.c
     src/3rdparty/bwa/bwaseqio.c
+    src/3rdparty/bwa/bwashm.c
+    src/3rdparty/bwa/bwt.c
+    src/3rdparty/bwa/bwt_gen.c
     src/3rdparty/bwa/bwt_lite.c
     src/3rdparty/bwa/bwtaln.c
+    src/3rdparty/bwa/bwtgap.c
     src/3rdparty/bwa/bwtindex.c
+    src/3rdparty/bwa/bwtsw2_aux.c
+    src/3rdparty/bwa/bwtsw2_chain.c
+    src/3rdparty/bwa/bwtsw2_core.c
+    src/3rdparty/bwa/bwtsw2_main.c
+    src/3rdparty/bwa/bwtsw2_pair.c
+    src/3rdparty/bwa/fastmap.c
     src/3rdparty/bwa/is.c
     src/3rdparty/bwa/kopen.c
     src/3rdparty/bwa/kstring.c
     src/3rdparty/bwa/ksw.c
-    src/3rdparty/bwa/utils.c
-    src/3rdparty/bwa/bwt_gen.c
-    src/3rdparty/bwa/rope.c
+    src/3rdparty/bwa/malloc_wrap.c
+    src/3rdparty/bwa/maxk.c
+    src/3rdparty/bwa/pemerge.c
+    src/3rdparty/bwa/QSufSort.c
     src/3rdparty/bwa/rle.c
-    src/3rdparty/bwa/bwtsw2_aux.c
-    src/3rdparty/bwa/bwtsw2_chain.c
-    src/3rdparty/bwa/bwtsw2_main.c
-    src/3rdparty/bwa/bwtsw2_pair.c
-    src/3rdparty/bwa/bwtgap.c
+    src/3rdparty/bwa/rope.c
+    src/3rdparty/bwa/run.c
+    src/3rdparty/bwa/utils.c
     src/mm_align.c
 )
 
@@ -714,9 +689,6 @@ target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${HTSLIB_INSTALL_DIR}/include)
 
-# Link spdlog (provides its own includes)
-target_link_libraries(panmap PRIVATE spdlog::spdlog)
-
 # Pull in libdeflate
 FetchContent_Declare(deflate
     GIT_REPOSITORY https://github.com/ebiggers/libdeflate
@@ -725,8 +697,8 @@ FetchContent_Declare(deflate
 FetchContent_MakeAvailable(deflate)
 
 # Find CapnProto libraries
-find_library(CAPNP_LIBRARY NAMES capnp PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu REQUIRED)
-find_library(KJ_LIBRARY NAMES kj PATHS /usr/local/lib /usr/lib/x86_64-linux-gnu REQUIRED)
+find_library(CAPNP_LIBRARY NAMES capnp REQUIRED)
+find_library(KJ_LIBRARY NAMES kj REQUIRED)
 
 # Link libraries
 target_link_libraries(panmap PRIVATE 
@@ -747,10 +719,8 @@ target_link_libraries(panmap PRIVATE
     ZLIB::ZLIB
     libzstd_static
     ${TBB_LIBRARY}
-    spdlog::spdlog  # Add spdlog
-    # Link panman_lib directly to access the implementation of panmanUtils functions
+    spdlog::spdlog
     panman_lib
-    # Fix libdeflate linking
     libdeflate_shared
     # Link Abseil components
     absl::flat_hash_map
