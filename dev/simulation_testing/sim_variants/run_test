@@ -1,4 +1,0 @@
-for i in $(seq 0 99);
-do
-    ./run_panmap $i
-done
