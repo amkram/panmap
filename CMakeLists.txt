@@ -413,7 +413,7 @@ endif()
 add_dependencies(panman panman_lib)
 
 # Define the Minimap2 build target
-if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
     set(MINIMAP2_MAKE_ARGS "arm_neon=1" "aarch64=1")
 else()
     set(MINIMAP2_MAKE_ARGS "")
@@ -717,17 +717,6 @@ target_include_directories(panmap PUBLIC ${HTSLIB_INSTALL_DIR}/include)
 # Link spdlog (provides its own includes)
 target_link_libraries(panmap PRIVATE spdlog::spdlog)
 
-# Add other FetchContent dependencies
-FetchContent_Declare(
-    docopt
-    GIT_REPOSITORY https://github.com/docopt/docopt.cpp
-    GIT_TAG master
-)
-FetchContent_MakeAvailable(docopt)
-if(TARGET docopt)
-    target_compile_options(docopt PRIVATE -w -m64 -mtune=generic)
-endif()
-
 # Pull in libdeflate
 FetchContent_Declare(deflate
     GIT_REPOSITORY https://github.com/ebiggers/libdeflate
@@ -747,7 +736,6 @@ target_link_libraries(panmap PRIVATE
     minimap2 
     samtools 
     htslib 
-    docopt
     # Link system capnp libs directly
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
