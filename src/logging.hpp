@@ -274,21 +274,6 @@ inline void print_footer() {
 // Timer Utility
 // ============================================================================
 
-class Timer {
-public:
-    Timer() : start_(std::chrono::high_resolution_clock::now()) {}
-    
-    int64_t elapsed_ms() const {
-        auto now = std::chrono::high_resolution_clock::now();
-        return std::chrono::duration_cast<std::chrono::milliseconds>(now - start_).count();
-    }
-    
-    void reset() { start_ = std::chrono::high_resolution_clock::now(); }
-
-private:
-    std::chrono::high_resolution_clock::time_point start_;
-};
-
 } // namespace output
 
 // ============================================================================
@@ -335,40 +320,16 @@ inline void install_handlers() {
 
 } // namespace signals
 
-// ============================================================================
-// Legacy Logging Namespace (for compatibility)
-// ============================================================================
-
+// Legacy logging namespace (maps to output:: with different names)
 namespace logging {
-
-template <typename... Args>
-inline void debug(fmt::format_string<Args...> fmt, Args&&... args) {
-    output::debug(fmt, std::forward<Args>(args)...);
-}
-inline void debug(const std::string& msg) { output::debug(msg); }
-
-template <typename... Args>
-inline void info(fmt::format_string<Args...> fmt, Args&&... args) {
-    output::info(fmt, std::forward<Args>(args)...);
-}
-inline void info(const std::string& msg) { output::info(msg); }
-
-template <typename... Args>
-inline void warn(fmt::format_string<Args...> fmt, Args&&... args) {
-    output::warn(fmt, std::forward<Args>(args)...);
-}
-inline void warn(const std::string& msg) { output::warn(msg); }
-
-template <typename... Args>
-inline void err(fmt::format_string<Args...> fmt, Args&&... args) {
-    output::error(fmt, std::forward<Args>(args)...);
-}
-inline void err(const std::string& msg) { output::error(msg); }
-
-template <typename... Args>
-inline void msg(fmt::format_string<Args...> fmt, Args&&... args) {
-    output::info(fmt, std::forward<Args>(args)...);
-}
-inline void msg(const std::string& message) { output::info(message); }
-
+template <typename... Args> inline void debug(fmt::format_string<Args...> f, Args&&... a) { output::debug(f, std::forward<Args>(a)...); }
+template <typename... Args> inline void info(fmt::format_string<Args...> f, Args&&... a) { output::info(f, std::forward<Args>(a)...); }
+template <typename... Args> inline void warn(fmt::format_string<Args...> f, Args&&... a) { output::warn(f, std::forward<Args>(a)...); }
+template <typename... Args> inline void err(fmt::format_string<Args...> f, Args&&... a) { output::error(f, std::forward<Args>(a)...); }
+template <typename... Args> inline void msg(fmt::format_string<Args...> f, Args&&... a) { output::info(f, std::forward<Args>(a)...); }
+inline void debug(const std::string& s) { output::debug(s); }
+inline void info(const std::string& s) { output::info(s); }
+inline void warn(const std::string& s) { output::warn(s); }
+inline void err(const std::string& s) { output::error(s); }
+inline void msg(const std::string& s) { output::info(s); }
 } // namespace logging

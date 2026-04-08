@@ -14,23 +14,6 @@ namespace genotyping {
     struct mutationMatrices;
 }
 
-// Main functions
-void createSam(
-    std::vector<std::string> &readSequences,
-    std::vector<std::string> &readQuals,
-    std::vector<std::string> &readNames,
-    std::string &bestMatchSequence,
-    std::string &samFileName,
-    bool pairedEndReads,
-    std::vector<char *> &samAlignments,
-    std::string &samHeader);
-
-void createBam(std::vector<char *> &samAlignments,
-               std::string &samHeader,
-               std::string &bamFileName,
-               sam_hdr_t *&header,
-               bam1_t **&bamRecords);
-
 void createMplp(std::string &bestMatchSequence,
                 sam_hdr_t *header,
                 bam1_t **bamRecords,

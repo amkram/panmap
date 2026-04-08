@@ -18,7 +18,6 @@ int our_printw(int c, kstring_t *k) {
   char buf[16];
   int l, x;
   if (c == 0) {
-    // fputc('0', fp);
     return kputc('0', k);
   }
   for (l = 0, x = c < 0 ? -c : c; x > 0; x /= 10)
@@ -32,7 +31,6 @@ int our_printw(int c, kstring_t *k) {
     buf[l - 1 - x] = y;
   }
   kputs(buf, k);
-  // fputs(buf, fp);
   return 0;
 }
 
@@ -245,12 +243,10 @@ void our_print_empty_pileup(kstring_t *k, const mplp_conf_t *conf,
   // ref[pos] : 'N');
   for (i = 0; i < n; ++i) {
     kputs("\t0\t*\t*", k);
-    // fputs("\t0\t*\t*", fp);
     int flag_value = MPLP_PRINT_MAPQ_CHAR;
     while (flag_value < MPLP_PRINT_LAST) {
       if (flag_value != MPLP_PRINT_MODS && (conf->flag & flag_value)) {
         kputs("\t*", k);
-        // fputs("\t*", fp);
       }
       flag_value <<= 1;
     }
@@ -258,7 +254,6 @@ void our_print_empty_pileup(kstring_t *k, const mplp_conf_t *conf,
       int t = 0;
       while (t++ < ((klist_t(auxlist) *)conf->auxlist)->size) {
         kputs("\t*", k);
-        // fputs("\t*", fp);
       }
     }
   }
@@ -512,12 +507,10 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
       ksprintf(mplp_string, "\t%d\t", cnt);
       if (n_plp[i] == 0) {
         kputs("*\t*", mplp_string);
-        // fputs("*\t*", pileup_fp);
         int flag_value = MPLP_PRINT_MAPQ_CHAR;
         while (flag_value < MPLP_PRINT_LAST) {
           if (flag_value != MPLP_PRINT_MODS && (conf->flag & flag_value)) {
             kputs("\t*", mplp_string);
-            // fputs("\t*", pileup_fp);
           }
           flag_value <<= 1;
         }
@@ -525,7 +518,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
           int t = 0;
           while (t++ < ((klist_t(auxlist) *)conf->auxlist)->size) {
             kputs("\t*", mplp_string);
-            // fputs("\t*", pileup_fp);
           }
         }
       } else {
@@ -612,7 +604,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
               }
               case MPLP_PRINT_QNAME:
                 kputs(bam_get_qname(p->b), mplp_string);
-                // fputs(bam_get_qname(p->b), pileup_fp);
                 break;
               case MPLP_PRINT_FLAG:
                 ksprintf(mplp_string, "%d", p->b->core.flag);
@@ -620,7 +611,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
               case MPLP_PRINT_RNAME:
                 if (p->b->core.tid >= 0) {
                   kputs(sam_hdr_tid2name(h, p->b->core.tid), mplp_string);
-                  // fputs(sam_hdr_tid2name(h, p->b->core.tid), pileup_fp);
                 } else {
                   kputc('*', mplp_string);
                   // putc('*', pileup_fp);
@@ -635,7 +625,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
               case MPLP_PRINT_RNEXT:
                 if (p->b->core.mtid >= 0) {
                   kputs(sam_hdr_tid2name(h, p->b->core.mtid), mplp_string);
-                  // fputs(sam_hdr_tid2name(h, p->b->core.mtid), pileup_fp);
                 } else {
                   kputc('*', mplp_string);
                   // putc('*', pileup_fp);
@@ -693,7 +682,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
                 if (!tag_s)
                   continue;
                 kputs(tag_s, mplp_string);
-                // fputs(tag_s, pileup_fp);
                 tag_supported = 1;
               }
 

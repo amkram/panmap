@@ -24,8 +24,6 @@ enum seedChangeType {
   SUB
 };
 
-std::string seedChangeTypeToString(seedChangeType changeType);
-
 void getSequenceFromReference(
   panmanUtils::Tree* tree,
   std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence,
