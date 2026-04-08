@@ -682,6 +682,13 @@ if(OPTION_BUILD_TESTS)
     add_test(NAME correctness_tests COMMAND correctness_tests --log_level=test_suite WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
+# Integration tests (always available, run with: ctest -R integration)
+enable_testing()
+add_test(NAME integration_tests
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/src/test/integration_test.sh $<TARGET_FILE:panmap>
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # Add generated sources to panmap target
   target_sources(panmap PRIVATE ${LITE_CAPNP_SRCS})
 
