@@ -996,8 +996,8 @@ void placeLite(PlacementResult &result,
         logging::info("Struct-of-arrays format: {} hashes in {} segments", totalHashDeltas, numSegs);
         
         // Phase 2a
-        const size_t GRAIN_SIZE = 262144; // 256K items per chunk
-        const size_t CAPNP_SPLIT = 500'000'000;
+        constexpr size_t GRAIN_SIZE = 262144; // 256K items per chunk
+        constexpr size_t CAPNP_SPLIT = 500'000'000;
         for (uint32_t seg = 0; seg < numSegs; seg++) {
           size_t segStart = static_cast<size_t>(seg) * CAPNP_SPLIT;
           size_t segEnd = std::min(segStart + CAPNP_SPLIT, totalHashDeltas);

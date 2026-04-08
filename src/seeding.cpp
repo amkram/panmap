@@ -33,7 +33,7 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
   if (seq.size() < k) return syncmers;
   syncmers.reserve(seq.size() - k + 1);
 
-  const size_t max_size_t = std::numeric_limits<size_t>::max();
+  constexpr size_t max_size_t = std::numeric_limits<size_t>::max();
   size_t forwardKmerHash = 0, reverseKmerHash = 0;
   size_t forwardSmerHash = 0, reverseSmerHash = 0;
 
