@@ -155,10 +155,8 @@ struct Config {
     size_t batchSize = 1000000;
     
     // Utility modes
-    std::string randomSeed;
     bool dumpRandomNode = false;
     std::string dumpNodeId;
-    bool dumpSequence = false;
     bool writeMetaReadScoresFiltered = false;
     bool writeMetaReadScoresUnfiltered = false;
     bool writeOCRanks = false;
@@ -2006,7 +2004,6 @@ int main(int argc, char** argv) {
 
     po::options_description developer("Developer");
     developer.add_options()
-        ("random-seed", po::value<std::string>(&cfg.randomSeed), "Seed for rng (read in as string then hashed). If not provided, default to 42.")
         ("dump-random-node", po::bool_switch(&cfg.dumpRandomNode), "Dump random node FASTA")
         ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
         ("remove-node", po::value<std::string>(&cfg.removeNodeId), "Exclude node")
@@ -2379,15 +2376,6 @@ int main(int argc, char** argv) {
 
         // Batch mode: load index once, place all samples
         if (!cfg.batchFile.empty()) {
-            // Load substitution spectrum from index for genotyping
-            if (!cfg.noMutationSpectrum && cfg.stopAfter >= PipelineStage::Genotype) {
-                IndexReader specReader(cfg.index, cfg.threads);
-                auto specIdx = specReader.getRoot<LiteIndex>();
-                cfg.substMatrixPhred = loadSubstMatrixFromIndex(specIdx);
-                if (!cfg.substMatrixPhred.empty()) {
-                    logging::msg("Loaded substitution spectrum from index");
-                }
-            }
             return runBatchPlacement(cfg);
         }
         
