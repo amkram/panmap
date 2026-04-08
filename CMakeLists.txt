@@ -155,7 +155,7 @@ add_custom_command(
         compile
         -o${CAPNPC_CXX_EXECUTABLE}
         -I${CAPNP_SCHEMA_DIR}
-        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
+        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}/src
         ${LITE_CAPNP_SRC_FILE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS ${LITE_CAPNP_SRC_FILE} capnp_tools
