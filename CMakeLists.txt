@@ -6,8 +6,8 @@ project(panmap VERSION 0.1.0)
 set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
 cmake_policy(SET CMP0169 OLD)  # Allow FetchContent_Populate (needed for panman patching)
 if(POLICY CMP0167)
-    cmake_policy(SET CMP0167 OLD)  # Use FindBoost module
-    set(CMAKE_POLICY_DEFAULT_CMP0167 OLD)  # Propagate to subprojects
+    cmake_policy(SET CMP0167 NEW)  # Use config-mode for Protobuf/Boost
+    set(CMAKE_POLICY_DEFAULT_CMP0167 NEW)
 endif()
 
 # Export compile_commands.json for clangd
