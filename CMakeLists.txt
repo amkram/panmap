@@ -546,7 +546,6 @@ set(PANMAP_SOURCES_MAIN
     src/index_single_mode.cpp
     src/placement.cpp
     src/seeding.cpp
-    src/index_utils.cpp
     src/mgsr.cpp
     src/mm_align.c
     src/pileup.c
@@ -634,15 +633,16 @@ if(OPTION_BUILD_TESTS)
         src/index_single_mode.cpp
         src/panmap_utils.cpp
         src/zstd_compression.cpp
-        src/index_utils.cpp
+        src/test/index_utils.cpp
         src/mm_align.c
         ${CMAKE_CURRENT_BINARY_DIR}/index_lite.capnp.c++
     )
     
     add_dependencies(correctness_tests panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
     
-    target_include_directories(correctness_tests PRIVATE 
+    target_include_directories(correctness_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/test
         ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
         ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2
         ${CMAKE_CURRENT_BINARY_DIR}

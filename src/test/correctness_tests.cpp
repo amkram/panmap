@@ -35,7 +35,7 @@
 #include "../index_single_mode.hpp"
 #include "../panmap_utils.hpp"
 #include "../zstd_compression.hpp"
-#include "../index_utils.hpp"
+#include "index_utils.hpp"
 #include "capnp/message.h"
 #include "capnp/serialize.h"
 #include "index_lite.capnp.h"
