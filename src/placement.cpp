@@ -2032,16 +2032,8 @@ void placeLite(PlacementResult &result,
     auto duration_placement_total = std::chrono::duration_cast<std::chrono::milliseconds>(
         placement_total_end - placement_total_start);
     
-    logging::info("\n=== PLACEMENT INTERNAL TIMING BREAKDOWN ===");
-    logging::info("HashDeltaLoading: {}ms", std::chrono::duration_cast<std::chrono::milliseconds>(time_hash_delta_end - time_hash_delta_start).count());
-    logging::info("ReadProcessing: {}ms", duration_read_processing.count());
-    logging::info("ReadMagnitude: {}ms", duration_magnitude.count());
-    logging::info("TreeTraversal: {}ms", duration_traversal.count());
-    logging::info("FileWriting: {}ms", duration_write.count());
-    logging::info("PlacementTotal: {}ms", duration_placement_total.count());
-    logging::info("==========================================\n");
-    
-    logging::info("Best LogRaw score: {:.6f} (node: {})", 
+    logging::info("Placement complete in {}ms", duration_placement_total.count());
+    logging::info("Best LogRaw score: {:.6f} (node: {})",
                  result.bestLogRawScore, result.bestLogRawNodeId);
     if (result.tiedLogRawNodeIndices.size() > 1) {
         logging::info("  {} nodes tied for best LogRaw score", result.tiedLogRawNodeIndices.size());
