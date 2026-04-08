@@ -28,8 +28,6 @@ KSEQ_INIT(int, read)
 
 #include <absl/container/flat_hash_map.h>
 
-
-
 namespace seeding
 {
 
@@ -87,8 +85,6 @@ struct seed_t {
   bool operator==(const seed_t &rhs) const { return pos == rhs.pos; }
 };
 
-
-
 static char comp(char c) {
   char compC;
   switch (c) {
@@ -135,7 +131,6 @@ static std::string revcomp(const std::string &s) {
   }
   return cs;
 }
-
 
 size_t chash(const char& c);
 

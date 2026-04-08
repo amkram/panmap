@@ -102,9 +102,7 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
   hts_base_mod_state *m = p->cd.p;
   if (!no_ends && p->is_head) {
     kputc('^', mplp_string);
-    // putc('^', fp);
     kputc(p->b->core.qual > 93 ? 126 : p->b->core.qual + 33, mplp_string);
-    // putc(p->b->core.qual > 93? 126 : p->b->core.qual + 33, fp);
   }
   if (!p->is_del) {
     int c = p->qpos < p->b->core.l_qseq
@@ -123,13 +121,11 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
         c = bam_is_rev(p->b) ? tolower(c) : toupper(c);
     }
     kputc(c, mplp_string);
-    // putc(c, fp);
     if (m) {
       int nm;
       hts_base_mod mod[256];
       if ((nm = bam_mods_at_qpos(p->b, p->qpos, m, mod, 256)) > 0) {
         kputc('[', mplp_string);
-        // putc('[', fp);
         int j;
         for (j = 0; j < nm && j < 256; j++) {
           char qual[20];
@@ -149,14 +145,12 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
           }
         }
         kputc(']', mplp_string);
-        // putc(']', fp);
       }
     }
   } else {
     kputc(p->is_refskip ? (bam_is_rev(p->b) ? '<' : '>')
                         : ((bam_is_rev(p->b) && rev_del) ? '#' : '*'),
           mplp_string);
-    // putc(p->is_refskip? (bam_is_rev(p->b)? '<' : '>') : ((bam_is_rev(p->b) &&
     // rev_del) ? '#' : '*'), fp);
   }
   int del_len = -p->indel;
@@ -169,7 +163,6 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
     }
     if (no_ins < 2) {
       kputc('+', mplp_string);
-      // putc('+', fp);
       our_printw(len, mplp_string);
     }
     if (!no_ins) {
@@ -183,7 +176,6 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
             in_mod = 0;
           kputc(ks->s[j] != '*' ? (in_mod ? ks->s[j] : tolower(ks->s[j])) : pad,
                 mplp_string);
-          // putc(ks->s[j] != '*'
           //? (in_mod ? ks->s[j] : tolower(ks->s[j]))
           //: pad, fp);
         }
@@ -195,7 +187,6 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
           if (ks->s[j] == ']')
             in_mod = 0;
           kputc(in_mod ? ks->s[j] : toupper(ks->s[j]), mplp_string);
-          // putc(in_mod ? ks->s[j] : toupper(ks->s[j]), fp);
         }
       }
     }
@@ -207,27 +198,12 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
       for (j = 1; j <= del_len; ++j) {
         int c = (ref && (int)pos + j < ref_len) ? ref[pos + j] : 'N';
         kputc(bam_is_rev(p->b) ? tolower(c) : toupper(c), mplp_string);
-        // putc(bam_is_rev(p->b)? tolower(c) : toupper(c), fp);
       }
     }
   }
   if (!no_ends && p->is_tail) {
     kputc('$', mplp_string);
-    // putc('$', fp);
   }
-  return 0;
-}
-
-int our_pileup_cd_create(void *data, const bam1_t *b, bam_pileup_cd *cd) {
-  int ret;
-  hts_base_mod_state *m = hts_base_mod_state_alloc();
-  ret = bam_parse_basemod(b, m);
-  cd->p = m;
-  return ret;
-}
-
-int our_pileup_cd_destroy(void *data, const bam1_t *b, bam_pileup_cd *cd) {
-  hts_base_mod_state_free(cd->p);
   return 0;
 }
 
@@ -237,12 +213,10 @@ void our_print_empty_pileup(kstring_t *k, const mplp_conf_t *conf,
   int i;
   ksprintf(k, "%s\t%" PRIhts_pos "\t%c", tname, pos + 1,
            (ref && pos < ref_len) ? ref[pos] : 'N');
-  // ref[pos] : 'N');
   for (i = 0; i < n; ++i) {
     kputs("\t0\t*\t*", k);
   }
   kputs("\n", k);
-  // putc('\n', fp);
 }
 // I think this function populates the bam1_t structure.
 
@@ -379,8 +353,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
     exit(EXIT_FAILURE);
   }
 
-  // read the header of each file in the list and initialize  data
-  refs_t *refs = NULL;
   for (i = 0; i < n; ++i) {
     sam_hdr_t *h_tmp = sam_header; // Providing sam header
     data[i] = calloc(1, sizeof(mplp_aux_t));
@@ -506,14 +478,12 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
         }
         if (!n) {
           kputc('*', mplp_string);
-          // putc('*', pileup_fp);
         }
 
         /* Print base qualities */
         n = 0;
         ks_free(&ks);
         kputc('\t', mplp_string);
-        // putc('\t', pileup_fp);
 
         for (j = 0; j < n_plp[i]; ++j) {
           const bam_pileup1_t *p = plp[i] + j;
@@ -521,19 +491,16 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
           if (c >= conf->min_baseQ) {
             c = c + 33 < 126 ? c + 33 : 126;
             kputc(c, mplp_string);
-            // putc(c, pileup_fp);
             n++;
           }
         }
         if (!n) {
           kputc('*', mplp_string);
-          // putc('*', pileup_fp);
         }
 
       }
     }
     kputc('\n', mplp_string);
-    // putc('\n', pileup_fp);
   }
 
   if (ret < 0) {
