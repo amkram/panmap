@@ -1,11 +1,9 @@
 .git
-.vscode
+.github
 .claude
+.vscode
 build
-external_cache
+output
+site
 docs
-examples
 recipe
-scripts
-*.md
-LICENSE

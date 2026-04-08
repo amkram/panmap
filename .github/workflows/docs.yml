@@ -3,7 +3,7 @@ name: Deploy docs
 on:
   push:
     branches: [main]
-    paths: [docs/**, mkdocs.yml]
+    paths: [docs/**]
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install mkdocs-material
-      - run: mkdocs build
+      - run: mkdocs build -f docs/mkdocs.yml
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

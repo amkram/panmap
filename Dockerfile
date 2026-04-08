@@ -15,24 +15,18 @@ RUN apt-get update && apt-get install -y \
   libboost-system-dev \
   libboost-date-time-dev \
   zlib1g-dev \
+  libhts-dev \
   capnproto \
   libcapnp-dev \
-  autoconf \
-  automake \
-  libtool \
   libeigen3-dev \
   && rm -rf /var/lib/apt/lists/*
-
 
 WORKDIR /home/panmap
 
 COPY . .
 
-RUN mkdir -p build && \
-  cd build && \
-  cmake .. && make MAKEFLAGS= -j$(nproc)
+RUN mkdir -p build && cd build && cmake .. && make -j$(nproc)
 
 ENV PATH="/home/panmap/build/bin:${PATH}"
 
 CMD ["panmap"]
-

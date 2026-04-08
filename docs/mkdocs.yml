@@ -2,6 +2,8 @@ site_name: panmap
 site_description: Pangenome-based sequence placement, alignment, and genotyping
 repo_url: https://github.com/amkram/panmap
 repo_name: amkram/panmap
+docs_dir: .
+site_dir: ../site
 
 theme:
   name: material

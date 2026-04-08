@@ -37,7 +37,7 @@ include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 # ===== CapnProto code generation =====
 add_custom_target(capnp_tools ALL)
 
-set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/index_lite.capnp")
+set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/index_lite.capnp")
 set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(LITE_CAPNP_GEN_CPP "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.c++")
 set(LITE_CAPNP_GEN_H "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.h")
