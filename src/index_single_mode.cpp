@@ -1,5 +1,4 @@
 
-
 #include "index_single_mode.hpp"
 #include "panmap_utils.hpp"
 #include "panmanUtils.hpp"
@@ -21,7 +20,6 @@
 #include <atomic>
 #include <mutex>
 #include <iomanip>
-
 
 std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::computeNewSyncmerRangesJump(
   panmanUtils::Node* node,
@@ -132,7 +130,6 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
       }
 
-
       if (!newSyncmerRanges.empty() 
           && globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) <= globalCoords.getScalarFromCoord(curSyncmerRange.endCoord, blockStrand[curSyncmerRange.endCoord.primaryBlockId])
       ) {
@@ -155,7 +152,6 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         syncmerRangeBegCoord = curBegCoord;
       }
     }
-
 
     // expand to the right... if reach mergedLocalMutationRanges[localMutationRangeIndex + 1], merge
     offset = 0;
@@ -441,7 +437,6 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
     return newKminmerRanges;
   }
 
-
   int64_t syncmerChangeIndex = 0;
   while (syncmerChangeIndex < refOnSyncmersChangeRecord.size()) {
     const auto& [syncmerPos, changeType, rsyncmer] = refOnSyncmersChangeRecord[syncmerChangeIndex];
@@ -532,7 +527,6 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
         offset++;
       }
     }
-
 
     newKminmerRanges.emplace_back(curBegIt, curEndIt);
     if (curEndIt == refOnSyncmersMap.end()) {
@@ -721,7 +715,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   localMutationRanges.shrink_to_fit();
   gapRunUpdates.shrink_to_fit();
 
-
   std::sort(gapRunUpdates.begin(), gapRunUpdates.end(), [&](const auto& a, const auto& b) { return a.second.first < b.second.first; });
   panmapUtils::updateGapMap(gapMap, gapRunUpdates, gapRunBacktracks, gapMapUpdates);
 
@@ -840,7 +833,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
     }
   }
 
-
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     if (oldExists && !newExists) {
       if (blockOnSyncmers.find(blockId) != blockOnSyncmers.end()) {
@@ -944,7 +936,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
         refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
         addedSeedHashes.push_back(newHash);
       }
-      // Store hash directly
       refOnKminmers[indexingPos] = newHash;
     } else {
       if (refOnKminmers.contains(indexingPos)) {
@@ -1039,7 +1030,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   gap_map::revertGapMapChanges(gapRunBlockInversionBacktracks, gapMap);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunBlockInversionBacktracks); // gapRunBlockInversionBacktracks is no longer needed... clear memory
 
-  // update delayed block states
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     blockExistsDelayed[blockId] = newExists;
     blockStrandDelayed[blockId] = newStrand;
@@ -1114,7 +1104,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   }
 }
 
-
 void index_single_mode::IndexBuilder::buildIndex() {
   panmapUtils::BlockSequences blockSequences(T);
   panmapUtils::GlobalCoords globalCoords(blockSequences);
@@ -1135,14 +1124,12 @@ void index_single_mode::IndexBuilder::buildIndex() {
 
   size_t numNodes = T->allNodes.size();
 
-  // Add block infos to index
   capnp::List<BlockRange>::Builder blockRangesBuilder = liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
   for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
     blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
     blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
   }
 
-  // Add node to index
   capnp::List<LiteNode>::Builder nodesBuilder = liteTreeBuilder.initLiteNodes(numNodes);
   for (const auto& [nodeId, node] : T->allNodes) {
     auto idx = nodeToDfsIndex[nodeId];
@@ -1165,7 +1152,6 @@ void index_single_mode::IndexBuilder::buildIndex() {
   uint64_t totalChanges = 0;
   uint32_t largestNodeChangeCount = 0;
 
-  // Build reverse lookup: dfsIndex -> Node*
   std::vector<panmanUtils::Node*> dfsIndexToNode(numNodes, nullptr);
   for (const auto& [nodeId, node] : T->allNodes) {
     auto it = nodeToDfsIndex.find(nodeId);
@@ -1176,7 +1162,6 @@ void index_single_mode::IndexBuilder::buildIndex() {
 
   output::step("Computing seed deltas...");
 
-  // Compute per-node deltas sequentially
   for (size_t nodeIdx = 0; nodeIdx < numNodes; ++nodeIdx) {
     const auto& curCounts = nodeSeedCounts[nodeIdx];
 
@@ -1245,13 +1230,11 @@ void index_single_mode::IndexBuilder::buildIndex() {
     output::step("Large index: splitting {} seed changes into {} segments", totalChanges, numSegments);
   }
 
-  // Sort each node's changes by hash for better compression
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     std::sort(nodeChanges[nodeIdx].begin(), nodeChanges[nodeIdx].end(),
              [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
   }
 
-  // Write flat arrays
   uint64_t offset = 0;
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     nodeChangeOffsetsBuilder.set(nodeIdx, offset);
@@ -1275,10 +1258,6 @@ void index_single_mode::IndexBuilder::buildIndex() {
   output::done(fmt::format("Index built ({} seed changes)", totalChanges));
 }
 
-// ============================================================================
-// Substitution Spectrum Computation
-// ============================================================================
-
 static int nucToIdx(char c) {
   switch (c) {
     case 'A': case 'a': return 0;
@@ -1296,7 +1275,6 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
   std::vector<std::vector<int64_t>> subCounts(4, std::vector<int64_t>(4, 0));
   int64_t numBranches = 0;
 
-  // Set up block sequences from root
   panmapUtils::BlockSequences blockSequences(T);
   auto& sequence = blockSequences.sequence;
 
@@ -1446,7 +1424,6 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
   // Serialize Cap'n Proto message to flat array
   kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments = outMessage.getSegmentsForOutput();
   
-  // Calculate total size
   size_t totalWords = 0;
   for (auto seg : segments) {
     totalWords += seg.size();
@@ -1468,10 +1445,6 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
   
   output::done("Index written to " + path);
 }
-
-// ============================================================================
-// Parallel Index Building Implementation
-// ============================================================================
 
 uint64_t index_single_mode::IndexBuilder::computeSubtreeSize(panmanUtils::Node* node) {
   uint64_t size = 1;  // Count this node
@@ -1752,7 +1725,6 @@ void index_single_mode::IndexBuilder::processNode(
   // Processing k-min-mers - matches original exactly
   auto k = indexBuilder.getK();
   auto l = indexBuilder.getL();
-  // LOCK-FREE: Store hashes directly instead of indices
   std::vector<uint64_t> deletedSeedHashes;
   std::vector<uint64_t> addedSeedHashes;
   std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedHashes; // <oldHash, newHash>
@@ -1826,7 +1798,6 @@ void index_single_mode::IndexBuilder::processNode(
         refOnKminmersChangeRecord.emplace_back(indexingPos, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
         addedSeedHashes.push_back(newHash);
       }
-      // Store hash directly instead of index
       state.refOnKminmers[indexingPos] = newHash;
     } else {
       auto existingIt = state.refOnKminmers.find(indexingPos);
@@ -1860,7 +1831,6 @@ void index_single_mode::IndexBuilder::processNode(
           refOnKminmersChangeRecord.emplace_back(indexingPos2, panmapUtils::seedChangeType::ADD, std::numeric_limits<uint64_t>::max());
           addedSeedHashes.push_back(newHash2);
         }
-        // Store hash directly
         state.refOnKminmers[indexingPos2] = newHash2;
       } else {
         auto existingIt2 = state.refOnKminmers.find(indexingPos2);
@@ -1945,14 +1915,12 @@ void index_single_mode::IndexBuilder::processNode(
       runningCountChanges.emplace_back(hash, -1);
     }
     for (const auto& [oldHash, newHash] : substitutedSeedHashes) {
-      // Delete old
       auto oldIt = state.runningCounts.find(oldHash);
       if (oldIt != state.runningCounts.end()) {
         oldIt->second--;
         if (oldIt->second <= 0) state.runningCounts.erase(oldIt);
       }
       runningCountChanges.emplace_back(oldHash, -1);
-      // Add new
       state.runningCounts[newHash]++;
       runningCountChanges.emplace_back(newHash, +1);
     }
@@ -1998,7 +1966,6 @@ void index_single_mode::IndexBuilder::processNode(
   // Revert gap map inversions (for proper state for children)
   gap_map::revertGapMapChanges(gapRunBlockInversionBacktracks, state.gapMap);
 
-  // Update delayed block states (for children)
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     state.blockExistsDelayed[blockId] = newExists;
     state.blockStrandDelayed[blockId] = newStrand;
@@ -2178,7 +2145,6 @@ void index_single_mode::IndexBuilder::processSubtreeParallel(
   // Always record changes for backtracking - needed to restore state for siblings
   BacktrackInfo nodeBacktrackInfo;
   
-  // Process this node
   processNode(node, state, globalCoords, localEmptyNodes, dfsIndex, &nodeBacktrackInfo);
 
   // Process children if any
@@ -2572,7 +2538,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   constexpr uint32_t CAPNP_SPLIT = 500'000'000;
   size_t numSegments = (totalChanges + CAPNP_SPLIT - 1) / CAPNP_SPLIT;
 
-  // Allocate and write flat arrays (sequential - Cap'n Proto builders aren't thread-safe)
   auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(numSegments);
   auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(numSegments);
   auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(numSegments);
@@ -2590,7 +2555,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     output::step("Large index: splitting {} seed changes into {} segments", totalChanges, numSegments);
   }
 
-  // Sort each node's changes by hash for better compression
   for (size_t nodeIdx = 0; nodeIdx < numNodes; nodeIdx++) {
     std::sort(nodeChanges[nodeIdx].begin(), nodeChanges[nodeIdx].end(),
              [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });

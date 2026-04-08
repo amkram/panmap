@@ -5,7 +5,6 @@
 #include "logging.hpp"
 #include "mm_align.h"
 
-
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <tbb/global_control.h>
@@ -282,13 +281,11 @@ void placement::NodeMetrics::computeChildMetrics(
     }
 }
 
-
 namespace placement {
 
 using ::panmanUtils::Node;
 using ::panmanUtils::Tree;
 
-// Forward declarations
 class PlacementResult;
 
 // Macro to generate score update functions - reduces repetitive code
@@ -371,11 +368,7 @@ void PlacementResult::resolveNodeIds(panmapUtils::LiteTree* liteTree) {
     resolveRefined(refinedLogContainment);
 }
 
-
-// =============================================================================
-// ALIGNMENT-BASED REFINEMENT
 // After k-mer scoring, refine top candidates by full minimap2 alignment
-// =============================================================================
 
 // Get all nodes within phylogenetic distance `radius` of a given node
 // Uses BFS traversal following parent/child edges
@@ -664,7 +657,6 @@ void refineTopCandidates(
     logging::info("  refined_log_raw: {} | refined_containment: {} | refined_log_cosine: {}",
                  lrScore, cScore, lcScore);
 }
-
 
 // Placement helper using BFS traversal with delta-based metrics
 void placeLiteHelperBFS(

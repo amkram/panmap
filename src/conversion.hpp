@@ -9,7 +9,6 @@ extern "C" {
 #include <htslib/sam.h>
 }
 
-// Forward declarations
 namespace genotyping {
     struct mutationMatrices;
 }
