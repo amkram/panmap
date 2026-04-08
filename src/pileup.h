@@ -16,9 +16,7 @@
 #include <htslib/sam.h>
 #include <htslib/faidx.h>
 #include <htslib/kstring.h>
-#include <htslib/klist.h>
 #include <htslib/khash_str2int.h>
-#include <htslib/cram.h>
 
 /* --- From sam_opts.h --- */
 
@@ -44,24 +42,6 @@ static inline void sam_global_args_init(sam_global_args *ga) {
 #define MPLP_ILLUMINA13 (1<<7)
 #define MPLP_IGNORE_RG  (1<<8)
 #define MPLP_SMART_OVERLAPS (1<<10)
-
-#define MPLP_PRINT_MAPQ_CHAR (1<<11)
-#define MPLP_PRINT_QPOS  (1<<12)
-#define MPLP_PRINT_QNAME (1<<13)
-#define MPLP_PRINT_FLAG  (1<<14)
-#define MPLP_PRINT_RNAME (1<<15)
-#define MPLP_PRINT_POS   (1<<16)
-#define MPLP_PRINT_MAPQ  (1<<17)
-#define MPLP_PRINT_CIGAR (1<<18)
-#define MPLP_PRINT_RNEXT (1<<19)
-#define MPLP_PRINT_PNEXT (1<<20)
-#define MPLP_PRINT_TLEN  (1<<21)
-#define MPLP_PRINT_SEQ   (1<<22)
-#define MPLP_PRINT_QUAL  (1<<23)
-#define MPLP_PRINT_RLEN  (1<<24)
-#define MPLP_PRINT_MODS  (1<<25)
-#define MPLP_PRINT_QPOS5 (1<<26)
-#define MPLP_PRINT_LAST  (1<<27)
 
 #define MPLP_MAX_DEPTH 8000
 #define MPLP_MAX_INDEL_DEPTH 250
