@@ -39,9 +39,6 @@ int our_printw(int c, kstring_t *k) {
 int our_mplp_get_ref(mplp_aux_t *ma, int tid, char **ref, hts_pos_t *ref_len) {
   mplp_ref_t *r = ma->ref;
 
-  // printf("get ref %d {%d/%p, %d/%p}\n", tid, r->ref_id[0], r->ref[0],
-  // r->ref_id[1], r->ref[1]);
-
   if (!r) {
     *ref = NULL;
     return 0;
@@ -149,12 +146,10 @@ int our_pileup_seq(kstring_t *mplp_string, const bam_pileup1_t *p,
             // ChEBI
             ksprintf(mplp_string, "%c(%d)%s", "+-"[mod[j].strand],
                      -mod[j].modified_base, qual);
-            // fprintf(fp, "%c(%d)%s", "+-"[mod[j].strand],
             //-mod[j].modified_base, qual);
           } else {
             ksprintf(mplp_string, "%c%c%s", "+-"[mod[j].strand],
                      mod[j].modified_base, qual);
-            // fprintf(fp, "%c%c%s", "+-"[mod[j].strand],
             // mod[j].modified_base, qual);
           }
         }
@@ -247,7 +242,6 @@ void our_print_empty_pileup(kstring_t *k, const mplp_conf_t *conf,
   int i;
   ksprintf(k, "%s\t%" PRIhts_pos "\t%c", tname, pos + 1,
            (ref && pos < ref_len) ? ref[pos] : 'N');
-  // fprintf(fp, "%s\t%"PRIhts_pos"\t%c", tname, pos+1, (ref && pos < ref_len)?
   // ref[pos] : 'N');
   for (i = 0; i < n; ++i) {
     kputs("\t0\t*\t*", k);
@@ -507,8 +501,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
       continue;
     ksprintf(mplp_string, "%s\t%" PRIhts_pos "\t%c", sam_hdr_tid2name(h, tid),
              pos + 1, (ref && pos < ref_len) ? ref[pos] : 'N');
-    // fprintf(pileup_fp, "%s\t%"PRIhts_pos"\t%c", sam_hdr_tid2name(h, tid), pos
-    // + 1, (ref && pos < ref_len)? ref[pos] : 'N');
     for (i = 0; i < n; ++i) {
       int j, cnt;
       for (j = cnt = 0; j < n_plp[i]; ++j) {
@@ -518,7 +510,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
           ++cnt;
       }
       ksprintf(mplp_string, "\t%d\t", cnt);
-      // fprintf(pileup_fp, "\t%d\t", cnt);
       if (n_plp[i] == 0) {
         kputs("*\t*", mplp_string);
         // fputs("*\t*", pileup_fp);
@@ -610,7 +601,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
               case MPLP_PRINT_QPOS:
                 // query position in current orientation
                 ksprintf(mplp_string, "%d", p->qpos + 1);
-                // fprintf(pileup_fp, "%d", p->qpos + 1);
                 break;
               case MPLP_PRINT_QPOS5: {
                 // query position in 5' to 3' orientation
@@ -618,7 +608,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
                                ? p->b->core.l_qseq - p->qpos + p->is_del
                                : p->qpos + 1;
                 ksprintf(mplp_string, "%d", pos5);
-                // fprintf(pileup_fp, "%d", pos5);
                 break;
               }
               case MPLP_PRINT_QNAME:
@@ -627,7 +616,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
                 break;
               case MPLP_PRINT_FLAG:
                 ksprintf(mplp_string, "%d", p->b->core.flag);
-                // fprintf(pileup_fp, "%d", p->b->core.flag);
                 break;
               case MPLP_PRINT_RNAME:
                 if (p->b->core.tid >= 0) {
@@ -640,11 +628,9 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
                 break;
               case MPLP_PRINT_POS:
                 ksprintf(mplp_string, "%" PRId64, (int64_t)p->b->core.pos + 1);
-                // fprintf(pileup_fp, "%"PRId64, (int64_t) p->b->core.pos + 1);
                 break;
               case MPLP_PRINT_MAPQ:
                 ksprintf(mplp_string, "%d", p->b->core.qual);
-                // fprintf(pileup_fp, "%d", p->b->core.qual);
                 break;
               case MPLP_PRINT_RNEXT:
                 if (p->b->core.mtid >= 0) {
@@ -657,11 +643,9 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
                 break;
               case MPLP_PRINT_PNEXT:
                 ksprintf(mplp_string, "%" PRId64, (int64_t)p->b->core.mpos + 1);
-                // fprintf(pileup_fp, "%"PRId64, (int64_t) p->b->core.mpos + 1);
                 break;
               case MPLP_PRINT_RLEN:
                 ksprintf(mplp_string, "%d", p->b->core.l_qseq);
-                // fprintf(pileup_fp, "%d", p->b->core.l_qseq);
                 break;
               }
             }
@@ -718,7 +702,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
                   *tag_u == 'c' || *tag_u == 'S' || *tag_u == 's') {
                 int64_t tag_i = bam_aux2i(tag_u);
                 ksprintf(mplp_string, "%" PRId64 "", tag_i);
-                // fprintf(pileup_fp, "%" PRId64 "", tag_i);
                 tag_supported = 1;
               }
 
@@ -726,7 +709,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
               if (*tag_u == 'd' || *tag_u == 'f') {
                 double tag_f = bam_aux2f(tag_u);
                 ksprintf(mplp_string, "%lf", tag_f);
-                // fprintf(pileup_fp, "%lf", tag_f);
                 tag_supported = 1;
               }
 

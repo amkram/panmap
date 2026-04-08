@@ -779,40 +779,19 @@ void writeOCRanks(const std::string& outputFile, const std::vector<std::pair<std
   outFile.close();
 }
 
-void writeMetaReadScoresUnfiltered(const std::string& outputFile, const mgsr::ThreadsManager& threadsManager) {
+void writeMetaReadScores(const std::string& outputFile, const mgsr::ThreadsManager& threadsManager, bool includeOverMaxFamilies) {
   std::ofstream outFile(outputFile);
-  
-  outFile << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tRawReadsIndices" << std::endl;
+  outFile << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\t";
+  if (includeOverMaxFamilies) outFile << "OverMaximumFamilies\t";
+  outFile << "RawReadsIndices" << std::endl;
   for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
     const auto& curRead = threadsManager.reads[i];
     if (curRead.maxScore == 0) continue;
     outFile << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
+    if (includeOverMaxFamilies) outFile << curRead.overMaximumFamilies << "\t";
     for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
-      if (j == 0) {
-        outFile << threadsManager.readSeedmersDuplicatesIndex[i][j];
-      } else {
-        outFile << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
-      }
-    }
-    outFile << std::endl;
-  }
-  outFile.close();
-}
-
-void writeMetaReadScoresFiltered(const std::string& outputFile, const mgsr::ThreadsManager& threadsManager) {
-  std::ofstream outFile(outputFile);
-  
-  outFile << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\tOverMaximumFamilies\tRawReadsIndices" << std::endl;
-  for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
-    const auto& curRead = threadsManager.reads[i];
-    if (curRead.maxScore == 0) continue;
-    outFile << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t" << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t" << curRead.overMaximumFamilies << "\t";
-    for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
-      if (j == 0) {
-        outFile << threadsManager.readSeedmersDuplicatesIndex[i][j];
-      } else {
-        outFile << "," << threadsManager.readSeedmersDuplicatesIndex[i][j];
-      }
+      if (j > 0) outFile << ",";
+      outFile << threadsManager.readSeedmersDuplicatesIndex[i][j];
     }
     outFile << std::endl;
   }
@@ -1292,7 +1271,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
   scoreReadsMultiThreaded(T, threadsManager, cfg);
 
   if (cfg.writeMetaReadScoresUnfiltered) {
-    writeMetaReadScoresUnfiltered(cfg.output + ".read_scores_info.unfiltered.tsv", threadsManager);
+    writeMetaReadScores(cfg.output + ".read_scores_info.unfiltered.tsv", threadsManager, false);
   }
 
   double discard_threshold = cfg.discard;
@@ -1364,7 +1343,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
 
 
   if (cfg.writeMetaReadScoresFiltered) {
-    writeMetaReadScoresFiltered(cfg.output + ".read_scores_info.filtered.tsv", threadsManager);
+    writeMetaReadScores(cfg.output + ".read_scores_info.filtered.tsv", threadsManager, true);
   }
 
   return true;
