@@ -54,6 +54,7 @@ src/3rdparty/samtools/config.mk
 src/3rdparty/samtools/config.status
 src/3rdparty/samtools/htslib-1.20/annot-tsv
 src/3rdparty/samtools/htslib-1.20/bgzip
+src/3rdparty/samtools/htslib-1.20/config.h
 src/3rdparty/samtools/htslib-1.20/config.log
 src/3rdparty/samtools/htslib-1.20/config.mk
 src/3rdparty/samtools/htslib-1.20/config.status
@@ -69,6 +70,7 @@ src/3rdparty/samtools/htslib-1.20/**/*.pico
 .vscode/
 .cache/
 .claude/
+.gitattributes
 
 # macOS
 .DS_Store
