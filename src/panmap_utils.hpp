@@ -111,8 +111,6 @@ class LiteTree {
       return "";
     }
 
-  private:
-    bool cleaned = false;
 };
 
 

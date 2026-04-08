@@ -90,7 +90,6 @@ namespace box {
     inline const char* horizontal()  { return config().plain ? "-" : "─"; }
     inline const char* vertical()    { return config().plain ? "|" : "│"; }
     inline const char* arrow()       { return config().plain ? "->" : "→"; }
-    inline const char* bullet()      { return config().plain ? "*" : "•"; }
     inline const char* check()       { return config().plain ? "[OK]" : "✓"; }
     inline const char* cross()       { return config().plain ? "[X]" : "✗"; }
 }

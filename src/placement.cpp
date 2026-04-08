@@ -2005,17 +2005,17 @@ void placeLite(PlacementResult &result,
         
         // Per-metric refinement scores (if refinement was run)
         if (result.refinementWasRun) {
-            auto writeRefined = [&](const char* name, const PlacementResult::RefinedResult& r) {
-                if (r.nodeIndex != UINT32_MAX) {
-                    placementsFile << name << "\t" << std::fixed << std::setprecision(0) << r.score << "\t";
-                    placementsFile << r.nodeId << "\n";
-                }
+            const std::pair<const char*, const PlacementResult::RefinedResult*> refined[] = {
+                {"refined_log_raw", &result.refinedLogRaw},
+                {"refined_log_cosine", &result.refinedLogCosine},
+                {"refined_containment", &result.refinedContainment},
+                {"refined_weighted_containment", &result.refinedWeightedContainment},
+                {"refined_log_containment", &result.refinedLogContainment}
             };
-            writeRefined("refined_log_raw", result.refinedLogRaw);
-            writeRefined("refined_log_cosine", result.refinedLogCosine);
-            writeRefined("refined_containment", result.refinedContainment);
-            writeRefined("refined_weighted_containment", result.refinedWeightedContainment);
-            writeRefined("refined_log_containment", result.refinedLogContainment);
+            for (const auto& [name, r] : refined) {
+                if (r->nodeIndex != UINT32_MAX)
+                    placementsFile << name << "\t" << std::fixed << std::setprecision(0) << r->score << "\t" << r->nodeId << "\n";
+            }
         }
         
         placementsFile.close();
@@ -2049,16 +2049,14 @@ void placeLite(PlacementResult &result,
     
     if (result.refinementWasRun) {
         logging::info("Per-metric refined placements:");
-        auto logRef = [](const char* name, const PlacementResult::RefinedResult& r) {
-            if (r.nodeIndex != UINT32_MAX) {
-                logging::info("  {}: score={:.0f} node={}", name, r.score, r.nodeId);
-            }
+        const std::pair<const char*, const PlacementResult::RefinedResult*> refined[] = {
+            {"refined_log_raw", &result.refinedLogRaw}, {"refined_log_cosine", &result.refinedLogCosine},
+            {"refined_containment", &result.refinedContainment}, {"refined_weighted_containment", &result.refinedWeightedContainment},
+            {"refined_log_containment", &result.refinedLogContainment}
         };
-        logRef("refined_log_raw", result.refinedLogRaw);
-        logRef("refined_log_cosine", result.refinedLogCosine);
-        logRef("refined_containment", result.refinedContainment);
-        logRef("refined_weighted_containment", result.refinedWeightedContainment);
-        logRef("refined_log_containment", result.refinedLogContainment);
+        for (const auto& [name, r] : refined)
+            if (r->nodeIndex != UINT32_MAX)
+                logging::info("  {}: score={:.0f} node={}", name, r->score, r->nodeId);
     }
 }
 
