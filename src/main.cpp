@@ -155,13 +155,11 @@ struct Config {
     size_t batchSize = 1000000;
     
     // Utility modes
-    bool dumpRandomNode = false;
     std::string dumpNodeId;
     bool writeMetaReadScoresFiltered = false;
     bool writeMetaReadScoresUnfiltered = false;
     bool writeOCRanks = false;
     int seed = 42;
-    bool mutRate = false;         // Compute average mutation rate (muts/bp)
     
     // Batch mode
     std::string batchFile;        // Path to batch file listing samples (one per line: reads1 [reads2])
@@ -326,123 +324,6 @@ std::unique_ptr<panmanUtils::TreeGroup> loadPanMAN(const std::string& path) {
 /**
  * Get ungapped genome length for a node (count non-gap characters).
  */
-size_t getUngappedLength(panmanUtils::Tree* T, const std::string& nodeId) {
-    std::string seq = T->getStringFromReference(nodeId, false);
-    size_t count = 0;
-    for (char c : seq) {
-        if (c != '-' && c != 'x') count++;
-    }
-    return count;
-}
-
-/**
- * Count N characters in a node's sequence.
- */
-size_t getNCount(panmanUtils::Tree* T, const std::string& nodeId) {
-    std::string seq = T->getStringFromReference(nodeId, false);
-    size_t count = 0;
-    for (char c : seq) {
-        if (c == 'N' || c == 'n') count++;
-    }
-    return count;
-}
-
-/**
- * Select a random node with ungapped genome length within 10% of the median.
- * Also logs the node's parent length for diagnostic purposes.
- * This filters out partial sequences (e.g., from edge deletions) that would
- * bias LOO validation results.
- */
-std::string getRandomNodeId(panmanUtils::Tree* T, int seed) {
-    // Build map from id -> Node* for parent lookup
-    std::unordered_map<std::string, panmanUtils::Node*> nodeMap;
-    std::vector<std::string> ids;
-    std::function<void(panmanUtils::Node*)> collect = [&](panmanUtils::Node* n) {
-        if (!n) return;
-        ids.push_back(n->identifier);
-        nodeMap[n->identifier] = n;
-        for (auto* c : n->children) collect(c);
-    };
-    collect(T->root);
-    
-    if (ids.empty()) throw std::runtime_error("No nodes in tree");
-    
-    // Sample a subset to estimate median (for speed)
-    const size_t sampleSize = std::min(ids.size(), size_t(100));
-    std::mt19937 sampleGen(42);  // Fixed seed for reproducibility
-    std::vector<std::string> sampleIds = ids;
-    std::shuffle(sampleIds.begin(), sampleIds.end(), sampleGen);
-    sampleIds.resize(sampleSize);
-    
-    std::vector<size_t> sampleLengths;
-    sampleLengths.reserve(sampleSize);
-    for (const auto& id : sampleIds) {
-        sampleLengths.push_back(getUngappedLength(T, id));
-    }
-    std::sort(sampleLengths.begin(), sampleLengths.end());
-    size_t medianLen = sampleLengths[sampleLengths.size() / 2];
-    
-    logging::info("Estimated median length from {} samples: {} bp", sampleSize, medianLen);
-    
-    // Filter nodes by computing lengths only for candidates
-    double tolerance = 0.10;
-    size_t minLen = static_cast<size_t>(medianLen * (1.0 - tolerance));
-    size_t maxLen = static_cast<size_t>(medianLen * (1.0 + tolerance));
-    
-    // Shuffle all IDs, then filter on-the-fly until we have enough
-    std::mt19937 gen(seed);
-    std::shuffle(ids.begin(), ids.end(), gen);
-    
-    const size_t maxNs = 5;  // Maximum allowed N characters
-    std::unordered_map<std::string, size_t> lengthCache;
-    std::vector<std::string> filteredIds;
-    
-    for (const auto& id : ids) {
-        size_t len = getUngappedLength(T, id);
-        lengthCache[id] = len;
-        if (len >= minLen && len <= maxLen) {
-            // Also filter by N count
-            size_t nCount = getNCount(T, id);
-            if (nCount <= maxNs) {
-                filteredIds.push_back(id);
-                if (filteredIds.size() >= 1000) break;  // Enough candidates
-            }
-        }
-    }
-    
-    if (filteredIds.empty()) {
-        logging::warn("No nodes within 10% of median length ({}). Using first available.", medianLen);
-        filteredIds.push_back(ids[0]);
-        lengthCache[ids[0]] = getUngappedLength(T, ids[0]);
-    }
-    
-    logging::info("Found {} nodes within 10% of median ({}-{} bp)", 
-                 filteredIds.size(), minLen, maxLen);
-    
-    // Select from filtered set
-    std::string selectedId = filteredIds[std::uniform_int_distribution<size_t>(0, filteredIds.size()-1)(gen)];
-    
-    // Ensure selected node and parent are in cache
-    if (lengthCache.find(selectedId) == lengthCache.end()) {
-        lengthCache[selectedId] = getUngappedLength(T, selectedId);
-    }
-    
-    // Log selected node and parent info
-    size_t selectedLen = lengthCache[selectedId];
-    panmanUtils::Node* selectedNode = nodeMap[selectedId];
-    if (selectedNode->parent) {
-        if (lengthCache.find(selectedNode->parent->identifier) == lengthCache.end()) {
-            lengthCache[selectedNode->parent->identifier] = getUngappedLength(T, selectedNode->parent->identifier);
-        }
-        size_t parentLen = lengthCache[selectedNode->parent->identifier];
-        logging::info("Selected node: {} ({} bp), parent: {} ({} bp)", 
-                     selectedId, selectedLen, selectedNode->parent->identifier, parentLen);
-    } else {
-        logging::info("Selected node: {} ({} bp), no parent (root)", selectedId, selectedLen);
-    }
-    
-    return selectedId;
-}
 
 std::string sanitizeFilename(const std::string& s) {
     std::string result = s;
@@ -453,13 +334,8 @@ std::string sanitizeFilename(const std::string& s) {
 }
 
 
-std::string getNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, bool impute = false) {
-    
-    return T->getStringFromReference(nodeId, false, true);
-}
-
-void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std::string& path, bool impute = false) {
-    std::string seq = getNodeSequence(T, nodeId, impute);
+void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std::string& path) {
+    std::string seq = T->getStringFromReference(nodeId, false, true);
     
     std::ofstream out(path);
     if (!out) throw std::runtime_error("Cannot write: " + path);
@@ -1759,15 +1635,12 @@ int main(int argc, char** argv) {
 
     po::options_description developer("Developer");
     developer.add_options()
-        ("dump-random-node", po::bool_switch(&cfg.dumpRandomNode), "Dump random node FASTA")
         ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
         ("dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")
         ("write-meta-read-scores-filtered", po::bool_switch(&cfg.writeMetaReadScoresFiltered), "Write filtered meta read scores to TSV file")
         ("write-meta-read-scores-unfiltered", po::bool_switch(&cfg.writeMetaReadScoresUnfiltered), "Write unfiltered meta read scores to TSV file")
         ("write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")
-        ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed")
-        ("mut-rate", po::bool_switch(&cfg.mutRate),
-            "Compute average mutation rate across panman tree (muts/bp per branch, SNPs and indels)");
+        ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
     
     // Positional arguments (always hidden)
     po::options_description positional;
@@ -1874,7 +1747,7 @@ int main(int argc, char** argv) {
         }
     }
     // Only set default output if we're not in dump mode (dump modes handle their own output)
-    if (cfg.output.empty() && !cfg.dumpRandomNode && cfg.dumpNodeId.empty()) {
+    if (cfg.output.empty() && cfg.dumpNodeId.empty()) {
         // Derive output prefix from reads filename (without path and common extensions)
         if (!cfg.reads1.empty()) {
             fs::path readsPath(cfg.reads1);
@@ -1913,7 +1786,7 @@ int main(int argc, char** argv) {
     
     auto printConfigSummary = [&]() {
         if (cfg.quiet) return;  // Skip in quiet mode
-        if (cfg.dumpRandomNode || !cfg.dumpNodeId.empty()) return;  // Skip for utility modes
+        if (!cfg.dumpNodeId.empty()) return;  // Skip for utility modes
         
         // Build stage string using arrow from box chars
         std::string arrow = output::box::arrow();
@@ -1964,121 +1837,6 @@ int main(int argc, char** argv) {
     // ========================================================================
     
     try {
-        // Utility: dump random node
-        if (cfg.dumpRandomNode) {
-            auto tg = loadPanMAN(cfg.panman);
-            std::string nodeId = getRandomNodeId(&tg->trees[0], cfg.seed);
-            // Use -o output path if specified, otherwise default to panman path
-            std::string outPath = cfg.output.empty() 
-                ? cfg.panman + ".random." + sanitizeFilename(nodeId) + ".fa"
-                : cfg.output;
-            saveNodeSequence(&tg->trees[0], nodeId, outPath, cfg.impute);
-            std::cout << nodeId << "\n";
-            return 0;
-        }
-
-        
-        // Utility: compute mutation rate across the tree
-        if (cfg.mutRate) {
-            auto tg = loadPanMAN(cfg.panman);
-            if (!tg || tg->trees.empty()) {
-                output::error("Failed to load panman");
-                return 1;
-            }
-            for (size_t ti = 0; ti < tg->trees.size(); ti++) {
-                panmanUtils::Tree* T = &tg->trees[ti];
-
-                // Genome length: sample up to 200 leaf nodes, take median ungapped length.
-                // Robust when the root sequence is empty/all-gap (common in block-structured panmans).
-                std::vector<std::string> leafIds;
-                std::function<void(panmanUtils::Node*)> collectLeaves = [&](panmanUtils::Node* n) {
-                    if (n->children.empty()) leafIds.push_back(n->identifier);
-                    else for (auto* c : n->children) collectLeaves(c);
-                };
-                collectLeaves(T->root);
-                {
-                    std::mt19937 rng(42);
-                    if (leafIds.size() > 200) {
-                        std::shuffle(leafIds.begin(), leafIds.end(), rng);
-                        leafIds.resize(200);
-                    }
-                }
-                std::vector<size_t> leafLens;
-                for (const auto& id : leafIds) leafLens.push_back(getUngappedLength(T, id));
-                std::sort(leafLens.begin(), leafLens.end());
-                size_t genomeLen = leafLens.empty() ? 0 : leafLens[leafLens.size() / 2];
-
-                // Compatible with wgsim -r / -R:
-                //   wgsim -r = total mutation EVENTS per site
-                //   wgsim -R = fraction of events that are indels
-                //   SNP: each substituted base = 1 event  (NS len L → L events)
-                //   Indel: each NI/ND entry   = 1 event   (regardless of bp length)
-                //   Block mutations = pan-genome structural variation → excluded
-                int64_t totalSnpPositions = 0;  // substituted bases
-                int64_t totalIndelEvents  = 0;  // indel entries (each = 1 event)
-                int64_t numBranches = 0;
-                std::vector<double> branchRates;
-                std::vector<double> branchIndelFracs;  // per-branch indel fraction
-
-                std::function<void(panmanUtils::Node*)> dfs = [&](panmanUtils::Node* node) {
-                    if (node != T->root) {
-                        int64_t bSnps = 0, bIndels = 0;
-                        for (const auto& nm : node->nucMutation) {
-                            int type = nm.mutInfo & 0x7;
-                            int len  = nm.mutInfo >> 4;
-                            if (len == 0) len = 1;
-                            if (type == panmanUtils::NucMutationType::NS ||
-                                type == panmanUtils::NucMutationType::NSNPS) {
-                                bSnps += len;  // each substituted base = 1 independent event
-                            } else {
-                                bIndels += 1;  // each NI/ND entry = 1 indel event (wgsim: 1 event regardless of length)
-                            }
-                        }
-                        totalSnpPositions += bSnps;
-                        totalIndelEvents  += bIndels;
-                        numBranches++;
-                        int64_t bTotal = bSnps + bIndels;
-                        double rate = genomeLen > 0 ? (double)bTotal / genomeLen : 0.0;
-                        branchRates.push_back(rate);
-                        // Per-branch indel fraction (only for branches with any mutations)
-                        if (bTotal > 0)
-                            branchIndelFracs.push_back((double)bIndels / bTotal);
-                    }
-                    for (auto* child : node->children) dfs(child);
-                };
-                dfs(T->root);
-
-                auto median_of = [](std::vector<double> v) -> double {
-                    if (v.empty()) return 0.0;
-                    std::sort(v.begin(), v.end());
-                    return v[v.size() / 2];
-                };
-
-                double medianRate        = median_of(branchRates);
-                double medianIndelFrac   = median_of(branchIndelFracs);
-                // wgsim -r  = medianRate        (total events/site for a typical branch)
-                // wgsim -R  = medianIndelFrac   (fraction of those that are indels)
-
-                double avgSnpRate = (numBranches > 0 && genomeLen > 0)
-                    ? (double)totalSnpPositions / (numBranches * genomeLen) : 0.0;
-                double avgIndelRate = (numBranches > 0 && genomeLen > 0)
-                    ? (double)totalIndelEvents  / (numBranches * genomeLen) : 0.0;
-
-                if (tg->trees.size() > 1)
-                    std::cout << "tree\t" << ti << "\n";
-                std::cout << "genome_length_bp\t"      << genomeLen        << "\n";
-                std::cout << "num_branches\t"          << numBranches      << "\n";
-                std::cout << "total_snp_positions\t"   << totalSnpPositions<< "\n";
-                std::cout << "total_indel_events\t"    << totalIndelEvents  << "\n";
-                std::cout << std::fixed << std::setprecision(8);
-                std::cout << "avg_snp_rate\t"          << avgSnpRate        << "\n";
-                std::cout << "avg_indel_rate\t"        << avgIndelRate      << "\n";
-                std::cout << "median_branch_rate\t"    << medianRate        << "\n";
-                std::cout << "median_indel_fraction\t" << medianIndelFrac   << "\n";
-                std::cout << "# wgsim: -r " << medianRate << "  -R " << medianIndelFrac << "\n";
-            }
-            return 0;
-        }
 
         // Utility: dump specific node sequence
         if (!cfg.dumpNodeId.empty()) {
@@ -2087,7 +1845,7 @@ int main(int argc, char** argv) {
             std::string outPath = cfg.output.empty()
                 ? cfg.panman + "." + sanitizeFilename(cfg.dumpNodeId) + ".fa"
                 : cfg.output;
-            saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath, cfg.impute);
+            saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath);
             std::cout << cfg.dumpNodeId << "\n";
             return 0;
         }
