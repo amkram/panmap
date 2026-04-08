@@ -10,7 +10,6 @@ Given a pangenome (in [PanMAN](https://github.com/TurakhiaLab/panman) format) an
 - **Metagenomic** (`--meta`): Scores reads from a mixture sample against every node in the PanMAN, and uses the scoring information to estimate haplotype abundance or directly assign reads to nodes.
 
 
-
 ### Run with Docker
 
 ```bash
