@@ -157,7 +157,7 @@ add_custom_command(
         -I${CAPNP_SCHEMA_DIR}
         --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}/src
         ${LITE_CAPNP_SRC_FILE}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    WORKING_DIRECTORY ${LITE_CAPNP_GEN_DIR}
     DEPENDS ${LITE_CAPNP_SRC_FILE} capnp_tools
     COMMENT "Generating C++ files from index_lite.capnp"
     VERBATIM
