@@ -2,10 +2,12 @@ cmake_minimum_required(VERSION 3.14)
 
 project(panmap VERSION 0.1.0)
 
-# Suppress deprecation warnings for policies we handle
+# Suppress deprecation warnings from third-party dependencies
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
 cmake_policy(SET CMP0169 OLD)  # Allow FetchContent_Populate (needed for panman patching)
 if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)  # Use FindBoost module
+    set(CMAKE_POLICY_DEFAULT_CMP0167 OLD)  # Propagate to subprojects
 endif()
 
 # Export compile_commands.json for clangd
@@ -568,8 +570,10 @@ set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(ZSTD_MULTITHREAD_SUPPORT ON CACHE BOOL "" FORCE)
 set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-
+set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(zstd)
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
 
 add_executable(panmap ${PANMAP_SOURCES_MAIN})
 add_dependencies(panmap build-deps index_capnp_generator tbb_build)
