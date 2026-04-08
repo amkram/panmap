@@ -5,9 +5,6 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define dummy_free(p)
-KLIST_INIT(auxlist, char *, dummy_free)
-
 char *global_ref_string;
 hts_pos_t global_ref_length;
 int bam_index;
@@ -243,19 +240,6 @@ void our_print_empty_pileup(kstring_t *k, const mplp_conf_t *conf,
   // ref[pos] : 'N');
   for (i = 0; i < n; ++i) {
     kputs("\t0\t*\t*", k);
-    int flag_value = MPLP_PRINT_MAPQ_CHAR;
-    while (flag_value < MPLP_PRINT_LAST) {
-      if (flag_value != MPLP_PRINT_MODS && (conf->flag & flag_value)) {
-        kputs("\t*", k);
-      }
-      flag_value <<= 1;
-    }
-    if (conf->auxlist) {
-      int t = 0;
-      while (t++ < ((klist_t(auxlist) *)conf->auxlist)->size) {
-        kputs("\t*", k);
-      }
-    }
   }
   kputs("\n", k);
   // putc('\n', fp);
@@ -422,10 +406,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
 
   iter = bam_mplp_init(n, our_mplp_func, (void **)data);
 
-  if (conf->flag & MPLP_PRINT_MODS) {
-    bam_mplp_constructor(iter, our_pileup_cd_create);
-    bam_mplp_destructor(iter, our_pileup_cd_destroy);
-  }
   if (conf->flag & MPLP_SMART_OVERLAPS)
     bam_mplp_init_overlaps(iter);
   if (!conf->max_depth) {
@@ -507,19 +487,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
       ksprintf(mplp_string, "\t%d\t", cnt);
       if (n_plp[i] == 0) {
         kputs("*\t*", mplp_string);
-        int flag_value = MPLP_PRINT_MAPQ_CHAR;
-        while (flag_value < MPLP_PRINT_LAST) {
-          if (flag_value != MPLP_PRINT_MODS && (conf->flag & flag_value)) {
-            kputs("\t*", mplp_string);
-          }
-          flag_value <<= 1;
-        }
-        if (conf->auxlist) {
-          int t = 0;
-          while (t++ < ((klist_t(auxlist) *)conf->auxlist)->size) {
-            kputs("\t*", mplp_string);
-          }
-        }
       } else {
         int n = 0;
         kstring_t ks = KS_INITIALIZE;
@@ -563,162 +530,6 @@ int our_mpileup(mplp_conf_t *conf, sam_hdr_t *sam_header,
           // putc('*', pileup_fp);
         }
 
-        /* Print selected columns */
-        int flag_value = MPLP_PRINT_MAPQ_CHAR;
-        while (flag_value < MPLP_PRINT_LAST) {
-          if (flag_value != MPLP_PRINT_MODS && (conf->flag & flag_value)) {
-            n = 0;
-            kputc('\t', mplp_string);
-            // putc('\t', pileup_fp);
-            for (j = 0; j < n_plp[i]; ++j) {
-              const bam_pileup1_t *p = &plp[i][j];
-              int c =
-                  p->qpos < p->b->core.l_qseq ? bam_get_qual(p->b)[p->qpos] : 0;
-              if (c < conf->min_baseQ)
-                continue;
-              if (n > 0 && flag_value != MPLP_PRINT_MAPQ_CHAR) {
-                kputc(',', mplp_string);
-                // putc(',', pileup_fp);
-              }
-              n++;
-
-              switch (flag_value) {
-              case MPLP_PRINT_MAPQ_CHAR:
-                c = p->b->core.qual + 33;
-                if (c > 126)
-                  c = 126;
-                kputc(c, mplp_string);
-                // putc(c, pileup_fp);
-                break;
-              case MPLP_PRINT_QPOS:
-                // query position in current orientation
-                ksprintf(mplp_string, "%d", p->qpos + 1);
-                break;
-              case MPLP_PRINT_QPOS5: {
-                // query position in 5' to 3' orientation
-                int pos5 = bam_is_rev(p->b)
-                               ? p->b->core.l_qseq - p->qpos + p->is_del
-                               : p->qpos + 1;
-                ksprintf(mplp_string, "%d", pos5);
-                break;
-              }
-              case MPLP_PRINT_QNAME:
-                kputs(bam_get_qname(p->b), mplp_string);
-                break;
-              case MPLP_PRINT_FLAG:
-                ksprintf(mplp_string, "%d", p->b->core.flag);
-                break;
-              case MPLP_PRINT_RNAME:
-                if (p->b->core.tid >= 0) {
-                  kputs(sam_hdr_tid2name(h, p->b->core.tid), mplp_string);
-                } else {
-                  kputc('*', mplp_string);
-                  // putc('*', pileup_fp);
-                }
-                break;
-              case MPLP_PRINT_POS:
-                ksprintf(mplp_string, "%" PRId64, (int64_t)p->b->core.pos + 1);
-                break;
-              case MPLP_PRINT_MAPQ:
-                ksprintf(mplp_string, "%d", p->b->core.qual);
-                break;
-              case MPLP_PRINT_RNEXT:
-                if (p->b->core.mtid >= 0) {
-                  kputs(sam_hdr_tid2name(h, p->b->core.mtid), mplp_string);
-                } else {
-                  kputc('*', mplp_string);
-                  // putc('*', pileup_fp);
-                }
-                break;
-              case MPLP_PRINT_PNEXT:
-                ksprintf(mplp_string, "%" PRId64, (int64_t)p->b->core.mpos + 1);
-                break;
-              case MPLP_PRINT_RLEN:
-                ksprintf(mplp_string, "%d", p->b->core.l_qseq);
-                break;
-              }
-            }
-            if (!n) {
-              kputc('*', mplp_string);
-              // putc('*', pileup_fp);
-            }
-          }
-          flag_value <<= 1;
-        }
-
-        /* Print selected tags */
-        klist_t(auxlist) *auxlist_p = ((klist_t(auxlist) *)conf->auxlist);
-        if (auxlist_p && auxlist_p->size) {
-          kliter_t(auxlist) * aux;
-          for (aux = kl_begin(auxlist_p); aux != kl_end(auxlist_p);
-               aux = kl_next(aux)) {
-            n = 0;
-            kputc('\t', mplp_string);
-            // putc('\t', pileup_fp);
-            for (j = 0; j < n_plp[i]; ++j) {
-              const bam_pileup1_t *p = &plp[i][j];
-              int c =
-                  p->qpos < p->b->core.l_qseq ? bam_get_qual(p->b)[p->qpos] : 0;
-              if (c < conf->min_baseQ)
-                continue;
-
-              if (n > 0) {
-                kputc(conf->sep, mplp_string);
-                // putc(conf->sep, pileup_fp);
-              }
-              n++;
-              uint8_t *tag_u = bam_aux_get(p->b, kl_val(aux));
-              if (!tag_u) {
-                kputc(conf->empty, mplp_string);
-                // putc(conf->empty , pileup_fp);
-                continue;
-              }
-
-              int tag_supported = 0;
-
-              /* Tag value is string */
-              if (*tag_u == 'Z' || *tag_u == 'H') {
-                char *tag_s = bam_aux2Z(tag_u);
-                if (!tag_s)
-                  continue;
-                kputs(tag_s, mplp_string);
-                tag_supported = 1;
-              }
-
-              /* Tag value is integer */
-              if (*tag_u == 'I' || *tag_u == 'i' || *tag_u == 'C' ||
-                  *tag_u == 'c' || *tag_u == 'S' || *tag_u == 's') {
-                int64_t tag_i = bam_aux2i(tag_u);
-                ksprintf(mplp_string, "%" PRId64 "", tag_i);
-                tag_supported = 1;
-              }
-
-              /* Tag value is float */
-              if (*tag_u == 'd' || *tag_u == 'f') {
-                double tag_f = bam_aux2f(tag_u);
-                ksprintf(mplp_string, "%lf", tag_f);
-                tag_supported = 1;
-              }
-
-              /* Tag value is character */
-              if (*tag_u == 'A') {
-                char tag_c = bam_aux2A(tag_u);
-                kputc(tag_c, mplp_string);
-                // putc(tag_c, pileup_fp);
-                tag_supported = 1;
-              }
-
-              if (!tag_supported) {
-                kputc('*', mplp_string);
-                // putc('*', pileup_fp);
-              }
-            }
-            if (!n) {
-              kputc('*', mplp_string);
-              // putc('*', pileup_fp);
-            }
-          }
-        }
       }
     }
     kputc('\n', mplp_string);
