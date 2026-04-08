@@ -5,8 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
-#include <ostream>
-#include <stdio.h>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -198,7 +196,6 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
     }
 
 
-
     if (recentAmbiguousBaseIndex >= 0 && i < recentAmbiguousBaseIndex + k) {
       if (returnAll) syncmers.emplace_back(std::make_tuple(max_size_t, false, false, i - k + 1));
     } else {
@@ -229,7 +226,6 @@ std::vector<std::tuple<size_t, bool, bool, int64_t>> rollingSyncmers(std::string
   syncmers.shrink_to_fit();
   return syncmers;
 }
-
 
 
 void seedsFromFastq(

@@ -2,7 +2,6 @@
 #include "genotyping.hpp"
 #include "logging.hpp"
 #include <algorithm>
-#include <iostream>
 #include <sys/wait.h>
 extern "C" {
 #include "mm_align.h"

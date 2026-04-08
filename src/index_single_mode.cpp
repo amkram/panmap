@@ -23,7 +23,6 @@
 #include <iomanip>
 
 
-
 std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::computeNewSyncmerRangesJump(
   panmanUtils::Node* node,
   size_t dfsIndex,
@@ -721,7 +720,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(
   potentialSyncmerDeletions.shrink_to_fit();
   localMutationRanges.shrink_to_fit();
   gapRunUpdates.shrink_to_fit();
-
 
 
   std::sort(gapRunUpdates.begin(), gapRunUpdates.end(), [&](const auto& a, const auto& b) { return a.second.first < b.second.first; });
