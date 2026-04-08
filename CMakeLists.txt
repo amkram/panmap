@@ -133,6 +133,8 @@ ExternalProject_Add(capnp_tools
 set(CAPNP_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnp)
 set(CAPNPC_CXX_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnpc-c++)
 set(CAPNP_SCHEMA_DIR ${CAPNP_INSTALL_DIR}/include)
+set(CAPNP_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libcapnp.a)
+set(KJ_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libkj.a)
 
 message(STATUS "Building CapnProto from bundled source")
 
@@ -140,10 +142,11 @@ include_directories(${CAPNP_INSTALL_DIR}/include)
 
 # Add index_lite.capnp generation (the only capnp schema used)
 set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/index_lite.capnp")
-set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/src")
 set(LITE_CAPNP_GEN_CPP "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.c++")
 set(LITE_CAPNP_GEN_H "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.h")
 # Custom command to generate CapnProto files
+file(MAKE_DIRECTORY ${LITE_CAPNP_GEN_DIR})
 add_custom_command(
     OUTPUT ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
     COMMAND ${CAPNP_EXECUTABLE}
@@ -152,6 +155,7 @@ add_custom_command(
         -I${CAPNP_SCHEMA_DIR}
         --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}
         ${LITE_CAPNP_SRC_FILE}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS ${LITE_CAPNP_SRC_FILE} capnp_tools
     COMMENT "Generating C++ files from index_lite.capnp"
     VERBATIM
@@ -389,6 +393,8 @@ target_link_libraries(panmanUtils
     ${PANMAN_PROTOBUF_LIB}
     ${Boost_LIBRARIES}
     ${TBB_LIBRARY}
+    ${PANMAN_CAPNP_LIB}
+    ${PANMAN_KJ_LIB}
     pthread
 )
 
@@ -580,9 +586,10 @@ if(OPTION_BUILD_SIMULATE)
     
     add_dependencies(simulate panman_lib minimap2_target htslib_ext)
     
-    target_include_directories(simulate PRIVATE 
+    target_include_directories(simulate PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_BINARY_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/src
         ${CMAKE_CURRENT_BINARY_DIR}/include
         ${panman_SOURCE_DIR}/src
         ${panman_BINARY_DIR}
@@ -676,6 +683,7 @@ endif()
 
 # Add include directories
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/src)
 target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap PUBLIC ${HTSLIB_INSTALL_DIR}/include)
@@ -686,11 +694,6 @@ FetchContent_Declare(deflate
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(deflate)
-
-# Find CapnProto libraries
-# Use capnp/kj libraries from our ExternalProject build
-set(CAPNP_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libcapnp.a)
-set(KJ_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libkj.a)
 
 # Link libraries
 target_link_libraries(panmap PRIVATE
