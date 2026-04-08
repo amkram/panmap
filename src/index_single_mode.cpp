@@ -1256,7 +1256,7 @@ void index_single_mode::IndexBuilder::buildIndex() {
   output::done(fmt::format("Index built ({} seed changes)", totalChanges));
 }
 
-static int nucToIdx(char c) {
+static constexpr int nucToIdx(char c) {
   switch (c) {
     case 'A': case 'a': return 0;
     case 'C': case 'c': return 1;
@@ -1396,7 +1396,7 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
     }
 
     // Log the matrix
-    const char* bases = "ACGT";
+    constexpr const char* bases = "ACGT";
     for (int from = 0; from < 4; from++) {
       std::string row;
       for (int to = 0; to < 4; to++) {

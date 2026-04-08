@@ -198,26 +198,15 @@ void genotyping::buildMutationMatricesHelper(
   }
 }
 
-static int getIndexFromNucleotide(char nuc) {
+static constexpr int getIndexFromNucleotide(char nuc) {
   switch (nuc) {
-  case 'A':
-  case 'a':
-    return 0;
-  case 'C':
-  case 'c':
-    return 1;
-  case 'G':
-  case 'g':
-    return 2;
-  case 'T':
-  case 't':
-    return 3;
-  case '*':
-    return 4;
-  default:
-    return 5;
+  case 'A': case 'a': return 0;
+  case 'C': case 'c': return 1;
+  case 'G': case 'g': return 2;
+  case 'T': case 't': return 3;
+  case '*': return 4;
+  default: return 5;
   }
-  return 5;
 }
 
 static char getNucFromTuple(const std::tuple<int64_t, int64_t, int64_t> &tupleCoord, const std::vector<std::vector<std::pair<char, std::vector<char>>>> &sequence) {
