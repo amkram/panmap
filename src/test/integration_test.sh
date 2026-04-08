@@ -71,8 +71,24 @@ $PANMAP "$TESTDATA/rsv_4K.panman" "$NODE_FA" \
 check "vcf exists" test -f "$TMPDIR/full_node.vcf"
 check "bam exists" test -f "$TMPDIR/full_node.bam"
 
-# Test 6: Version flag
-echo "[6] CLI flags"
+# Test 6: Placement with FASTQ input (quality scores present)
+echo "[6] Placement - fastq input"
+$PANMAP "$TESTDATA/rsv_4K.panman" "$TESTDATA/MZ515733.1.fastq" \
+    --stop place -o "$TMPDIR/place_fq" -t 2 -i "$TMPDIR/idx_test.idx" >/dev/null 2>&1
+check "placement file created" test -f "$TMPDIR/place_fq.placement.tsv"
+check "placed to MZ515733.1" grep -q "MZ515733.1" "$TMPDIR/place_fq.placement.tsv"
+FQ_SCORE=$(awk -F'\t' '/^log_raw/ {print $2}' "$TMPDIR/place_fq.placement.tsv")
+check "log_raw score > 50" awk "BEGIN {exit ($FQ_SCORE > 50) ? 0 : 1}"
+
+# Test 7: Full pipeline with FASTQ (placement + alignment + genotyping)
+echo "[7] Full pipeline - fastq"
+$PANMAP "$TESTDATA/rsv_4K.panman" "$TESTDATA/MZ515733.1.fastq" \
+    --stop genotype -o "$TMPDIR/full_fq" -t 2 -i "$TMPDIR/idx_test.idx" >/dev/null 2>&1
+check "vcf exists" test -f "$TMPDIR/full_fq.vcf"
+check "bam exists" test -f "$TMPDIR/full_fq.bam"
+
+# Test 8: Version flag
+echo "[8] CLI flags"
 check "--version works" $PANMAP --version
 check "--help works" $PANMAP --help
 
