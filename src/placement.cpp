@@ -36,7 +36,7 @@ namespace {
 
 // Compute the canonical hash of a homopolymer k-mer (all same base)
 // Returns the min of forward and reverse complement hash
-inline size_t computeHomopolymerHash(char base, int k) {
+constexpr size_t computeHomopolymerHash(char base, int k) {
     size_t baseVal = seeding::chash(base);
     size_t compVal;
     switch (base) {
@@ -64,7 +64,7 @@ inline size_t computeHomopolymerHash(char base, int k) {
 }
 
 // Get all 4 canonical homopolymer hashes for a given k
-inline std::array<size_t, 4> getHomopolymerHashes(int k) {
+constexpr std::array<size_t, 4> getHomopolymerHashes(int k) {
     return {
         computeHomopolymerHash('A', k),
         computeHomopolymerHash('C', k),

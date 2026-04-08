@@ -16,27 +16,6 @@
 
 namespace seeding {
 
-size_t chash(const char& c) {
-  switch (c) {
-    case 'a':
-    case 'A':
-      return 0x3c8bfbb395c60474;
-    case 'c':
-    case 'C':
-      return 0x3193c18562a02b4c;
-    case 'g':
-    case 'G':
-      return 0x20323ed082572324;
-    case 't':
-    case 'T':
-      return 0x295549f54be24456;
-    default:
-      // throw std::invalid_argument("Kmer contains non canonical base");
-      return 0;
-  }
-  return 0;
-}
-
 std::pair<size_t, size_t> hashSeq(const std::string& s) {
   size_t fHash = 0;
   size_t rHash = 0;

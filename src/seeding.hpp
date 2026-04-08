@@ -85,39 +85,14 @@ struct seed_t {
   bool operator==(const seed_t &rhs) const { return pos == rhs.pos; }
 };
 
-static char comp(char c) {
-  char compC;
+constexpr char comp(char c) {
   switch (c) {
-  case 'A':
-    compC = 'T';
-    break;
-  case 'a':
-    compC = 't';
-    break;
-  case 'C':
-    compC = 'G';
-    break;
-  case 'c':
-    compC = 'g';
-    break;
-  case 'G':
-    compC = 'C';
-    break;
-  case 'g':
-    compC = 'c';
-    break;
-  case 'T':
-    compC = 'A';
-    break;
-  case 't':
-    compC = 'a';
-    break;
-  default:
-    compC = 'N';
-    break;
+  case 'A': return 'T'; case 'a': return 't';
+  case 'C': return 'G'; case 'c': return 'g';
+  case 'G': return 'C'; case 'g': return 'c';
+  case 'T': return 'A'; case 't': return 'a';
+  default: return 'N';
   }
-
-  return compC;
 }
 
 static std::string revcomp(const std::string &s) {
@@ -132,11 +107,18 @@ static std::string revcomp(const std::string &s) {
   return cs;
 }
 
-size_t chash(const char& c);
+constexpr size_t chash(char c) {
+  switch (c) {
+  case 'a': case 'A': return 0x3c8bfbb395c60474;
+  case 'c': case 'C': return 0x3193c18562a02b4c;
+  case 'g': case 'G': return 0x20323ed082572324;
+  case 't': case 'T': return 0x295549f54be24456;
+  default: return 0;
+  }
+}
 
-inline size_t rol(const size_t& h, const size_t& r) { return (h << r) | (h >> (64-r)); }
-
-inline size_t ror(const size_t& h, const size_t& r) { return (h >> r) | (h << (64-r)); }
+constexpr size_t rol(size_t h, size_t r) { return (h << r) | (h >> (64 - r)); }
+constexpr size_t ror(size_t h, size_t r) { return (h >> r) | (h << (64 - r)); }
 
 // Hash a sequence, returns (forward hash, reverse complement hash)
 std::pair<size_t, size_t> hashSeq(const std::string& s);
@@ -189,11 +171,12 @@ namespace std {
   
       // A common pattern for combining hashes.
       // Ensure all member hashes are combined.
+      static constexpr size_t HASH_MIX = 0x9e3779b9;
       size_t seed = 0;
-      seed ^= h1 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-      seed ^= h2 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-      seed ^= h3 + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-      seed ^= h4 + 0x9e3779b9 + (seed << 6) + (seed >> 2); // Include h4
+      seed ^= h1 + HASH_MIX + (seed << 6) + (seed >> 2);
+      seed ^= h2 + HASH_MIX + (seed << 6) + (seed >> 2);
+      seed ^= h3 + HASH_MIX + (seed << 6) + (seed >> 2);
+      seed ^= h4 + HASH_MIX + (seed << 6) + (seed >> 2); // Include h4
       return seed;
     }
   };

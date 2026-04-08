@@ -17,7 +17,7 @@
 // OPTIMIZATION: Identity hash for seed hashes (they're already well-distributed)
 // This avoids double-hashing and improves cache performance
 struct IdentityHash {
-    std::size_t operator()(uint64_t key) const noexcept {
+    constexpr std::size_t operator()(uint64_t key) const noexcept {
         return static_cast<std::size_t>(key);
     }
 };
@@ -112,7 +112,7 @@ struct NodeMetrics {
     size_t genomeUniqueSeedCount = 0;      // Total unique seeds in genome
 
     // LogRAW Score: Σ(log(1+readCount) / genomeCount) for matching seeds
-    double getLogRawScore(double logReadMagnitude) const {
+    constexpr double getLogRawScore(double logReadMagnitude) const {
         if (logReadMagnitude <= 0.0) return 0.0;
         return logRawNumerator / logReadMagnitude;
     }
@@ -126,21 +126,21 @@ struct NodeMetrics {
     }
 
     // Containment Index: |reads ∩ genome| / |reads|
-    double getContainmentScore(size_t readUniqueSeedCount) const {
+    constexpr double getContainmentScore(size_t readUniqueSeedCount) const {
         return (readUniqueSeedCount > 0) ?
             static_cast<double>(presenceIntersectionCount) / readUniqueSeedCount : 0.0;
     }
 
     // Weighted Containment: Σ(1/nodeGenomeCount_i for R∩G) / Σ(1/rootGenomeCount_i for R)
     // Upweights rare (discriminative) seeds, downweights common ones
-    double getWeightedContainmentScore(double weightedContainmentDenominator) const {
+    constexpr double getWeightedContainmentScore(double weightedContainmentDenominator) const {
         return (weightedContainmentDenominator > 0.0) ?
             weightedContainmentNumerator / weightedContainmentDenominator : 0.0;
     }
 
     // Log Containment: Σ(log(1+r_i) for R∩G) / Σ(log(1+r_i) for R)
     // Weights each seed by log read abundance instead of binary presence
-    double getLogContainmentScore(double logContainmentDenominator) const {
+    constexpr double getLogContainmentScore(double logContainmentDenominator) const {
         return (logContainmentDenominator > 0.0) ?
             logContainmentNumerator / logContainmentDenominator : 0.0;
     }
