@@ -31,10 +31,10 @@ static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv)
 }
 
 void createMplpBcf(
-  std::string &prefix,
-  std::string &refFileName,
-  std::string &bestMatchSequence,
-  std::string &bamFileName,
+  const std::string &prefix,
+  const std::string &refFileName,
+  const std::string &bestMatchSequence,
+  const std::string &bamFileName,
   std::string &mpileupFileName,
   bool baq
 ) {
@@ -225,10 +225,10 @@ static bam1_t *build_bam_from_result(
              qname.length(), qname.c_str(),
              flag,
              0,                  // tid = 0
-             (hts_pos_t)aln->rs, // 0-based position
+             static_cast<hts_pos_t>(aln->rs), // 0-based position
              aln->mapq,
              full_n_cigar, full_cigar.data(),
-             mtid, mpos_val, (hts_pos_t)tlen,
+             mtid, mpos_val, static_cast<hts_pos_t>(tlen),
              read_len, bam_seq.c_str(), bam_qual.c_str(),
              0);
 
@@ -244,7 +244,7 @@ void alignAndWriteBam(
     bool pairedEndReads,
     int n_threads)
 {
-    int n_reads = (int)readSequences.size();
+    int n_reads = static_cast<int>(readSequences.size());
 
     // Prepare C arrays
     std::vector<const char *> read_ptrs(n_reads);
@@ -255,7 +255,7 @@ void alignAndWriteBam(
         read_ptrs[i] = readSequences[i].c_str();
         qual_ptrs[i] = readQuals[i].c_str();
         name_ptrs[i] = readNames[i].c_str();
-        r_lens[i] = (int)readSequences[i].length();
+        r_lens[i] = static_cast<int>(readSequences[i].length());
     }
 
     int n_results = pairedEndReads ? n_reads / 2 : n_reads;

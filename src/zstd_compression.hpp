@@ -18,7 +18,7 @@ namespace panmap_zstd {
  * @param frameSize Size of each seekable frame in bytes (default 4MB for good parallelism)
  * @return true on success
  */
-bool compressToFile(
+[[nodiscard]] bool compressToFile(
     const void* inputData,
     size_t inputSize,
     const std::string& outputPath,
@@ -35,7 +35,7 @@ bool compressToFile(
  * @param numThreads Number of decompression threads (0 = auto-detect)
  * @return true on success
  */
-bool decompressFromFile(
+[[nodiscard]] bool decompressFromFile(
     const std::string& inputPath,
     std::vector<uint8_t>& outputData,
     int numThreads = 0

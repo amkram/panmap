@@ -1158,8 +1158,21 @@ int runBatchPlacement(const Config& cfg) {
     int successCount = 0, failCount = 0;
     auto batchStart = std::chrono::high_resolution_clock::now();
 
-    // Pre-load seed changes into the LiteTree by running placement on the first sample.
-    // After this, liteTree.seedChangesLoaded == true, and subsequent calls skip the loading.
+    placement::TraversalParams batchParams;
+    batchParams.seedMaskFraction = cfg.seedMaskFraction;
+    batchParams.minSeedQuality = cfg.minSeedQuality;
+    batchParams.dedupReads = cfg.dedupReads;
+    batchParams.trimStart = cfg.trimStart;
+    batchParams.trimEnd = cfg.trimEnd;
+    batchParams.minReadSupport = cfg.minReadSupport;
+    batchParams.refineEnabled = refineEnabled;
+    batchParams.refineTopPct = cfg.refineTopPct;
+    batchParams.refineMaxTopN = cfg.refineMaxTopN;
+    batchParams.refineNeighborRadius = cfg.refineNeighborRadius;
+    batchParams.refineMaxNeighborN = cfg.refineMaxNeighborN;
+    batchParams.forceLeaf = cfg.forceLeaf;
+
+    // Pre-load seed changes by running placement on the first sample.
     {
         const auto& s = samples[0];
         std::string outPath = s.outputPrefix + ".placement.tsv";
@@ -1169,13 +1182,7 @@ int runBatchPlacement(const Config& cfg) {
         output::config().quiet = true;
         placement::PlacementResult result;
         auto start = std::chrono::high_resolution_clock::now();
-        placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, false, fullTreePtr,
-                            "", nullptr, false, cfg.seedMaskFraction,
-                            cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
-                            cfg.minReadSupport,
-                            refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN,
-                            cfg.refineNeighborRadius, cfg.refineMaxNeighborN,
-                            cfg.forceLeaf);
+        placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, batchParams, fullTreePtr);
         output::config().quiet = false;
 
         if (result.bestLogRawNodeId.empty()) {
@@ -1240,13 +1247,7 @@ int runBatchPlacement(const Config& cfg) {
 
                     placement::PlacementResult result;
                     auto start = std::chrono::high_resolution_clock::now();
-                    placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, false, fullTreePtr,
-                                        "", nullptr, false, cfg.seedMaskFraction,
-                                        cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
-                                        cfg.minReadSupport,
-                                        refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN,
-                                        cfg.refineNeighborRadius, cfg.refineMaxNeighborN,
-                                        cfg.forceLeaf);
+                    placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, batchParams, fullTreePtr);
 
                     if (result.bestLogRawNodeId.empty()) {
                         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1342,13 +1343,21 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     }
     
     auto start = std::chrono::high_resolution_clock::now();
-    placement::placeLite(result, &tree, reader, cfg.reads1, cfg.reads2, outPath, false, fullTreePtr,
-                        "", nullptr, storeDiagnostics, cfg.seedMaskFraction,
-                        cfg.minSeedQuality, cfg.dedupReads, true, cfg.trimStart, cfg.trimEnd,
-                        cfg.minReadSupport,
-                        refineEnabled, cfg.refineTopPct, cfg.refineMaxTopN, 
-                        cfg.refineNeighborRadius, cfg.refineMaxNeighborN,
-                        cfg.forceLeaf);
+    placement::TraversalParams params;
+    params.store_diagnostics = storeDiagnostics;
+    params.seedMaskFraction = cfg.seedMaskFraction;
+    params.minSeedQuality = cfg.minSeedQuality;
+    params.dedupReads = cfg.dedupReads;
+    params.trimStart = cfg.trimStart;
+    params.trimEnd = cfg.trimEnd;
+    params.minReadSupport = cfg.minReadSupport;
+    params.refineEnabled = refineEnabled;
+    params.refineTopPct = cfg.refineTopPct;
+    params.refineMaxTopN = cfg.refineMaxTopN;
+    params.refineNeighborRadius = cfg.refineNeighborRadius;
+    params.refineMaxNeighborN = cfg.refineMaxNeighborN;
+    params.forceLeaf = cfg.forceLeaf;
+    placement::placeLite(result, &tree, reader, cfg.reads1, cfg.reads2, outPath, params, fullTreePtr);
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start);
     

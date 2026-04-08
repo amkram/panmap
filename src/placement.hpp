@@ -54,6 +54,7 @@ struct TraversalParams {
   int refineMaxTopN = 150;          // Max nodes to align against (caps the %)
   int refineNeighborRadius = 2;     // Expand to neighbors within N branches
   int refineMaxNeighborN = 150;     // Max additional nodes from neighbor expansion
+  bool forceLeaf = false;           // Restrict scoring to leaf nodes only
 };
 
 // Track global state during placement
@@ -235,32 +236,13 @@ struct PlacementResult {
   double readMagnitude = 0.0;
 };
 
-// LiteTree-based placement (the main entry point for lite placement)
-// If skipNodeId is non-empty, that node will be excluded from placement results
-// (for leave-one-out validation). Its parent ID is returned via parentOfSkippedNode.
-void placeLite(PlacementResult &result, 
+void placeLite(PlacementResult &result,
                panmapUtils::LiteTree *liteTree,
-               ::capnp::MessageReader &liteIndex, 
+               ::capnp::MessageReader &liteIndex,
                const std::string &reads1,
                const std::string &reads2,
                std::string &outputPath,
-               bool verify_scores = false,
-               panmanUtils::Tree *fullTree = nullptr,
-               const std::string &skipNodeId = "",
-               std::string *parentOfSkippedNode = nullptr,
-               bool store_diagnostics = false,
-               double seedMaskFraction = 0.001,
-               int minSeedQuality = 0,
-               bool dedupReads = false,
-               bool pairFilter = true,
-               int trimStart = 0,
-               int trimEnd = 0,
-               int minReadSupport = 1,
-               bool refineEnabled = false,
-               double refineTopPct = 0.01,
-               int refineMaxTopN = 150,
-               int refineNeighborRadius = 2,
-               int refineMaxNeighborN = 150,
-               bool forceLeaf = false);
+               const TraversalParams &params = {},
+               panmanUtils::Tree *fullTree = nullptr);
 
 } // namespace placement

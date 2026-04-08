@@ -20,10 +20,10 @@ void createMplp(std::string &bestMatchSequence,
                 std::string &mpileupFileName,
                 char *&mplpString);
 
-void createMplpBcf(std::string &prefix,
-                   std::string &refFileName,
-                   std::string &bestMatchSequence,
-                   std::string &bamFileName,
+void createMplpBcf(const std::string &prefix,
+                   const std::string &refFileName,
+                   const std::string &bestMatchSequence,
+                   const std::string &bamFileName,
                    std::string &mpileupFileName,
                    bool baq = false);
 

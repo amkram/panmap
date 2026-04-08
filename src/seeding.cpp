@@ -351,7 +351,7 @@ void readFastqPaired(
     kseq_destroy(seq);
     fclose(fp);
 
-    if ((int)readSequences.size() != forwardReads * 2) {
+    if (static_cast<int>(readSequences.size()) != forwardReads * 2) {
       std::cerr << "Error: " << fastqPath2
                 << " does not contain the same number of reads as "
                 << fastqPath1 << std::endl;

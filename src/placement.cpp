@@ -923,67 +923,20 @@ void placeLiteHelperBFS(
     logging::info("Thread-local merge completed in {}ms", merge_ms);
 }
 
-void placeLite(PlacementResult &result, 
-                       panmapUtils::LiteTree *liteTree,
-                       ::capnp::MessageReader &liteIndex, 
-                       const std::string &reads1,
-                       const std::string &reads2,
-                       std::string &outputPath,
-                       bool verify_scores,
-                       panmanUtils::Tree *fullTree,
-                       const std::string &skipNodeId,
-                       std::string *parentOfSkippedNode,
-                       bool store_diagnostics,
-                       double seedMaskFraction,
-                       int minSeedQuality,
-                       bool dedupReads,
-                       bool pairFilter,
-                       int trimStart,
-                       int trimEnd,
-                       int minReadSupport,
-                       bool refineEnabled,
-                       double refineTopPct,
-                       int refineMaxTopN,
-                       int refineNeighborRadius,
-                       int refineMaxNeighborN,
-                       bool forceLeaf) {
+void placeLite(PlacementResult &result,
+               panmapUtils::LiteTree *liteTree,
+               ::capnp::MessageReader &liteIndex,
+               const std::string &reads1,
+               const std::string &reads2,
+               std::string &outputPath,
+               const TraversalParams &callerParams,
+               panmanUtils::Tree *fullTree) {
     auto placement_total_start = std::chrono::high_resolution_clock::now();
     logging::info("Starting lite-index placement");
     
-    // Handle leave-one-out validation: find skip node and its parent
     uint32_t skipNodeIndex = UINT32_MAX;
-    if (!skipNodeId.empty()) {
-        auto it = liteTree->allLiteNodes.find(skipNodeId);
-        if (it == liteTree->allLiteNodes.end()) {
-            logging::err("Skip node '{}' not found in tree", skipNodeId);
-            throw std::runtime_error("Skip node not found: " + skipNodeId);
-        }
-        panmapUtils::LiteNode* skipNode = it->second;
-        
-        // Validate it's a leaf node
-        if (!skipNode->children.empty()) {
-            logging::err("Skip node '{}' has {} children - only leaf nodes supported for leave-one-out", 
-                        skipNodeId, skipNode->children.size());
-            throw std::runtime_error("Skip node must be a leaf: " + skipNodeId);
-        }
-        
-        skipNodeIndex = skipNode->nodeIndex;
-        logging::info("Leave-one-out mode: skipping leaf node '{}' (index {})", skipNodeId, skipNodeIndex);
-        
-        // Return parent node ID if requested
-        if (parentOfSkippedNode != nullptr) {
-            if (skipNode->parent != nullptr) {
-                *parentOfSkippedNode = skipNode->parent->identifier;
-                logging::info("Expected placement (parent of skipped node): '{}'", *parentOfSkippedNode);
-            } else {
-                *parentOfSkippedNode = "";
-                logging::warn("Skipped node has no parent (is root?)");
-            }
-        }
-    }
-    
-    // Store verify_scores flag in a place accessible to score calculation
-    if (verify_scores) {
+
+    if (callerParams.verify_scores) {
         logging::info("VERIFICATION MODE: Will recompute all scores from scratch at each node");
         if (fullTree == nullptr) {
             logging::err("VERIFICATION MODE requires fullTree pointer but got nullptr!");
@@ -1046,7 +999,7 @@ void placeLite(PlacementResult &result,
         const size_t GRAIN_SIZE = 262144; // 256K items per chunk
         const size_t CAPNP_SPLIT = 500'000'000;
         for (uint32_t seg = 0; seg < numSegs; seg++) {
-          size_t segStart = (size_t)seg * CAPNP_SPLIT;
+          size_t segStart = static_cast<size_t>(seg) * CAPNP_SPLIT;
           size_t segEnd = std::min(segStart + CAPNP_SPLIT, totalHashDeltas);
           auto hashes = hashesReader[seg];
           auto parents = parentCountsReader[seg];
@@ -1091,42 +1044,29 @@ void placeLite(PlacementResult &result,
     auto time_hash_delta_end = std::chrono::high_resolution_clock::now();
     
     // Set traversal parameters
-    TraversalParams params;
+    TraversalParams params = callerParams;
+    // Override k/s/t/l/open/hpc from the index (authoritative source)
     params.k = indexRoot.getK();
     params.s = indexRoot.getS();
     params.t = indexRoot.getT();
     params.l = indexRoot.getL();
     params.open = indexRoot.getOpen();
     params.hpc = indexRoot.getHpc();
-    params.verify_scores = verify_scores;
-    params.store_diagnostics = store_diagnostics;
-    params.dedupReads = dedupReads;
-    params.pairFilter = pairFilter;
-    params.trimStart = trimStart;
-    params.trimEnd = trimEnd;
-    params.minReadSupport = minReadSupport;
     
-    // Set refinement parameters
-    params.refineEnabled = refineEnabled;
-    params.refineTopPct = refineTopPct;
-    params.refineMaxTopN = refineMaxTopN;
-    params.refineNeighborRadius = refineNeighborRadius;
-    params.refineMaxNeighborN = refineMaxNeighborN;
-    
-    if (dedupReads) {
+    if (params.dedupReads) {
         logging::info("Read deduplication enabled (--dedup): counting each unique sequence once");
     }
-    if (trimStart > 0 || trimEnd > 0) {
-        logging::info("Read trimming enabled: trimStart={}, trimEnd={} (for primer removal)", trimStart, trimEnd);
+    if (params.trimStart > 0 || params.trimEnd > 0) {
+        logging::info("Read trimming enabled: params.trimStart={}, params.trimEnd={} (for primer removal)", params.trimStart, params.trimEnd);
     }
-    if (pairFilter && !reads2.empty()) {
+    if (params.pairFilter && !reads2.empty()) {
         logging::warn("Paired-end filter (--pair-filter) is not yet implemented - flag has no effect on scoring");
-    } else if (pairFilter && reads2.empty()) {
+    } else if (params.pairFilter && reads2.empty()) {
         logging::info("Paired-end scoring requested but no R2 reads provided - disabled");
     }
     
     std::vector<std::string> allReadSequences;
-    std::vector<std::string> allReadQualities;  // Quality strings (only populated if minSeedQuality > 0)
+    std::vector<std::string> allReadQualities;  // Quality strings (only populated if params.minSeedQuality > 0)
     
     // Initialize placement global state
     PlacementGlobalState state;
@@ -1134,20 +1074,20 @@ void placeLite(PlacementResult &result,
     state.fullTree = fullTree;  // Store full tree pointer for verification mode
     state.liteNodes = liteTree->dfsIndexToNode;
     state.skipNodeIndex = skipNodeIndex;  // Set skip node for leave-one-out validation
-    state.forceLeaf = forceLeaf;  // Restrict scoring to leaf nodes only
-    if (forceLeaf) {
+    state.forceLeaf = params.forceLeaf;  // Restrict scoring to leaf nodes only
+    if (params.forceLeaf) {
         logging::info("Force-leaf mode: only leaf nodes will be considered for placement");
     }
     
     auto time_read_processing_start = std::chrono::high_resolution_clock::now();
     {
         if (!reads1.empty()) {
-            if (minSeedQuality > 0) {
+            if (params.minSeedQuality > 0) {
                 // Need quality strings for per-seed quality filtering
                 std::vector<std::string> readNames;  // Unused but required by function
                 extractFullFastqData(reads1, reads2, allReadSequences, allReadQualities, readNames);
                 logging::info("Loaded {} reads with quality strings for Q{} filtering", 
-                            allReadSequences.size(), minSeedQuality);
+                            allReadSequences.size(), params.minSeedQuality);
             } else {
                 extractReadSequences(reads1, reads2, allReadSequences);
             }
@@ -1172,7 +1112,7 @@ void placeLite(PlacementResult &result,
             logging::info("l=0: Using raw syncmers instead of k-minimizers");
             
             // Quality-filtered seed extraction path (no read deduplication since quality varies)
-            if (minSeedQuality > 0 && !allReadQualities.empty()) {
+            if (params.minSeedQuality > 0 && !allReadQualities.empty()) {
                 auto time_seed_extract_start = std::chrono::high_resolution_clock::now();
                 
                 size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
@@ -1221,7 +1161,7 @@ void placeLite(PlacementResult &result,
                                 
                                 // Quality filter: check average quality over k-mer span
                                 double avgQual = avgPhredQuality(qual, startPos, params.k);
-                                if (avgQual < static_cast<double>(minSeedQuality)) {
+                                if (avgQual < static_cast<double>(params.minSeedQuality)) {
                                     ++filtered;
                                     continue;  // Skip low-quality seed
                                 }
@@ -1253,7 +1193,7 @@ void placeLite(PlacementResult &result,
                 auto duration_seed_extract = std::chrono::duration_cast<std::chrono::milliseconds>(
                     time_seed_extract_end - time_seed_extract_start);
                 logging::info("Seed extraction (Q{} filtered): {}ms", 
-                            minSeedQuality, duration_seed_extract.count());
+                            params.minSeedQuality, duration_seed_extract.count());
                 logging::info("Extracted {} unique syncmers from {} reads (filtered {} low-quality seeds)", 
                             state.seedFreqInReads.size(), allReadSequences.size(), totalFiltered);
                 
@@ -1401,7 +1341,7 @@ void placeLite(PlacementResult &result,
             // l > 0: Use k-minimizers (consecutive syncmers combined)
             
             // Quality-filtered k-minimizer extraction (no read deduplication)
-            if (minSeedQuality > 0 && !allReadQualities.empty()) {
+            if (params.minSeedQuality > 0 && !allReadQualities.empty()) {
                 auto time_kminimizer_start = std::chrono::high_resolution_clock::now();
                 
                 size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
@@ -1439,7 +1379,7 @@ void placeLite(PlacementResult &result,
                                 for (const auto& [seedHash, isReverse, isSyncmer, startPos] : syncmers) {
                                     // Quality filter
                                     double avgQual = avgPhredQuality(qual, startPos, params.k);
-                                    if (avgQual < static_cast<double>(minSeedQuality)) {
+                                    if (avgQual < static_cast<double>(params.minSeedQuality)) {
                                         ++filtered;
                                         continue;
                                     }
@@ -1454,7 +1394,7 @@ void placeLite(PlacementResult &result,
                             for (size_t j = 0; j < syncmers.size(); ++j) {
                                 int64_t startPos = std::get<3>(syncmers[j]);
                                 double avgQual = avgPhredQuality(qual, startPos, params.k);
-                                syncmerPassesQuality[j] = (avgQual >= static_cast<double>(minSeedQuality));
+                                syncmerPassesQuality[j] = (avgQual >= static_cast<double>(params.minSeedQuality));
                             }
                             
                             // Build k-minimizers, skipping any window with low-quality syncmers
@@ -1542,7 +1482,7 @@ void placeLite(PlacementResult &result,
                 auto duration_kminimizer = std::chrono::duration_cast<std::chrono::milliseconds>(
                     time_kminimizer_end - time_kminimizer_start);
                 logging::info("K-minimizer extraction (Q{} filtered): {}ms", 
-                            minSeedQuality, duration_kminimizer.count());
+                            params.minSeedQuality, duration_kminimizer.count());
                 logging::info("Extracted {} unique k-minimizers from {} reads (filtered {} low-quality seeds)", 
                             state.seedFreqInReads.size(), allReadSequences.size(), totalFiltered);
                 
@@ -1745,7 +1685,7 @@ void placeLite(PlacementResult &result,
         
         // Only sort if we need to mask seeds or output diagnostics (slow for large datasets)
         std::vector<std::pair<size_t, int64_t>> sortedSeeds;
-        bool needSorting = (seedMaskFraction > 0.0) || params.store_diagnostics;
+        bool needSorting = (params.seedMaskFraction > 0.0) || params.store_diagnostics;
         
         if (needSorting) {
             sortedSeeds.reserve(uniqueSeeds);
@@ -1768,8 +1708,8 @@ void placeLite(PlacementResult &result,
         
         // Apply percentile-based masking: remove top N% of seeds by frequency
         // This removes potential primer/adapter artifacts without needing to calibrate a threshold
-        if (seedMaskFraction > 0.0 && !sortedSeeds.empty()) {
-            const size_t numToMask = static_cast<size_t>(seedMaskFraction * uniqueSeeds);
+        if (params.seedMaskFraction > 0.0 && !sortedSeeds.empty()) {
+            const size_t numToMask = static_cast<size_t>(params.seedMaskFraction * uniqueSeeds);
             
             if (numToMask > 0) {
                 int64_t maskedFrequency = 0;
@@ -1784,7 +1724,7 @@ void placeLite(PlacementResult &result,
                 }
                 
                 logging::info("  MASKING: Removed top {} seeds ({:.2f}%% of unique seeds)", 
-                            numToMask, seedMaskFraction * 100.0);
+                            numToMask, params.seedMaskFraction * 100.0);
                 logging::info("  Masked seed freq range: {:.2f}%% - {:.2f}%% of reads", 
                             minMaskedFrac * 100.0, maxMaskedFrac * 100.0);
                 logging::info("  Total masked frequency: {}", maskedFrequency);
@@ -1807,7 +1747,7 @@ void placeLite(PlacementResult &result,
                 } else {
                     seedFreqFile << "hash\tcount\tfraction\tmasked\n";
                 }
-                size_t numToMask = static_cast<size_t>(seedMaskFraction * uniqueSeeds);
+                size_t numToMask = static_cast<size_t>(params.seedMaskFraction * uniqueSeeds);
                 for (size_t i = 0; i < sortedSeeds.size(); i++) {
                     double frac = static_cast<double>(sortedSeeds[i].second) / totalReads;
                     int masked = (i < numToMask) ? 1 : 0;
