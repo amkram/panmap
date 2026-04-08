@@ -49,13 +49,6 @@ std::string getStringFromReference(
   bool aligned
 );
 
-void simulateSNPsOnSequence(
-  std::string& sequence,
-  std::vector<std::tuple<char,char, uint32_t>>& snpRecords,
-  uint32_t numsnps,
-  std::mt19937& rng
-);
-
 class LiteNode {
   public:
     std::string identifier;
