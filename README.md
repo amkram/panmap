@@ -11,19 +11,11 @@ Given a pangenome (in [PanMAN](https://github.com/TurakhiaLab/panman) format) an
 
 
 
-### Installation
-
-**Bioconda (recommended)**
+### Run with Docker
 
 ```bash
-conda install -c bioconda panmap
-```
-
-**Docker**
-
-```bash
-docker build -t panmap .
-docker run --rm panmap panmap -h
+docker pull alanalohaucsc/panmap:latest
+docker run --rm alanalohaucsc/panmap:latest
 ```
 
 See the [documentation](https://amkram.github.io/panmap/) for building from source.
