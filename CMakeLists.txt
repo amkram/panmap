@@ -464,31 +464,6 @@ set_target_properties(htslib PROPERTIES
 )
 add_dependencies(htslib htslib_ext)
 
-# Build samtools using ExternalProject (out-of-source build)
-set(SAMTOOLS_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/samtools_install)
-set(SAMTOOLS_BUILD_DIR ${CMAKE_CURRENT_BINARY_DIR}/samtools_build)
-ExternalProject_Add(samtools_ext
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools
-    BINARY_DIR ${SAMTOOLS_BUILD_DIR}
-    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E copy_directory 
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools ${SAMTOOLS_BUILD_DIR}
-    BUILD_COMMAND ${CMAKE_COMMAND} -E env 
-        "LDFLAGS=-L${HTSLIB_INSTALL_DIR}/lib -lz -lpthread"
-        LD_LIBRARY_PATH=${HTSLIB_INSTALL_DIR}/lib
-        CPPFLAGS=-I${HTSLIB_INSTALL_DIR}/include
-        sh -c "cd ${SAMTOOLS_BUILD_DIR} && autoheader && autoconf && ./configure --prefix=${SAMTOOLS_INSTALL_DIR} --with-htslib=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-shared --with-pic --without-curses && make libst.a"
-    INSTALL_COMMAND ""
-    BUILD_IN_SOURCE 0
-    UPDATE_COMMAND ""
-    DEPENDS htslib_ext
-)
-# Create an imported target for samtools
-add_library(samtools STATIC IMPORTED GLOBAL)
-set(SAMTOOLS_LIB_PATH "${SAMTOOLS_BUILD_DIR}/libst.a") 
-set_target_properties(samtools PROPERTIES
-    IMPORTED_LOCATION ${SAMTOOLS_LIB_PATH}
-)
-add_dependencies(samtools samtools_ext)
 
 # Define BWA sources
 set(BWA_SOURCES
@@ -532,7 +507,6 @@ set(BWA_SOURCES
 # Aggregate all the dependencies into a single target
 add_custom_target(build-deps DEPENDS
     htslib_ext
-    samtools_ext
     minimap2_target
     capnp_tools
     tbb_build
@@ -604,7 +578,7 @@ if(OPTION_BUILD_SIMULATE)
         src/pileup.c
     )
     
-    add_dependencies(simulate panman_lib minimap2_target htslib_ext samtools_ext)
+    add_dependencies(simulate panman_lib minimap2_target htslib_ext)
     
     target_include_directories(simulate PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -620,7 +594,6 @@ if(OPTION_BUILD_SIMULATE)
         panman_lib
         minimap2
         bcftools
-        samtools
         htslib
         libdeflate_shared
         ${Boost_LIBRARIES}
@@ -726,7 +699,6 @@ target_link_libraries(panmap PRIVATE
     bwa
     bcftools
     minimap2
-    samtools
     htslib
     ${CAPNP_LIBRARY}
     ${KJ_LIBRARY}
