@@ -1984,65 +1984,24 @@ void placeLite(PlacementResult &result,
     if (placementsFile.is_open()) {
         placementsFile << "metric\tscore\tnodes\n";
         
-        // Log Raw score
-        placementsFile << "log_raw\t" << std::fixed << std::setprecision(6) << result.bestLogRawScore << "\t";
-        if (!result.tiedLogRawNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedLogRawNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedLogRawNodeIndices[i]);
+        auto writeMetric = [&](const char* name, double score,
+                               const std::vector<uint32_t>& tied, const std::string& bestId) {
+            placementsFile << name << "\t" << std::fixed << std::setprecision(6) << score << "\t";
+            if (!tied.empty()) {
+                for (size_t i = 0; i < tied.size(); ++i) {
+                    if (i > 0) placementsFile << ",";
+                    placementsFile << liteTree->resolveNodeId(tied[i]);
+                }
+            } else {
+                placementsFile << bestId;
             }
-        } else {
-            placementsFile << result.bestLogRawNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Log Cosine score
-        placementsFile << "log_cosine\t" << std::fixed << std::setprecision(6) << result.bestLogCosineScore << "\t";
-        if (!result.tiedLogCosineNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedLogCosineNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedLogCosineNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestLogCosineNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Containment score
-        placementsFile << "containment\t" << std::fixed << std::setprecision(6) << result.bestContainmentScore << "\t";
-        if (!result.tiedContainmentNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedContainmentNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedContainmentNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestContainmentNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Weighted Containment score
-        placementsFile << "weighted_containment\t" << std::fixed << std::setprecision(6) << result.bestWeightedContainmentScore << "\t";
-        if (!result.tiedWeightedContainmentNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedWeightedContainmentNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedWeightedContainmentNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestWeightedContainmentNodeId;
-        }
-        placementsFile << "\n";
-        
-        // Log Containment score
-        placementsFile << "log_containment\t" << std::fixed << std::setprecision(6) << result.bestLogContainmentScore << "\t";
-        if (!result.tiedLogContainmentNodeIndices.empty()) {
-            for (size_t i = 0; i < result.tiedLogContainmentNodeIndices.size(); ++i) {
-                if (i > 0) placementsFile << ",";
-                placementsFile << liteTree->resolveNodeId(result.tiedLogContainmentNodeIndices[i]);
-            }
-        } else {
-            placementsFile << result.bestLogContainmentNodeId;
-        }
-        placementsFile << "\n";
+            placementsFile << "\n";
+        };
+        writeMetric("log_raw", result.bestLogRawScore, result.tiedLogRawNodeIndices, result.bestLogRawNodeId);
+        writeMetric("log_cosine", result.bestLogCosineScore, result.tiedLogCosineNodeIndices, result.bestLogCosineNodeId);
+        writeMetric("containment", result.bestContainmentScore, result.tiedContainmentNodeIndices, result.bestContainmentNodeId);
+        writeMetric("weighted_containment", result.bestWeightedContainmentScore, result.tiedWeightedContainmentNodeIndices, result.bestWeightedContainmentNodeId);
+        writeMetric("log_containment", result.bestLogContainmentScore, result.tiedLogContainmentNodeIndices, result.bestLogContainmentNodeId);
         
         // Per-metric refinement scores (if refinement was run)
         if (result.refinementWasRun) {
