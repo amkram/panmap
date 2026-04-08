@@ -109,7 +109,6 @@ struct Coordinate {
     int32_t primaryBlockId;
     int32_t secondaryBlockId;
 
-    // Default constructor
     Coordinate() {}
 
     // Create a Coordinate by position
@@ -132,7 +131,6 @@ struct Coordinate {
     // Create a Coordinate copying a NucMut
     Coordinate(const panmanUtils::NucMut& nm) : Coordinate(nm, 0) {}
 
-    // custom print operator
     friend std::ostream& operator<<(std::ostream& os, const Coordinate& coord) {
       os << "(" << coord.primaryBlockId << ", " << coord.nucPosition << ", " << coord.nucGapPosition << ")";
       return os;
@@ -319,12 +317,10 @@ struct BlockSequences {
       sequence[primaryBlockId].push_back({'x', {}});
     }
 
-    // resize in case of early stop
     sequence.resize(maxBlockId + 1);
     blockExists.resize(maxBlockId + 1);
     blockStrand.resize(maxBlockId + 1);
 
-    // assign gaps
     for(size_t i = 0; i < tree->gaps.size(); i++) {
       const auto& curGap = tree->gaps[i];
       int32_t primaryBId = (curGap.primaryBlockId);
@@ -509,7 +505,6 @@ struct GlobalCoords {
       blockEdgeCoords[i].endScalar = getBlockEndScalar(i);
     }
 
-    // sanity check
     if (getScalarFromTuple(firstTupleCoord) != 0) {
       logging::err("firstScalarCoord != 0");
       std::exit(1);

@@ -76,14 +76,11 @@ struct BuildState {
     // Each node writes to its own slot, so no synchronization needed
     std::shared_ptr<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>> nodeChanges;
     
-    // Default constructor
     BuildState() : nodeChanges(std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>()) {}
     
-    // Move constructor and assignment
     BuildState(BuildState&&) = default;
     BuildState& operator=(BuildState&&) = default;
     
-    // Copy constructor - shares nodeChanges storage (doesn't deep copy it)
     // But copies runningCounts since each chunk needs its own copy
     BuildState(const BuildState& other) = default;
     BuildState& operator=(const BuildState&) = default;

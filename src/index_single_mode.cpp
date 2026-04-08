@@ -537,7 +537,6 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
   return newKminmerRanges;
 }
 
-// Overload for parallel building that uses BuildState instead of member variables
 std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>> index_single_mode::IndexBuilder::computeNewKminmerRanges(
   std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
   BuildState& state,
@@ -1211,7 +1210,6 @@ void index_single_mode::IndexBuilder::buildIndex() {
   constexpr size_t CAPNP_SPLIT = 500'000'000;
   size_t numSegments = (totalChanges + CAPNP_SPLIT - 1) / CAPNP_SPLIT;
 
-  // Allocate flat arrays
   auto seedChangeHashesBuilder = indexBuilder.initSeedChangeHashes(numSegments);
   auto seedChangeParentCountsBuilder = indexBuilder.initSeedChangeParentCounts(numSegments);
   auto seedChangeChildCountsBuilder = indexBuilder.initSeedChangeChildCounts(numSegments);
@@ -1430,7 +1428,6 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
   }
   size_t totalBytes = totalWords * sizeof(capnp::word);
   
-  // Allocate buffer for serialized message using messageToFlatArray
   kj::Array<capnp::word> flatArray = capnp::messageToFlatArray(outMessage);
   const void* data = flatArray.begin();
   size_t dataSize = flatArray.size() * sizeof(capnp::word);
@@ -2328,7 +2325,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
   output::stage("Building index");
   output::step("Parallel build with {} threads", numThreads);
   
-  // Reset instrumentation stats
   processedNodes_.store(0, std::memory_order_relaxed);
   totalClonesCreated_.store(0, std::memory_order_relaxed);
   buildStartTime_ = std::chrono::steady_clock::now();

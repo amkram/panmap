@@ -45,7 +45,6 @@ bool compressToFile(
     ZSTD_CCtx_setParameter(cctx, ZSTD_c_jobSize, frameSize);
     ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 1);
     
-    // Allocate output buffer
     size_t const maxCompressedSize = ZSTD_compressBound(inputSize);
     std::vector<uint8_t> compressedData(maxCompressedSize);
     
@@ -126,7 +125,6 @@ bool decompressFromFile(
         return false;
     }
     
-    // Allocate output buffer
     outputData.resize(decompressedSize);
     
     // Check if the compressed data has multiple frames

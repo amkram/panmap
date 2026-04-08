@@ -811,7 +811,6 @@ void placeLiteHelperBFS(
         }
         size_t total_next = offsets.back();
         
-        // Resize destination vectors once
         current_nodes.clear(); current_nodes.resize(total_next);
         current_metrics.clear(); current_metrics.resize(total_next);
         if (params.verify_scores) {
