@@ -218,7 +218,6 @@ void our_print_empty_pileup(kstring_t *k, const mplp_conf_t *conf,
   }
   kputs("\n", k);
 }
-// I think this function populates the bam1_t structure.
 
 int our_mplp_func(void *data, bam1_t *b) {
   char *ref;
