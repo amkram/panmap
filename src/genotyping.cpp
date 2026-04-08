@@ -99,11 +99,8 @@ void genotyping::fillMutationMatricesFromFile(mutationMatrices &mutMat, std::ifs
     throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
   }
   
-  // Set maximum log probabilities for insertions and deletions
-  mutMat.maxInsLogProb = 100.0; // Default high penalty
-  mutMat.maxDelLogProb = 100.0; // Default high penalty
-  
-  // Calculate actual maximum values if matrices are not empty
+  mutMat.maxInsLogProb = 100.0;
+  mutMat.maxDelLogProb = 100.0;
   if (!mutMat.insmat.empty()) {
     mutMat.maxInsLogProb = std::max_element(
       mutMat.insmat.begin(), mutMat.insmat.end(),
@@ -133,13 +130,8 @@ void genotyping::buildMutationMatricesHelper(
     
   if (!node) return;
   
-  // Process current node mutations
   std::vector<int64_t> currentBaseCounts(4, 0);
-  
-  // Get sequence for this node
   std::string nodeSeq = tree->getStringFromReference(node->identifier, false, true);
-  
-  // Count bases in current node
   for (char c : nodeSeq) {
     if (c == 'A' || c == 'a') currentBaseCounts[0]++;
     else if (c == 'C' || c == 'c') currentBaseCounts[1]++;
@@ -171,11 +163,8 @@ void genotyping::buildMutationMatricesHelper(
         continue;
       }
       
-      // Convert to upper case for comparison
       p = std::toupper(p);
       n = std::toupper(n);
-      
-      // Map nucleotides to indices
       int pIdx = (p == 'A') ? 0 : ((p == 'C') ? 1 : ((p == 'G') ? 2 : 3));
       int nIdx = (n == 'A') ? 0 : ((n == 'C') ? 1 : ((n == 'G') ? 2 : 3));
       
@@ -202,10 +191,7 @@ void genotyping::buildMutationMatricesHelper(
     }
   }
   
-  // Update parent base counts for children
   parentBaseCounts = currentBaseCounts;
-  
-  // Recursively process all children
   for (auto* child : node->children) {
     buildMutationMatricesHelper(mutMat, tree, child, parentBaseCounts, 
                            totalBaseCounts, subCount, insCount, delCount);
@@ -241,7 +227,6 @@ static char getNucFromTuple(const std::tuple<int64_t, int64_t, int64_t> &tupleCo
   }
   return sequence[blockId][nucPos].second[nucGapPos];
 }
-
 
 void clearBlockBaseCounts(
   int32_t blockId,
@@ -386,7 +371,6 @@ static void applyMutations(
         isMutatedNuc = true;
         ++subCount[getIndexFromNucleotide(parChar)][getIndexFromNucleotide(curChar)];
       }
-
 
       if (parChar != '-' && curChar == '-') {
         // nuc to gap
@@ -580,7 +564,6 @@ void buildMutationMatricesHelper_test(
       if (curNucRange.first != -1) {
         nucRanges.push_back(curNucRange);
       }
-
 
       if (blockSequences.blockStrand[blockId]) {
         for (const auto& range : nucRanges) {

@@ -24,7 +24,6 @@ struct IdentityHash {
 
 namespace placement {
 
-// Forward declarations
 struct PlacementResult;
 struct PlacementGlobalState;
 

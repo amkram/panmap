@@ -35,8 +35,6 @@ typedef struct {
 // Forward declaration
 static void free_regs(mm_reg1_t *reg, int n_reg);
 
-// ============================================================================
-// Shared minimap2 setup: auto-selects preset based on average read length.
 //
 // Preset selection (from minimap2/options.c):
 //   avg_len < 500   -> "sr"       short reads  (k=21, w=11, b=8, max_gap=100)
@@ -52,7 +50,6 @@ static void free_regs(mm_reg1_t *reg, int n_reg);
 //
 // for_alignment: when true and short reads detected, use the full sr preset
 //   WITH MM_F_SR since mm_map_frag handles paired-end correctly.
-// ============================================================================
 static mm_idx_t *setup_minimap2(mm_idxopt_t *iopt, mm_mapopt_t *mopt,
                                 const char *reference,
                                 int n_reads, const int *r_lens,
@@ -300,9 +297,6 @@ int64_t score_reads_vs_reference(const char *reference, int n_reads,
   return -total_errors;
 }
 
-// ============================================================================
-// Parallel alignment returning structured results (no SAM text)
-// ============================================================================
 
 // Helper: extract primary alignment fields from mm_reg1_t into read_align_t
 static void extract_align_result(mm_reg1_t *reg, int n_reg, read_align_t *out) {

@@ -15,7 +15,6 @@
 #include <climits>
 #include <random>
 
-
 namespace panmapUtils {
 
 enum seedChangeType {
@@ -104,8 +103,6 @@ class LiteTree {
 
 };
 
-
-
 struct Coordinate {
     int32_t nucPosition;
     int32_t nucGapPosition;
@@ -134,7 +131,6 @@ struct Coordinate {
 
     // Create a Coordinate copying a NucMut
     Coordinate(const panmanUtils::NucMut& nm) : Coordinate(nm, 0) {}
-
 
     // custom print operator
     friend std::ostream& operator<<(std::ostream& os, const Coordinate& coord) {
@@ -267,7 +263,6 @@ struct Coordinate {
       return !(*this < other);
     }
 
-
 };
 
 struct NewSyncmerRange {
@@ -278,8 +273,6 @@ struct NewSyncmerRange {
   std::vector<uint64_t> localRangeCoordToBlockId;
   std::vector<uint64_t> seedsToDelete;
 };
-
-
 
 struct BlockSequences {
   std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
@@ -527,7 +520,6 @@ struct GlobalCoords {
     }
   }
 
-
   std::tuple<int64_t, int64_t, int64_t> getBlockStartTuple(int64_t blockId) const {
     const auto& curBlock = globalCoords[blockId];
     if (curBlock[0].second.empty()) {
@@ -535,7 +527,6 @@ struct GlobalCoords {
     }
     return std::make_tuple(blockId, 0, 0);
   }
-
 
   Coordinate getBlockStartCoord(int64_t blockId) const {
     const auto& curBlock = globalCoords[blockId];
@@ -573,7 +564,6 @@ struct GlobalCoords {
     }
     return Coordinate(nucPosition, nucGapPosition, blockId, secondaryBlockId);
   }
-
 
   int64_t getBlockStartScalar(int64_t blockId) const {
     auto [primaryBlockId, nucPos, nucGapPos] = getBlockStartTuple(blockId);
@@ -854,10 +844,6 @@ struct GlobalCoords {
   }
 };
 
-// ============================================================================
-// Nucleotide ambiguity helpers (IUPAC)
-// ============================================================================
-
 inline bool isCanonical(char nuc) {
   return (nuc == 'A' || nuc == 'T' || nuc == 'C' || nuc == 'G');
 }
@@ -869,10 +855,7 @@ inline bool canonicalToAmb(char oldNuc, char newNuc) {
           isCanonical(oldNuc) && !isCanonical(newNuc));
 }
 
-// ============================================================================
-// applyMutations: Process block and nucleotide mutations for a tree node
 // Shared between lite and MGSR index building
-// ============================================================================
 
 inline void applyMutations(
   panmanUtils::Node *node,
@@ -994,7 +977,6 @@ inline void applyMutations(
     }
   }
 
-
   for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
     if (oldExists && !newExists) {
       uint64_t beg = (uint64_t)globalCoords.getBlockStartScalar(blockId);
@@ -1029,10 +1011,6 @@ inline void applyMutations(
   }
 }
 
-// ============================================================================
-// Gap map orchestrator: apply a sorted list of gap updates to the gap map
-// ============================================================================
-
 inline void updateGapMap(
   std::map<uint64_t, uint64_t>& gapMap,
   const std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>& updates,
@@ -1044,12 +1022,9 @@ inline void updateGapMap(
   }
 }
 
-// ============================================================================
-// Compute genome extent from gap map
 // Returns (firstNonGapScalar, lastNonGapScalar) - the bounds of actual sequence data
 // flankSize: number of non-gap bases to skip at each end (default 0)
 // If genome is all gaps or too short, returns (UINT64_MAX, 0)
-// ============================================================================
 
 inline std::pair<uint64_t, uint64_t> computeExtentFromGapMap(
     const std::map<uint64_t, uint64_t>& gapMap,

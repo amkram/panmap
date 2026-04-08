@@ -254,7 +254,6 @@ class PackedFdReader {
     }
   };
 
-
 class FdReader {
   public:
     int fd = -1;
@@ -278,10 +277,6 @@ class FdReader {
       return reader->getRoot<T>();
     }
   };
-
-// ==================
-// Utility Functions
-// ==================
 
 // Load 4x4 substitution matrix from index and convert to phred scale.
 // Returns empty matrix if index has no spectrum data.
@@ -320,7 +315,6 @@ std::unique_ptr<panmanUtils::TreeGroup> loadPanMAN(const std::string& path) {
     return std::make_unique<panmanUtils::TreeGroup>(stream);
 }
 
-
 /**
  * Get ungapped genome length for a node (count non-gap characters).
  */
@@ -332,7 +326,6 @@ std::string sanitizeFilename(const std::string& s) {
     }
     return result;
 }
-
 
 void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std::string& path) {
     std::string seq = T->getStringFromReference(nodeId, false, true);
@@ -387,7 +380,6 @@ bool buildIndex(const Config& cfg) {
 }
 
 // Compute tree distance between two nodes (number of edges)
-
 
 void writeOCRanks(const std::string& outputFile, const std::vector<std::pair<std::string, double>>& overlapCoefficients) {
   std::ofstream outFile(outputFile);
@@ -449,7 +441,6 @@ void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& thread
         curThreadPlacer.scoreReads();
       }
 
-
       if (i == 0) {
         threadsManager.identicalGroups = std::move(curThreadPlacer.identicalGroups);
         threadsManager.identicalNodeToGroup = std::move(curThreadPlacer.identicalNodeToGroup);
@@ -466,7 +457,6 @@ bool isFileReadable(const std::string &path) {
   return file.good();
 }
 
-
 void validateInputFile(const std::string &path,
   const std::string &description) {
 if (path.empty())
@@ -476,7 +466,6 @@ throw std::runtime_error(description + " not found: " + path);
 if (!isFileReadable(path))
 throw std::runtime_error("Cannot read " + description + ": " + path);
 }
-
 
 void filterAndAssignBatch(
   mgsr::ThreadsManager &threadsManager, mgsr::MgsrLiteTree &T,
@@ -497,7 +486,6 @@ void filterAndAssignBatch(
     fq2 = std::make_unique<mgsr::FastqFile>(readPath2);
     seq2 = kseq_init(fileno(fq2->fp));
   }
-
 
   std::ofstream assignedReadsFastq(prefix + ".mgsr.assignedReads.fastq");
   if (!assignedReadsFastq.is_open()) {
@@ -698,7 +686,6 @@ void filterAndAssignBatch(
   assignedReadsOut.close();
   std::cout << totalFastqReadsWritten << " reads written to fastq file" << std::endl;
 
-
   std::ofstream assignedReadsLCANodeOut(prefix + ".mgsr.assignedReadsLCANode.out");
   if (!assignedReadsLCANodeOut.is_open()) {
     logging::err("Failed to open assigned reads LCA node output file: {}", prefix + ".mgsr.assignedReadsLCANode.out");
@@ -723,7 +710,6 @@ void filterAndAssignBatch(
   }
 
   assignedReadsLCANodeOut.close();
-
 
   // Calculate breadth from assigned reads
   if (breadthRatio) {
@@ -937,7 +923,6 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
   auto duration_squareEM = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
   std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n" << std::endl;
 
-
   std::vector<uint64_t> indices(squareEM.nodes.size());
   std::iota(indices.begin(), indices.end(), 0);
   std::sort(indices.begin(), indices.end(), [&squareEM](uint64_t i, uint64_t j) {
@@ -965,7 +950,6 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
   }
   abundanceOutput.close();
 
-
   if (cfg.writeMetaReadScoresFiltered) {
     writeMetaReadScores(cfg.output + ".read_scores_info.filtered.tsv", threadsManager, true);
   }
@@ -987,7 +971,6 @@ bool runMetagenomic(const Config& cfg) {
     std::cerr << "Error: Taxonomic metadata file " << cfg.taxonomicMetadata << " does not exist" << std::endl;
     return false;
   }
-
 
   if (cfg.batchFilesPath.empty() && (cfg.reads1.empty() || !fs::exists(cfg.reads1))) {
     std::cerr << "Error: Reads1 file " << cfg.reads1 << " does not exist" << std::endl;
@@ -1061,7 +1044,6 @@ bool runMetagenomic(const Config& cfg) {
   return true;
 }
 
-// Forward declarations
 int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
                  panmanUtils::Tree* preloadedTree = nullptr);
 int runGenotyping(const Config& cfg);
@@ -1518,10 +1500,6 @@ int runGenotyping(const Config& cfg) {
     logging::msg("Genotyping complete in {}ms -> {}", elapsed.count(), vcfFileName);
     return 0;
 }
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
 
 void printUsage() {
     std::cout << color::bold() << "panmap" << color::reset() << " v" << VERSION << "\n";

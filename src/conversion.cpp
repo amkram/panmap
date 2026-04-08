@@ -30,7 +30,6 @@ static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv)
     }
 }
 
-
 void createMplpBcf(
   std::string &prefix,
   std::string &refFileName,
@@ -127,10 +126,6 @@ void createVcfWithMutationMatrices(
   rawVcfIn.close();
   std::remove(rawVcfFile.c_str());
 }
-
-// ============================================================================
-// Direct alignment-to-BAM (opts 2+3: parallel align, skip SAM text)
-// ============================================================================
 
 static uint16_t compute_sam_flags(bool is_paired, bool is_read1,
                                    uint8_t rev, uint8_t mate_rev,
@@ -271,12 +266,10 @@ void alignAndWriteBam(
                        name_ptrs.data(), r_lens.data(),
                        results.data(), pairedEndReads, n_threads);
 
-    // Build SAM header
     std::string samHeaderStr = "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:ref\tLN:"
                                + std::to_string(reference.length());
     sam_hdr_t *header = sam_hdr_parse(samHeaderStr.length(), samHeaderStr.c_str());
 
-    // Build bam1_t records with (sort_pos, bam1_t*) for position sorting
     std::vector<std::pair<int32_t, bam1_t*>> bam_entries;
     bam_entries.reserve(pairedEndReads ? n_results * 2 : n_results);
 
@@ -313,11 +306,9 @@ void alignAndWriteBam(
         }
     }
 
-    // Sort by reference position
     std::sort(bam_entries.begin(), bam_entries.end(),
               [](const auto &a, const auto &b) { return a.first < b.first; });
 
-    // Write BAM file
     if (!bamFileName.empty()) {
         htsFile *bam_file = hts_open(bamFileName.c_str(), "wb");
         if (bam_file) {

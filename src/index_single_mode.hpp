@@ -25,9 +25,6 @@ using SyncmerSet = absl::btree_set<uint64_t>;
 using SyncmerMap = absl::flat_hash_map<uint64_t, seeding::rsyncmer_t>;
 using KminmerMap = absl::flat_hash_map<uint64_t, uint64_t>;
 
-// ============================================================================
-// NodeSeedDelta: Stores just the seed changes for a node (not full counts)
-// ============================================================================
 struct NodeSeedDelta {
     std::vector<uint64_t> addedHashes;      // Seeds added at this node
     std::vector<uint64_t> deletedHashes;    // Seeds deleted at this node  
@@ -44,10 +41,7 @@ struct NodeSeedDelta {
     }
 };
 
-// ============================================================================
-// BuildState: Encapsulates all mutable state for parallel DFS traversal
 // Memory-optimized: uses sparse maps instead of dense vectors
-// ============================================================================
 struct BuildState {
     // Block sequence state (mutated during traversal)
     panmapUtils::BlockSequences blockSequences;
@@ -138,7 +132,6 @@ uint64_t degapGlobal(const uint64_t& globalCoord, const std::map<uint64_t, uint6
 uint64_t regapGlobal(const uint64_t& localCoord, const std::map<uint64_t, uint64_t>& regapCoordsIndex);
 
 int open_file(const std::string& path);
-
 
 class IndexBuilder {
   public:

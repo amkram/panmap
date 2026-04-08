@@ -19,10 +19,6 @@
 
 namespace output {
 
-// ============================================================================
-// Global Configuration  
-// ============================================================================
-
 struct Config {
     std::atomic<bool> quiet{false};     // Minimal output (errors only)
     std::atomic<bool> verbose{false};   // Extra debug output
@@ -62,10 +58,6 @@ inline void init(bool quiet = false, bool verbose = false, bool plain = false) {
     }
 }
 
-// ============================================================================
-// Color/Style Codes
-// ============================================================================
-
 namespace style {
     inline const char* reset()   { return config().plain ? "" : "\033[0m"; }
     inline const char* bold()    { return config().plain ? "" : "\033[1m"; }
@@ -77,10 +69,6 @@ namespace style {
     inline const char* cyan()    { return config().plain ? "" : "\033[36m"; }
     inline const char* magenta() { return config().plain ? "" : "\033[35m"; }
 }
-
-// ============================================================================
-// Box Drawing Characters (Unicode or ASCII fallback)
-// ============================================================================
 
 namespace box {
     inline const char* topLeft()     { return config().plain ? "+" : "┌"; }
@@ -94,10 +82,6 @@ namespace box {
     inline const char* cross()       { return config().plain ? "[X]" : "✗"; }
 }
 
-// ============================================================================
-// Status Indicators
-// ============================================================================
-
 inline std::string status_ok() {
     return fmt::format("{}{}{}", style::green(), box::check(), style::reset());
 }
@@ -105,10 +89,6 @@ inline std::string status_ok() {
 inline std::string status_fail() {
     return fmt::format("{}{}{}", style::red(), box::cross(), style::reset());
 }
-
-// ============================================================================
-// Core Output Functions
-// ============================================================================
 
 // Error messages - always shown
 template <typename... Args>
@@ -158,10 +138,6 @@ inline void debug(const std::string& msg) {
     if (!config().verbose) return;
     std::cerr << style::dim() << msg << style::reset() << "\n";
 }
-
-// ============================================================================
-// Structured Output
-// ============================================================================
 
 // Stage header - marks major pipeline steps
 inline void stage(const std::string& name) {
@@ -240,10 +216,6 @@ inline void progress_clear() {
     }
 }
 
-// ============================================================================
-// Summary Box
-// ============================================================================
-
 inline void print_header(const std::string& title, const std::string& version = "") {
     if (config().quiet) return;
     
@@ -270,15 +242,7 @@ inline void print_footer() {
     std::cerr << box::bottomRight() << style::reset() << "\n\n";
 }
 
-// ============================================================================
-// Timer Utility
-// ============================================================================
-
 } // namespace output
-
-// ============================================================================
-// Signal Handling
-// ============================================================================
 
 #include <csignal>
 
