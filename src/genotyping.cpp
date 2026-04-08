@@ -243,7 +243,6 @@ static char getNucFromTuple(const std::tuple<int64_t, int64_t, int64_t> &tupleCo
 }
 
 
-
 void clearBlockBaseCounts(
   int32_t blockId,
   bool blockStrand,
