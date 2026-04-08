@@ -46,7 +46,7 @@ add_custom_command(
     OUTPUT ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
     COMMAND ${CAPNP_EXECUTABLE} compile -o${CAPNPC_CXX_EXECUTABLE}
         -I${CAPNP_SCHEMA_DIR}
-        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR} ${LITE_CAPNP_SRC_FILE}
+        --src-prefix=${CMAKE_CURRENT_SOURCE_DIR}/src ${LITE_CAPNP_SRC_FILE}
     DEPENDS ${LITE_CAPNP_SRC_FILE}
     COMMENT "Generating C++ from index_lite.capnp"
     VERBATIM
