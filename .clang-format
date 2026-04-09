@@ -1,10 +1,75 @@
+# Base style: Google (2-space indent, attached braces, left-aligned pointers)
 BasedOnStyle: Google
-IndentWidth: 4
-ColumnLimit: 120
-AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: WithoutElse
-AllowShortLoopsOnASingleLine: true
-BreakBeforeBraces: Attach
-PointerAlignment: Left
-DerivePointerAlignment: false
-SortIncludes: false
+
+# Parse as C++20
+Standard: c++20
+
+# --- Indentation ---
+IndentWidth: 2                          # Spaces per indent level (2 matches most of the codebase)
+ContinuationIndentWidth: 4             # Extra indent for wrapped lines
+AccessModifierOffset: -1               # public:/private: outdented 1 from class body
+IndentCaseLabels: false                 # case labels at same level as switch (matches current style)
+IndentPPDirectives: None                # Don't indent #ifdef/#endif
+NamespaceIndentation: None              # Don't indent inside namespaces
+IndentWrappedFunctionNames: false       # Don't indent wrapped function names
+
+# --- Line length ---
+ColumnLimit: 120                        # Max line width (0 = unlimited)
+
+# --- Braces ---
+BreakBeforeBraces: Attach               # Opening brace on same line: if (x) {
+
+# --- Short statements ---
+AllowShortFunctionsOnASingleLine: Inline  # Allow one-line functions inside classes
+AllowShortIfStatementsOnASingleLine: WithoutElse  # Allow: if (x) return;
+AllowShortLoopsOnASingleLine: true      # Allow: for (...) x++;
+AllowShortBlocksOnASingleLine: Empty    # Allow: void f() {}
+AllowShortLambdasOnASingleLine: Inline  # Allow short lambdas on one line
+AllowShortEnumsOnASingleLine: true      # Allow: enum { A, B, C };
+AllowShortCaseLabelsOnASingleLine: true # Allow: case 'A': return 0;
+
+# --- Function parameters and arguments ---
+BinPackParameters: false                # One param per line when signature wraps
+BinPackArguments: false                 # One arg per line when call wraps
+AllowAllParametersOfDeclarationOnNextLine: true  # All params on next line if first doesn't fit
+AlignAfterOpenBracket: Align            # Align wrapped args/params with opening (
+
+# --- Pointer/reference alignment ---
+PointerAlignment: Left                  # int* p (not int *p)
+ReferenceAlignment: Left                # int& r (not int &r)
+DerivePointerAlignment: false           # Don't auto-detect from existing code
+
+# --- Spaces ---
+SpaceAfterCStyleCast: false             # (int)x not (int) x
+SpaceBeforeParens: ControlStatements    # if (x) but f(x)
+SpacesBeforeTrailingComments: 2         # x;  // comment (2 spaces before //)
+SpaceBeforeRangeBasedForLoopColon: true # for (auto& x : vec)
+SpacesInAngles: Never                   # vector<int> not vector< int >
+
+# --- Alignment ---
+AlignTrailingComments: true             # Vertically align // comments in a block
+AlignConsecutiveAssignments: None       # Don't align = signs (too noisy)
+AlignConsecutiveDeclarations: None      # Don't align variable names
+AlignConsecutiveMacros: None            # Don't align #define values
+AlignOperands: Align                    # Align multi-line expressions at operators
+AlignEscapedNewlines: Left              # Align \ in multi-line macros
+
+# --- Includes ---
+SortIncludes: false                     # Don't reorder #include (order matters for C/C++ interop)
+IncludeBlocks: Preserve                 # Keep existing include grouping
+
+# --- Namespace ---
+FixNamespaceComments: true              # Auto-add } // namespace foo
+
+# --- Penalties (how hard clang-format tries to avoid certain breaks) ---
+PenaltyBreakBeforeFirstCallParameter: 19  # Prefer keeping first arg on same line as function
+PenaltyReturnTypeOnItsOwnLine: 60        # Avoid putting return type on separate line
+PenaltyBreakString: 1000                  # Strongly avoid breaking string literals
+
+# --- Misc ---
+ReflowComments: true                    # Reflow long // comments to fit ColumnLimit
+InsertBraces: false                     # Don't auto-add braces to single-line if/for
+RemoveSemicolon: false                  # Don't remove redundant semicolons
+EmptyLineBeforeAccessModifier: Always   # Blank line before public:/private:
+SeparateDefinitionBlocks: Leave         # Don't add/remove blank lines between functions
+MaxEmptyLinesToKeep: 1                  # Collapse multiple blank lines to 1
