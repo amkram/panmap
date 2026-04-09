@@ -316,5 +316,4 @@ class IndexBuilder {
         const uint64_t dfsIndex);
 };
 
-// end of namespace index_single_mode
 }  // namespace index_single_mode
