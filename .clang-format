@@ -1,75 +1,73 @@
-# Base style: Google (2-space indent, attached braces, left-aligned pointers)
 BasedOnStyle: Google
 
-# Parse as C++20
 Standard: c++20
 
-# --- Indentation ---
-IndentWidth: 2                          # Spaces per indent level (2 matches most of the codebase)
-ContinuationIndentWidth: 4             # Extra indent for wrapped lines
-AccessModifierOffset: -1               # public:/private: outdented 1 from class body
-IndentCaseLabels: false                 # case labels at same level as switch (matches current style)
-IndentPPDirectives: None                # Don't indent #ifdef/#endif
-NamespaceIndentation: None              # Don't indent inside namespaces
-IndentWrappedFunctionNames: false       # Don't indent wrapped function names
+# Indentation
+IndentWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: -1
+IndentCaseLabels: true
+IndentPPDirectives: None
+NamespaceIndentation: None
+IndentWrappedFunctionNames: false
 
-# --- Line length ---
-ColumnLimit: 120                        # Max line width (0 = unlimited)
+# Line length
+ColumnLimit: 120
 
-# --- Braces ---
-BreakBeforeBraces: Attach               # Opening brace on same line: if (x) {
+# Braces
+BreakBeforeBraces: Attach
 
-# --- Short statements ---
-AllowShortFunctionsOnASingleLine: Inline  # Allow one-line functions inside classes
-AllowShortIfStatementsOnASingleLine: WithoutElse  # Allow: if (x) return;
-AllowShortLoopsOnASingleLine: true      # Allow: for (...) x++;
-AllowShortBlocksOnASingleLine: Empty    # Allow: void f() {}
-AllowShortLambdasOnASingleLine: Inline  # Allow short lambdas on one line
-AllowShortEnumsOnASingleLine: true      # Allow: enum { A, B, C };
-AllowShortCaseLabelsOnASingleLine: true # Allow: case 'A': return 0;
+# Short statements
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: Inline
+AllowShortEnumsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
 
-# --- Function parameters and arguments ---
-BinPackParameters: false                # One param per line when signature wraps
-BinPackArguments: false                 # One arg per line when call wraps
-AllowAllParametersOfDeclarationOnNextLine: true  # All params on next line if first doesn't fit
-AlignAfterOpenBracket: Align            # Align wrapped args/params with opening (
+# Function parameters and arguments
+BinPackParameters: false
+BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: true
+AlignAfterOpenBracket: Align
 
-# --- Pointer/reference alignment ---
-PointerAlignment: Left                  # int* p (not int *p)
-ReferenceAlignment: Left                # int& r (not int &r)
-DerivePointerAlignment: false           # Don't auto-detect from existing code
+# Pointer/reference alignment
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
 
-# --- Spaces ---
-SpaceAfterCStyleCast: false             # (int)x not (int) x
-SpaceBeforeParens: ControlStatements    # if (x) but f(x)
-SpacesBeforeTrailingComments: 2         # x;  // comment (2 spaces before //)
-SpaceBeforeRangeBasedForLoopColon: true # for (auto& x : vec)
-SpacesInAngles: Never                   # vector<int> not vector< int >
+# Spaces
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesBeforeTrailingComments: 2
+SpaceBeforeRangeBasedForLoopColon: true
+SpacesInAngles: Never
 
-# --- Alignment ---
-AlignTrailingComments: true             # Vertically align // comments in a block
-AlignConsecutiveAssignments: None       # Don't align = signs (too noisy)
-AlignConsecutiveDeclarations: None      # Don't align variable names
-AlignConsecutiveMacros: None            # Don't align #define values
-AlignOperands: Align                    # Align multi-line expressions at operators
-AlignEscapedNewlines: Left              # Align \ in multi-line macros
+# Alignment
+AlignTrailingComments: true
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: None
+AlignOperands: Align
+AlignEscapedNewlines: Left
 
-# --- Includes ---
-SortIncludes: false                     # Don't reorder #include (order matters for C/C++ interop)
-IncludeBlocks: Preserve                 # Keep existing include grouping
+# Includes
+SortIncludes: false
+IncludeBlocks: Preserve
 
-# --- Namespace ---
-FixNamespaceComments: true              # Auto-add } // namespace foo
+# Namespace
+FixNamespaceComments: true
 
-# --- Penalties (how hard clang-format tries to avoid certain breaks) ---
-PenaltyBreakBeforeFirstCallParameter: 19  # Prefer keeping first arg on same line as function
-PenaltyReturnTypeOnItsOwnLine: 60        # Avoid putting return type on separate line
-PenaltyBreakString: 1000                  # Strongly avoid breaking string literals
+# Penalties
+PenaltyBreakBeforeFirstCallParameter: 19
+PenaltyReturnTypeOnItsOwnLine: 60
+PenaltyBreakString: 1000
 
-# --- Misc ---
-ReflowComments: true                    # Reflow long // comments to fit ColumnLimit
-InsertBraces: false                     # Don't auto-add braces to single-line if/for
-RemoveSemicolon: false                  # Don't remove redundant semicolons
-EmptyLineBeforeAccessModifier: Always   # Blank line before public:/private:
-SeparateDefinitionBlocks: Leave         # Don't add/remove blank lines between functions
-MaxEmptyLinesToKeep: 1                  # Collapse multiple blank lines to 1
+# Misc
+ReflowComments: true
+InsertBraces: false
+RemoveSemicolon: false
+EmptyLineBeforeAccessModifier: Always
+SeparateDefinitionBlocks: Always
+MaxEmptyLinesToKeep: 1

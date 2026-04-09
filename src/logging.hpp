@@ -20,14 +20,12 @@
 namespace output {
 
 struct Config {
-    std::atomic<bool> quiet{false};     // Minimal output (errors only)
-    std::atomic<bool> verbose{false};   // Extra debug output
-    std::atomic<bool> plain{false};     // No colors or unicode
-    std::atomic<bool> isTTY{true};      // Auto-detected
-    
-    void detectTTY() {
-        isTTY = isatty(fileno(stderr)) && isatty(fileno(stdout));
-    }
+    std::atomic<bool> quiet{false};    // Minimal output (errors only)
+    std::atomic<bool> verbose{false};  // Extra debug output
+    std::atomic<bool> plain{false};    // No colors or unicode
+    std::atomic<bool> isTTY{true};     // Auto-detected
+
+    void detectTTY() { isTTY = isatty(fileno(stderr)) && isatty(fileno(stdout)); }
 };
 
 inline Config& config() {
@@ -41,12 +39,12 @@ inline void init(bool quiet = false, bool verbose = false, bool plain = false) {
     config().verbose = verbose;
     config().plain = plain;
     config().detectTTY();
-    
+
     // Auto-enable plain mode if not a TTY
     if (!config().isTTY) {
         config().plain = true;
     }
-    
+
     // Configure spdlog
     spdlog::set_pattern("%v");
     if (quiet) {
@@ -59,28 +57,80 @@ inline void init(bool quiet = false, bool verbose = false, bool plain = false) {
 }
 
 namespace style {
-    inline const char* reset()   { return config().plain ? "" : "\033[0m"; }
-    inline const char* bold()    { return config().plain ? "" : "\033[1m"; }
-    inline const char* dim()     { return config().plain ? "" : "\033[2m"; }
-    inline const char* red()     { return config().plain ? "" : "\033[31m"; }
-    inline const char* green()   { return config().plain ? "" : "\033[32m"; }
-    inline const char* yellow()  { return config().plain ? "" : "\033[33m"; }
-    inline const char* blue()    { return config().plain ? "" : "\033[34m"; }
-    inline const char* cyan()    { return config().plain ? "" : "\033[36m"; }
-    inline const char* magenta() { return config().plain ? "" : "\033[35m"; }
+inline const char* reset() {
+    return config().plain ? "" : "\033[0m";
 }
 
-namespace box {
-    inline const char* topLeft()     { return config().plain ? "+" : "┌"; }
-    inline const char* topRight()    { return config().plain ? "+" : "┐"; }
-    inline const char* bottomLeft()  { return config().plain ? "+" : "└"; }
-    inline const char* bottomRight() { return config().plain ? "+" : "┘"; }
-    inline const char* horizontal()  { return config().plain ? "-" : "─"; }
-    inline const char* vertical()    { return config().plain ? "|" : "│"; }
-    inline const char* arrow()       { return config().plain ? "->" : "→"; }
-    inline const char* check()       { return config().plain ? "[OK]" : "✓"; }
-    inline const char* cross()       { return config().plain ? "[X]" : "✗"; }
+inline const char* bold() {
+    return config().plain ? "" : "\033[1m";
 }
+
+inline const char* dim() {
+    return config().plain ? "" : "\033[2m";
+}
+
+inline const char* red() {
+    return config().plain ? "" : "\033[31m";
+}
+
+inline const char* green() {
+    return config().plain ? "" : "\033[32m";
+}
+
+inline const char* yellow() {
+    return config().plain ? "" : "\033[33m";
+}
+
+inline const char* blue() {
+    return config().plain ? "" : "\033[34m";
+}
+
+inline const char* cyan() {
+    return config().plain ? "" : "\033[36m";
+}
+
+inline const char* magenta() {
+    return config().plain ? "" : "\033[35m";
+}
+}  // namespace style
+
+namespace box {
+inline const char* topLeft() {
+    return config().plain ? "+" : "┌";
+}
+
+inline const char* topRight() {
+    return config().plain ? "+" : "┐";
+}
+
+inline const char* bottomLeft() {
+    return config().plain ? "+" : "└";
+}
+
+inline const char* bottomRight() {
+    return config().plain ? "+" : "┘";
+}
+
+inline const char* horizontal() {
+    return config().plain ? "-" : "─";
+}
+
+inline const char* vertical() {
+    return config().plain ? "|" : "│";
+}
+
+inline const char* arrow() {
+    return config().plain ? "->" : "→";
+}
+
+inline const char* check() {
+    return config().plain ? "[OK]" : "✓";
+}
+
+inline const char* cross() {
+    return config().plain ? "[X]" : "✗";
+}
+}  // namespace box
 
 inline std::string status_ok() {
     return fmt::format("{}{}{}", style::green(), box::check(), style::reset());
@@ -130,8 +180,7 @@ inline void info(const std::string& msg) {
 template <typename... Args>
 inline void debug(fmt::format_string<Args...> fmt, Args&&... args) {
     if (!config().verbose) return;
-    std::cerr << style::dim() << fmt::format(fmt, std::forward<Args>(args)...) 
-              << style::reset() << "\n";
+    std::cerr << style::dim() << fmt::format(fmt, std::forward<Args>(args)...) << style::reset() << "\n";
 }
 
 inline void debug(const std::string& msg) {
@@ -142,8 +191,7 @@ inline void debug(const std::string& msg) {
 // Stage header - marks major pipeline steps
 inline void stage(const std::string& name) {
     if (config().quiet) return;
-    std::cerr << style::bold() << style::cyan() << box::arrow() << " " 
-              << name << style::reset() << "\n";
+    std::cerr << style::bold() << style::cyan() << box::arrow() << " " << name << style::reset() << "\n";
 }
 
 // Step within a stage
@@ -167,14 +215,14 @@ inline void done(const std::string& what, int64_t ms) {
         if (ms < 1000) {
             std::cerr << style::dim() << " (" << ms << "ms)" << style::reset();
         } else if (ms < 60000) {
-            std::cerr << style::dim() << " (" << std::fixed << std::setprecision(1) 
-                      << (ms / 1000.0) << "s)" << style::reset();
+            std::cerr << style::dim() << " (" << std::fixed << std::setprecision(1) << (ms / 1000.0) << "s)"
+                      << style::reset();
         } else {
             int64_t secs = ms / 1000;
             int64_t mins = secs / 60;
             secs = secs % 60;
-            std::cerr << style::dim() << " (" << mins << "m" << std::setw(2) 
-                      << std::setfill('0') << secs << "s)" << style::reset();
+            std::cerr << style::dim() << " (" << mins << "m" << std::setw(2) << std::setfill('0') << secs << "s)"
+                      << style::reset();
         }
     }
     std::cerr << "\n";
@@ -202,8 +250,7 @@ inline void progress_pct(const std::string& task, size_t current, size_t total, 
             if (elapsed_ms < 1000) {
                 std::cerr << " (" << elapsed_ms << "ms)";
             } else {
-                std::cerr << " (" << std::fixed << std::setprecision(1) 
-                          << (elapsed_ms / 1000.0) << "s)";
+                std::cerr << " (" << std::fixed << std::setprecision(1) << (elapsed_ms / 1000.0) << "s)";
             }
         }
         std::cerr << style::reset() << std::flush;
@@ -218,9 +265,8 @@ inline void progress_clear() {
 
 inline void print_header(const std::string& title, const std::string& version = "") {
     if (config().quiet) return;
-    
-    std::cerr << style::bold() << style::cyan() << box::topLeft() 
-              << box::horizontal() << " " << title;
+
+    std::cerr << style::bold() << style::cyan() << box::topLeft() << box::horizontal() << " " << title;
     if (!version.empty()) {
         std::cerr << style::reset() << style::dim() << " v" << version;
     }
@@ -231,8 +277,8 @@ inline void print_header(const std::string& title, const std::string& version = 
 
 inline void print_row(const std::string& label, const std::string& value) {
     if (config().quiet) return;
-    std::cerr << style::bold() << style::cyan() << box::vertical() << style::reset()
-              << " " << style::bold() << label << ": " << style::reset() << value << "\n";
+    std::cerr << style::bold() << style::cyan() << box::vertical() << style::reset() << " " << style::bold() << label
+              << ": " << style::reset() << value << "\n";
 }
 
 inline void print_footer() {
@@ -242,7 +288,7 @@ inline void print_footer() {
     std::cerr << box::bottomRight() << style::reset() << "\n\n";
 }
 
-} // namespace output
+}  // namespace output
 
 #include <csignal>
 
@@ -282,18 +328,52 @@ inline void install_handlers() {
 #endif
 }
 
-} // namespace signals
+}  // namespace signals
 
 // Legacy logging namespace (maps to output:: with different names)
 namespace logging {
-template <typename... Args> inline void debug(fmt::format_string<Args...> f, Args&&... a) { output::debug(f, std::forward<Args>(a)...); }
-template <typename... Args> inline void info(fmt::format_string<Args...> f, Args&&... a) { output::info(f, std::forward<Args>(a)...); }
-template <typename... Args> inline void warn(fmt::format_string<Args...> f, Args&&... a) { output::warn(f, std::forward<Args>(a)...); }
-template <typename... Args> inline void err(fmt::format_string<Args...> f, Args&&... a) { output::error(f, std::forward<Args>(a)...); }
-template <typename... Args> inline void msg(fmt::format_string<Args...> f, Args&&... a) { output::info(f, std::forward<Args>(a)...); }
-inline void debug(const std::string& s) { output::debug(s); }
-inline void info(const std::string& s) { output::info(s); }
-inline void warn(const std::string& s) { output::warn(s); }
-inline void err(const std::string& s) { output::error(s); }
-inline void msg(const std::string& s) { output::info(s); }
-} // namespace logging
+template <typename... Args>
+inline void debug(fmt::format_string<Args...> f, Args&&... a) {
+    output::debug(f, std::forward<Args>(a)...);
+}
+
+template <typename... Args>
+inline void info(fmt::format_string<Args...> f, Args&&... a) {
+    output::info(f, std::forward<Args>(a)...);
+}
+
+template <typename... Args>
+inline void warn(fmt::format_string<Args...> f, Args&&... a) {
+    output::warn(f, std::forward<Args>(a)...);
+}
+
+template <typename... Args>
+inline void err(fmt::format_string<Args...> f, Args&&... a) {
+    output::error(f, std::forward<Args>(a)...);
+}
+
+template <typename... Args>
+inline void msg(fmt::format_string<Args...> f, Args&&... a) {
+    output::info(f, std::forward<Args>(a)...);
+}
+
+inline void debug(const std::string& s) {
+    output::debug(s);
+}
+
+inline void info(const std::string& s) {
+    output::info(s);
+}
+
+inline void warn(const std::string& s) {
+    output::warn(s);
+}
+
+inline void err(const std::string& s) {
+    output::error(s);
+}
+
+inline void msg(const std::string& s) {
+    output::info(s);
+}
+}  // namespace logging
