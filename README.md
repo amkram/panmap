@@ -7,17 +7,25 @@ Given a pangenome (in [PanMAN](https://github.com/TurakhiaLab/panman) format) an
 ### Modes
 
 - **Single-sample** (default): Places reads from a single sample, aligns to the best-matching reference, and genotypes variants (BAM + VCF output).
-- **Metagenomic** (`--meta`): Scores reads from a mixture sample against every node in the PanMAN, and uses the scoring information to estimate haplotype abundance or directly assign reads to nodes.
+- **Metagenomic** (`--meta`): Scores reads against every node in the PanMAN to estimate haplotype abundance or assign reads to nodes.
 
+### Install
 
-### Run with Docker
-
+**From source:**
 ```bash
-docker pull alanalohaucsc/panmap:latest
-docker run --rm alanalohaucsc/panmap:latest
+git clone https://github.com/amkram/panmap.git
+cd panmap && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
 ```
 
-See the [documentation](https://amkram.github.io/panmap/) for building from source.
+See the [installation docs](https://amkram.github.io/panmap/installation/) for dependencies and platform-specific notes.
+
+**Docker:**
+```bash
+docker build -t panmap .
+docker run --rm panmap --help
+```
 
 ## Usage
 
@@ -54,67 +62,36 @@ By default, panmap runs through genotyping. Use `--stop` to control how far the 
 
 Run `panmap --help` for the full option list.
 
-### Example usage
+### Examples
 
 **Place and genotype paired-end reads:**
 ```bash
-panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
+panmap sars.panman reads_R1.fq reads_R2.fq -t 8 -o sample
+# Output: sample.placement.tsv, sample.bam, sample.vcf
 ```
 
-**Metagenomic mode, estimating SARS-CoV-2 lineage abundances:**
-
-First step is to build an index for metagenomics mode:
-
+**Index only (reuse for multiple samples):**
 ```bash
-mkdir example_run && cd example_run
-
-panmap ../examples/data/sars_20000_twilight_dipper.panman \
-  --index-mgsr sars_20000_twilight_dipper.idx
+panmap sars.panman --stop index -o sars
+panmap sars.panman reads.fq -i sars.idx -o sample1
+panmap sars.panman reads2.fq -i sars.idx -o sample2
 ```
 
-Then run panmap with the `--meta` option:
-
+**Metagenomic mode:**
 ```bash
-panmap ../examples/data/sars_20000_twilight_dipper.panman \
-  ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R1.fastq.gz \
-  ../examples/data/sars20000_5hap_0snp-a_200000_rep0_R2.fastq.gz \
-  --meta --index sars_20000_twilight_dipper.idx \
-  --threads 8 --em-delta-threshold 0.00001
+panmap sars.panman --index-mgsr sars_mgsr.idx
+panmap sars.panman reads_R1.fq reads_R2.fq \
+  --meta -i sars_mgsr.idx -t 8
 ```
 
-Reads used above were simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples, refer to README
-in [examples/wastewater](examples/wastewater) for more details.
+See the [documentation](https://amkram.github.io/panmap/) for detailed usage guides.
 
-**Metagenomic mode, filter and assign reads:**
+### Contributing
 
-We first build an index for the vertebrate mitochondrial PanMAN. We recommend using the `-k 15 -s 8 -l 1` seed parameters for aeDNA reads.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, testing, and code style.
 
-```bash
-mkdir example_run && cd example_run
+### Citation
 
-panmap ../examples/data/v_mtdna.panman \
-  --index-mgsr v_mtdna.idx -k 15 -s 8 -l 1
-```
+If you use panmap in your research, please cite:
 
-Then run panmap with the `--filter-and-assign` option:
-
-```bash
-panmap ../examples/data/v_mtdna.panman \
-  ../examples/data/subsampled.fastq.gz \
-  --meta -i v_mtdna.idx \
-  --filter-and-assign --discard 0.6 --dust 5 \
-  --taxonomic-metadata ../examples/data/v_mtdna.meta.tsv \
-  -t 4 --breadth-ratio --output subsampled
-```
-
-This outputs 3 files:
-
-`.mgsr.assignedReads.fastq` file containing the reads that were assigned
-
-`.mgsr.assignedReads.out` file containing the number of reads assigned to each node and the indices of the reads assigned, with respect to the the `.mgsr.assignedReads.fastq` file
-
-`.mgsr.assignedReadsLCANode.out` file containing the number of reads assigned to the LCA node and the indices of the reads assigned. *As reads may be assigned to multiple nodes, the LCA node of a read is the LCA of all the nodes it was assigned to.*
-
-### Building from source
-
-See the [installation docs](https://amkram.github.io/panmap/installation/) for dependencies and build instructions.
+> Kramer, A. et al. (2024). Pangenome-based sequence analysis with panmap. *bioRxiv*. [doi:10.1101/2024.XX.XX](https://doi.org/10.1101/2024.XX.XX)

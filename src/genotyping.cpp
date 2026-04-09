@@ -26,7 +26,6 @@
 #include <vector>
 #include <boost/icl/interval_set.hpp>
 
-using namespace std;
 using namespace genotyping;
 
 void genotyping::stringSplit(const std::string& str, char delimiter, std::vector<std::string>& out) {
@@ -43,7 +42,7 @@ void genotyping::stringSplit(const std::string& str, char delimiter, std::vector
 void genotyping::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf) {
     std::string line;
     int idx = 0;
-    while (getline(inf, line)) {
+    while (std::getline(inf, line)) {
         std::vector<double> probs;
         std::vector<std::string> fields;
         stringSplit(line, ' ', fields);
@@ -743,9 +742,9 @@ inline double getAverageMutationRate(const std::vector<std::vector<double>>& mat
     return sum / count;
 }
 
-vector<std::vector<double>> genotyping::scaleMutationSpectrum(const mutationMatrices& mutMat, double mutationRate) {
-    vector<std::vector<double>> scaled_submat_phred = mutMat.submat;
-    vector<std::vector<double>> scaled_submat_prob = phredMatrix2ProbMatrix(scaled_submat_phred);
+std::vector<std::vector<double>> genotyping::scaleMutationSpectrum(const mutationMatrices& mutMat, double mutationRate) {
+    std::vector<std::vector<double>> scaled_submat_phred = mutMat.submat;
+    std::vector<std::vector<double>> scaled_submat_prob = phredMatrix2ProbMatrix(scaled_submat_phred);
     double avg_mutation_rate = getAverageMutationRate(scaled_submat_prob);
     double scale_factor = mutationRate / avg_mutation_rate;
 
