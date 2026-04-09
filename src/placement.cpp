@@ -188,8 +188,6 @@ void extractFullFastqData(const std::string& readPath1,
 
 }  // anonymous namespace
 
-using namespace logging;
-
 void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMetrics,
                                                  std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges,
                                                  const placement::PlacementGlobalState& state) {
