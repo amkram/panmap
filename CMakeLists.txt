@@ -5,7 +5,7 @@ project(panmap VERSION 0.1.0)
 # Suppress deprecation warnings from third-party dependencies
 set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
 if(POLICY CMP0169)
-  cmake_policy(SET CMP0169 OLD)
+    cmake_policy(SET CMP0169 OLD)  # Allow FetchContent_Populate (needed for panman patching)
 endif()
 if(POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)  # Use config-mode for Protobuf/Boost
@@ -765,9 +765,6 @@ configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
 
 install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/lib/ DESTINATION ${CMAKE_INSTALL_LIBDIR} FILES_MATCHING PATTERN "*.a" PATTERN "*.so" PATTERN "*.dylib" PATTERN "*.la" PATTERN "*.so.*")
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin/ DESTINATION ${CMAKE_INSTALL_BINDIR} FILES_MATCHING PATTERN "*")
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Create a compile_commands.json symlink for clangd
 add_custom_command(
