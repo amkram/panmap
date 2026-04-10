@@ -1678,7 +1678,10 @@ int runConsensus(const Config& cfg) {
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    createConsensus(vcfFileName, refFileName, consensusFileName);
+    if (createConsensus(vcfFileName, refFileName, consensusFileName) != 0) {
+        logging::err("bcftools consensus failed");
+        return 1;
+    }
 
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
