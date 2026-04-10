@@ -19,8 +19,9 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 
 # Collect all shared library dependencies for the runtime stage
 RUN mkdir -p /runtime-libs && \
-  ldd /usr/local/bin/panmap | grep '=>' | awk '{print $3}' | \
-  while read lib; do [ -f "$lib" ] && cp -L "$lib" /runtime-libs/; done
+  (ldd /usr/local/bin/panmap 2>/dev/null || true) | grep '=>' | awk '{print $3}' | \
+  while read lib; do [ -f "$lib" ] && cp -L "$lib" /runtime-libs/; done && \
+  find /build/panmap/build -name '*.so*' -exec cp -L {} /runtime-libs/ \;
 
 # Stage 2: Runtime
 FROM ubuntu:22.04
