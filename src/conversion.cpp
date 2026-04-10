@@ -17,8 +17,8 @@ static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv)
     if (pid == 0) {
         // Child: run bcftools function and exit
         optind = 1;
-        func(argc, argv);
-        _exit(0);
+        int ret = func(argc, argv);
+        _exit(ret);
     } else if (pid > 0) {
         int status;
         waitpid(pid, &status, 0);
@@ -115,12 +115,12 @@ void createVcfWithMutationMatrices(std::string& prefix,
     std::remove(rawVcfFile.c_str());
 }
 
-void createConsensus(const std::string& vcfFileName,
-                     const std::string& refFileName,
-                     const std::string& consensusFileName) {
+int createConsensus(const std::string& vcfFileName,
+                    const std::string& refFileName,
+                    const std::string& consensusFileName) {
     const char* args[] = {
         "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), vcfFileName.c_str()};
-    run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args));
+    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args));
 }
 
 static uint16_t compute_sam_flags(

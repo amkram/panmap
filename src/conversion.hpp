@@ -34,9 +34,9 @@ void createVcfWithMutationMatrices(std::string& prefix,
                                    std::string& vcfFileName,
                                    const std::vector<std::vector<double>>& substMatrixPhred);
 
-void createConsensus(const std::string& vcfFileName,
-                     const std::string& refFileName,
-                     const std::string& consensusFileName);
+int createConsensus(const std::string& vcfFileName,
+                    const std::string& refFileName,
+                    const std::string& consensusFileName);
 
 // Direct alignment-to-BAM pipeline: parallel minimap2 alignment with direct
 // bam1_t construction (no SAM text intermediate). Writes sorted BAM file.
