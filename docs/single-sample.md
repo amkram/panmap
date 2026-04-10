@@ -5,24 +5,24 @@ The default mode. Places reads from one sample onto the pangenome tree, aligns t
 ## Basic usage
 
 ```bash
-# Place reads (default -- stops after placement)
+# Run full pipeline (default -- through consensus)
 panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
 
-# Run through genotyping
-panmap ref.panman reads_R1.fq reads_R2.fq --stop consensus -t 8 -o sample
+# Stop at an earlier stage
+panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
 ```
 
 ## Pipeline stages
 
-By default, panmap stops after **placement**. Use `--stop` to control how far the pipeline runs.
+By default, panmap runs through **consensus**. Use `--stop` to stop at an earlier stage.
 
 | Stage | `--stop` value | Output | Description |
 |-------|---------------|--------|-------------|
 | Index | `index` | `<prefix>.idx` | Builds seed index from the PanMAN |
-| Place | `place` (default) | `<prefix>.placement.tsv` | Places reads onto the pangenome tree |
+| Place | `place` | `<prefix>.placement.tsv` | Places reads onto the pangenome tree |
 | Align | `align` | `<prefix>.bam` | Aligns reads to closest reference |
 | Genotype | `genotype` | `<prefix>.vcf` | Calls variants from alignments |
-| Consensus | `consensus` | `<prefix>.consensus.fa` | Generates consensus FASTA from variants |
+| Consensus | `consensus` (default) | `<prefix>.consensus.fa` | Generates consensus FASTA from variants |
 
 !!! note
     When `--stop genotype` is used, `--force-leaf` is enabled automatically.
@@ -74,7 +74,7 @@ panmap examples/data/sars_20000_twilight_dipper.panman \
 | `-o, --output` | Output file prefix | derived from reads filename |
 | `-t, --threads` | Number of threads | `1` |
 | `-a, --aligner` | `minimap2` or `bwa` | `minimap2` |
-| `--stop` | Stop after: `index`, `place`, `align`, `genotype` | `place` |
+| `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` |
 | `--force-leaf` | Restrict placement to leaf nodes | off (auto-enabled with `--stop genotype`) |
 | `--refine` | Alignment-based refinement of top candidates | off |
 

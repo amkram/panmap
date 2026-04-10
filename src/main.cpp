@@ -1708,7 +1708,7 @@ int main(int argc, char** argv) {
         ("version,V", "Show version")
         ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
         ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
-        ("stop", po::value<std::string>()->default_value("place"), "Stop after: index|place|align|genotype|consensus")
+        ("stop", po::value<std::string>()->default_value("consensus"), "Stop after: index|place|align|genotype|consensus")
         ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")
         ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")
         ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
