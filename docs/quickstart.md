@@ -8,43 +8,54 @@ panmap <panman> [reads1.fq] [reads2.fq] [options]
 
 ## Pipeline
 
-panmap runs four stages in sequence. By default, it stops after **placement**. Use `--stop` to run further.
+panmap runs four stages in sequence. By default it stops after **placement**. Use `--stop` to run further.
 
 ```
-index  ──>  place  ──>  align  ──>  genotype
+index  -->  place  -->  align  -->  genotype
  .idx    .placement.tsv  .bam       .vcf
 ```
 
-## Example: paired-end genotyping
+## Single-sample genotyping
+
+Place reads onto the pangenome, align to the closest reference, and call variants:
 
 ```bash
-panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
+panmap ref.panman reads_R1.fq reads_R2.fq \
+  --stop genotype -t 8 -o sample
 ```
 
-This runs the full pipeline and produces:
+This produces `sample.bam` and `sample.vcf`.
 
-| File | Contents |
-|------|----------|
-| `sample.idx` | Seed index (reusable) |
-| `sample.placement.tsv` | Tree placement |
-| `sample.bam` | Aligned reads |
-| `sample.vcf` | Called variants |
+## Metagenomic abundance estimation
 
-## Running partial pipelines
+Estimate which lineages are present in a mixed sample:
+
+```bash
+# Build metagenomic index (once per pangenome)
+panmap ref.panman --index-mgsr ref.idx
+
+# Estimate abundances
+panmap ref.panman reads.fq \
+  --meta --index ref.idx -t 8 -o sample
+```
+
+Output: `sample.mgsr.abundance.out`
+
+## Partial pipelines
 
 ```bash
 # Build index only
 panmap ref.panman --stop index -o ref
 
-# Place reads (default behavior)
+# Place reads (default)
 panmap ref.panman reads.fq -o sample
 
-# Place and align, but skip genotyping
+# Place and align, skip genotyping
 panmap ref.panman reads.fq --stop align -o sample
 ```
 
 ## Next steps
 
-- [Single-Sample Mode](single-sample.md) -- pipeline details and options
-- [Metagenomic Mode](metagenomic.md) -- abundance estimation and read assignment
-- [CLI Reference](cli-reference.md) -- full option list
+- [Single-Sample Mode](single-sample.md) -- full walkthrough with examples
+- [Metagenomic Mode](metagenomic.md) -- wastewater and aeDNA workflows
+- [CLI Reference](cli-reference.md) -- all options

@@ -4,6 +4,19 @@
 
 panmap takes sequencing reads and a pangenome in [PanMAN](https://github.com/TurakhiaLab/panman) format, places the reads onto the pangenome tree, aligns them to the closest reference, and calls variants.
 
+## At a glance
+
+```bash
+# Install
+conda install -c bioconda panmap
+
+# Place and genotype paired-end reads
+panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
+
+# Metagenomic abundance estimation
+panmap ref.panman reads.fq --meta --index ref.idx -t 8 -o sample
+```
+
 ## Modes
 
 **Single-sample** (default)
@@ -12,23 +25,10 @@ panmap takes sequencing reads and a pangenome in [PanMAN](https://github.com/Tur
 **Metagenomic** (`--meta`)
 :   Scores reads against every node in the PanMAN to estimate haplotype abundance or assign reads directly to nodes.
 
-## At a glance
-
-```bash
-# Install
-conda install -c bioconda panmap
-
-# Place reads (stops after placement by default)
-panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
-
-# Run full pipeline through genotyping
-panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
-```
-
 ## Documentation
 
-- [Installation](installation.md) -- Docker and building from source
-- [Quick Start](quickstart.md) -- First analysis in minutes
-- [Single-Sample Mode](single-sample.md) -- Default pipeline walkthrough
-- [Metagenomic Mode](metagenomic.md) -- Abundance estimation and read assignment
+- [Installation](installation.md) -- Bioconda, Docker, building from source
+- [Quick Start](quickstart.md) -- Pipeline overview and basic examples
+- [Single-Sample Mode](single-sample.md) -- Genotyping walkthrough
+- [Metagenomic Mode](metagenomic.md) -- Wastewater and aeDNA workflows
 - [CLI Reference](cli-reference.md) -- All options and flags
