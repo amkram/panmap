@@ -716,8 +716,8 @@ void mgsr::MgsrLiteTree::fillOCRanks(std::vector<std::pair<std::string, double>>
   }
 }
 
-void mgsr::MgsrLiteTree::fillFamilyIndices(size_t maximumFamilies) {
-  if (maximumFamilies == 0) return;
+void mgsr::MgsrLiteTree::fillTaxonIndices(size_t maximumTaxonNumber) {
+  if (maximumTaxonNumber == 0) return;
 
   std::stack<MgsrLiteNode*> traversal;
   std::stack<MgsrLiteNode*> postOrder;
@@ -738,72 +738,105 @@ void mgsr::MgsrLiteTree::fillFamilyIndices(size_t maximumFamilies) {
 
     bool childOverMaximum = false;
     for (MgsrLiteNode* child : node->children) {
-      if (child->overMaximumFamilies) {
+      if (child->overMaximumTaxonNumber) {
         childOverMaximum = true;
         break;
       }
     }
 
     if (childOverMaximum) {
-      node->overMaximumFamilies = true;
+      node->overMaximumTaxonNumber = true;
       continue;
     }
 
     for (MgsrLiteNode* child : node->children)
-      node->familyIndices.insert(
-        child->familyIndices.begin(),
-        child->familyIndices.end()
+      node->taxonIndices.insert(
+        child->taxonIndices.begin(),
+        child->taxonIndices.end()
       );
 
-    if (node->familyIndices.size() > maximumFamilies) {
-      node->overMaximumFamilies = true;
-      node->familyIndices.clear();
+    if (node->taxonIndices.size() > maximumTaxonNumber) {
+      node->overMaximumTaxonNumber = true;
+      node->taxonIndices.clear();
     }
   }
+}
+
+void mgsr::MgsrLiteTree::loadTaxonomicMetadata(
+  const std::string& taxonomicMetadataPath,
+  const std::string& taxonomicRank,
+  std::unordered_map<std::string, int>& sampleToTaxonIndex
+) {
+  std::cerr << "Starting to read in taxonomic metadata from " << taxonomicMetadataPath << std::endl;
+  std::ifstream infile(taxonomicMetadataPath);
+  if (!infile.is_open()) {
+    std::cerr << "Error opening taxonomic metadata file: " << taxonomicMetadataPath << std::endl;
+    std::exit(1);
+  }
+
+  std::string line;
+  if (!std::getline(infile, line)) {
+    std::cerr << "Error: taxonomic metadata file is empty: " << taxonomicMetadataPath << std::endl;
+    std::exit(1);
+  }
+
+  int taxonColumn = -1;
+  {
+    std::istringstream headerStream(line);
+    std::string columnName;
+    int columnIndex = 0;
+    while (headerStream >> columnName) {
+      if (columnName == taxonomicRank) {
+        taxonColumn = columnIndex;
+        break;
+      }
+      ++columnIndex;
+    }
+  }
+
+  if (taxonColumn <= 0) {
+    std::cerr << "Error: taxonomic rank '" << taxonomicRank
+              << "' not found in header of " << taxonomicMetadataPath << std::endl;
+    std::exit(1);
+  }
+
+  while (std::getline(infile, line)) {
+    std::istringstream iss(line);
+    std::string sampleId;
+    if (!(iss >> sampleId)) continue;
+
+    std::string taxon;
+    for (int i = 1; i <= taxonColumn; ++i) {
+      if (!(iss >> taxon)) {
+        std::cerr << "Error: row for sample '" << sampleId
+                  << "' in " << taxonomicMetadataPath
+                  << "' has fewer than " << (taxonColumn + 1)
+                  << " columns (expected taxon at column " << taxonColumn << ")" << std::endl;
+        std::exit(1);
+      }
+    }
+    if (taxon == ".") continue;
+
+    auto [it, inserted] = taxonToIndex.try_emplace(taxon, taxons.size());
+    if (inserted) taxons.push_back(taxon);
+    sampleToTaxonIndex[sampleId] = it->second;
+  }
+  infile.close();
+  std::cerr << "Number of unique taxons (" << taxonomicRank << "): " << taxons.size() << std::endl;
 }
 
 void mgsr::MgsrLiteTree::initialize(
   LiteIndex::Reader indexReader,
   const std::string& taxonomicMetadataPath,
-  size_t maximumFamilies,
+  const std::string& taxonomicRank,
+  size_t maximumTaxonNumber,
   size_t numThreads,
   bool lowMemory,
   bool collapseIdenticalNodes
 ) {
-  std::unordered_map<std::string, int> sampleToFamilyIndex;
+  std::unordered_map<std::string, int> sampleToTaxonIndex;
   if (taxonomicMetadataPath != "") {
-    std::cerr << "Starting to read in taxonomic metadata from " << taxonomicMetadataPath << std::endl;
-    std::ifstream infile(taxonomicMetadataPath);
-    if (!infile.is_open()) {
-      std::cerr << "Error opening taxonomic metadata file: " << taxonomicMetadataPath << std::endl;
-      std::exit(1);
-    }
-    std::string line;
-    std::getline(infile, line);
-    while (std::getline(infile, line)) {
-      std::istringstream iss(line);
-      std::string sampleId;
-      iss >> sampleId;
-      
-      std::string token;
-      for (int i = 0; i < 3; ++i)
-        iss >> token;
-      
-      std::string family;
-      iss >> family;
-
-      if (family == ".") continue;
-      
-      if (familyToIndex.find(family) == familyToIndex.end()) {
-        familyToIndex[family] = families.size();
-        families.push_back(family);
-      }
-      
-      sampleToFamilyIndex[sampleId] = familyToIndex[family];
-    }
-    infile.close();
-
-    std::cerr << "Number of unique families: " << families.size() << std::endl;
+    loadTaxonomicMetadata(taxonomicMetadataPath, taxonomicRank, sampleToTaxonIndex);
   }
 
   std::cerr << "Starting to initialize MgsrLiteTree from index..." << std::endl;
@@ -993,9 +1026,9 @@ void mgsr::MgsrLiteTree::initialize(
         it->second->initializeMutationData(refSeedChanges, nodeChangeOffsets[i], nodeChangeOffsets[i + 1], numThreads, lowMemory);
       }
       if (taxonomicMetadataPath != "") {
-        auto familyIndexIt = sampleToFamilyIndex.find(nodeIdentifier);
-        if (familyIndexIt != sampleToFamilyIndex.end()) {
-          it->second->familyIndices.insert(familyIndexIt->second);
+        auto taxonIndexIt = sampleToTaxonIndex.find(nodeIdentifier);
+        if (taxonIndexIt != sampleToTaxonIndex.end()) {
+          it->second->taxonIndices.insert(taxonIndexIt->second);
         }
       }
       it->second->sumWEPPScoresByThread.resize(numThreads);
@@ -1030,7 +1063,7 @@ void mgsr::MgsrLiteTree::initialize(
   lastNodeDFSCollapsed = lastNodeDFS;
 
   if (taxonomicMetadataPath != "") {
-    fillFamilyIndices(maximumFamilies);
+    fillTaxonIndices(maximumTaxonNumber);
   }
 
   if (collapseIdenticalNodes) {
@@ -6855,9 +6888,9 @@ void mgsr::mgsrPlacer::assignReadsHelper(
   for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
     const auto& curRead = reads[readIndex];
     auto curMaxScore = curRead.maxScore;
-    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+    auto curOvermaximumTaxonNumber = curRead.overMaximumTaxonNumber;
 
-    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+    if (curMaxScore == 0 || curOvermaximumTaxonNumber) continue;
 
     auto readIt = mpsReadSet.find(readIndex);
     if (scoreDelta == curMaxScore) {
@@ -6891,38 +6924,38 @@ void mgsr::mgsrPlacer::assignReadsHelper(
   }
 }
 
-void mgsr::mgsrPlacer::checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies) {
+void mgsr::mgsrPlacer::checkTaxonIndices(MgsrLiteNode* node, size_t maximumTaxonNumber) {
   const auto& curNodeScoreDeltas = node->readScoreDeltas[threadId];
   
   for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
     auto& curRead = reads[readIndex];
     auto curMaxScore = curRead.maxScore;
-    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+    auto curOvermaximumTaxonNumber = curRead.overMaximumTaxonNumber;
 
 
-    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+    if (curMaxScore == 0 || curOvermaximumTaxonNumber) continue;
 
     if (scoreDelta == curMaxScore) {
-      bool exceeded = node->overMaximumFamilies;
+      bool exceeded = node->overMaximumTaxonNumber;
       if (!exceeded) {
-        curRead.familyIndices.insert(node->familyIndices.begin(), node->familyIndices.end());
-        exceeded = curRead.familyIndices.size() > maximumFamilies;
+        curRead.taxonIndices.insert(node->taxonIndices.begin(), node->taxonIndices.end());
+        exceeded = curRead.taxonIndices.size() > maximumTaxonNumber;
       }
       if (exceeded) {
-        curRead.overMaximumFamilies = true;
-        curRead.familyIndices.clear();
+        curRead.overMaximumTaxonNumber = true;
+        curRead.taxonIndices.clear();
       }
     }
   }
 
   for (auto child : node->collapsedChildren) {
-    checkFamilyIndices(child, maximumFamilies);
+    checkTaxonIndices(child, maximumTaxonNumber);
   }
 }
 
-void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies) {
+void mgsr::mgsrPlacer::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumTaxonNumber) {
   std::unordered_set<size_t> mpsReadSet;
-  checkFamilyIndices(liteTree->root, maximumFamilies);
+  checkTaxonIndices(liteTree->root, maximumTaxonNumber);
   assignReadsHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
 }
 
@@ -6939,9 +6972,9 @@ void mgsr::mgsrPlacer::assignReadsBatchHelper(
   for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
     auto& curRead = reads[readIndex];
     auto curMaxScore = curRead.maxScore;
-    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+    auto curOvermaximumTaxonNumber = curRead.overMaximumTaxonNumber;
 
-    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+    if (curMaxScore == 0 || curOvermaximumTaxonNumber) continue;
 
     auto readIt = mpsReadSet.find(readIndex);
     if (scoreDelta == curMaxScore) {
@@ -6975,54 +7008,54 @@ void mgsr::mgsrPlacer::assignReadsBatchHelper(
   }
 }
 
-void mgsr::mgsrPlacer::checkFamilyIndicesBatch(MgsrLiteNode* node, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
+void mgsr::mgsrPlacer::checkTaxonIndicesBatch(MgsrLiteNode* node, size_t maximumTaxonNumber, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio) {
   const auto& curNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
   
   for (const auto [readIndex, scoreDelta] : curNodeScoreDeltas) {
     auto& curRead = reads[readIndex];
     auto curMaxScore = curRead.maxScore;
-    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+    auto curOvermaximumTaxonNumber = curRead.overMaximumTaxonNumber;
 
 
-    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+    if (curMaxScore == 0 || curOvermaximumTaxonNumber) continue;
 
     int curAmbiguousScoreThreshold = std::max(ambiguousScoreThreshold, static_cast<int>(curMaxScore * ambiguousScoreThresholdRatio));
 
     if (scoreDelta == curMaxScore || scoreDelta >= std::max(0, static_cast<int>(curMaxScore) - curAmbiguousScoreThreshold)) {
-      bool exceeded = node->overMaximumFamilies;
+      bool exceeded = node->overMaximumTaxonNumber;
       if (!exceeded) {
-        curRead.familyIndices.insert(node->familyIndices.begin(), node->familyIndices.end());
-        exceeded = curRead.familyIndices.size() > maximumFamilies;
+        curRead.taxonIndices.insert(node->taxonIndices.begin(), node->taxonIndices.end());
+        exceeded = curRead.taxonIndices.size() > maximumTaxonNumber;
       }
       if (exceeded) {
-        curRead.overMaximumFamilies = true;
-        curRead.familyIndices.clear();
+        curRead.overMaximumTaxonNumber = true;
+        curRead.taxonIndices.clear();
       }
     }
   }
 
   for (auto child : node->collapsedChildren) {
-    checkFamilyIndicesBatch(child, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+    checkTaxonIndicesBatch(child, maximumTaxonNumber, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
   }
 }
 
 void mgsr::mgsrPlacer::assignReadsBatch(
   std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
   std::unordered_map<MgsrLiteNode*,std::vector<size_t>>& assignedReadsByLCANode,
-  size_t maximumFamilies,
+  size_t maximumTaxonNumber,
   int ambiguousScoreThreshold,
   double ambiguousScoreThresholdRatio
 ) {
   std::unordered_set<size_t> mpsReadSet;
-  checkFamilyIndicesBatch(liteTree->root, maximumFamilies, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
+  checkTaxonIndicesBatch(liteTree->root, maximumTaxonNumber, ambiguousScoreThreshold, ambiguousScoreThresholdRatio);
   assignReadsBatchHelper(liteTree->root, assignedReadsByNode, mpsReadSet);
 
   for (size_t i = 0; i < reads.size(); ++i) {
     auto& curRead = reads[i];
     auto curMaxScore = curRead.maxScore;
-    auto curOverMaximumFamilies = curRead.overMaximumFamilies;
+    auto curOvermaximumTaxonNumber = curRead.overMaximumTaxonNumber;
 
-    if (curMaxScore == 0 || curOverMaximumFamilies) continue;
+    if (curMaxScore == 0 || curOvermaximumTaxonNumber) continue;
 
     assignedReadsByLCANode[curRead.lcaNode].push_back(i);
   }
@@ -7091,7 +7124,7 @@ void mgsr::mgsrPlacer::calculateBreadthRatio(
 
 }
 
-void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies) {
+void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumTaxonNumber) {
   std::vector<std::unordered_map<MgsrLiteNode*, std::vector<size_t>>> assignedReadsByNodePerThread(threadRanges.size());
 
   // Assign reads per thread
@@ -7103,7 +7136,7 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
       mgsr::mgsrPlacer curThreadPlacer(liteTree, *this, lowMemory, i);
       curThreadPlacer.reads = curThreadReads;
 
-      curThreadPlacer.assignReads(assignedReadsByNodePerThread[i], maximumFamilies);
+      curThreadPlacer.assignReads(assignedReadsByNodePerThread[i], maximumTaxonNumber);
     }
   });
 

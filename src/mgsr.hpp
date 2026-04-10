@@ -336,8 +336,8 @@ public:
   size_t totalRefSeeds = 0;
   size_t ocRank = std::numeric_limits<size_t>::max();
 
-  std::unordered_set<int> familyIndices;
-  bool overMaximumFamilies = false;
+  std::unordered_set<int> taxonIndices;
+  bool overMaximumTaxonNumber = false;
 
   std::vector<KahanSum> sumWEPPScoresByThread;
   std::vector<size_t> sumRawScoresByThread; 
@@ -412,8 +412,8 @@ public:
   std::unordered_set<MgsrLiteNode*> detachedNodes;
   std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
 
-  std::vector<std::string> families;
-  std::unordered_map<std::string, int> familyToIndex;
+  std::vector<std::string> taxons;
+  std::unordered_map<std::string, int> taxonToIndex;
 
   std::string debugNodeID = "";
   std::unordered_map<std::string, double> trueAbundances;
@@ -444,8 +444,14 @@ public:
   }
   
   void cleanup();
-  void initialize(LiteIndex::Reader indexReader, const std::string& taxonomicMetadataPath, size_t maximumFamilies, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
+  void initialize(LiteIndex::Reader indexReader, const std::string& taxonomicMetadataPath, const std::string& taxonomicRank, size_t maximumTaxonNumber, size_t numThreads, bool lowMemory, bool collapseIdenticalNodes = true);
   
+  void loadTaxonomicMetadata(
+    const std::string& taxonomicMetadataPath,
+    const std::string& taxonomicRank,
+    std::unordered_map<std::string, int>& sampleToTaxonIndex
+  );
+
   void buildEulerTour();
   void fillEulerTour(MgsrLiteNode* node, size_t depth);
   size_t minByDepth(size_t a, size_t b);
@@ -463,7 +469,7 @@ public:
   void toRefSeedDeltas();
 
   void fillOCRanks(std::vector<std::pair<std::string, double>>& overlapCoefficients);
-  void fillFamilyIndices(size_t maximumFamilies);
+  void fillTaxonIndices(size_t maximumTaxonNumber);
 
   std::unordered_map<size_t, int32_t> getSeedsAtNode(MgsrLiteNode* node, bool useCollapsed=true) const;
 
@@ -541,8 +547,8 @@ class Read {
     bool keepForFilterAndAssign = false;
     int32_t discardThreshold = 0;
 
-    std::unordered_set<int> familyIndices;
-    bool overMaximumFamilies = false;
+    std::unordered_set<int> taxonIndices;
+    bool overMaximumTaxonNumber = false;
 
     int32_t epp = 0;
     int32_t numForwardMatching = 0;
@@ -819,7 +825,7 @@ class ThreadsManager {
       size_t& dfsIndex
     );
 
-    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies);
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumTaxonNumber);
 
 };
 
@@ -1015,21 +1021,21 @@ class mgsrPlacer {
     std::vector<uint32_t> getScoresAtNode(const std::string& nodeId) const;
     void getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const;
 
-    void assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByLCANode, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
+    void assignReadsBatch(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByLCANode, size_t maximumTaxonNumber, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
     void assignReadsBatchHelper(
       mgsr::MgsrLiteNode* node,
       std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
       std::unordered_set<size_t>& mpsReadSet
     );
-    void checkFamilyIndicesBatch(MgsrLiteNode* node, size_t maximumFamilies, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
+    void checkTaxonIndicesBatch(MgsrLiteNode* node, size_t maximumTaxonNumber, int ambiguousScoreThreshold, double ambiguousScoreThresholdRatio);
 
-    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumFamilies);
+    void assignReads(std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode, size_t maximumTaxonNumber);
     void assignReadsHelper(
       mgsr::MgsrLiteNode* node,
       std::unordered_map<MgsrLiteNode*, std::vector<size_t>>& assignedReadsByNode,
       std::unordered_set<size_t>& mpsReadSet
     );
-    void checkFamilyIndices(MgsrLiteNode* node, size_t maximumFamilies);
+    void checkTaxonIndices(MgsrLiteNode* node, size_t maximumTaxonNumber);
 
 
 
