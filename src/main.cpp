@@ -169,7 +169,8 @@ struct Config {
     double discard = 0.0;
     uint32_t maskReadEnds = 0;
     std::string taxonomicMetadata;
-    size_t maximumFamilies = 1;
+    std::string taxonomicRank;
+    size_t maximumTaxonNumber = 1;
     double ambiguousScoreThresholdRatio = 0.0;
     int ambiguousScoreThreshold = 0;
     bool breadthRatio = false;
@@ -428,17 +429,17 @@ void writeOCRanks(const std::string& outputFile,
 
 void writeMetaReadScores(const std::string& outputFile,
                          const mgsr::ThreadsManager& threadsManager,
-                         bool includeOverMaxFamilies) {
+                         bool includeOverMaxTaxonNum) {
     std::ofstream outFile(outputFile);
     outFile << "ReadIndex\tNumDuplicates\tTotalScore\tMaxScore\tNumMaxScoreNodes\t";
-    if (includeOverMaxFamilies) outFile << "OverMaximumFamilies\t";
+    if (includeOverMaxTaxonNum) outFile << "OvermaximumTaxonNumber\t";
     outFile << "RawReadsIndices" << std::endl;
     for (size_t i = 0; i < threadsManager.reads.size(); ++i) {
         const auto& curRead = threadsManager.reads[i];
         if (curRead.maxScore == 0) continue;
         outFile << i << "\t" << threadsManager.readSeedmersDuplicatesIndex[i].size() << "\t"
                 << curRead.seedmersList.size() << "\t" << curRead.maxScore << "\t" << curRead.epp << "\t";
-        if (includeOverMaxFamilies) outFile << curRead.overMaximumFamilies << "\t";
+        if (includeOverMaxTaxonNum) outFile << curRead.overMaximumTaxonNumber << "\t";
         for (size_t j = 0; j < threadsManager.readSeedmersDuplicatesIndex[i].size(); ++j) {
             if (j > 0) outFile << ",";
             outFile << threadsManager.readSeedmersDuplicatesIndex[i][j];
@@ -507,7 +508,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           uint32_t maskReadsEnds,
                           int ambiguousScoreThreshold,
                           double ambiguousScoreThresholdRatio,
-                          size_t maximumFamilies,
+                          size_t maximumTaxonNumber,
                           double breadthRatio,
                           size_t batchSize,
                           const std::string& prefix) {
@@ -547,7 +548,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
 
         size_t numReadsUnmapped;
         size_t numReadsDiscarded;
-        size_t numReadsOverMaximumFamilies;
+        size_t numReadsOvermaximumTaxonNumber;
 
         double readProcessingTime;
         double scoringTime;
@@ -635,7 +636,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                     auto startAssigning = std::chrono::high_resolution_clock::now();
                     placer.assignReadsBatch(batch->assignedReadsByNode,
                                             batch->assignedReadsByLCANode,
-                                            maximumFamilies,
+                                            maximumTaxonNumber,
                                             ambiguousScoreThreshold,
                                             ambiguousScoreThresholdRatio);
 
@@ -694,7 +695,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           << " reads processed | " << batch->numReadsAssigned
                           << " reads assigned and written to fastq file | " << batch->numReadsUnmapped
                           << " reads unmapped | " << batch->numReadsDiscarded << " reads discarded | "
-                          << batch->numReadsOverMaximumFamilies << " reads over maximum families | "
+                          << batch->numReadsOvermaximumTaxonNumber << " reads over maximum taxon number | "
                           << batch->readProcessingTime << " seconds (read processing) | " << batch->scoringTime
                           << " seconds (scoring) | " << batch->assigningTime << " seconds (assigning) | "
                           << batch->postProcessingTime << " seconds (post-processing)\n";
@@ -788,7 +789,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
             std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> assignedReadsByLCANode;
             placer.assignReadsBatch(assignedReadsByNode,
                                     assignedReadsByLCANode,
-                                    maximumFamilies,
+                                    maximumTaxonNumber,
                                     ambiguousScoreThreshold,
                                     ambiguousScoreThresholdRatio);
             std::unordered_map<size_t, int64_t> refSeedsCount;
@@ -821,131 +822,133 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
     }
 }
 
+struct BatchEntry {
+  std::string reads1;
+  std::string reads2;
+  std::string prefix;
+};
+
+bool readBatchFiles(const std::string& batchFilesPath, std::vector<BatchEntry>& entries) {
+  validateInputFile(batchFilesPath, "batch files TSV");
+  std::ifstream batchIn(batchFilesPath);
+  if (!batchIn.is_open()) {
+    logging::err("Cannot open batch files TSV: {}", batchFilesPath);
+    exit(1);
+  }
+  std::string line;
+  size_t lineNum = 0;
+  while (std::getline(batchIn, line)) {
+    ++lineNum;
+    boost::trim(line);
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    std::vector<std::string> cols;
+    boost::split(cols, line, boost::is_any_of("\t"), boost::token_compress_on);
+    for (auto& c : cols) {
+      boost::trim(c);
+    }
+    while (!cols.empty() && cols.back().empty()) {
+      cols.pop_back();
+    }
+    if (cols.size() == 2) {
+      validateInputFile(cols[0], "reads1 (batch TSV)");
+      entries.push_back({cols[0], "", cols[1]});
+    } else if (cols.size() == 3) {
+      validateInputFile(cols[0], "reads1 (batch TSV)");
+      validateInputFile(cols[1], "reads2 (batch TSV)");
+      entries.push_back({cols[0], cols[1], cols[2]});
+    } else {
+      logging::err("Batch TSV {} line {}: expected 2 or 3 tab-separated columns, got {}",
+                   batchFilesPath,
+                   lineNum,
+                   cols.size());
+      return false;
+    }
+  }
+  return true;
+}
+
 bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
-    auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
+  auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
 
-    auto start_time_buildEulerTour = std::chrono::high_resolution_clock::now();
-    T.buildEulerTour();
-    auto end_time_buildEulerTour = std::chrono::high_resolution_clock::now();
-    auto duration_buildEulerTour =
-        std::chrono::duration_cast<std::chrono::milliseconds>(end_time_buildEulerTour - start_time_buildEulerTour);
-    std::cout << "Built Euler tour in " << static_cast<double>(duration_buildEulerTour.count()) / 1000.0 << "s\n"
+  auto start_time_buildEulerTour = std::chrono::high_resolution_clock::now();
+  T.buildEulerTour();
+  auto end_time_buildEulerTour = std::chrono::high_resolution_clock::now();
+  auto duration_buildEulerTour =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end_time_buildEulerTour - start_time_buildEulerTour);
+  std::cout << "Built Euler tour in " << static_cast<double>(duration_buildEulerTour.count()) / 1000.0 << "s\n"
+            << std::endl;
+
+  if (cfg.breadthRatio) {
+    auto start_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
+    T.calculateRefSeedCounts();
+    auto end_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
+    auto duration_calculateRefSeedCounts = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end_time_calculateRefSeedCounts - start_time_calculateRefSeedCounts);
+    std::cout << "Calculated reference seed counts in "
+              << static_cast<double>(duration_calculateRefSeedCounts.count()) / 1000.0 << "s\n"
               << std::endl;
+  }
 
-    if (cfg.breadthRatio) {
-        auto start_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
-        T.calculateRefSeedCounts();
-        auto end_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
-        auto duration_calculateRefSeedCounts = std::chrono::duration_cast<std::chrono::milliseconds>(
-            end_time_calculateRefSeedCounts - start_time_calculateRefSeedCounts);
-        std::cout << "Calculated reference seed counts in "
-                  << static_cast<double>(duration_calculateRefSeedCounts.count()) / 1000.0 << "s\n"
-                  << std::endl;
+  auto start_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+  T.toRefSeedDeltas();
+  auto end_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+  auto duration_toRefSeedDeltas =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end_time_toRefSeedDeltas - start_time_toRefSeedDeltas);
+  std::cout << "Converted to reference seed deltas in "
+            << static_cast<double>(duration_toRefSeedDeltas.count()) / 1000.0 << "s\n"
+            << std::endl;
+
+  if (!cfg.reads1.empty()) {
+    filterAndAssignBatch(threadsManager,
+                         T,
+                         cfg.reads1,
+                         cfg.reads2,
+                         cfg.dust,
+                         cfg.discard,
+                         cfg.maskReadEnds,
+                         cfg.ambiguousScoreThreshold,
+                         cfg.ambiguousScoreThresholdRatio,
+                         cfg.maximumTaxonNumber,
+                         cfg.breadthRatio,
+                         cfg.batchSize,
+                         cfg.output);
+  } else if (!cfg.batchFilesPath.empty()) {
+    std::vector<BatchEntry> batchEntries;
+    if (!readBatchFiles(cfg.batchFilesPath, batchEntries)) {
+      return false;
     }
-
-    auto start_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
-    T.toRefSeedDeltas();
-    auto end_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
-    auto duration_toRefSeedDeltas =
-        std::chrono::duration_cast<std::chrono::milliseconds>(end_time_toRefSeedDeltas - start_time_toRefSeedDeltas);
-    std::cout << "Converted to reference seed deltas in "
-              << static_cast<double>(duration_toRefSeedDeltas.count()) / 1000.0 << "s\n"
-              << std::endl;
-
-    if (!cfg.reads1.empty()) {
-        filterAndAssignBatch(threadsManager,
-                             T,
-                             cfg.reads1,
-                             cfg.reads2,
-                             cfg.dust,
-                             cfg.discard,
-                             cfg.maskReadEnds,
-                             cfg.ambiguousScoreThreshold,
-                             cfg.ambiguousScoreThresholdRatio,
-                             cfg.maximumFamilies,
-                             cfg.breadthRatio,
-                             cfg.batchSize,
-                             cfg.output);
-    } else if (!cfg.batchFilesPath.empty()) {
-        validateInputFile(cfg.batchFilesPath, "batch files TSV");
-        std::ifstream batchIn(cfg.batchFilesPath);
-        if (!batchIn.is_open()) {
-            logging::err("Cannot open batch files TSV: {}", cfg.batchFilesPath);
-            exit(1);
-        }
-        std::string line;
-        size_t lineNum = 0;
-        while (std::getline(batchIn, line)) {
-            ++lineNum;
-            boost::trim(line);
-            if (line.empty() || line[0] == '#') {
-                continue;
-            }
-            std::vector<std::string> cols;
-            boost::split(cols, line, boost::is_any_of("\t"), boost::token_compress_on);
-            for (auto& c : cols) {
-                boost::trim(c);
-            }
-            while (!cols.empty() && cols.back().empty()) {
-                cols.pop_back();
-            }
-            if (cols.size() == 2) {
-                const std::string& rowReads1 = cols[0];
-                const std::string& rowPrefix = cols[1];
-                validateInputFile(rowReads1, "reads1 (batch TSV)");
-                logging::info("filter-and-assign batch line {}: reads1={}, prefix={}", lineNum, rowReads1, rowPrefix);
-                filterAndAssignBatch(threadsManager,
-                                     T,
-                                     rowReads1,
-                                     "",
-                                     cfg.dust,
-                                     cfg.discard,
-                                     cfg.maskReadEnds,
-                                     cfg.ambiguousScoreThreshold,
-                                     cfg.ambiguousScoreThresholdRatio,
-                                     cfg.maximumFamilies,
-                                     cfg.breadthRatio,
-                                     cfg.batchSize,
-                                     rowPrefix);
-            } else if (cols.size() == 3) {
-                const std::string& rowReads1 = cols[0];
-                const std::string& rowReads2 = cols[1];
-                const std::string& rowPrefix = cols[2];
-                validateInputFile(rowReads1, "reads1 (batch TSV)");
-                validateInputFile(rowReads2, "reads2 (batch TSV)");
-                logging::info("filter-and-assign batch line {}: reads1={}, reads2={}, prefix={}",
-                              lineNum,
-                              rowReads1,
-                              rowReads2,
-                              rowPrefix);
-                filterAndAssignBatch(threadsManager,
-                                     T,
-                                     rowReads1,
-                                     rowReads2,
-                                     cfg.dust,
-                                     cfg.discard,
-                                     cfg.maskReadEnds,
-                                     cfg.ambiguousScoreThreshold,
-                                     cfg.ambiguousScoreThresholdRatio,
-                                     cfg.maximumFamilies,
-                                     cfg.breadthRatio,
-                                     cfg.batchSize,
-                                     rowPrefix);
-            } else {
-                logging::err("Batch TSV {} line {}: expected 2 or 3 tab-separated columns, got {}",
-                             cfg.batchFilesPath,
-                             lineNum,
-                             cols.size());
-                return false;
-            }
-        }
+    for (size_t i = 0; i < batchEntries.size(); ++i) {
+      const auto& entry = batchEntries[i];
+      if (entry.reads2.empty()) {
+        logging::info("filter-and-assign batch entry {}: reads1={}, prefix={}",
+                      i + 1, entry.reads1, entry.prefix);
+      } else {
+        logging::info("filter-and-assign batch entry {}: reads1={}, reads2={}, prefix={}",
+                      i + 1, entry.reads1, entry.reads2, entry.prefix);
+      }
+      filterAndAssignBatch(threadsManager,
+                           T,
+                           entry.reads1,
+                           entry.reads2,
+                           cfg.dust,
+                           cfg.discard,
+                           cfg.maskReadEnds,
+                           cfg.ambiguousScoreThreshold,
+                           cfg.ambiguousScoreThresholdRatio,
+                           cfg.maximumTaxonNumber,
+                           cfg.breadthRatio,
+                           cfg.batchSize,
+                           entry.prefix);
     }
-    auto end_time_filterAndAssign = std::chrono::high_resolution_clock::now();
-    auto duration_filterAndAssign =
-        std::chrono::duration_cast<std::chrono::milliseconds>(end_time_filterAndAssign - start_time_filterAndAssign);
-    std::cout << "Filter and assign took " << static_cast<double>(duration_filterAndAssign.count()) / 1000.0 << "s\n"
-              << std::endl;
-    return true;
+  }
+  auto end_time_filterAndAssign = std::chrono::high_resolution_clock::now();
+  auto duration_filterAndAssign =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end_time_filterAndAssign - start_time_filterAndAssign);
+  std::cout << "Filter and assign took " << static_cast<double>(duration_filterAndAssign.count()) / 1000.0 << "s\n"
+            << std::endl;
+  return true;
 }
 
 bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
@@ -1087,9 +1090,24 @@ bool runMetagenomic(const Config& cfg) {
         return false;
     }
 
-    if (cfg.batchFilesPath.empty() && (cfg.reads1.empty() || !fs::exists(cfg.reads1))) {
+
+    if (cfg.reads1.empty()) {
+      if (cfg.batchFilesPath.empty()) {
+        std::cerr << "Error: Reads1 file is required when not using batch mode" << std::endl;
+        return false;
+      } else {
+        // check if batch files path exists
+        std::vector<BatchEntry> dummyBatchEntries;
+        if (!readBatchFiles(cfg.batchFilesPath, dummyBatchEntries)) {
+          std::cerr << "Error: Failed to read batch files" << std::endl;
+          return false;
+        }
+      }
+    } else {
+      if (!fs::exists(cfg.reads1)) {
         std::cerr << "Error: Reads1 file " << cfg.reads1 << " does not exist" << std::endl;
         return false;
+      }
     }
 
     if (!cfg.reads2.empty() && !fs::exists(cfg.reads2)) {
@@ -1138,7 +1156,8 @@ bool runMetagenomic(const Config& cfg) {
     mgsr::MgsrLiteTree T;
     T.initialize(indexReader,
                  cfg.taxonomicMetadata,
-                 cfg.taxonomicMetadata.empty() ? 0 : cfg.maximumFamilies,
+                 cfg.taxonomicRank,
+                 cfg.taxonomicMetadata.empty() ? 0 : cfg.maximumTaxonNumber,
                  cfg.threads,
                  lowMemory,
                  true);
@@ -1665,139 +1684,95 @@ int main(int argc, char** argv) {
 
     // === Common options (shown in --help) ===
     po::options_description visible("Options");
-    visible.add_options()("help,h", "Show help (--help-all for more)")("help-all", "Show all options")(
-        "version,V", "Show version")("output,o", po::value<std::string>(&cfg.output), "Output prefix")(
-        "threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")(
-        "stop", po::value<std::string>()->default_value("place"), "Stop after: index|place|align|genotype")(
-        "meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")(
-        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")(
-        "verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")(
-        "quiet,q", po::bool_switch(&cfg.quiet), "Quiet output")("no-color", po::bool_switch(&cfg.plain), "No colors");
-
-    // === Advanced options (shown only in --help-all) ===
+    visible.add_options()
+        ("help,h", "Show help (--help-all for more)")
+        ("help-all", "Show all options")
+        ("version,V", "Show version")
+        ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
+        ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
+        ("stop", po::value<std::string>()->default_value("place"), "Stop after: index|place|align|genotype")
+        ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")
+        ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")
+        ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
+        ("quiet,q", po::bool_switch(&cfg.quiet), "Quiet output")
+        ("no-color", po::bool_switch(&cfg.plain), "No colors");
+    
     po::options_description advanced("Advanced");
-    advanced.add_options()("index,i", po::value<std::string>(&cfg.index), "Index file path")(
-        "reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")(
-        "dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")(
-        "impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")(
-        "no-mutation-spectrum",
-        po::bool_switch(&cfg.noMutationSpectrum),
-        "Disable mutation spectrum filtering in VCF genotyping")(
-        "baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")(
-        "kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")(
-        "syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")(
-        "offset", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")(
-        "lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")(
-        "open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")(
-        "flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")(
-        "seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0), "Mask top seed fraction")(
-        "min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0), "Min seed quality")(
-        "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")(
-        "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")(
-        "min-read-support",
-        po::value<int>(&cfg.minReadSupport)->default_value(1),
-        "Min reads for a seed (2=filter singletons)")("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")(
-        "extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")(
-        "force-leaf",
-        po::bool_switch(&cfg.forceLeaf),
-        "Restrict placement to leaf nodes only (default when --stop genotype)")(
-        "refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")(
-        "refine-top-pct",
-        po::value<double>(&cfg.refineTopPct)->default_value(0.01),
-        "Top % of nodes to refine (default 1%)")(
-        "refine-max-top-n", po::value<int>(&cfg.refineMaxTopN)->default_value(150), "Max nodes to align against")(
-        "refine-neighbor-radius",
-        po::value<int>(&cfg.refineNeighborRadius)->default_value(2),
-        "Expand to neighbors within N branches")("refine-max-neighbor-n",
-                                                 po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
-                                                 "Max additional nodes from neighbor expansion")(
-        "zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7), "ZSTD compression level for index (1-22)")(
-        "batch",
-        po::value<std::string>(&cfg.batchFile),
-        "Batch file listing samples (one per line: reads1 [reads2] [output_prefix])");
-
+    advanced.add_options()
+        ("index,i", po::value<std::string>(&cfg.index), "Index file path")
+        ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
+        ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
+        ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
+        ("no-mutation-spectrum", po::bool_switch(&cfg.noMutationSpectrum), "Disable mutation spectrum filtering in VCF genotyping")
+        ("baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")
+        ("kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")
+        ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
+        ("offset", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
+        ("lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")
+        ("open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")
+        ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
+        ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0), "Mask top seed fraction")
+        ("min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0), "Min seed quality")
+        ("trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")
+        ("trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")
+        ("min-read-support", po::value<int>(&cfg.minReadSupport)->default_value(1), "Min reads for a seed (2=filter singletons)")
+        ("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")
+        ("extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")
+        ("force-leaf", po::bool_switch(&cfg.forceLeaf), "Restrict placement to leaf nodes only (default when --stop genotype)")
+        ("refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")
+        ("refine-top-pct", po::value<double>(&cfg.refineTopPct)->default_value(0.01), "Top % of nodes to refine (default 1%)")
+        ("refine-max-top-n", po::value<int>(&cfg.refineMaxTopN)->default_value(150), "Max nodes to align against")
+        ("refine-neighbor-radius", po::value<int>(&cfg.refineNeighborRadius)->default_value(2), "Expand to neighbors within N branches")
+        ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150), "Max additional nodes from neighbor expansion")
+        ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7), "ZSTD compression level for index (1-22)")
+        ("batch", po::value<std::string>(&cfg.batchFile), "Batch file listing samples (one per line: reads1 [reads2] [output_prefix])");
+    
     po::options_description metagenomic("Metagenomic");
-    metagenomic.add_options()("index-mgsr", po::value<std::string>(&cfg.indexMgsr), "Path to build/rebuild MGSR index")(
-        "index-full", po::bool_switch(&cfg.indexFull), "Build full index (default index-mgsr builds lite index)")(
-        "index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")(
-        "read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")(
-        "no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
-
+    metagenomic.add_options()
+        ("index-mgsr", po::value<std::string>(&cfg.indexMgsr), "Path to build/rebuild MGSR index")
+        ("index-full", po::bool_switch(&cfg.indexFull), "Build full index (default index-mgsr builds lite index)")
+        ("index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")
+        ("read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")
+        ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
+    
     po::options_description em("Metagenomic: EM");
-    em.add_options()("top-oc",
-                     po::value<size_t>(&cfg.topOc)->default_value(1000),
-                     "Select top <int> nodes by overlap coefficients to send to EM")(
-        "mask-reads",
-        po::value<uint32_t>(&cfg.maskReads)->default_value(0),
-        "mask reads containing k-min-mers with total occurrence <= threshold")(
-        "mask-seeds",
-        po::value<uint32_t>(&cfg.maskSeeds)->default_value(0),
-        "mask k-min-mer seeds in query with total occurrence <= threshold")(
-        "amplicon-depth",
-        po::value<std::string>(&cfg.ampliconDepth),
-        "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")(
-        "mask-reads-relative-frequency",
-        po::value<double>(&cfg.maskReadsRelativeFrequency)->default_value(0.0),
-        "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")(
-        "mask-seeds-relative-frequency",
-        po::value<double>(&cfg.maskSeedsRelativeFrequency)->default_value(0.0),
-        "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
-
-        ("em-convergence-threshold",
-         po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001),
-         "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or "
-         "em-delta-threshold, default is em-convergence-threshold)")(
-            "em-delta-threshold",
-            po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0),
-            "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or "
-            "em-delta-threshold, default is em-delta-threshold)")(
-            "em-maximum-rounds", po::value<uint32_t>(&cfg.emMaximumRounds)->default_value(5), "EM maximum rounds")(
-            "em-maximum-iterations",
-            po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000),
-            "EM maximum iterations")(
-            "em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
-
+    em.add_options()
+        ("top-oc", po::value<size_t>(&cfg.topOc)->default_value(1000), "Select top <int> nodes by overlap coefficients to send to EM")
+        ("mask-reads", po::value<uint32_t>(&cfg.maskReads)->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
+        ("mask-seeds", po::value<uint32_t>(&cfg.maskSeeds)->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
+        ("amplicon-depth", po::value<std::string>(&cfg.ampliconDepth), "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")
+        ("mask-reads-relative-frequency", po::value<double>(&cfg.maskReadsRelativeFrequency)->default_value(0.0), "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")
+        ("mask-seeds-relative-frequency", po::value<double>(&cfg.maskSeedsRelativeFrequency)->default_value(0.0), "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
+        ("em-convergence-threshold", po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001), "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
+        ("em-delta-threshold", po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0), "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
+        ("em-maximum-rounds", po::value<uint32_t>(&cfg.emMaximumRounds)->default_value(5), "EM maximum rounds")
+        ("em-maximum-iterations", po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000), "EM maximum iterations")
+        ("em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
+    
     po::options_description filterAndAssign("Metagenomic: Filter and Assign");
-    filterAndAssign.add_options()("filter-and-assign",
-                                  po::bool_switch(&cfg.filterAndAssign),
-                                  "Filter and assign reads to nodes without running EM")(
-        "dust",
-        po::value<double>(&cfg.dust)->default_value(100.0),
-        "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")(
-        "discard",
-        po::value<double>(&cfg.discard)->default_value(0.0),
-        "Discard reads with maximum parsimony score < FLOAT * read_total_seed (default 0, i.e. no discard)")(
-        "mask-read-ends",
-        po::value<uint32_t>(&cfg.maskReadEnds)->default_value(0),
-        "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")(
-        "taxonomic-metadata", po::value<std::string>(&cfg.taxonomicMetadata), "Path to taxonomic metadata TSV file")(
-        "maximum-families",
-        po::value<size_t>(&cfg.maximumFamilies)->default_value(1),
-        "Discard reads assigned to nodes spanning more than <int> distinct taxonomic families, only applicable if "
-        "taxonomic-metadata is provided")(
-        "ambiguous-score-threshold-ratio",
-        po::value<double>(&cfg.ambiguousScoreThresholdRatio)->default_value(0.0),
-        "Discard reads scoring max score - <double> * max score outside of the max scoring families")(
-        "ambiguous-score-threshold",
-        po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0),
-        "Discard reads scoring max score - <int> outside of the max scoring families")(
-        "breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")(
-        "pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")(
-        "batch-files-path", po::value<std::string>(&cfg.batchFilesPath), "Path to tsv file containg batch file paths")(
-        "batch-size",
-        po::value<size_t>(&cfg.batchSize)->default_value(1000000),
-        "Batch size for filtering and assigning reads");
-
+    filterAndAssign.add_options()
+        ("filter-and-assign", po::bool_switch(&cfg.filterAndAssign), "Filter and assign reads to nodes without running EM")
+        ("dust", po::value<double>(&cfg.dust)->default_value(100.0), "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")
+        ("discard", po::value<double>(&cfg.discard)->default_value(0.0), "Discard reads with maximum parsimony score < FLOAT * read_total_seed (default 0, i.e. no discard)")
+        ("mask-read-ends", po::value<uint32_t>(&cfg.maskReadEnds)->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
+        ("taxonomic-metadata", po::value<std::string>(&cfg.taxonomicMetadata), "Path to taxonomic metadata TSV file")
+        ("taxonomic-rank", po::value<std::string>(&cfg.taxonomicRank)->default_value("Family"), "Taxonomic rank to use for filtering and assigning reads (should match the column name in the taxonomic metadata TSV file), only applicable if taxonomic-metadata is provided")
+        ("maximum-taxon-number", po::value<size_t>(&cfg.maximumTaxonNumber)->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonos at the specified taxonomic rank, only applicable if taxonomic-metadata is provided")
+        ("ambiguous-score-threshold-ratio", po::value<double>(&cfg.ambiguousScoreThresholdRatio)->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families")
+        ("ambiguous-score-threshold", po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families")
+        ("breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")
+        ("pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")
+        ("batch-files-path", po::value<std::string>(&cfg.batchFilesPath), "Path to tsv file containg batch file paths")
+        ("batch-size", po::value<size_t>(&cfg.batchSize)->default_value(1000000), "Batch size for filtering and assigning reads");
+    
     po::options_description developer("Developer");
-    developer.add_options()("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")(
-        "dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")(
-        "write-meta-read-scores-filtered",
-        po::bool_switch(&cfg.writeMetaReadScoresFiltered),
-        "Write filtered meta read scores to TSV file")("write-meta-read-scores-unfiltered",
-                                                       po::bool_switch(&cfg.writeMetaReadScoresUnfiltered),
-                                                       "Write unfiltered meta read scores to TSV file")(
-        "write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")(
-        "seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
+    developer.add_options()
+        ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
+        ("dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")
+        ("write-meta-read-scores-filtered", po::bool_switch(&cfg.writeMetaReadScoresFiltered), "Write filtered meta read scores to TSV file")
+        ("write-meta-read-scores-unfiltered", po::bool_switch(&cfg.writeMetaReadScoresUnfiltered), "Write unfiltered meta read scores to TSV file")
+        ("write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")
+        ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
 
     // Positional arguments (always hidden)
     po::options_description positional;
