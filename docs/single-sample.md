@@ -26,6 +26,45 @@ By default, panmap stops after **placement**. Use `--stop` to control how far th
 !!! note
     When `--stop genotype` is used, `--force-leaf` is enabled automatically.
 
+## Example: SARS-CoV-2 genotyping from Illumina reads
+
+This example places paired-end reads onto a SARS-CoV-2 pangenome and calls variants.
+
+### 1. Get a PanMAN
+
+Download or build a PanMAN for your organism. For SARS-CoV-2, a pre-built PanMAN with 20,000 samples is included:
+
+```bash
+ls examples/data/sars_20000_twilight_dipper.panman
+```
+
+### 2. Run the full pipeline
+
+```bash
+panmap examples/data/sars_20000_twilight_dipper.panman \
+  reads_R1.fq.gz reads_R2.fq.gz \
+  --stop genotype -t 8 -o my_sample
+```
+
+### 3. Output files
+
+| File | Contents |
+|------|----------|
+| `my_sample.idx` | Seed index (reusable for future runs with `--index`) |
+| `my_sample.placement.tsv` | Placement on the pangenome tree |
+| `my_sample.bam` | Reads aligned to the closest reference |
+| `my_sample.vcf` | Called variants |
+
+### 4. Reuse the index
+
+Once built, the index can be reused across samples:
+
+```bash
+panmap examples/data/sars_20000_twilight_dipper.panman \
+  sample2_R1.fq.gz sample2_R2.fq.gz \
+  --index my_sample.idx --stop genotype -t 8 -o sample2
+```
+
 ## Common options
 
 | Option | Description | Default |
@@ -54,7 +93,7 @@ panmap ref.panman reads.fq -a bwa -o sample
 panmap ref.panman reads.fq --refine -o sample
 ```
 
-Refinement parameters (advanced):
+Refinement parameters:
 
 | Option | Description | Default |
 |--------|-------------|---------|

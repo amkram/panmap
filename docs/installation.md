@@ -13,8 +13,15 @@ This installs `panmap` and `panmanUtils`.
 ## Docker
 
 ```bash
-docker build -t panmap .
-docker run --rm panmap panmap -h
+docker pull alanalohaucsc/panmap:latest
+docker run --rm alanalohaucsc/panmap:latest --help
+```
+
+To run on local files, mount a volume:
+
+```bash
+docker run --rm -v $(pwd):/data -w /data alanalohaucsc/panmap:latest \
+  ref.panman reads.fq -o sample
 ```
 
 ---
@@ -25,7 +32,7 @@ docker run --rm panmap panmap -h
 
 | Package | Ubuntu/Debian |
 |---------|---------------|
-| CMake >= 3.12 | `cmake` |
+| CMake >= 3.14 | `cmake` |
 | C++17 compiler | `g++` or `clang++` |
 | Protobuf | `protobuf-compiler`, `libprotobuf-dev` |
 | Boost | `libboost-program-options-dev`, `libboost-iostreams-dev`, `libboost-filesystem-dev`, `libboost-system-dev`, `libboost-date-time-dev` |
@@ -37,9 +44,8 @@ docker run --rm panmap panmap -h
 ### Build
 
 ```bash
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
 
 The binary is at `build/bin/panmap`.
