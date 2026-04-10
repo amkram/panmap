@@ -4,7 +4,9 @@ project(panmap VERSION 0.1.0)
 
 # Suppress deprecation warnings from third-party dependencies
 set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
-cmake_policy(SET CMP0169 OLD)  # Allow FetchContent_Populate (needed for panman patching)
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)  # Allow FetchContent_Populate (needed for panman patching)
+endif()
 if(POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)  # Use config-mode for Protobuf/Boost
     set(CMAKE_POLICY_DEFAULT_CMP0167 NEW)
