@@ -10,8 +10,8 @@ panmap takes sequencing reads and a pangenome in [PanMAN](https://github.com/Tur
 # Install
 conda install -c bioconda panmap
 
-# Place and genotype paired-end reads
-panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
+# Place, genotype, and build consensus
+panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
 
 # Metagenomic abundance estimation
 panmap ref.panman reads.fq --meta --index ref.idx -t 8 -o sample

@@ -16,7 +16,7 @@ Use `--help` for common options or `--help-all` for the full list.
 | `-o, --output` | Output file prefix | derived from reads filename |
 | `-t, --threads` | Number of threads | `1` |
 | `-a, --aligner` | `minimap2` or `bwa` | `minimap2` |
-| `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `place` |
+| `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` |
 | `--meta` | Enable metagenomic mode | off |
 | `-v, --verbose` | Verbose output | off |
 | `-q, --quiet` | Errors only | off |
