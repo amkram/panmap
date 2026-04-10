@@ -17,19 +17,17 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   && cmake --build build -j$(nproc) \
   && cmake --install build --prefix /usr/local
 
+# Collect all shared library dependencies for the runtime stage
+RUN mkdir -p /runtime-libs && \
+  ldd /usr/local/bin/panmap | grep '=>' | awk '{print $3}' | \
+  while read lib; do [ -f "$lib" ] && cp -L "$lib" /runtime-libs/; done
+
 # Stage 2: Runtime
 FROM ubuntu:22.04
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-  libboost-program-options1.74.0 libboost-iostreams1.74.0 \
-  libboost-filesystem1.74.0 libboost-date-time1.74.0 \
-  libprotobuf23 libcapnp-0.8.0 libhts3 zlib1g \
-  && rm -rf /var/lib/apt/lists/* \
-  && useradd -m panmap
-
 COPY --from=builder /usr/local/bin/panmap /usr/local/bin/
+COPY --from=builder /runtime-libs/ /usr/lib/
 
+RUN ldconfig && useradd -m panmap
 USER panmap
 ENTRYPOINT ["panmap"]
