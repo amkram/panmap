@@ -9,7 +9,7 @@ The default mode. Places reads from one sample onto the pangenome tree, aligns t
 panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
 
 # Run through genotyping
-panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
+panmap ref.panman reads_R1.fq reads_R2.fq --stop consensus -t 8 -o sample
 ```
 
 ## Pipeline stages
@@ -22,6 +22,7 @@ By default, panmap stops after **placement**. Use `--stop` to control how far th
 | Place | `place` (default) | `<prefix>.placement.tsv` | Places reads onto the pangenome tree |
 | Align | `align` | `<prefix>.bam` | Aligns reads to closest reference |
 | Genotype | `genotype` | `<prefix>.vcf` | Calls variants from alignments |
+| Consensus | `consensus` | `<prefix>.consensus.fa` | Generates consensus FASTA from variants |
 
 !!! note
     When `--stop genotype` is used, `--force-leaf` is enabled automatically.
@@ -54,6 +55,7 @@ panmap examples/data/sars_20000_twilight_dipper.panman \
 | `my_sample.placement.tsv` | Placement on the pangenome tree |
 | `my_sample.bam` | Reads aligned to the closest reference |
 | `my_sample.vcf` | Called variants |
+| `my_sample.consensus.fa` | Consensus sequence |
 
 ### 4. Reuse the index
 
@@ -62,7 +64,7 @@ Once built, the index can be reused across samples:
 ```bash
 panmap examples/data/sars_20000_twilight_dipper.panman \
   sample2_R1.fq.gz sample2_R2.fq.gz \
-  --index my_sample.idx --stop genotype -t 8 -o sample2
+  --index my_sample.idx --stop consensus -t 8 -o sample2
 ```
 
 ## Common options

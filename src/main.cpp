@@ -100,11 +100,12 @@ inline const char* cyan() {
 }  // namespace color
 
 enum class PipelineStage {
-    Index,     // Build index only
-    Place,     // Placement only
-    Align,     // Placement + Alignment
-    Genotype,  // Placement + Alignment + Genotyping
-    Full       // Full pipeline including assembly
+    Index,      // Build index only
+    Place,      // Placement only
+    Align,      // Placement + Alignment
+    Genotype,   // Placement + Alignment + Genotyping
+    Consensus,  // + Consensus FASTA generation
+    Full        // Full pipeline
 };
 
 struct Config {
@@ -1194,6 +1195,7 @@ int runAlignment(const Config& cfg,
                  const placement::PlacementResult& placement,
                  panmanUtils::Tree* preloadedTree = nullptr);
 int runGenotyping(const Config& cfg);
+int runConsensus(const Config& cfg);
 
 int runBatchPlacement(const Config& cfg) {
     // Parse batch file
@@ -1669,11 +1671,27 @@ int runGenotyping(const Config& cfg) {
     return 0;
 }
 
+int runConsensus(const Config& cfg) {
+    std::string refFileName = cfg.output + ".ref.fa";
+    std::string vcfFileName = cfg.output + ".vcf";
+    std::string consensusFileName = cfg.output + ".consensus.fa";
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    createConsensus(vcfFileName, refFileName, consensusFileName);
+
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
+
+    logging::msg("Consensus complete in {}ms -> {}", elapsed.count(), consensusFileName);
+    return 0;
+}
+
 void printUsage() {
     std::cout << color::bold() << "panmap" << color::reset() << " v" << VERSION << "\n";
     std::cout << "Pangenome-based sequence placement, alignment, and genotyping\n\n";
     std::cout << color::bold() << "Usage:" << color::reset() << "  panmap [options] <panman> [reads.fq] [reads2.fq]\n";
-    std::cout << color::bold() << "Output:" << color::reset() << " <prefix>.vcf, <prefix>.bam, <prefix>.placement.tsv\n"
+    std::cout << color::bold() << "Output:" << color::reset() << " <prefix>.vcf, <prefix>.bam, <prefix>.consensus.fa, ...\n"
               << "        (prefix defaults to reads filename, or use -o)\n\n";
 }
 
@@ -1690,7 +1708,7 @@ int main(int argc, char** argv) {
         ("version,V", "Show version")
         ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
         ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
-        ("stop", po::value<std::string>()->default_value("place"), "Stop after: index|place|align|genotype")
+        ("stop", po::value<std::string>()->default_value("place"), "Stop after: index|place|align|genotype|consensus")
         ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")
         ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")
         ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
@@ -1860,6 +1878,8 @@ int main(int argc, char** argv) {
         cfg.stopAfter = PipelineStage::Align;
     else if (stopStr == "genotype")
         cfg.stopAfter = PipelineStage::Genotype;
+    else if (stopStr == "consensus")
+        cfg.stopAfter = PipelineStage::Consensus;
     else {
         output::error("Invalid stage '{}'", stopStr);
         return 1;
@@ -2064,6 +2084,21 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (signals::check_interrupted()) return 130;
+        if (cfg.stopAfter == PipelineStage::Genotype) {
+            output::done("Variants: " + cfg.output + ".vcf");
+            output::info("");
+            output::info("{}Next steps:{}", color::dim(), color::reset());
+            output::info("  {} View variants: bcftools view {}.vcf | head", color::dim(), cfg.output);
+            output::info("  {} Consensus: panmap {} {} --stop consensus", color::dim(), cfg.panman, cfg.reads1);
+            return 0;
+        }
+
+        // Stage 5: Consensus
+        if (runConsensus(cfg) != 0) {
+            output::error("Consensus generation failed");
+            return 1;
+        }
+        if (signals::check_interrupted()) return 130;
 
         output::info("");
         output::info("{}Pipeline complete.{}", color::green(), color::reset());
@@ -2071,6 +2106,7 @@ int main(int argc, char** argv) {
         output::info("  Reference:  {}.ref.fa", cfg.output);
         output::info("  Alignment:  {}.bam", cfg.output);
         output::info("  Variants:   {}.vcf", cfg.output);
+        output::info("  Consensus:  {}.consensus.fa", cfg.output);
         output::info("");
         output::info("{}Next steps:{}", color::dim(), color::reset());
         output::info("  {} View variants: bcftools view {}.vcf | head", color::dim(), cfg.output);

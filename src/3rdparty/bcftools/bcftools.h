@@ -187,6 +187,7 @@ extern "C" {
 
 int main_mpileup(int argc, char *argv[]);
 int main_vcfcall(int argc, char *argv[]);
+int main_consensus(int argc, char *argv[]);
 
 #ifdef __cplusplus
 }

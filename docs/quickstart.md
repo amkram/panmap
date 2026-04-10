@@ -8,23 +8,23 @@ panmap <panman> [reads1.fq] [reads2.fq] [options]
 
 ## Pipeline
 
-panmap runs four stages in sequence. By default it stops after **placement**. Use `--stop` to run further.
+panmap runs five stages in sequence. By default it stops after **placement**. Use `--stop` to run further.
 
 ```
-index  -->  place  -->  align  -->  genotype
- .idx    .placement.tsv  .bam       .vcf
+index  -->  place  -->  align  -->  genotype  -->  consensus
+ .idx    .placement.tsv  .bam       .vcf        .consensus.fa
 ```
 
 ## Single-sample genotyping
 
-Place reads onto the pangenome, align to the closest reference, and call variants:
+Place reads onto the pangenome, align to the closest reference, call variants, and generate a consensus:
 
 ```bash
 panmap ref.panman reads_R1.fq reads_R2.fq \
-  --stop genotype -t 8 -o sample
+  --stop consensus -t 8 -o sample
 ```
 
-This produces `sample.bam` and `sample.vcf`.
+This produces `sample.bam`, `sample.vcf`, and `sample.consensus.fa`.
 
 ## Metagenomic abundance estimation
 
