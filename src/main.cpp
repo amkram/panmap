@@ -59,10 +59,12 @@ extern "C" {
 #include <htslib/faidx.h>
 }
 
+#include "version.h"
+
 namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 
-constexpr const char* VERSION = "0.1.0";
+constexpr const char* VERSION = PANMAP_VERSION;
 constexpr const char* PROGRAM_NAME = "panmap";
 
 namespace color {

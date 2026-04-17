@@ -5,15 +5,15 @@ Pangenome-based sequence placement, alignment, and genotyping.
 [Documentation](https://amkram.github.io/panmap/) | [Preprint](https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1)
 
 ## Install
-<!-- 
+
 ```bash
-conda install -c bioconda panmap
+conda install -c conda-forge -c bioconda panmap
 ```
 
-Or with Docker: -->
+Or with Docker:
 
 ```bash
-docker pull alanalohaucsc/panmap:latest
+docker pull quay.io/biocontainers/panmap:0.1.1--0
 ```
 
 ## Quick start
