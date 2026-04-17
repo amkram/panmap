@@ -1,5 +1,5 @@
 {% set name = "panmap" %}
-{% set version = "0.1.0" %}
+{% set version = "0.1.1" %}
 {% set panman_version = "0.1.4" %}
 
 package:
