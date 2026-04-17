@@ -1,0 +1,3 @@
+#pragma once
+
+#define PANMAP_VERSION "@PROJECT_VERSION@"

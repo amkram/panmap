@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(panmap VERSION 0.1.0)
+project(panmap VERSION 0.1.1)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/version.h"
+    @ONLY
+)
 
 # Suppress deprecation warnings from third-party dependencies
 set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
