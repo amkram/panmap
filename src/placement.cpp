@@ -293,10 +293,12 @@ using ::panmanUtils::Tree;
 class PlacementResult;
 
 // Macro to generate score update functions - reduces repetitive code
-// Each function: stores score on node, updates best score/index, tracks ties
+// Each function: stores score on node, updates best score/index, tracks ties.
+// `skipNodeScoreWrites` (a PlacementResult member) gates the LiteNode write so
+// concurrent placeLite calls can opt out of mutating shared LiteNode fields.
 #define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices)   \
     void PlacementResult::FuncName(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) { \
-        if (node) {                                                                                 \
+        if (node && !skipNodeScoreWrites) {                                                         \
             node->nodeScoreField = static_cast<float>(score);                                       \
         }                                                                                           \
         double tolerance = std::max(bestScore * 0.0001, 1e-9);                                      \
@@ -329,13 +331,35 @@ DEFINE_UPDATE_SCORE_FUNC(updateWeightedContainmentScore,
                          bestWeightedContainmentScore,
                          bestWeightedContainmentNodeIndex,
                          tiedWeightedContainmentNodeIndices)
-DEFINE_UPDATE_SCORE_FUNC(updateLogContainmentScore,
-                         logContainmentScore,
-                         bestLogContainmentScore,
-                         bestLogContainmentNodeIndex,
-                         tiedLogContainmentNodeIndices)
 
 #undef DEFINE_UPDATE_SCORE_FUNC
+
+// updateLogContainmentScore is special-cased: also writes to perNodeLogContScore
+// so callers in skipNodeScoreWrites mode can still look up arbitrary node scores.
+void PlacementResult::updateLogContainmentScore(uint32_t nodeIndex, double score,
+                                                 panmapUtils::LiteNode* node) {
+    if (node && !skipNodeScoreWrites) {
+        node->logContainmentScore = static_cast<float>(score);
+    }
+    if (nodeIndex < perNodeLogContScore.size()) {
+        perNodeLogContScore[nodeIndex] = static_cast<float>(score);
+    }
+    double tolerance = std::max(bestLogContainmentScore * 0.0001, 1e-9);
+    if (score > bestLogContainmentScore + tolerance) {
+        bestLogContainmentScore = score;
+        bestLogContainmentNodeIndex = nodeIndex;
+        tiedLogContainmentNodeIndices.clear();
+        tiedLogContainmentNodeIndices.push_back(nodeIndex);
+    } else if (score >= bestLogContainmentScore - tolerance && score > 0) {
+        if (tiedLogContainmentNodeIndices.empty()
+            || tiedLogContainmentNodeIndices.back() != bestLogContainmentNodeIndex) {
+            tiedLogContainmentNodeIndices.push_back(bestLogContainmentNodeIndex);
+        }
+        if (nodeIndex != bestLogContainmentNodeIndex) {
+            tiedLogContainmentNodeIndices.push_back(nodeIndex);
+        }
+    }
+}
 
 // Helper to deduplicate a tied-indices vector and pick the lowest index as best
 static void finalizeTiedIndices(std::vector<uint32_t>& tied, uint32_t& bestIndex) {

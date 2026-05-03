@@ -1294,73 +1294,148 @@ int main(int argc, char** argv) {
         double pass_max_delta = 0.0;
         const char* phaseStr = (phase == 0 ? "global" : "local");
 
-        for (size_t i = 0; i < leaves.size(); i++) {
-            auto* leaf = leaves[i];
-            auto* parent = leaf->parent;
-            const std::string& leafId = leaf->identifier;
-            std::string parentId = parent ? parent->identifier : "";
-            if (!parent) { pass_skipped++; continue; }
-
-            auto itL = liteTree.allLiteNodes.find(leafId);
-            if (itL == liteTree.allLiteNodes.end()) { pass_skipped++; continue; }
-            uint32_t leafIdx = itL->second->nodeIndex;
-
-            std::string seq;
-            try { seq = tree->getStringFromReference(leafId, false, true); }
-            catch (...) { pass_skipped++; continue; }
-            if (seq.empty()) { pass_skipped++; continue; }
-            writeFasta(tmpFasta, leafId, seq);
-
-            placement::PlacementResult result;
-            placement::TraversalParams params;
-            params.k = idxK; params.s = idxS; params.l = idxL;
-            params.t = idxT; params.open = idxOpen;
-            params.skipNodeIndex = leafIdx;
-            params.dedupReads = false; params.refineEnabled = false;
-            try {
-                if (placementVerbose) {
-                    placement::placeLite(result, &liteTree, *reader, tmpFasta, r2Empty,
-                                         tmpOut, params, nullptr);
-                } else {
+        // ---- Pre-warm placement so seedChangesLoaded is set before parallel calls ----
+        // First call materializes the LiteTree's seed-delta arrays. After that, calls
+        // are read-only against LiteTree (with skipNodeScoreWrites=true) and safe to
+        // run concurrently.
+        if (!leaves.empty() && !liteTree.seedChangesLoaded) {
+            auto* leaf0 = leaves[0];
+            std::string seq0;
+            try { seq0 = tree->getStringFromReference(leaf0->identifier, false, true); }
+            catch (...) {}
+            if (!seq0.empty()) {
+                writeFasta(tmpFasta, leaf0->identifier, seq0);
+                placement::PlacementResult warmup;
+                warmup.skipNodeScoreWrites = true;
+                warmup.perNodeLogContScore.assign(liteTree.allLiteNodes.size(), 0.0f);
+                placement::TraversalParams wp;
+                wp.k = idxK; wp.s = idxS; wp.l = idxL; wp.t = idxT; wp.open = idxOpen;
+                auto itLW = liteTree.allLiteNodes.find(leaf0->identifier);
+                wp.skipNodeIndex = itLW != liteTree.allLiteNodes.end() ? itLW->second->nodeIndex : UINT32_MAX;
+                wp.dedupReads = false; wp.refineEnabled = false;
+                try {
                     SilenceStdio s;
-                    placement::placeLite(result, &liteTree, *reader, tmpFasta, r2Empty,
-                                         tmpOut, params, nullptr);
+                    placement::placeLite(warmup, &liteTree, *reader, tmpFasta, r2Empty,
+                                         tmpOut, wp, nullptr);
+                } catch (...) {}
+            }
+        }
+
+        // ---- Phase A: parallel placement, collect outcomes per leaf ----
+        struct Outcome {
+            std::string parentId, bestId;
+            double parentScore = 0.0, bestScore = 0.0, delta = 0.0;
+            bool different = false;
+            bool wouldMove = false;
+            bool skipped = true;
+        };
+        std::vector<Outcome> outcomes(leaves.size());
+
+        // Per-thread temp file paths so concurrent placement calls don't stomp on
+        // the same FASTA. Assign a stable thread id from a counter.
+        std::atomic<int> nextTid{0};
+        tbb::enumerable_thread_specific<int> tlsTid([&]() { return ++nextTid; });
+        std::atomic<size_t> done{0};
+        size_t total = leaves.size();
+
+        // Hold the original cerr buf so progress prints can bypass the global silence.
+        std::streambuf* origCerr = std::cerr.rdbuf();
+        // Single global stdio silence around the whole parallel block. Per-call
+        // SilenceStdio would race because std::cout/cerr's rdbuf is one global field.
+        std::unique_ptr<SilenceStdio> phaseAQuiet;
+        if (!placementVerbose) phaseAQuiet = std::make_unique<SilenceStdio>();
+
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, leaves.size(), 32),
+            [&](const tbb::blocked_range<size_t>& r) {
+                int tid = tlsTid.local();
+                std::string ttmpFa = outPrefix + ".tmp_leaf_t" + std::to_string(tid) + ".fa";
+                std::string ttmpOut = outPrefix + ".tmp_placement_t" + std::to_string(tid) + ".tsv";
+                for (size_t i = r.begin(); i < r.end(); i++) {
+                    auto* leaf = leaves[i];
+                    auto* parent = leaf->parent;
+                    if (!parent) continue;
+                    Outcome& o = outcomes[i];
+                    o.parentId = parent->identifier;
+
+                    auto itL = liteTree.allLiteNodes.find(leaf->identifier);
+                    if (itL == liteTree.allLiteNodes.end()) continue;
+                    uint32_t leafIdx = itL->second->nodeIndex;
+
+                    std::string seq;
+                    try { seq = tree->getStringFromReference(leaf->identifier, false, true); }
+                    catch (...) { continue; }
+                    if (seq.empty()) continue;
+                    writeFasta(ttmpFa, leaf->identifier, seq);
+
+                    placement::PlacementResult result;
+                    result.skipNodeScoreWrites = true;
+                    result.perNodeLogContScore.assign(liteTree.allLiteNodes.size(), 0.0f);
+                    placement::TraversalParams p;
+                    p.k = idxK; p.s = idxS; p.l = idxL; p.t = idxT; p.open = idxOpen;
+                    p.skipNodeIndex = leafIdx;
+                    p.dedupReads = false; p.refineEnabled = false;
+                    try {
+                        placement::placeLite(result, &liteTree, *reader, ttmpFa, r2Empty,
+                                             ttmpOut, p, nullptr);
+                    } catch (...) { continue; }
+
+                    auto itP = liteTree.allLiteNodes.find(o.parentId);
+                    double parentScore = 0.0;
+                    if (itP != liteTree.allLiteNodes.end()) {
+                        uint32_t pIdx = itP->second->nodeIndex;
+                        if (pIdx < result.perNodeLogContScore.size()) {
+                            parentScore = (double)result.perNodeLogContScore[pIdx];
+                        }
+                    }
+                    o.parentScore = parentScore;
+                    o.bestScore = result.bestLogContainmentScore;
+                    o.bestId = result.bestLogContainmentNodeId;
+                    o.different = !o.bestId.empty() && (o.bestId != o.parentId);
+                    o.delta = o.different ? (o.bestScore - o.parentScore) : 0.0;
+                    o.wouldMove = o.different && (o.delta > margin);
+                    o.skipped = false;
+
+                    size_t d = done.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if (progressEvery > 0 && (d % progressEvery) == 0) {
+                        auto now = std::chrono::steady_clock::now();
+                        long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - tStart).count();
+                        // Use the saved (un-silenced) cerr so progress is visible.
+                        std::ostream realCerr(origCerr);
+                        realCerr << "  pass " << passN << " (" << phaseStr
+                                 << ", R=" << currentRadius << ") placed " << d << "/" << total
+                                 << "  (" << ms / 1000 << "s)\n";
+                    }
                 }
-            } catch (const std::exception& e) {
-                std::cerr << "  placement failed for " << leafId << ": " << e.what() << "\n";
-                pass_skipped++;
-                continue;
-            }
+            });
 
-            double parentScore = 0.0;
-            auto itP = liteTree.allLiteNodes.find(parentId);
-            if (itP != liteTree.allLiteNodes.end()) {
-                parentScore = (double)itP->second->logContainmentScore;
-            }
-            double bestScore = result.bestLogContainmentScore;
-            std::string bestId = result.bestLogContainmentNodeId;
-            bool different = !bestId.empty() && (bestId != parentId);
-            double delta = different ? (bestScore - parentScore) : 0.0;
-            bool wouldMove = different && (delta > margin);
+        phaseAQuiet.reset();  // restore stdout/stderr
 
-            // Local-radius constraint
-            if (wouldMove && currentRadius > 0) {
-                auto itT = tree->allNodes.find(bestId);
+        // ---- Phase B: serial move application (preserves tree consistency + cache) ----
+        for (size_t i = 0; i < leaves.size(); i++) {
+            const Outcome& o = outcomes[i];
+            auto* leaf = leaves[i];
+            const std::string& leafId = leaf->identifier;
+            if (o.skipped) { pass_skipped++; continue; }
+
+            // Local-radius check uses CURRENT tree state (re-evaluated here).
+            bool wouldMove = o.wouldMove;
+            if (wouldMove && currentRadius > 0 && leaf->parent) {
+                auto itT = tree->allNodes.find(o.bestId);
                 if (itT == tree->allNodes.end() ||
-                    bfsDistance(parent, itT->second, currentRadius) < 0) {
+                    bfsDistance(leaf->parent, itT->second, currentRadius) < 0) {
                     wouldMove = false;
                 }
             }
-
-            if (different) {
+            if (o.different) {
                 pass_better++;
-                if (delta > pass_max_delta) pass_max_delta = delta;
+                if (o.delta > pass_max_delta) pass_max_delta = o.delta;
             }
             if (wouldMove) pass_would_move++;
 
             bool applied = false;
             if (applyMoves && wouldMove) {
-                auto itT = tree->allNodes.find(bestId);
+                auto itT = tree->allNodes.find(o.bestId);
                 if (itT == tree->allNodes.end()) {
                     pass_failed++;
                 } else {
@@ -1400,21 +1475,23 @@ int main(int argc, char** argv) {
             }
 
             tsv << passN << "\t" << phaseStr << "\t"
-                << leafId << "\t" << parentId << "\t" << bestId << "\t"
+                << leafId << "\t" << o.parentId << "\t" << o.bestId << "\t"
                 << std::fixed << std::setprecision(8)
-                << parentScore << "\t" << bestScore << "\t" << delta << "\t"
+                << o.parentScore << "\t" << o.bestScore << "\t" << o.delta << "\t"
                 << (wouldMove ? "1" : "0") << "\t" << (applied ? "1" : "0") << "\n";
 
-            if (progressEvery > 0 && ((i + 1) % progressEvery) == 0) {
-                auto now = std::chrono::steady_clock::now();
-                long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - tStart).count();
-                std::cerr << "  pass " << passN << " (" << phaseStr << ", R=" << currentRadius
-                          << ") " << (i + 1) << "/" << leaves.size()
-                          << "  applied=" << pass_applied
-                          << " rejected=" << pass_rejected
-                          << " failed=" << pass_failed;
-                if (rejectOnIncrease) std::cerr << "  P=" << currentPFitch;
-                std::cerr << "  (" << ms / 1000 << "s)\n";
+            // ---- Per-N-leaf trace row (parsimony only meaningful in reject mode) ----
+            if (rejectOnIncrease && progressEvery > 0
+                && ((i + 1) % progressEvery) == 0 && traceTsv.is_open()) {
+                double CI = currentPFitch > 0 ? (double)P_min_const / currentPFitch : 0;
+                double RI = (P_max_const - P_min_const) > 0
+                          ? (double)(P_max_const - currentPFitch) / (P_max_const - P_min_const) : 1.0;
+                traceTsv << passN << "\t" << phaseStr << "\t" << currentRadius
+                         << "\t" << (total_applied + pass_applied) << "\t"
+                         << n_var_const << "\t" << currentPFitch << "\t"
+                         << P_min_const << "\t" << P_max_const << "\t"
+                         << std::setprecision(8) << CI << "\t" << RI << "\n";
+                traceTsv.flush();
             }
         }
 

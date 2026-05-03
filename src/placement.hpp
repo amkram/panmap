@@ -195,6 +195,16 @@ struct PlacementResult {
     RefinedResult refinedLogContainment;
     bool refinementWasRun = false;  // True if refinement was executed
 
+    // ===== Concurrent-call support =====
+    // If true, score-update functions skip writing to LiteNode.<scoreField>.
+    // Required for panopt_spr's parallel leaf loop, where many placeLite calls
+    // share one LiteTree and concurrent writes would race.
+    bool skipNodeScoreWrites = false;
+    // Per-node logContainmentScore for the current placement, indexed by nodeIndex.
+    // Caller must resize to liteTree.allLiteNodes.size() before placeLite. When
+    // skipNodeScoreWrites is true, this is the ONLY way to read non-best scores.
+    std::vector<float> perNodeLogContScore;
+
     // Performance metrics
     int64_t totalReadsProcessed = 0;
 
