@@ -1267,9 +1267,12 @@ int main(int argc, char** argv) {
     int globalPassN = 0;    // reported in trace
     int totalPassN = 0;     // for output tmp filenames (always increments)
 
+    bool needCacheRebuild = true;  // set to true after refresh or on pass 0
     while (passN < maxPasses) {
-        // Build (or rebuild after refresh) Fitch cache for this pass.
-        if (applyMoves && rejectOnIncrease) {
+        // (Re)build FitchCache only when needed: pass 0, or after a refresh.
+        // The cache is incrementally maintained DURING a pass, so its end-state
+        // matches the start-state of the next pass.
+        if (applyMoves && rejectOnIncrease && needCacheRebuild) {
             std::cerr << "Pass " << passN << " (phase=" << (phase==0?"global":"local")
                       << ", radius=" << currentRadius << "): building Fitch cache...\n";
             auto tFc0 = std::chrono::steady_clock::now();
@@ -1280,6 +1283,10 @@ int main(int argc, char** argv) {
             std::cerr << "  Cache built in "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(tFc1 - tFc0).count()
                       << " ms. P_fitch=" << currentPFitch << "\n";
+            needCacheRebuild = false;
+        } else if (applyMoves && rejectOnIncrease) {
+            std::cerr << "Pass " << passN << " (phase=" << (phase==0?"global":"local")
+                      << ", radius=" << currentRadius << "): reusing cache from previous pass.\n";
         }
 
         int pass_better = 0, pass_would_move = 0, pass_skipped = 0;
@@ -1405,9 +1412,9 @@ int main(int argc, char** argv) {
                           << ") " << (i + 1) << "/" << leaves.size()
                           << "  applied=" << pass_applied
                           << " rejected=" << pass_rejected
-                          << " failed=" << pass_failed
-                          << "  P=" << currentPFitch
-                          << "  (" << ms / 1000 << "s)\n";
+                          << " failed=" << pass_failed;
+                if (rejectOnIncrease) std::cerr << "  P=" << currentPFitch;
+                std::cerr << "  (" << ms / 1000 << "s)\n";
             }
         }
 
@@ -1465,6 +1472,7 @@ int main(int argc, char** argv) {
                 std::cerr << "Refresh failed; stopping.\n";
                 break;
             }
+            needCacheRebuild = true;  // tree was reloaded; cache must rebuild
         }
     }  // end pass loop
 
