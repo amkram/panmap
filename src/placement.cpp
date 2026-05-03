@@ -929,7 +929,7 @@ void placeLite(PlacementResult& result,
     auto placement_total_start = std::chrono::high_resolution_clock::now();
     logging::info("Starting lite-index placement");
 
-    uint32_t skipNodeIndex = UINT32_MAX;
+    uint32_t skipNodeIndex = callerParams.skipNodeIndex;
 
     if (callerParams.verify_scores) {
         logging::info("VERIFICATION MODE: Will recompute all scores from scratch at each node");

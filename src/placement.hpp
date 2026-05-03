@@ -55,6 +55,10 @@ struct TraversalParams {
     int refineNeighborRadius = 2;  // Expand to neighbors within N branches
     int refineMaxNeighborN = 150;  // Max additional nodes from neighbor expansion
     bool forceLeaf = false;        // Restrict scoring to leaf nodes only
+
+    // Leave-one-out: node index to exclude from scoring (UINT32_MAX = none).
+    // Used by panopt_spr to score a leaf re-placement as if the leaf were pruned.
+    uint32_t skipNodeIndex = UINT32_MAX;
 };
 
 // Track global state during placement

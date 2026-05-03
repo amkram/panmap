@@ -772,6 +772,75 @@ configure_file(src/test/data/test.fastq test.fastq COPYONLY)
 
 install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# panopt: field-standard parsimony scoring for single-tree PanMANs
+add_executable(panopt src/panopt.cpp)
+add_dependencies(panopt panman_lib build-deps tbb_build)
+target_include_directories(panopt PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${panman_SOURCE_DIR}/src
+    ${panman_BINARY_DIR}
+)
+target_link_libraries(panopt PRIVATE
+    panman_lib
+    ${CAPNP_LIBRARY}
+    ${KJ_LIBRARY}
+    jsoncpp_lib
+    ${PROTOBUF_LIB_PATH}
+    Boost::program_options
+    Boost::iostreams
+    Boost::filesystem
+    ${TBB_LIBRARY}
+    pthread
+    m
+)
+install(TARGETS panopt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# panopt_spr: placement-driven SPR move proposer
+add_executable(panopt_spr
+    src/panopt_spr.cpp
+    src/placement.cpp
+    src/panmap_utils.cpp
+    src/seeding.cpp
+    src/mgsr.cpp
+    src/mm_align.c
+    src/zstd_compression.cpp
+    ${LITE_CAPNP_SRCS}
+)
+add_dependencies(panopt_spr panman_lib build-deps tbb_build index_capnp_generator)
+target_include_directories(panopt_spr PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2
+    ${HTSLIB_INSTALL_DIR}/include
+    ${panman_SOURCE_DIR}/src
+    ${panman_BINARY_DIR}
+)
+target_link_libraries(panopt_spr PRIVATE
+    panman_lib
+    minimap2
+    htslib
+    ${CAPNP_LIBRARY}
+    ${KJ_LIBRARY}
+    jsoncpp_lib
+    ${PROTOBUF_LIB_PATH}
+    Boost::program_options
+    Boost::iostreams
+    Boost::filesystem
+    ZLIB::ZLIB
+    libzstd_static
+    ${TBB_LIBRARY}
+    spdlog::spdlog
+    libdeflate_shared
+    absl::flat_hash_map
+    pthread
+    m
+)
+install(TARGETS panopt_spr RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # Create a compile_commands.json symlink for clangd
 add_custom_command(
     TARGET panmap POST_BUILD
