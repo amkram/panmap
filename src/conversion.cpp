@@ -3,7 +3,9 @@
 #include "logging.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
+#include <unistd.h>
 #include <sys/wait.h>
 extern "C" {
 #include "mm_align.h"
@@ -17,20 +19,56 @@ extern "C" {
 // Run a bcftools function in a forked child process to avoid global state conflicts.
 // bcftools main_mpileup/main_vcfcall use global optind and other process-wide state,
 // so forking gives each call its own address space for safe parallelism.
-static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv) {
+static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv, bool silenceStderr = true) {
+    bool verbose = output::config().verbose;
+    bool fullSilence = silenceStderr && !verbose;
+    bool filterNote = !silenceStderr && !verbose;  // keep meaningful chatter, drop "Note: ..." lines
+
+    int pipeFds[2] = {-1, -1};
+    if (filterNote && pipe(pipeFds) != 0) {
+        filterNote = false;  // fall back to passthrough on failure
+    }
+
     pid_t pid = fork();
     if (pid == 0) {
-        // Child: run bcftools function and exit
+        if (fullSilence) {
+            FILE* devnull = std::fopen("/dev/null", "w");
+            if (devnull) dup2(fileno(devnull), STDERR_FILENO);
+        } else if (filterNote) {
+            close(pipeFds[0]);
+            dup2(pipeFds[1], STDERR_FILENO);
+            close(pipeFds[1]);
+        }
         optind = 1;
         int ret = func(argc, argv);
         _exit(ret);
     } else if (pid > 0) {
+        if (filterNote) {
+            close(pipeFds[1]);
+            FILE* in = fdopen(pipeFds[0], "r");
+            if (in) {
+                char* line = nullptr;
+                size_t cap = 0;
+                while (getline(&line, &cap, in) != -1) {
+                    if (std::strncmp(line, "Note:", 5) == 0) continue;
+                    fputs(line, stderr);
+                }
+                free(line);
+                fclose(in);
+            } else {
+                close(pipeFds[0]);
+            }
+        }
         int status;
         waitpid(pid, &status, 0);
         if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return 0;
         return 1;
     } else {
         logging::err("fork() failed for bcftools call");
+        if (filterNote) {
+            close(pipeFds[0]);
+            close(pipeFds[1]);
+        }
         return 1;
     }
 }
@@ -165,7 +203,7 @@ int createConsensus(const std::string& vcfFileName,
 
     const char* args[] = {
         "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), bgzVcf.c_str()};
-    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args));
+    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args), /*silenceStderr=*/false);
 }
 
 static uint16_t compute_sam_flags(

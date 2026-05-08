@@ -89,7 +89,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
         numThreads = std::thread::hardware_concurrency();
     }
 
-    logging::info("Decompressing {} using {} threads", inputPath, numThreads);
+    logging::debug("Decompressing {} using {} threads", inputPath, numThreads);
 
     auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -224,7 +224,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
 
     double throughput = decompressedSize / (1024.0 * 1024.0 * duration.count() / 1000.0);
 
-    logging::info("Decompression complete: {} -> {} bytes in {}ms ({:.1f} MB/s)",
+    logging::debug("Decompression complete: {} -> {} bytes in {}ms ({:.1f} MB/s)",
                   compressedSize,
                   decompressedSize,
                   duration.count(),

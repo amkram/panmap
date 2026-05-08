@@ -904,7 +904,7 @@ void placeLite(PlacementResult& result,
                const TraversalParams& callerParams,
                panmanUtils::Tree* fullTree) {
     auto placement_total_start = std::chrono::high_resolution_clock::now();
-    logging::info("Starting lite-index placement");
+    logging::debug("Starting lite-index placement");
 
     uint32_t skipNodeIndex = UINT32_MAX;
 
