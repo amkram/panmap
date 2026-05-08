@@ -2,120 +2,64 @@
 #include <atomic>
 #include <vector>
 #include <chrono>
-#include <iostream>
-#include <iomanip>
-#include <mutex>
+#include <cstdint>
+#include <memory>
+#include <numeric>
+#include "logging.hpp"
 
+// Aggregates per-thread progress into a single sleek progress bar.
+// Public API matches the previous per-thread tracker so callers don't change.
 class ProgressTracker {
-   private:
-    std::vector<std::atomic<uint64_t>> threadProgress;
-    std::vector<uint64_t> threadTotals;
-    mutable std::mutex outputMutex;
-    size_t numThreads;
-    std::chrono::steady_clock::time_point startTime;
-    mutable std::chrono::steady_clock::time_point lastGlobalUpdate;
-
    public:
     ProgressTracker(size_t numThreads, const std::vector<uint64_t>& totalNodesPerThread)
-        : numThreads(numThreads), threadProgress(numThreads), threadTotals(totalNodesPerThread) {
+        : threadProgress(numThreads),
+          threadTotals(totalNodesPerThread),
+          numThreads_(numThreads) {
         for (size_t i = 0; i < numThreads; ++i) {
             threadProgress[i].store(0, std::memory_order_relaxed);
         }
-        startTime = std::chrono::steady_clock::now();
-        lastGlobalUpdate = startTime;
-
-        // Reserve space for all thread lines
-        for (size_t i = 0; i < numThreads; ++i) {
-            std::cerr << "T" << std::setw(2) << i << ": [  0.00%]        0/" << std::setw(8) << threadTotals[i]
-                      << " (   0.0 n/s)\n";
-        }
+        uint64_t total = 0;
+        for (auto t : totalNodesPerThread) total += t;
+        bar_ = std::make_unique<output::ProgressBar>("place", total);
     }
 
     void updateProgress(size_t threadId, uint64_t currentNode) {
         threadProgress[threadId].store(currentNode, std::memory_order_relaxed);
-
-        // Throttle updates per thread
-        static thread_local auto lastUpdate = std::chrono::steady_clock::now();
-        auto now = std::chrono::steady_clock::now();
-
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdate).count() >= 100) {
-            tryDisplayUpdate();
-            lastUpdate = now;
-        }
+        publish();
     }
 
     void incrementProgress(size_t threadId) {
         threadProgress[threadId].fetch_add(1, std::memory_order_relaxed);
-
-        // Less frequent updates for increment calls
-        static thread_local auto lastUpdate = std::chrono::steady_clock::now();
-        static thread_local int updateCounter = 0;
-
-        if (++updateCounter % 50 == 0) {  // Update every 50 increments
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdate).count() >= 200) {
-                tryDisplayUpdate();
-                lastUpdate = now;
-            }
-        }
+        publish();
     }
 
-   private:
-    void tryDisplayUpdate() const {
-        std::unique_lock lock(outputMutex, std::try_to_lock);
-        if (!lock.owns_lock()) return;
-
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastGlobalUpdate).count() < 1000) {
-            return;
-        }
-
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
-
-        // Save cursor position and clear from cursor to end of screen
-        std::cerr << "\033[s\033[J";
-
-        for (size_t i = 0; i < numThreads; ++i) {
-            uint64_t threadProg = threadProgress[i].load(std::memory_order_relaxed);
-            uint64_t threadTotal = threadTotals[i];
-
-            double percentComplete = threadTotal > 0 ? (100.0 * threadProg) / threadTotal : 0.0;
-            double nodesPerSecond = elapsed > 0 ? static_cast<double>(threadProg) / elapsed : 0.0;
-
-            std::cerr << "T" << std::setw(2) << i << ": [" << std::setw(6) << std::fixed << std::setprecision(2)
-                      << percentComplete << "%] " << std::setw(8) << threadProg << "/" << std::setw(8) << threadTotal
-                      << " (" << std::setw(6) << std::setprecision(1) << nodesPerSecond << " n/s)\n";
-        }
-
-        // Restore cursor position
-        std::cerr << "\033[u" << std::flush;
-
-        lastGlobalUpdate = now;
-    }
-
-   public:
+    // Replace the bar with a final action line.
     void finalDisplay() {
-        std::lock_guard<std::mutex> lock(outputMutex);
-
-        // Move cursor down past all thread lines
-        for (size_t i = 0; i < numThreads; ++i) {
-            std::cerr << "\n";
-        }
-
-        // Calculate totals
+        if (!bar_) return;
         uint64_t totalProgress = 0;
         uint64_t totalNodes = 0;
-
-        for (size_t i = 0; i < numThreads; ++i) {
+        for (size_t i = 0; i < numThreads_; ++i) {
             totalProgress += threadProgress[i].load(std::memory_order_relaxed);
             totalNodes += threadTotals[i];
         }
-
-        auto elapsed =
-            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - startTime).count();
-        double nodesPerSecond = elapsed > 0 ? static_cast<double>(totalProgress) / elapsed : 0.0;
-
-        std::cerr << "Completed: " << totalProgress << "/" << totalNodes << " nodes in " << elapsed << "s ("
-                  << std::setprecision(1) << nodesPerSecond << " nodes/s)" << std::endl;
+        bar_->set(totalProgress);
+        bar_->clear();
+        // Don't emit an action line here; the caller emits the canonical "Placed" line.
+        bar_.reset();
     }
+
+   private:
+    void publish() {
+        if (!bar_) return;
+        uint64_t total = 0;
+        for (size_t i = 0; i < numThreads_; ++i) {
+            total += threadProgress[i].load(std::memory_order_relaxed);
+        }
+        bar_->set(total);
+    }
+
+    std::vector<std::atomic<uint64_t>> threadProgress;
+    std::vector<uint64_t> threadTotals;
+    size_t numThreads_;
+    std::unique_ptr<output::ProgressBar> bar_;
 };
