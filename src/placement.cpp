@@ -770,7 +770,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
         size_t last = lastReported.load(std::memory_order_relaxed);
         if (currentCount / 500 > last / 500) {
             lastReported.store(currentCount, std::memory_order_relaxed);
-            logging::info("Processed {} nodes", currentCount);
+            logging::debug("Processed {} nodes", currentCount);
         }
 
         // Parallel Merge Step - Optimized for minimal synchronization
@@ -817,7 +817,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
     // ========================================
     // MERGE PHASE: Combine thread-local results into global result
     // ========================================
-    logging::info("Merging {} thread-local results...", thread_data.size());
+    logging::debug("Merging {} thread-local results...", thread_data.size());
     auto merge_start = std::chrono::high_resolution_clock::now();
 
     for (auto& tls : thread_data) {
@@ -892,7 +892,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
 
     auto merge_end = std::chrono::high_resolution_clock::now();
     auto merge_ms = std::chrono::duration_cast<std::chrono::milliseconds>(merge_end - merge_start).count();
-    logging::info("Thread-local merge completed in {}ms", merge_ms);
+    logging::debug("Thread-local merge completed in {}ms", merge_ms);
 }
 
 void placeLite(PlacementResult& result,
@@ -924,7 +924,7 @@ void placeLite(PlacementResult& result,
     auto indexRoot = liteIndex.getRoot<LiteIndex>();
 
     if (!liteTree->seedChangesLoaded) {
-        logging::info("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
+        logging::debug("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
 
         // OPTIMIZATION: Process nodes in DFS order with direct vector indexing for O(1) access
         // This eliminates hash map lookup overhead in the hot path
@@ -942,7 +942,7 @@ void placeLite(PlacementResult& result,
                     "Index missing required V3 fields (seedChangeHashes, etc). V2 is no longer supported.");
             }
 
-            logging::info("Using VERSION 3 struct-of-arrays format from index (optimal parallel access)");
+            logging::debug("Using VERSION 3 struct-of-arrays format from index (optimal parallel access)");
             auto indexOffsets = indexRoot.getNodeChangeOffsets();
             if (indexOffsets.size() >= numNodes + 1) {
                 for (size_t i = 0; i <= numNodes; ++i) {
@@ -965,7 +965,7 @@ void placeLite(PlacementResult& result,
             auto childCountsReader = indexRoot.getSeedChangeChildCounts();
 
             size_t numSegs = hashesReader.size();
-            logging::info("Struct-of-arrays format: {} hashes in {} segments", totalHashDeltas, numSegs);
+            logging::debug("Struct-of-arrays format: {} hashes in {} segments", totalHashDeltas, numSegs);
 
             // Phase 2a
             constexpr size_t GRAIN_SIZE = 262144;  // 256K items per chunk
@@ -1006,7 +1006,7 @@ void placeLite(PlacementResult& result,
             });
         }
 
-        logging::info("Loaded {} hash deltas from index", totalHashDeltas);
+        logging::debug("Loaded {} hash deltas from index", totalHashDeltas);
         liteTree->seedChangesLoaded = true;
     } else {
         logging::info("Seed changes already loaded, skipping index deserialization");
@@ -1032,9 +1032,7 @@ void placeLite(PlacementResult& result,
                       params.trimStart,
                       params.trimEnd);
     }
-    if (params.pairFilter && !reads2.empty()) {
-        logging::warn("Paired-end filter (--pair-filter) is not yet implemented - flag has no effect on scoring");
-    } else if (params.pairFilter && reads2.empty()) {
+    if (params.pairFilter && reads2.empty()) {
         logging::info("Paired-end scoring requested but no R2 reads provided - disabled");
     }
 
@@ -1079,7 +1077,7 @@ void placeLite(PlacementResult& result,
         }
 
         uint32_t l = indexRoot.getL();
-        logging::info("Index parameters: k={}, s={}, t={}, l={}{}",
+        logging::debug("Index parameters: k={}, s={}, t={}, l={}{}",
                       params.k,
                       params.s,
                       params.t,
@@ -1240,7 +1238,7 @@ void placeLite(PlacementResult& result,
                                       });
                 }
 
-                logging::info(
+                logging::debug(
                     "Deduplication: {} reads → {} unique sequences", allReadSequences.size(), dupReadsIndex.size());
 
                 auto time_seed_extract_start = std::chrono::high_resolution_clock::now();
@@ -1479,9 +1477,9 @@ void placeLite(PlacementResult& result,
                 auto time_kminimizer_end = std::chrono::high_resolution_clock::now();
                 auto duration_kminimizer =
                     std::chrono::duration_cast<std::chrono::milliseconds>(time_kminimizer_end - time_kminimizer_start);
-                logging::info(
+                logging::debug(
                     "K-minimizer extraction (Q{} filtered): {}ms", params.minSeedQuality, duration_kminimizer.count());
-                logging::info("Extracted {} unique k-minimizers from {} reads (filtered {} low-quality seeds)",
+                logging::debug("Extracted {} unique k-minimizers from {} reads (filtered {} low-quality seeds)",
                               state.seedFreqInReads.size(),
                               allReadSequences.size(),
                               totalFiltered);
@@ -1536,7 +1534,7 @@ void placeLite(PlacementResult& result,
                                       });
                 }
 
-                logging::info(
+                logging::debug(
                     "Deduplication: {} reads → {} unique sequences", allReadSequences.size(), dupReadsIndex.size());
 
                 // Extract k-min-mers in parallel
@@ -1630,8 +1628,8 @@ void placeLite(PlacementResult& result,
                 auto time_kminimizer_end = std::chrono::high_resolution_clock::now();
                 auto duration_kminimizer =
                     std::chrono::duration_cast<std::chrono::milliseconds>(time_kminimizer_end - time_kminimizer_start);
-                logging::info("K-minimizer extraction: {}ms", duration_kminimizer.count());
-                logging::info("Extracted {} unique k-minimizers from {} reads",
+                logging::debug("K-minimizer extraction: {}ms", duration_kminimizer.count());
+                logging::debug("Extracted {} unique k-minimizers from {} reads",
                               state.seedFreqInReads.size(),
                               allReadSequences.size());
             }  // end of else block for non-quality-filtered path (l > 0)
@@ -1640,7 +1638,7 @@ void placeLite(PlacementResult& result,
     auto time_read_processing_end = std::chrono::high_resolution_clock::now();
     auto duration_read_processing =
         std::chrono::duration_cast<std::chrono::milliseconds>(time_read_processing_end - time_read_processing_start);
-    logging::info("Total read processing: {}ms", duration_read_processing.count());
+    logging::debug("Total read processing: {}ms", duration_read_processing.count());
 
     // ==========================================================================
     // Seed frequency analysis and masking
@@ -1685,15 +1683,15 @@ void placeLite(PlacementResult& result,
         }
 
         // Log seed frequency analysis
-        logging::info("=== Seed Frequency Analysis ===");
-        logging::info("  Total reads: {}, Unique seeds: {}", totalReads, uniqueSeeds);
-        logging::info("  Max seed frequency: {:.2f}%", maxFreq * 100.0);
-        logging::info("  Seeds >50%% of reads: {}", above50pct);
-        logging::info("  Seeds >20%% of reads: {}", above20pct);
-        logging::info("  Seeds >10%% of reads: {}", above10pct);
-        logging::info("  Seeds >5%% of reads: {}", above5pct);
-        logging::info("  Seeds >1%% of reads: {}", above1pct);
-        logging::info("===============================");
+        logging::debug("=== Seed Frequency Analysis ===");
+        logging::debug("  Total reads: {}, Unique seeds: {}", totalReads, uniqueSeeds);
+        logging::debug("  Max seed frequency: {:.2f}%", maxFreq * 100.0);
+        logging::debug("  Seeds >50%% of reads: {}", above50pct);
+        logging::debug("  Seeds >20%% of reads: {}", above20pct);
+        logging::debug("  Seeds >10%% of reads: {}", above10pct);
+        logging::debug("  Seeds >5%% of reads: {}", above5pct);
+        logging::debug("  Seeds >1%% of reads: {}", above1pct);
+        logging::debug("===============================");
 
         // Only sort if we need to mask seeds or output diagnostics (slow for large datasets)
         std::vector<std::pair<size_t, int64_t>> sortedSeeds;
@@ -1710,11 +1708,11 @@ void placeLite(PlacementResult& result,
 
             // Show top 5 most frequent seeds if any are above 5%
             if (above5pct > 0) {
-                logging::info("  Top {} high-frequency seeds:", std::min(size_t(5), above5pct));
+                logging::debug("  Top {} high-frequency seeds:", std::min(size_t(5), above5pct));
                 for (size_t i = 0; i < std::min(size_t(5), sortedSeeds.size()); i++) {
                     double frac = static_cast<double>(sortedSeeds[i].second) / totalReads;
                     if (frac < 0.01) break;  // Stop if below 1%
-                    logging::info("    {:.2f}%  (hash: {:016x})", frac * 100.0, sortedSeeds[i].first);
+                    logging::debug("    {:.2f}%  (hash: {:016x})", frac * 100.0, sortedSeeds[i].first);
                 }
             }
         }
@@ -1747,7 +1745,7 @@ void placeLite(PlacementResult& result,
                 logging::info("  Seed masking: fraction too small to mask any seeds");
             }
         }
-        logging::info("===============================");
+        logging::debug("===============================");
 
         // Dump seed frequencies to TSV file for analysis (only in debug mode - slow for large datasets)
         // Format: hash, sequence, count, fraction, masked (0/1)
@@ -1826,7 +1824,7 @@ void placeLite(PlacementResult& result,
                           minSupport,
                           filteredSeedCount);
         }
-        logging::info("Precomputed magnitude: log={:.6f}, total read seed frequency: {}, unique read seeds: {}",
+        logging::debug("Precomputed magnitude: log={:.6f}, total read seed frequency: {}, unique read seeds: {}",
                       state.logReadMagnitude,
                       state.totalReadSeedFrequency,
                       state.readUniqueSeedCount);
@@ -1834,7 +1832,7 @@ void placeLite(PlacementResult& result,
     auto time_magnitude_end = std::chrono::high_resolution_clock::now();
     auto duration_magnitude =
         std::chrono::duration_cast<std::chrono::milliseconds>(time_magnitude_end - time_magnitude_start);
-    logging::info("Read magnitude precomputation: {}ms", duration_magnitude.count());
+    logging::debug("Read magnitude precomputation: {}ms", duration_magnitude.count());
 
     state.root = liteTree->root;
 
@@ -1849,7 +1847,7 @@ void placeLite(PlacementResult& result,
                 state.weightedContainmentDenominator += invCount;
             }
         }
-        logging::info("Weighted containment: {} seeds with inverse genome counts, denominator={:.6f}",
+        logging::debug("Weighted containment: {} seeds with inverse genome counts, denominator={:.6f}",
                       state.seedInverseGenomeCounts.size(),
                       state.weightedContainmentDenominator);
     }
@@ -1858,7 +1856,7 @@ void placeLite(PlacementResult& result,
     // CRITICAL: Root starts with empty genome (all genome metrics = 0).
     // The root's seed changes will apply deltas to compute the actual root state.
 
-    logging::info("Starting BFS placement traversal with {} tree nodes", liteTree->allLiteNodes.size());
+    logging::debug("Starting BFS placement traversal with {} tree nodes", liteTree->allLiteNodes.size());
 
     auto time_traversal_start = std::chrono::high_resolution_clock::now();
     if (liteTree && liteTree->root) {
@@ -1902,7 +1900,7 @@ void placeLite(PlacementResult& result,
     auto time_traversal_end = std::chrono::high_resolution_clock::now();
     auto duration_traversal =
         std::chrono::duration_cast<std::chrono::milliseconds>(time_traversal_end - time_traversal_start);
-    logging::info("Tree traversal: {}ms", duration_traversal.count());
+    logging::debug("Tree traversal: {}ms", duration_traversal.count());
 
     result.totalReadsProcessed = allReadSequences.size();
 
@@ -1924,7 +1922,7 @@ void placeLite(PlacementResult& result,
         result.totalReadSeedFrequency = state.totalReadSeedFrequency;
         result.readMagnitude = state.logReadMagnitude;
 
-        logging::info(
+        logging::debug(
             "Stored alignment parameters: k={}, s={}, t={}, open={}", result.k, result.s, result.t, result.open);
     }
 
@@ -1979,22 +1977,22 @@ void placeLite(PlacementResult& result,
         }
 
         placementsFile.close();
-        logging::info("Wrote placement results to {}", placementsFilePath);
+        logging::debug("Wrote placement results to {}", placementsFilePath);
     } else {
         logging::err("Failed to open placements file: {}", placementsFilePath);
     }
     auto time_write_end = std::chrono::high_resolution_clock::now();
     auto duration_write = std::chrono::duration_cast<std::chrono::milliseconds>(time_write_end - time_write_start);
-    logging::info("Result file writing: {}ms", duration_write.count());
+    logging::debug("Result file writing: {}ms", duration_write.count());
 
     auto placement_total_end = std::chrono::high_resolution_clock::now();
     auto duration_placement_total =
         std::chrono::duration_cast<std::chrono::milliseconds>(placement_total_end - placement_total_start);
 
-    logging::info("Placement complete in {}ms", duration_placement_total.count());
-    logging::info("Best LogRaw score: {:.6f} (node: {})", result.bestLogRawScore, result.bestLogRawNodeId);
+    logging::debug("Placement complete in {}ms", duration_placement_total.count());
+    logging::debug("Best LogRaw score: {:.6f} (node: {})", result.bestLogRawScore, result.bestLogRawNodeId);
     if (result.tiedLogRawNodeIndices.size() > 1) {
-        logging::info("  {} nodes tied for best LogRaw score", result.tiedLogRawNodeIndices.size());
+        logging::debug("  {} nodes tied for best LogRaw score", result.tiedLogRawNodeIndices.size());
     }
 
     if (result.refinementWasRun) {
