@@ -2136,27 +2136,7 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
     if (skipNodeChanges) return;
 
     uint64_t processed = ++processedNodes_;
-    uint64_t totalNodes = T->allNodes.size();
-
-    // Log progress every 1000 nodes or every 2 seconds, whichever comes first
-    auto now = std::chrono::steady_clock::now();
-    bool shouldLog = (processed % 1000 == 0) || (processed == totalNodes);
-    if (!shouldLog && processed > 100) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastProgressLog_).count();
-        shouldLog = (elapsed >= 2000);
-    }
-
-    if (shouldLog) {
-        auto elapsedSinceStart = std::chrono::duration_cast<std::chrono::milliseconds>(now - buildStartTime_).count();
-        double nodesPerSec = (elapsedSinceStart > 0) ? (processed * 1000.0 / elapsedSinceStart) : 0;
-
-        lastProgressLog_ = now;
-        uint64_t totalClones = totalClonesCreated_.load(std::memory_order_relaxed);
-
-        double pct = 100.0 * processed / totalNodes;
-        output::progress(fmt::format(
-            "[{:.1f}%] {}/{} ({:.0f} n/s) chunks:{}", pct, processed, totalNodes, nodesPerSec, totalClones));
-    }
+    if (buildProgressBar_) buildProgressBar_->set(processed);
 }
 
 // Backtrack all changes made by processNode (reverses state to pre-processNode)
@@ -2515,6 +2495,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     totalClonesCreated_.store(0, std::memory_order_relaxed);
     buildStartTime_ = std::chrono::steady_clock::now();
     lastProgressLog_ = buildStartTime_;
+    buildProgressBar_ = std::make_unique<output::ProgressBar>("index", T->allNodes.size());
 
     auto startTotal = std::chrono::high_resolution_clock::now();
 
@@ -2671,6 +2652,10 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     uint64_t finalNodes = processedNodes_.load();
     double finalNodesPerSec = (dfsDurationMs > 0) ? (finalNodes * 1000.0 / dfsDurationMs) : 0;
 
+    if (buildProgressBar_) {
+        buildProgressBar_->clear();
+        buildProgressBar_.reset();
+    }
     output::progress_clear();
     output::debug("Build summary: {} nodes ({:.0f}/sec), {} ms, {} chunks",
                   finalNodes,

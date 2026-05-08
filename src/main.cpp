@@ -384,14 +384,14 @@ bool buildMgsrIndex(const Config& cfg) {
 
 bool buildIndex(const Config& cfg) {
     if (fs::exists(cfg.index) && !cfg.forceReindex) {
-        logging::msg("Using existing index: {}", cfg.index);
+        output::done("index", cfg.index, "cached");
         return true;
     }
 
-    logging::msg("Building index: {}", cfg.index);
+    auto t0 = std::chrono::steady_clock::now();
     auto tg = loadPanMAN(cfg.panman);
     if (!tg || tg->trees.empty()) {
-        logging::err("Failed to load pangenome");
+        output::error("Failed to load pangenome");
         return false;
     }
 
@@ -401,14 +401,11 @@ bool buildIndex(const Config& cfg) {
     builder.computeSubstitutionSpectrum();
     builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel);
 
-    logging::msg("Index built with k={}, s={}, l={}, flankMask={}bp{}{}{}",
-                 cfg.k,
-                 cfg.s,
-                 cfg.l,
-                 cfg.flankMaskBp,
-                 cfg.hpc ? ", hpc=on" : "",
-                 cfg.impute ? ", impute=on" : "",
-                 cfg.extentGuard ? ", extentGuard=on" : "");
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    output::done("index",
+                 cfg.index,
+                 fmt::format("{} nodes", output::fmt_count(tg->trees[0].allNodes.size())),
+                 ms);
     return true;
 }
 
@@ -458,7 +455,7 @@ void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& thread
         totalNodesPerThread[i] = T.getNumActiveNodes();
     }
     ProgressTracker progressTracker(threadsManager.numThreads, totalNodesPerThread);
-    std::cout << "Placing reads with " << threadsManager.numThreads << " threads..." << std::endl;
+    logging::debug("Placing reads with {} threads...", threadsManager.numThreads);
 
     bool lowMemory = false;
     auto start_time_place = std::chrono::high_resolution_clock::now();
@@ -488,7 +485,10 @@ void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& thread
                       });
     auto end_time_place = std::chrono::high_resolution_clock::now();
     auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
-    std::cout << "\n\nPlaced reads in " << static_cast<double>(duration_place.count()) / 1000.0 << "s\n" << std::endl;
+    progressTracker.finalDisplay();
+    output::done("place", "metagenomic",
+                 fmt::format("{} reads", output::fmt_count(threadsManager.reads.size())),
+                 duration_place.count());
 }
 
 bool isFileReadable(const std::string& path) {
@@ -1486,7 +1486,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
 
     panmapUtils::LiteTree tree;
     tree.initialize(idx.getLiteTree());
-    logging::msg("Tree loaded: {} nodes", tree.allLiteNodes.size());
+    logging::debug("Tree loaded: {} nodes", tree.allLiteNodes.size());
 
     placement::PlacementResult result;
     std::string outPath = cfg.output + ".placement.tsv";
@@ -1501,7 +1501,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
         tg = loadPanMAN(cfg.panman);
         if (tg && !tg->trees.empty()) {
             fullTreePtr = &tg->trees[0];
-            logging::msg("Loaded full tree for refinement ({} nodes)", fullTreePtr->allNodes.size());
+            logging::debug("Loaded full tree for refinement ({} nodes)", fullTreePtr->allNodes.size());
         } else {
             logging::warn("Failed to load full tree for refinement - disabling refinement");
             refineEnabled = false;
@@ -1527,20 +1527,15 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
 
-    logging::msg("Placement complete in {}ms", elapsed.count());
-
-    // Check if any metric found a placement
     if (result.bestLogContainmentNodeId.empty()) {
         logging::warn("No placement found");
         return std::nullopt;
     }
 
-    // Report results
-    logging::msg("{}Best placement:{} {} (LogContainment: {:.6f})",
-                 color::green(),
-                 color::reset(),
+    output::done("place",
                  result.bestLogContainmentNodeId,
-                 result.bestLogContainmentScore);
+                 fmt::format("LogC {:.4f}", result.bestLogContainmentScore),
+                 elapsed.count());
     logging::debug("  LogRaw: {:.6f}, LogCosine: {:.6f}, Containment: {:.6f}",
                    result.bestLogRawScore,
                    result.bestLogCosineScore,
@@ -1634,7 +1629,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
     std::vector<std::string> readSequences, readQuals, readNames;
     seeding::readFastqPaired(readSequences, readQuals, readNames, cfg.reads1, cfg.reads2);
 
-    logging::msg("Loaded {} reads", readSequences.size());
+    logging::debug("Loaded {} reads", readSequences.size());
 
     // Opts 2+3: Parallel alignment with direct BAM construction
     bool pairedEndReads = !cfg.reads2.empty();
@@ -1643,7 +1638,10 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
 
-    logging::msg("Alignment complete in {}ms -> {}", elapsed.count(), bamFileName);
+    output::done("align",
+                 bamFileName,
+                 fmt::format("{} reads", output::fmt_count(readSequences.size())),
+                 elapsed.count());
     return 0;
 }
 
@@ -1671,7 +1669,20 @@ int runGenotyping(const Config& cfg) {
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
 
-    logging::msg("Genotyping complete in {}ms -> {}", elapsed.count(), vcfFileName);
+    // Count variant records (lines that aren't headers) for the status line.
+    size_t numVariants = 0;
+    {
+        std::ifstream vcf(vcfFileName);
+        std::string ln;
+        while (std::getline(vcf, ln)) {
+            if (!ln.empty() && ln[0] != '#') ++numVariants;
+        }
+    }
+
+    output::done("call",
+                 vcfFileName,
+                 fmt::format("{} variants", output::fmt_count(numVariants)),
+                 elapsed.count());
     return 0;
 }
 
@@ -1690,7 +1701,26 @@ int runConsensus(const Config& cfg) {
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
 
-    logging::msg("Consensus complete in {}ms -> {}", elapsed.count(), consensusFileName);
+    // Pull consensus length and N count for the status line.
+    size_t consLen = 0, nCount = 0;
+    {
+        std::ifstream fa(consensusFileName);
+        std::string ln;
+        while (std::getline(fa, ln)) {
+            if (ln.empty() || ln[0] == '>') continue;
+            consLen += ln.size();
+            for (char c : ln) if (c == 'N' || c == 'n') ++nCount;
+        }
+    }
+    std::string stat;
+    if (consLen > 0) {
+        if (nCount > 0) {
+            stat = fmt::format("{} bp, {:.1f}% N", output::fmt_count(consLen), 100.0 * nCount / consLen);
+        } else {
+            stat = fmt::format("{} bp", output::fmt_count(consLen));
+        }
+    }
+    output::done("build", consensusFileName, stat, elapsed.count());
     return 0;
 }
 
@@ -1942,54 +1972,7 @@ int main(int argc, char** argv) {
     // Print Configuration Summary
     // ========================================================================
 
-    auto printConfigSummary = [&]() {
-        if (cfg.quiet) return;                // Skip in quiet mode
-        if (!cfg.dumpNodeId.empty()) return;  // Skip for utility modes
-
-        // Build stage string using arrow from box chars
-        std::string arrow = output::box::arrow();
-        std::string stageStr;
-        switch (cfg.stopAfter) {
-            case PipelineStage::Index: stageStr = "index"; break;
-            case PipelineStage::Place: stageStr = fmt::format("index {} place", arrow); break;
-            case PipelineStage::Align: stageStr = fmt::format("index {} place {} align", arrow, arrow); break;
-            case PipelineStage::Genotype:
-                stageStr = fmt::format("index {} place {} align {} genotype", arrow, arrow, arrow);
-                break;
-            default: stageStr = "full"; break;
-        }
-
-        // Build input string
-        std::string inputStr = cfg.panman;
-        if (!cfg.reads1.empty()) {
-            inputStr += "  + " + cfg.reads1;
-            if (!cfg.reads2.empty()) inputStr += ", " + cfg.reads2;
-        }
-
-        // Build config string
-        std::string configStr = fmt::format("threads={}  k={} s={} l={}", cfg.threads, cfg.k, cfg.s, cfg.l);
-        if (cfg.hpc) {
-            configStr += "  hpc";
-        }
-        if (cfg.metagenomic) {
-            configStr += fmt::format("  meta(top={})", cfg.topN);
-        }
-        if (cfg.forceReindex) {
-            configStr += "  reindex";
-        }
-        if (cfg.aligner != "minimap2") {
-            configStr += "  aligner=" + cfg.aligner;
-        }
-
-        output::print_header("panmap", VERSION);
-        output::print_row("Input ", inputStr);
-        output::print_row("Output", cfg.output + ".*");
-        output::print_row("Stages", stageStr);
-        output::print_row("Config", configStr);
-        output::print_footer();
-    };
-
-    printConfigSummary();
+    if (cfg.dumpNodeId.empty()) output::banner(VERSION);
 
     // ========================================================================
     // Run Pipeline
@@ -2033,96 +2016,53 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (cfg.stopAfter == PipelineStage::Index) {
-            output::done("Index ready: " + cfg.index);
-            output::info("");
-            output::info("{}Next steps:{}", color::dim(), color::reset());
-            output::info("  {} panmap {} reads.fq", color::dim(), cfg.panman);
+        auto finishWithSummary = [&]() {
+            output::summary(0);
             return 0;
-        }
+        };
 
-        // Batch mode: load index once, place all samples
+        if (cfg.stopAfter == PipelineStage::Index) return finishWithSummary();
+
         if (!cfg.batchFile.empty()) {
             return runBatchPlacement(cfg);
         }
 
-        // Check for reads
-        if (cfg.reads1.empty()) {
-            output::info("No reads provided. Index is ready.");
-            output::info("");
-            output::info("{}Next steps:{}", color::dim(), color::reset());
-            output::info("  {} panmap {} reads.fq", color::dim(), cfg.panman);
-            return 0;
-        }
+        if (cfg.reads1.empty()) return finishWithSummary();
 
-        // Stage 2: Placement
         auto placement = runPlacement(cfg);
         if (signals::check_interrupted()) return 130;
         if (!placement) {
-            output::error("Placement failed");
+            output::fail("place", "no placement found");
             return 1;
         }
-        if (cfg.stopAfter == PipelineStage::Place) {
-            output::done("Placement: " + cfg.output + ".placement.tsv");
-            output::info("");
-            output::info("{}Next steps:{}", color::dim(), color::reset());
-            output::info("  {} Continue to alignment: panmap {} {} --stop align", color::dim(), cfg.panman, cfg.reads1);
-            return 0;
-        }
+        if (cfg.stopAfter == PipelineStage::Place) return finishWithSummary();
 
-        // Stage 3: Alignment
         if (runAlignment(cfg, *placement) != 0) {
-            output::error("Alignment failed");
+            output::fail("align", "alignment failed");
             return 1;
         }
         if (signals::check_interrupted()) return 130;
-        if (cfg.stopAfter == PipelineStage::Align) {
-            output::done("Alignment: " + cfg.output + ".bam");
-            output::info("");
-            output::info("{}Next steps:{}", color::dim(), color::reset());
-            output::info("  {} View: samtools view {}.bam | head", color::dim(), cfg.output);
-            output::info("  {} Stats: samtools flagstat {}.bam", color::dim(), cfg.output);
-            return 0;
-        }
+        if (cfg.stopAfter == PipelineStage::Align) return finishWithSummary();
 
-        // Stage 4: Genotyping
         if (runGenotyping(cfg) != 0) {
-            output::error("Genotyping failed");
+            output::fail("call", "genotyping failed");
             return 1;
         }
         if (signals::check_interrupted()) return 130;
-        if (cfg.stopAfter == PipelineStage::Genotype) {
-            output::done("Variants: " + cfg.output + ".vcf");
-            output::info("");
-            output::info("{}Next steps:{}", color::dim(), color::reset());
-            output::info("  {} View variants: bcftools view {}.vcf | head", color::dim(), cfg.output);
-            output::info("  {} Consensus: panmap {} {} --stop consensus", color::dim(), cfg.panman, cfg.reads1);
-            return 0;
-        }
+        if (cfg.stopAfter == PipelineStage::Genotype) return finishWithSummary();
+
 
         // Stage 5: Consensus
         if (runConsensus(cfg) != 0) {
-            output::error("Consensus generation failed");
+            output::fail("build", "consensus generation failed");
             return 1;
         }
         if (signals::check_interrupted()) return 130;
 
-        output::info("");
-        output::info("{}Pipeline complete.{}", color::green(), color::reset());
-        output::info("  Placement:  {}.placement.tsv", cfg.output);
-        output::info("  Reference:  {}.ref.fa", cfg.output);
-        output::info("  Alignment:  {}.bam", cfg.output);
-        output::info("  Variants:   {}.vcf", cfg.output);
-        output::info("  Consensus:  {}.consensus.fa", cfg.output);
-        output::info("");
-        output::info("{}Next steps:{}", color::dim(), color::reset());
-        output::info("  {} View variants: bcftools view {}.vcf | head", color::dim(), cfg.output);
-        output::info("  {} View alignment: samtools tview {}.bam {}.ref.fa", color::dim(), cfg.output, cfg.output);
-
-        return 0;
+        return finishWithSummary();
 
     } catch (const std::exception& e) {
-        output::error("Fatal error: {}", e.what());
+        output::error("{}", e.what());
         return 1;
     }
 }

@@ -203,7 +203,7 @@ int createConsensus(const std::string& vcfFileName,
 
     const char* args[] = {
         "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), bgzVcf.c_str()};
-    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args), /*silenceStderr=*/false);
+    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args), /*silenceStderr=*/true);
 }
 
 static uint16_t compute_sam_flags(
