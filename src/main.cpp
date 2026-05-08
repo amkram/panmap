@@ -1280,7 +1280,7 @@ int runBatchPlacement(const Config& cfg) {
     output::info("Batch mode: {} samples", samples.size());
 
     // Load index ONCE
-    logging::msg("Loading index...");
+    logging::debug("Loading index...");
     IndexReader reader(cfg.index, cfg.threads);
     auto idx = reader.getRoot<LiteIndex>();
     logging::debug("Index parameters: k={}, s={}, l={}", idx.getK(), idx.getS(), idx.getL());
@@ -1478,7 +1478,7 @@ int runBatchPlacement(const Config& cfg) {
 }
 
 std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
-    logging::msg("Loading index...");
+    logging::debug("Loading index...");
     IndexReader reader(cfg.index, cfg.threads);
 
     auto idx = reader.getRoot<LiteIndex>();
@@ -1536,14 +1536,15 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     }
 
     // Report results
-    logging::msg("{}Best placement:{} {} (LogContainment: {:.6f}, LogRaw: {:.6f}, LogCosine: {:.6f}, Containment: {:.6f})",
+    logging::msg("{}Best placement:{} {} (LogContainment: {:.6f})",
                  color::green(),
                  color::reset(),
                  result.bestLogContainmentNodeId,
-                 result.bestLogContainmentScore,
-                 result.bestLogRawScore,
-                 result.bestLogCosineScore,
-                 result.bestContainmentScore);
+                 result.bestLogContainmentScore);
+    logging::debug("  LogRaw: {:.6f}, LogCosine: {:.6f}, Containment: {:.6f}",
+                   result.bestLogRawScore,
+                   result.bestLogCosineScore,
+                   result.bestContainmentScore);
 
     // Dump all scores to file if requested
     if (!cfg.dumpAllScores.empty()) {
@@ -1580,7 +1581,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
     std::unique_ptr<panmanUtils::TreeGroup> tg;
     panmanUtils::Tree* T = preloadedTree;
     if (!T) {
-        logging::msg("Loading tree for alignment...");
+        logging::debug("Loading tree for alignment...");
         tg = loadPanMAN(cfg.panman);
         if (!tg || tg->trees.empty()) {
             logging::err("Failed to load tree");
@@ -1625,7 +1626,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
         return 1;
     }
 
-    logging::msg("Reference: {} bp from node {} -> {}", bestMatchSequence.size(), nodeId, refFileName);
+    logging::debug("Reference: {} bp from node {} -> {}", bestMatchSequence.size(), nodeId, refFileName);
 
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -2028,7 +2029,7 @@ int main(int argc, char** argv) {
             auto specIdx = specReader.getRoot<LiteIndex>();
             cfg.substMatrixPhred = loadSubstMatrixFromIndex(specIdx);
             if (!cfg.substMatrixPhred.empty()) {
-                logging::msg("Loaded substitution spectrum from index");
+                logging::debug("Loaded substitution spectrum from index");
             }
         }
 
