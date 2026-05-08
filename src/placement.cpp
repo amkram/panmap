@@ -1,6 +1,7 @@
 #include "panman.hpp"
 #include "placement.hpp"
 #include "seeding.hpp"
+#include "mgsr.hpp"
 #include "index_lite.capnp.h"
 #include "logging.hpp"
 #include "mm_align.h"
@@ -91,28 +92,17 @@ inline double avgPhredQuality(const std::string& qual, int64_t startPos, int k) 
 void extractReadSequences(const std::string& readPath1,
                           const std::string& readPath2,
                           std::vector<std::string>& readSequences) {
-    FILE* fp;
-    kseq_t* seq;
-    fp = fopen(readPath1.c_str(), "r");
-    if (!fp) {
-        output::error("File {} not found", readPath1);
-        exit(1);
-    }
-    seq = kseq_init(fileno(fp));
+    mgsr::FastqFile fq1(readPath1);
+    kseq_t* seq = kseq_init(fileno(fq1.fp));
     int line;
     while ((line = kseq_read(seq)) >= 0) {
         readSequences.push_back(seq->seq.s);
     }
     kseq_destroy(seq);
-    fclose(fp);
 
     if (readPath2.size() > 0) {
-        fp = fopen(readPath2.c_str(), "r");
-        if (!fp) {
-            output::error("File {} not found", readPath2);
-            exit(1);
-        }
-        seq = kseq_init(fileno(fp));
+        mgsr::FastqFile fq2(readPath2);
+        seq = kseq_init(fileno(fq2.fp));
 
         line = 0;
         int forwardReads = readSequences.size();
@@ -120,9 +110,8 @@ void extractReadSequences(const std::string& readPath1,
             readSequences.push_back(seq->seq.s);
         }
         kseq_destroy(seq);
-        fclose(fp);
 
-        if (readSequences.size() != forwardReads * 2) {
+        if (readSequences.size() != static_cast<size_t>(forwardReads) * 2) {
             output::error("File {} does not contain the same number of reads as {}", readPath2, readPath1);
             exit(1);
         }
@@ -138,14 +127,8 @@ void extractFullFastqData(const std::string& readPath1,
                           std::vector<std::string>& readSequences,
                           std::vector<std::string>& readQuals,
                           std::vector<std::string>& readNames) {
-    FILE* fp;
-    kseq_t* seq;
-    fp = fopen(readPath1.c_str(), "r");
-    if (!fp) {
-        output::error("File {} not found", readPath1);
-        exit(1);
-    }
-    seq = kseq_init(fileno(fp));
+    mgsr::FastqFile fq1(readPath1);
+    kseq_t* seq = kseq_init(fileno(fq1.fp));
     int line;
     while ((line = kseq_read(seq)) >= 0) {
         readSequences.push_back(seq->seq.s);
@@ -154,15 +137,10 @@ void extractFullFastqData(const std::string& readPath1,
         readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
     }
     kseq_destroy(seq);
-    fclose(fp);
 
     if (readPath2.size() > 0) {
-        fp = fopen(readPath2.c_str(), "r");
-        if (!fp) {
-            output::error("File {} not found", readPath2);
-            exit(1);
-        }
-        seq = kseq_init(fileno(fp));
+        mgsr::FastqFile fq2(readPath2);
+        seq = kseq_init(fileno(fq2.fp));
 
         line = 0;
         int forwardReads = readSequences.size();
@@ -172,9 +150,8 @@ void extractFullFastqData(const std::string& readPath1,
             readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
         }
         kseq_destroy(seq);
-        fclose(fp);
 
-        if (readSequences.size() != static_cast<size_t>(forwardReads * 2)) {
+        if (readSequences.size() != static_cast<size_t>(forwardReads) * 2) {
             output::error("File {} does not contain the same number of reads as {}", readPath2, readPath1);
             exit(1);
         }

@@ -2,11 +2,15 @@
 #include "genotyping.hpp"
 #include "logging.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
 #include <sys/wait.h>
 extern "C" {
 #include "mm_align.h"
 #include "pileup.h"
 #include <bcftools/bcftools.h>
+#include <htslib/bgzf.h>
+#include <htslib/tbx.h>
 }
 
 // Run a bcftools function in a forked child process to avoid global state conflicts.
@@ -118,8 +122,48 @@ void createVcfWithMutationMatrices(std::string& prefix,
 int createConsensus(const std::string& vcfFileName,
                     const std::string& refFileName,
                     const std::string& consensusFileName) {
+    // bcftools consensus requires a bgzipped + tabix-indexed VCF.
+    // Transparently produce a .vcf.gz next to the plain .vcf for the consensus call.
+    std::string bgzVcf = vcfFileName + ".gz";
+
+    {
+        std::ifstream in(vcfFileName, std::ios::binary);
+        if (!in) {
+            logging::err("Cannot open VCF for bgzip: {}", vcfFileName);
+            return 1;
+        }
+        BGZF* out = bgzf_open(bgzVcf.c_str(), "w");
+        if (!out) {
+            logging::err("Cannot create bgzipped VCF: {}", bgzVcf);
+            return 1;
+        }
+        constexpr size_t bufSize = 64 * 1024;
+        std::vector<char> buf(bufSize);
+        while (in) {
+            in.read(buf.data(), bufSize);
+            std::streamsize n = in.gcount();
+            if (n > 0 && bgzf_write(out, buf.data(), static_cast<size_t>(n)) < 0) {
+                logging::err("bgzf_write failed for {}", bgzVcf);
+                bgzf_close(out);
+                std::remove(bgzVcf.c_str());
+                return 1;
+            }
+        }
+        if (bgzf_close(out) < 0) {
+            logging::err("bgzf_close failed for {}", bgzVcf);
+            std::remove(bgzVcf.c_str());
+            return 1;
+        }
+    }
+
+    if (tbx_index_build(bgzVcf.c_str(), 0, &tbx_conf_vcf) != 0) {
+        logging::err("Failed to build tabix index for {}", bgzVcf);
+        std::remove(bgzVcf.c_str());
+        return 1;
+    }
+
     const char* args[] = {
-        "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), vcfFileName.c_str()};
+        "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), bgzVcf.c_str()};
     return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args));
 }
 
