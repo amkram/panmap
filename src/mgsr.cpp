@@ -7223,7 +7223,8 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   });
   auto end_time_scoreNodes = std::chrono::high_resolution_clock::now();
   auto duration_scoreNodes = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_scoreNodes - start_time_scoreNodes);
-  std::cerr << "\n\nScored nodes in " << static_cast<double>(duration_scoreNodes.count()) / 1000.0 << "s\n" << std::endl;
+  progressTrackerScoreNodes.finalDisplay();
+  output::done("score", "nodes", "", duration_scoreNodes.count());
 
 
   auto start_time_selectNodes = std::chrono::high_resolution_clock::now();
