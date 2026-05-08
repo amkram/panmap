@@ -38,21 +38,29 @@ docker run --rm panmap panmap -h
 
 ## Quick start (demo)
 
-### For isolated samples 
-
-```bash
-# Place and genotype paired-end reads
-panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
-```
-
-**Pipeline**
+### Single-sample Pipeline
 
 ```
 index  -->  place  -->  align  -->  genotype  -->  consensus
  .idx    .placement.tsv  .bam       .vcf        .consensus.fa
 ```
 
-By default, panmap stops after placement. Use `--stop` to run further stages.
+By default, panmap runs the full pipeline. Use `--stop <stage>` to run fewer stages.
+
+**Example:**
+
+```bash
+panmap examples/data/sars_20000_twilight_dipper.panman examples/data/isolate_R1.fastq.gz examples/data/isolate_R2.fastq.gz
+```
+
+This places, genotypes, and assembles a small set of SARS-CoV-2 reads against a 20,000 genome PanMAN (should complete in ~0.8s).
+
+**Outputs**:
+- Placement:  `isolate_R1.placement.tsv`
+- Closest reference:  `isolate_R1.ref.fa`
+- Read alignments to closest reference:  `isolate_R1.bam` + `isolate_R1.bam.bai`
+- Variants from closest reference:   `isolate_R1.vcf`
+- Consensus:  `isolate_R1.consensus.fa`
 
 ### For metagenomic samples
 
