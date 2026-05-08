@@ -1334,7 +1334,7 @@ int runBatchPlacement(const Config& cfg) {
         placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, batchParams, fullTreePtr);
         output::config().quiet = false;
 
-        if (result.bestLogRawNodeId.empty()) {
+        if (result.bestLogContainmentNodeId.empty()) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::high_resolution_clock::now() - start);
             fmt::print(stderr, "[1/{}] {} -> NO PLACEMENT ({}ms)\n", samples.size(), s.outputPrefix, elapsed.count());
@@ -1359,7 +1359,7 @@ int runBatchPlacement(const Config& cfg) {
                                    "[1/{}] {} -> {} ({}ms)\n",
                                    samples.size(),
                                    s.outputPrefix,
-                                   result.bestLogRawNodeId,
+                                   result.bestLogContainmentNodeId,
                                    elapsed.count());
                         successCount++;
                     }
@@ -1370,7 +1370,7 @@ int runBatchPlacement(const Config& cfg) {
                                "[1/{}] {} -> {} ({}ms)\n",
                                samples.size(),
                                s.outputPrefix,
-                               result.bestLogRawNodeId,
+                               result.bestLogContainmentNodeId,
                                elapsed.count());
                     successCount++;
                 }
@@ -1381,7 +1381,7 @@ int runBatchPlacement(const Config& cfg) {
                            "[1/{}] {} -> {} ({}ms)\n",
                            samples.size(),
                            s.outputPrefix,
-                           result.bestLogRawNodeId,
+                           result.bestLogContainmentNodeId,
                            elapsed.count());
                 successCount++;
             }
@@ -1408,7 +1408,7 @@ int runBatchPlacement(const Config& cfg) {
                 auto start = std::chrono::high_resolution_clock::now();
                 placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, batchParams, fullTreePtr);
 
-                if (result.bestLogRawNodeId.empty()) {
+                if (result.bestLogContainmentNodeId.empty()) {
                     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::high_resolution_clock::now() - start);
                     int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -1458,7 +1458,7 @@ int runBatchPlacement(const Config& cfg) {
                            n,
                            samples.size(),
                            s.outputPrefix,
-                           result.bestLogRawNodeId,
+                           result.bestLogContainmentNodeId,
                            totalElapsedSample.count());
                 atomicSuccess.fetch_add(1, std::memory_order_relaxed);
             }
@@ -1530,16 +1530,17 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     logging::msg("Placement complete in {}ms", elapsed.count());
 
     // Check if any metric found a placement
-    if (result.bestLogRawNodeId.empty()) {
+    if (result.bestLogContainmentNodeId.empty()) {
         logging::warn("No placement found");
         return std::nullopt;
     }
 
     // Report results
-    logging::msg("{}Best placement:{} {} (LogRaw: {:.6f}, LogCosine: {:.6f}, Containment: {:.6f})",
+    logging::msg("{}Best placement:{} {} (LogContainment: {:.6f}, LogRaw: {:.6f}, LogCosine: {:.6f}, Containment: {:.6f})",
                  color::green(),
                  color::reset(),
-                 result.bestLogRawNodeId,
+                 result.bestLogContainmentNodeId,
+                 result.bestLogContainmentScore,
                  result.bestLogRawScore,
                  result.bestLogCosineScore,
                  result.bestContainmentScore);
@@ -1587,8 +1588,8 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
         }
         T = &tg->trees[0];
     }
-    // Use LogRaw as primary placement metric
-    std::string nodeId = placement.bestLogRawNodeId;
+    // Use LogContainment as primary placement metric
+    std::string nodeId = placement.bestLogContainmentNodeId;
 
     if (nodeId.empty()) {
         logging::err("No best node ID from placement - cannot align");

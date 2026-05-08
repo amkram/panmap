@@ -1,4 +1,5 @@
 #include "seeding.hpp"
+#include "mgsr.hpp"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -224,27 +225,18 @@ void seedsFromFastq(const int32_t& k,
                     std::vector<std::vector<std::string>>& readSeedSeqs,
                     const std::string& fastqPath1,
                     const std::string& fastqPath2) {
-    FILE* fp;
-    kseq_t* seq;
-    fp = fopen(fastqPath1.c_str(), "r");
-    if (!fp) {
-        std::cerr << "Error: File " << fastqPath1 << " not found" << std::endl;
-        exit(0);
-    }
-    seq = kseq_init(fileno(fp));
+    mgsr::FastqFile fq1(fastqPath1);
+    kseq_t* seq = kseq_init(fileno(fq1.fp));
     int line;
     while ((line = kseq_read(seq)) >= 0) {
         readSequences.push_back(seq->seq.s);
         readNames.push_back(seq->name.s);
         readQuals.push_back(seq->qual.s);
     }
+    kseq_destroy(seq);
     if (fastqPath2.size() > 0) {
-        fp = fopen(fastqPath2.c_str(), "r");
-        if (!fp) {
-            std::cerr << "Error: File " << fastqPath2 << " not found" << std::endl;
-            exit(0);
-        }
-        seq = kseq_init(fileno(fp));
+        mgsr::FastqFile fq2(fastqPath2);
+        seq = kseq_init(fileno(fq2.fp));
 
         line = 0;
         int forwardReads = readSequences.size();
@@ -253,8 +245,9 @@ void seedsFromFastq(const int32_t& k,
             readNames.push_back(seq->name.s);
             readQuals.push_back(seq->qual.s);
         }
+        kseq_destroy(seq);
 
-        if (readSequences.size() != forwardReads * 2) {
+        if (readSequences.size() != static_cast<size_t>(forwardReads) * 2) {
             std::cerr << "Error: File " << fastqPath2 << " does not contain the same number of reads as " << fastqPath1
                       << std::endl;
             exit(0);
@@ -300,27 +293,18 @@ void readFastqPaired(std::vector<std::string>& readSequences,
                      std::vector<std::string>& readNames,
                      const std::string& fastqPath1,
                      const std::string& fastqPath2) {
-    FILE* fp = fopen(fastqPath1.c_str(), "r");
-    if (!fp) {
-        std::cerr << "Error: File " << fastqPath1 << " not found" << std::endl;
-        exit(1);
-    }
-    kseq_t* seq = kseq_init(fileno(fp));
+    mgsr::FastqFile fq1(fastqPath1);
+    kseq_t* seq = kseq_init(fileno(fq1.fp));
     while (kseq_read(seq) >= 0) {
         readSequences.push_back(seq->seq.s);
         readNames.push_back(seq->name.s);
         readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
     }
     kseq_destroy(seq);
-    fclose(fp);
 
     if (!fastqPath2.empty()) {
-        fp = fopen(fastqPath2.c_str(), "r");
-        if (!fp) {
-            std::cerr << "Error: File " << fastqPath2 << " not found" << std::endl;
-            exit(1);
-        }
-        seq = kseq_init(fileno(fp));
+        mgsr::FastqFile fq2(fastqPath2);
+        seq = kseq_init(fileno(fq2.fp));
         int forwardReads = readSequences.size();
         while (kseq_read(seq) >= 0) {
             readSequences.push_back(reverseComplement(seq->seq.s));
@@ -328,9 +312,8 @@ void readFastqPaired(std::vector<std::string>& readSequences,
             readQuals.push_back(seq->qual.l > 0 ? seq->qual.s : std::string(seq->seq.l, 'I'));
         }
         kseq_destroy(seq);
-        fclose(fp);
 
-        if (static_cast<int>(readSequences.size()) != forwardReads * 2) {
+        if (readSequences.size() != static_cast<size_t>(forwardReads) * 2) {
             std::cerr << "Error: " << fastqPath2 << " does not contain the same number of reads as " << fastqPath1
                       << std::endl;
             exit(1);
