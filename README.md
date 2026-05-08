@@ -56,6 +56,8 @@ panmap $data_dir/sars_20000_twilight_dipper.panman --index-mgsr $data_dir/sars_2
 panmap  $data_dir/sars_20000_twilight_dipper.panman $data_dir/*.fastq.gz --meta --index $data_dir/sars_20000_twilight_dipper.idx --threads 8 --em-delta-threshold 0.00001
 ```
 
+This outputs a `.mgsr.abundance.out` file containing the haplotype abundance for each sample.
+
 Reads used above were simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples, refer to the
 full documentation linked below or README in examples/wastewater for more details.
 
@@ -71,8 +73,15 @@ panmap $data_dir/v_mtdna.panman --index-mgsr $data_dir/v_mtdna.idx -k 15 -s 8 -l
 # Run Panmap with --filter-and-assign option
 panmap $data_dir/v_mtdna.panman $data_dir/subsampled.fastq.gz --meta -i $data_dir/v_mtdna.idx --filter-and-assign \
   --discard 0.6 --dust 5 --taxonomic-metadata $data_dir/v_mtdna.meta.tsv -t 4 --breadth-ratio --output $data_dir/subsampled
-
 ```
+
+This outputs 3 files:
+
+- `.mgsr.assignedReads.fastq` file containing the reads that were assigned
+
+- `.mgsr.assignedReads.out` file containing the number of reads assigned to each node and the indices of the reads assigned, with respect to the the .mgsr.assignedReads.fastq file
+
+- `.mgsr.assignedReadsLCANode.out` file containg the number of reads assigned to the LCA node and the indices of the reads assigned. As reads may be assigned to multiple nodes, the LCA node of a read if the LCA of all the nodes it was assigned to
 
 ## Modes
 
