@@ -4,28 +4,39 @@ Pangenome-based sequence placement, alignment, and genotyping.
 
 [Documentation](https://amkram.github.io/panmap/) | [Preprint](https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1)
 
-## Install
+## System requirements
+
+Panmap was developed and benchmarked on a Linux compute server (dual Intel Xeon Gold 6338, 128 threads, Ubuntu 22.04 LTS)
+and also tested on macOS 14.3 (MacBook Air, Apple M3, 8 cores, 16 GB RAM, arm64).
+
+For typical use, Panmap runs on any Linux machine with a modern x86-64 CPU and at least 8 GB of RAM. macOS
+(Apple Silicon) is also supported through conda and Docker. No non-standard hardware is required.
+
+## Installation
+
+Panmap can be installed with conda, which takes about 2 minutes
 
 ```bash
 conda install -c conda-forge -c bioconda panmap
 panmap -h
 ```
 
-Or build with Docker:
+
+Or built with Docker, which takes about 6 minutes:
 
 ```bash
 docker build -t panmap .
 docker run --rm panmap panmap -h
 ```
 
-Or pull with Docker:
+Or pulled with Docker:
 
 ```bash
 docker pull quay.io/biocontainers/panmap:0.1.1--0
 docker run --rm panmap panmap -h
 ```
 
-## Quick start
+## Quick start (demo)
 
 ### For isolated samples 
 
@@ -47,13 +58,16 @@ By default, panmap stops after placement. Use `--stop` to run further stages.
 
 **Esimating haplotype abundance**
 
+This demo run should take about 2 minutes to complete.
+
 ```bash
-data_dir=examples/data
+data_dir=examples/data; output_dir=examples/output; mkdir -p $output_dir
+
 # Build an index for metagenomics mode
-panmap $data_dir/sars_20000_twilight_dipper.panman --index-mgsr $data_dir/sars_20000_twilight_dipper.idx 
+panmap $data_dir/sars_20000_twilight_dipper.panman --index-mgsr $output_dir/sars_20000_twilight_dipper.idx 
 
 # Run panmap with --meta option
-panmap  $data_dir/sars_20000_twilight_dipper.panman $data_dir/*.fastq.gz --meta --index $data_dir/sars_20000_twilight_dipper.idx --threads 8 --em-delta-threshold 0.00001
+panmap  $data_dir/sars_20000_twilight_dipper.panman $data_dir/*.fastq.gz --meta --index $output_dir/sars_20000_twilight_dipper.idx --threads 8 --em-delta-threshold 0.00001 --output $output_dir/example
 ```
 
 This outputs a `.mgsr.abundance.out` file containing the haplotype abundance for each sample.
@@ -64,7 +78,7 @@ full documentation linked below or README in examples/wastewater for more detail
 **Filter and assign reads**
 
 ```bash
-data_dir=examples/data
+data_dir=examples/data; output_dir=examples/output; mkdir -p $output_dir
 cp data/vertebrate_mtdna/v_mtdna.panman $data_dir/
 
 # Build an index for metagenomics mode with ancient dna parameters
