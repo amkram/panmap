@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
 
 #ifdef _WIN32
@@ -373,10 +374,17 @@ inline bool check_interrupted(bool print_message = true) {
     return false;
 }
 
+// Async-signal-safe handler. Exits immediately on the first Ctrl-C/SIGTERM
+// rather than waiting for the inner work loop to poll a flag — long stages
+// (8M-node index, EM rounds) never poll, so the polite path looked stuck.
+// Output files are written all-at-once at stage end, so an interrupt
+// mid-stage simply leaves no partial artifact.
 inline void handler(int signum) {
     (void)signum;
+    static const char msg[] = "\ninterrupted\n";
+    (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
     interrupted() = true;
-    std::cerr << "\n";
+    std::_Exit(130);
 }
 
 inline void install_handlers() {
