@@ -53,7 +53,7 @@ By default, panmap runs the full pipeline. Use `--stop <stage>` to run fewer sta
 panmap examples/data/sars_20000_twilight_dipper.panman examples/data/isolate_R1.fastq.gz examples/data/isolate_R2.fastq.gz
 ```
 
-This places, genotypes, and assembles a small set of SARS-CoV-2 reads against a 20,000 genome PanMAN (should complete in ~0.8s).
+This places, genotypes, and assembles a small set of SARS-CoV-2 reads against a 20,000 genome PanMAN (should complete in ~0.6s).
 
 **Outputs**:
 - Placement:  `isolate_R1.placement.tsv`
