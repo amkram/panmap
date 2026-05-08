@@ -10,6 +10,7 @@ extern "C" {
 #include "pileup.h"
 #include <bcftools/bcftools.h>
 #include <htslib/bgzf.h>
+#include <htslib/sam.h>
 #include <htslib/tbx.h>
 }
 
@@ -409,6 +410,9 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
             }
             hts_close(bam_file);
             logging::info("Wrote bam files to {}", bamFileName);
+            if (sam_index_build(bamFileName.c_str(), 0) != 0) {
+                logging::warn("Failed to index BAM file: {}", bamFileName);
+            }
         } else {
             logging::err("Failed to open output BAM file: {}", bamFileName);
         }

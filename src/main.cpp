@@ -1283,7 +1283,7 @@ int runBatchPlacement(const Config& cfg) {
     logging::msg("Loading index...");
     IndexReader reader(cfg.index, cfg.threads);
     auto idx = reader.getRoot<LiteIndex>();
-    logging::msg("Index parameters: k={}, s={}, l={}", idx.getK(), idx.getS(), idx.getL());
+    logging::debug("Index parameters: k={}, s={}, l={}", idx.getK(), idx.getS(), idx.getL());
 
     panmapUtils::LiteTree tree;
     tree.initialize(idx.getLiteTree());
@@ -1482,7 +1482,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     IndexReader reader(cfg.index, cfg.threads);
 
     auto idx = reader.getRoot<LiteIndex>();
-    logging::msg("Index parameters: k={}, s={}, l={}", idx.getK(), idx.getS(), idx.getL());
+    logging::debug("Index parameters: k={}, s={}, l={}", idx.getK(), idx.getS(), idx.getL());
 
     panmapUtils::LiteTree tree;
     tree.initialize(idx.getLiteTree());
