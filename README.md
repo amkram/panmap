@@ -86,7 +86,7 @@ panmap $data_dir/v_mtdna.panman --index-mgsr $data_dir/v_mtdna.idx -k 15 -s 8 -l
 
 # Run Panmap with --filter-and-assign option
 panmap $data_dir/v_mtdna.panman $data_dir/subsampled.fastq.gz --meta -i $data_dir/v_mtdna.idx --filter-and-assign \
-  --discard 0.6 --dust 5 --taxonomic-metadata $data_dir/v_mtdna.meta.tsv -t 4 --breadth-ratio --output $data_dir/subsampled
+  --discard 0.6 --dust 5 --taxonomic-metadata $data_dir/v_mtdna.meta.tsv -t 4 --breadth-ratio --output $output_dir/subsampled
 ```
 
 This outputs 3 files:
