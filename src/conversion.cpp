@@ -2,30 +2,73 @@
 #include "genotyping.hpp"
 #include "logging.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <unistd.h>
 #include <sys/wait.h>
 extern "C" {
 #include "mm_align.h"
 #include "pileup.h"
 #include <bcftools/bcftools.h>
+#include <htslib/bgzf.h>
+#include <htslib/sam.h>
+#include <htslib/tbx.h>
 }
 
 // Run a bcftools function in a forked child process to avoid global state conflicts.
 // bcftools main_mpileup/main_vcfcall use global optind and other process-wide state,
 // so forking gives each call its own address space for safe parallelism.
-static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv) {
+static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv, bool silenceStderr = true) {
+    bool verbose = output::config().verbose;
+    bool fullSilence = silenceStderr && !verbose;
+    bool filterNote = !silenceStderr && !verbose;  // keep meaningful chatter, drop "Note: ..." lines
+
+    int pipeFds[2] = {-1, -1};
+    if (filterNote && pipe(pipeFds) != 0) {
+        filterNote = false;  // fall back to passthrough on failure
+    }
+
     pid_t pid = fork();
     if (pid == 0) {
-        // Child: run bcftools function and exit
+        if (fullSilence) {
+            FILE* devnull = std::fopen("/dev/null", "w");
+            if (devnull) dup2(fileno(devnull), STDERR_FILENO);
+        } else if (filterNote) {
+            close(pipeFds[0]);
+            dup2(pipeFds[1], STDERR_FILENO);
+            close(pipeFds[1]);
+        }
         optind = 1;
         int ret = func(argc, argv);
         _exit(ret);
     } else if (pid > 0) {
+        if (filterNote) {
+            close(pipeFds[1]);
+            FILE* in = fdopen(pipeFds[0], "r");
+            if (in) {
+                char* line = nullptr;
+                size_t cap = 0;
+                while (getline(&line, &cap, in) != -1) {
+                    if (std::strncmp(line, "Note:", 5) == 0) continue;
+                    fputs(line, stderr);
+                }
+                free(line);
+                fclose(in);
+            } else {
+                close(pipeFds[0]);
+            }
+        }
         int status;
         waitpid(pid, &status, 0);
         if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return 0;
         return 1;
     } else {
         logging::err("fork() failed for bcftools call");
+        if (filterNote) {
+            close(pipeFds[0]);
+            close(pipeFds[1]);
+        }
         return 1;
     }
 }
@@ -118,9 +161,49 @@ void createVcfWithMutationMatrices(std::string& prefix,
 int createConsensus(const std::string& vcfFileName,
                     const std::string& refFileName,
                     const std::string& consensusFileName) {
+    // bcftools consensus requires a bgzipped + tabix-indexed VCF.
+    // Transparently produce a .vcf.gz next to the plain .vcf for the consensus call.
+    std::string bgzVcf = vcfFileName + ".gz";
+
+    {
+        std::ifstream in(vcfFileName, std::ios::binary);
+        if (!in) {
+            logging::err("Cannot open VCF for bgzip: {}", vcfFileName);
+            return 1;
+        }
+        BGZF* out = bgzf_open(bgzVcf.c_str(), "w");
+        if (!out) {
+            logging::err("Cannot create bgzipped VCF: {}", bgzVcf);
+            return 1;
+        }
+        constexpr size_t bufSize = 64 * 1024;
+        std::vector<char> buf(bufSize);
+        while (in) {
+            in.read(buf.data(), bufSize);
+            std::streamsize n = in.gcount();
+            if (n > 0 && bgzf_write(out, buf.data(), static_cast<size_t>(n)) < 0) {
+                logging::err("bgzf_write failed for {}", bgzVcf);
+                bgzf_close(out);
+                std::remove(bgzVcf.c_str());
+                return 1;
+            }
+        }
+        if (bgzf_close(out) < 0) {
+            logging::err("bgzf_close failed for {}", bgzVcf);
+            std::remove(bgzVcf.c_str());
+            return 1;
+        }
+    }
+
+    if (tbx_index_build(bgzVcf.c_str(), 0, &tbx_conf_vcf) != 0) {
+        logging::err("Failed to build tabix index for {}", bgzVcf);
+        std::remove(bgzVcf.c_str());
+        return 1;
+    }
+
     const char* args[] = {
-        "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), vcfFileName.c_str()};
-    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args));
+        "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), bgzVcf.c_str()};
+    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args), /*silenceStderr=*/true);
 }
 
 static uint16_t compute_sam_flags(
@@ -365,6 +448,9 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
             }
             hts_close(bam_file);
             logging::info("Wrote bam files to {}", bamFileName);
+            if (sam_index_build(bamFileName.c_str(), 0) != 0) {
+                logging::warn("Failed to index BAM file: {}", bamFileName);
+            }
         } else {
             logging::err("Failed to open output BAM file: {}", bamFileName);
         }
