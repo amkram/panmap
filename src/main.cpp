@@ -722,9 +722,21 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
         for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
             assignedReadsOut << "," << identicalNodeId;
         }
+        
+        std::string taxonNames;
+        if (node->taxonIndices.empty()) {
+          taxonNames = ".";
+        } else {
+          bool first = true;
+          for (size_t taxonIndex : node->taxonIndices) {
+            if (!first) taxonNames += ",";
+            taxonNames += T.taxons[taxonIndex];
+            first = false;
+          }
+        }   
 
         std::sort(readIndices.begin(), readIndices.end());
-        assignedReadsOut << "\t" << readIndices.size() << "\t";
+        assignedReadsOut << "\t" << taxonNames << "\t" << readIndices.size() << "\t";
 
         for (size_t i = 0; i < readIndices.size(); ++i) {
             assignedReadsOut << readIndices[i];
@@ -748,9 +760,21 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
         for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
             assignedReadsLCANodeOut << "," << identicalNodeId;
         }
+        
+        std::string taxonNames;
+        if (node->taxonIndices.empty()) {
+          taxonNames = ".";
+        } else {
+          bool first = true;
+          for (size_t taxonIndex : node->taxonIndices) {
+            if (!first) taxonNames += ",";
+            taxonNames += T.taxons[taxonIndex];
+            first = false;
+          }
+        }
 
         std::sort(readIndices.begin(), readIndices.end());
-        assignedReadsLCANodeOut << "\t" << readIndices.size() << "\t";
+        assignedReadsLCANodeOut << "\t" << taxonNames << "\t" << readIndices.size() << "\t";
 
         for (size_t i = 0; i < readIndices.size(); ++i) {
             assignedReadsLCANodeOut << readIndices[i];
