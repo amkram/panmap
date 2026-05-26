@@ -1,6 +1,7 @@
 #pragma once
 
 #include "panmanUtils.hpp"
+#include "logging.hpp"
 #include "capnp/message.h"
 #include "capnp/serialize-packed.h"
 #include "index_lite.capnp.h"
@@ -166,6 +167,7 @@ class IndexBuilder {
     std::atomic<int> peakActiveClones_{0};          // Peak concurrent clones
     mutable std::chrono::steady_clock::time_point lastProgressLog_{};
     std::chrono::steady_clock::time_point buildStartTime_{};  // For nodes/sec calculation
+    std::unique_ptr<output::ProgressBar> buildProgressBar_;
 
     // Pre-computed subtree sizes for DFS index assignment
     std::unordered_map<std::string, uint64_t> subtreeSizes_;
