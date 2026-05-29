@@ -770,7 +770,28 @@ configure_file(src/test/data/test.json test.json COPYONLY)
 configure_file(src/test/data/test.pmat test.pmat COPYONLY)
 configure_file(src/test/data/test.fastq test.fastq COPYONLY)
 
-install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# ===== Multi-PanMAT support: combine_panmans + merge_indexes =====
+# combine_panmans: merge N single-tree .panman into one multi-PanMAT TreeGroup.
+# merge_indexes:   merge N single-tree MGSR lite .idx into one combined LiteIndex,
+#                  so `panmap --meta -i merged.idx` seeds reads once and places across all clades.
+find_library(LZMA_LIBRARY NAMES lzma)
+add_executable(combine_panmans src/combine_panmans.cpp)
+add_dependencies(combine_panmans panman_lib)
+target_include_directories(combine_panmans PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}
+    ${panman_SOURCE_DIR}/src ${panman_BINARY_DIR})
+target_link_libraries(combine_panmans PRIVATE
+    panman panman_lib ${CAPNP_LIBRARY} ${KJ_LIBRARY} jsoncpp_lib
+    ${PROTOBUF_LIBRARIES} ${Boost_LIBRARIES} ZLIB::ZLIB ${TBB_LIBRARY} ${LZMA_LIBRARY} m pthread)
+set_target_properties(combine_panmans PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(merge_indexes src/merge_indexes.cpp ${LITE_CAPNP_GEN_CPP})
+add_dependencies(merge_indexes index_capnp_generator)
+target_include_directories(merge_indexes PRIVATE ${LITE_CAPNP_GEN_DIR} ${CAPNP_SCHEMA_DIR})
+target_link_libraries(merge_indexes PRIVATE ${CAPNP_LIBRARY} ${KJ_LIBRARY} pthread)
+set_target_properties(merge_indexes PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+install(TARGETS panmap combine_panmans merge_indexes RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Create a compile_commands.json symlink for clangd
 add_custom_command(

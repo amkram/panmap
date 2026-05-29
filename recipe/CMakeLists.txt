@@ -259,7 +259,7 @@ target_compile_options(bcftools PRIVATE -fPIC -w)
 set(PANMAP_SOURCES_MAIN
     src/main.cpp src/conversion.cpp src/panmap_utils.cpp
     src/genotyping.cpp src/index_single_mode.cpp src/placement.cpp
-    src/seeding.cpp src/index_utils.cpp src/mgsr.cpp
+    src/seeding.cpp src/mgsr.cpp
     src/mm_align.c src/pileup.c src/zstd_compression.cpp
 )
 
@@ -298,6 +298,39 @@ target_link_libraries(panmap PRIVATE
 )
 
 target_compile_options(panmap PUBLIC -O3)
+
+# ===== combine_panmans: merge N single-tree .panman into one multi-PanMAT PanMAN =====
+find_library(LZMA_LIBRARY NAMES lzma)
+add_executable(combine_panmans src/combine_panmans.cpp)
+add_dependencies(combine_panmans panman_lib generate_panman_capnp_extern)
+target_link_libraries(combine_panmans PRIVATE
+    panman
+    panman_lib
+    ${CAPNP_LIBRARY}
+    ${KJ_LIBRARY}
+    jsoncpp_lib
+    ${PROTOBUF_LIB_PATH}
+    Boost::iostreams
+    Boost::filesystem
+    ZLIB::ZLIB
+    ${ZSTD_LIBRARY}
+    TBB::tbb
+    ${LZMA_LIBRARY}
+    m
+    pthread
+)
+set_target_properties(combine_panmans PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== merge_indexes: merge N single-tree MGSR lite .idx into one combined LiteIndex =====
+add_executable(merge_indexes src/merge_indexes.cpp ${LITE_CAPNP_GEN_CPP})
+add_dependencies(merge_indexes index_capnp_generator)
+target_include_directories(merge_indexes PRIVATE ${LITE_CAPNP_GEN_DIR} ${CAPNP_SCHEMA_DIR})
+target_link_libraries(merge_indexes PRIVATE
+    ${CAPNP_LIBRARY}
+    ${KJ_LIBRARY}
+    pthread
+)
+set_target_properties(merge_indexes PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # ===== Install =====
 set_target_properties(panmap PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
