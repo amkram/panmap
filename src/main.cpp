@@ -374,6 +374,21 @@ bool buildMgsrIndex(const Config& cfg) {
         return false;
     }
 
+    // Refuse to silently index only the first tree of a multi-PanMAT PanMAN. Building a single
+    // MGSR index across multiple trees is done by indexing each clade's PanMAN separately (single
+    // -tree indexing is robust) and merging the indexes with `merge_indexes` — which produces one
+    // LiteIndex spanning ALL clades (a forest under a synthetic super-root). Re-indexing trees
+    // reloaded from a combined multi-tree PanMAN is not reliable (panman multi-tree re-processing
+    // is incomplete; see MULTIPANMAT.md), so we direct the user to the merge path rather than
+    // produce a first-tree-only (silently wrong) index.
+    if (tg->trees.size() > 1) {
+        logging::err("Input PanMAN contains " + std::to_string(tg->trees.size()) +
+                     " trees (multi-PanMAT). --index-mgsr indexes a single tree only and would "
+                     "otherwise use just the first. To index all clades: build a single-tree index "
+                     "per clade PanMAN, then combine them with `merge_indexes out.idx in1.idx ...`. "
+                     "See MULTIPANMAT.md.");
+        return false;
+    }
     panmanUtils::Tree* T = &tg->trees[0];
     mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, cfg.indexFull);
     mgsrIndexBuilder.buildIndex();

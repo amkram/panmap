@@ -38,6 +38,18 @@ panmap --meta -i all.idx all.panman reads.fq -o out      # -> out.mgsr.abundance
   runs ≈ **55 min**. **~165× speedup**; read-seeding (~14 s) is paid once. Merged index = 16.9 MB,
   9,275 nodes, 963k seeds; merge step itself is ~0.1 s.
 
-**Caveats.** Covers the buildable clades indexed; to maximize recall include small/singleton clades
-too (the merger is size-agnostic). Standard (non-`--meta`) placement remains single-tree.
-`clade_045` fails panmap v0.1 indexing (`getCoordFromScalar out of range`) — unrelated bug.
+**`panmap --meta -i merged.idx` uses ALL trees** (the merged index is a forest under the
+super-root), verified by all 174 clades receiving placements on a real run — not just the first.
+
+**Why not `--index-mgsr` directly on a combined multi-tree PanMAN?** `--index-mgsr` indexes a
+single tree. Previously it silently used `trees[0]` on a multi-tree PanMAN (a first-clade-only,
+silently-wrong index); it now **errors and directs to `merge_indexes`**. Building one index across
+trees by re-indexing a combined PanMAN is unreliable anyway — panman multi-tree *re-processing* is
+incomplete (e.g. `panmanUtils -f` on a multi-tree file does not emit all tips), and re-indexing a
+tree reloaded from a combined PanMAN can crash. Indexing each clade's own single-tree PanMAN
+(robust) and merging the indexes avoids this entirely.
+
+**Caveats.** Covers the buildable clades indexed; small/singleton clades are better served by a
+flat all-genomes detection index (the panmap MGSR indexer rejects some tiny/degenerate panmans:
+`firstScalarCoord != 0`, same class as `clade_045`'s `getCoordFromScalar`). Standard (non-`--meta`)
+placement remains single-tree.

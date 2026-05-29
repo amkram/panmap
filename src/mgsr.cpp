@@ -4532,7 +4532,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   }
 
   nodeToDfsIndex[node->identifier] = dfsIndex;
-  std::cout << "\rdfsIndex: " << dfsIndex << std::flush;
   for (panmanUtils::Node *child : node->children) {
     dfsIndex++;
     buildIndexHelper(child, emptyNodes, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
