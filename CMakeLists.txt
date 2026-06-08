@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(panmap VERSION 0.1.1)
+project(panmap VERSION 0.1.2)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in"
