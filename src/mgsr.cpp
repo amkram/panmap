@@ -16,559 +16,6 @@
 #include <stack>
 #include <bitset>
 
-static void compareBruteForceBuild(
-  panmanUtils::Tree *T,
-  panmanUtils::Node *node,
-  const panmapUtils::BlockSequences& blockSequences,
-  const panmapUtils::GlobalCoords& globalCoords,
-  const std::map<uint64_t, uint64_t>& gapMap,
-  const std::map<uint64_t, uint64_t>& degapCoordIndex,
-  const std::map<uint64_t, uint64_t>& regapCoordIndex,
-  const std::vector<std::optional<seeding::rsyncmer_t>>& refOnSyncmers,
-  const std::set<uint64_t>& refOnSyncmersMap,
-  const std::unordered_map<uint32_t, std::unordered_set<uint64_t>>& blockOnSyncmers,
-  const std::vector<std::optional<uint64_t>>& refOnKminmers,
-  const std::vector<seeding::uniqueKminmer_t>& uniqueKminmers,
-  const std::unordered_map<seeding::uniqueKminmer_t, uint64_t>& kminmerToUniqueIndex,
-  int k, int s, int t, int l, bool open
-) {
-  bool printCorrect = false;
-  std::string nodeToDebug = "KJ627733.1";
-  std::cout << "Checking " << node->identifier << " states with brute force... " << std::flush;
-
-  // check sequence object
-  std::vector<std::vector<std::pair<char, std::vector<char>>>> sequenceBruteForce;
-  std::vector<char> blockExistsBruteForce;
-  std::vector<char> blockStrandBruteForce;
-  std::unordered_map<int, int> blockLengthsBruteForce;
-  panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
-
-  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, true);
-  std::vector<std::pair<uint64_t, uint64_t>> gapMapBruteForce;
-  // checking gap map with brute force
-  uint64_t curScalar = 0;
-  while (curScalar < gappedSequenceBruteForce.size()){
-    const auto& curCoord = globalCoords.getCoordFromScalar(curScalar);
-    if (curCoord == globalCoords.blockEdgeCoords[curCoord.primaryBlockId].start && !blockSequences.blockExists[curCoord.primaryBlockId]) {
-      const auto curBlockLength = blockLengthsBruteForce[curCoord.primaryBlockId];
-      if (!gapMapBruteForce.empty() && gapMapBruteForce.back().second + 1 == curScalar) {
-        gapMapBruteForce.back().second += curBlockLength;
-      } else {
-        gapMapBruteForce.emplace_back(curScalar, curScalar + curBlockLength - 1);
-      }
-      curScalar += curBlockLength;
-      continue;
-    }
-    char nuc = gappedSequenceBruteForce[curScalar];
-    if (nuc == '-') {
-      if (!gapMapBruteForce.empty() && gapMapBruteForce.back().second + 1 == curScalar) {
-        ++gapMapBruteForce.back().second;
-      } else {
-        gapMapBruteForce.emplace_back(curScalar, curScalar);
-      }
-    }
-    curScalar++;
-  }
-
-  
-  if (gapMapBruteForce.size() != gapMap.size()) {
-    std::cout << "Gap map size mismatch: dynamic " << gapMap.size() << " != brute force " << gapMapBruteForce.size() << std::endl;
-    std::cout << "Dynamic gap map:";
-    for (const auto& [a, b] : gapMap) {
-      std::cout << "(" << a << "," << b << ") ";
-    }
-    std::cout << std::endl;
-    std::cout << "Brute force gap map:";
-    for (const auto& [a, b] : gapMapBruteForce) {
-      std::cout << "(" << a << "," << b << ") ";
-    }
-    std::cout << std::endl;
-    std::exit(1);
-  }
-
-  size_t gapMapIndex = 0;
-  for (const auto& [a, b] : gapMap) {
-    if (a == gapMapBruteForce[gapMapIndex].first && b == gapMapBruteForce[gapMapIndex].second) {
-      ++gapMapIndex;
-    } else {
-      std::cout << "Gap map mismatch at gap map index " << gapMapIndex << " dynamic " << a << " " << b << " != brute force " << gapMapBruteForce[gapMapIndex].first << " " << gapMapBruteForce[gapMapIndex].second << std::endl;
-      std::cout << "Dynamic gap map:";
-      for (const auto& [a, b] : gapMap) {
-        std::cout << "(" << a << "," << b << ") ";
-      }
-      std::cout << std::endl;
-      std::cout << "Brute force gap map:";
-      for (const auto& [a, b] : gapMapBruteForce) {
-        std::cout << "(" << a << "," << b << ") ";
-      }
-      std::cout << std::endl;
-      std::exit(1);
-    }
-  }
-
-  std::cout << "GapMap passed... " << std::flush;
-
-
-  // check block sequence objects and coordinates
-  const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequenceDynamic = blockSequences.sequence;
-  const std::vector<char>& blockExistsDynamic = blockSequences.blockExists;
-  const std::vector<char>& blockStrandDynamic = blockSequences.blockStrand;
-  if (sequenceDynamic.size() != sequenceBruteForce.size()) {
-    std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic.size() << " != brute force " << sequenceBruteForce.size() << std::endl;
-    std::exit(1);
-  } else {
-    if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical sequence size... passed: " << sequenceDynamic.size() << " == " << sequenceBruteForce.size() << std::endl;
-  }
-
-  uint64_t localScalarCoordBruteForce = 0;
-  uint64_t globalScalarCoord = 0;
-  for (int blockId = 0; blockId < blockSequences.numBlocks(); blockId++) {
-    if (!blockExistsDynamic[blockId]) {
-      globalScalarCoord += blockLengthsBruteForce[blockId];
-      continue;
-    }
-
-    if (globalScalarCoord != globalCoords.getBlockStartScalar(blockId)) {
-      std::cerr << "Global scalar coord block " << blockId << " start mismatch: dynamic " << globalScalarCoord << " != brute force " << globalCoords.getBlockStartScalar(blockId) << std::endl;
-      std::exit(1);
-    } else {
-      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " start scalar coord... passed: " << globalScalarCoord << " == " << globalCoords.getBlockStartScalar(blockId) << std::endl;
-    }
-
-    if (blockSequences.blockExists[blockId] != blockExistsBruteForce[blockId]) {
-      std::cerr << "Block " << blockId << " exists state mismatch: dynamic " << blockSequences.blockExists[blockId] << " != brute force " << blockExistsBruteForce[blockId] << std::endl;
-      std::exit(1);
-    } else {
-      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " exists state... passed: " << blockSequences.blockExists[blockId] << " == " << blockExistsBruteForce[blockId] << std::endl;
-    }
-
-    if (blockSequences.blockStrand[blockId] != blockStrandBruteForce[blockId]) {
-      std::cerr << "Block " << blockId << " strand state mismatch: dynamic " << blockSequences.blockStrand[blockId] << " != brute force " << blockStrandBruteForce[blockId] << std::endl;
-      std::exit(1);
-    } else {
-      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " strand state... passed: " << blockSequences.blockStrand[blockId] << " == " << blockStrandBruteForce[blockId] << std::endl;
-    }
-
-    if (blockStrandDynamic[blockId]) {
-      for (int i = 0; i < sequenceDynamic[blockId].size(); i++) {      
-        if (sequenceDynamic[blockId][i].second.size() != sequenceBruteForce[blockId][i].second.size()) {
-          std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic[blockId][i].second.size() << " != brute force " << sequenceBruteForce[blockId][i].second.size() << std::endl;
-          std::exit(1);
-        } else {
-          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc size at (" << blockId << ", " << i << ")... passed: " << sequenceDynamic[blockId][i].second.size() << " == " << sequenceBruteForce[blockId][i].second.size() << std::endl;
-        }
-  
-        for (int j = 0; j < sequenceDynamic[blockId][i].second.size(); j++) {
-          if (sequenceDynamic[blockId][i].second[j] != sequenceBruteForce[blockId][i].second[j]) {
-            std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", " << j << "): dynamic " << sequenceDynamic[blockId][i].second[j] << " != brute force " << sequenceBruteForce[blockId][i].second[j] << std::endl;
-            std::exit(1);
-          } else {
-            if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc at (" << blockId << ", " << i << ", " << j << ")... passed: " << sequenceDynamic[blockId][i].second[j] << " == " << sequenceBruteForce[blockId][i].second[j] << std::endl;
-          }
-  
-          if (sequenceDynamic[blockId][i].second[j] != '-') {
-            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
-              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", " << j << ") and global scalar coord  " << globalScalarCoord << std::endl;
-              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].second[j] << " ?= " << sequenceBruteForce[blockId][i].second[j] << std::endl;
-              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
-              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
-              std::exit(1);
-            } else {
-              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", " << j << ")... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
-            }
-            ++localScalarCoordBruteForce;
-          }
-          ++globalScalarCoord;
-        }
-  
-        if (sequenceDynamic[blockId][i].first != sequenceBruteForce[blockId][i].first) {
-          std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", -1): dynamic " << sequenceDynamic[blockId][i].first << " != brute force " << sequenceBruteForce[blockId][i].first << std::endl;
-          std::exit(1);
-        } else {
-          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical main nuc at (" << blockId << ", " << i << ", -1)... passed: " << sequenceDynamic[blockId][i].first << " == " << sequenceBruteForce[blockId][i].first << std::endl;
-        }
-  
-        if (sequenceDynamic[blockId][i].first != 'x') {
-          if (sequenceDynamic[blockId][i].first != '-') {
-            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
-              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", -1) and global scalar coord " << globalScalarCoord << std::endl;
-              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].first << " ?= " << sequenceBruteForce[blockId][i].first << std::endl;
-              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
-              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
-              std::exit(1);
-            } else {
-              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", -1)... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
-            }
-            ++localScalarCoordBruteForce;
-          }
-          ++globalScalarCoord;
-        }
-      }
-    } else {
-      for (int i = sequenceDynamic[blockId].size() - 1; i >= 0; i--) {
-        if (sequenceDynamic[blockId][i].first != sequenceBruteForce[blockId][i].first) {
-          std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", -1): dynamic " << sequenceDynamic[blockId][i].first << " != brute force " << sequenceBruteForce[blockId][i].first << std::endl;
-          std::exit(1);
-        } else {
-          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical main nuc at (" << blockId << ", " << i << ", -1)... passed: " << sequenceDynamic[blockId][i].first << " == " << sequenceBruteForce[blockId][i].first << std::endl;
-        }
-  
-        if (sequenceDynamic[blockId][i].first != 'x') {
-          if (sequenceDynamic[blockId][i].first != '-') {
-            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
-              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", -1) and global scalar coord " << globalScalarCoord << std::endl;
-              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].first << " ?= " << sequenceBruteForce[blockId][i].first << std::endl;
-              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
-              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
-              std::exit(1);
-            } else {
-              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", -1)... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
-            }
-            ++localScalarCoordBruteForce;
-          }
-          ++globalScalarCoord;
-        }
-
-        if (sequenceDynamic[blockId][i].second.size() != sequenceBruteForce[blockId][i].second.size()) {
-          std::cerr << "Sequence size mismatch: dynamic " << sequenceDynamic[blockId][i].second.size() << " != brute force " << sequenceBruteForce[blockId][i].second.size() << std::endl;
-          std::exit(1);
-        } else {
-          if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc size at (" << blockId << ", " << i << ")... passed: " << sequenceDynamic[blockId][i].second.size() << " == " << sequenceBruteForce[blockId][i].second.size() << std::endl;
-        }
-  
-        for (int j = sequenceDynamic[blockId][i].second.size() - 1; j >= 0; j--) {
-          if (sequenceDynamic[blockId][i].second[j] != sequenceBruteForce[blockId][i].second[j]) {
-            std::cerr << "Nuc mismatch at coord (" << blockId << ", " << i << ", " << j << "): dynamic " << sequenceDynamic[blockId][i].second[j] << " != brute force " << sequenceBruteForce[blockId][i].second[j] << std::endl;
-            std::exit(1);
-          } else {
-            if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical gap nuc at (" << blockId << ", " << i << ", " << j << ")... passed: " << sequenceDynamic[blockId][i].second[j] << " == " << sequenceBruteForce[blockId][i].second[j] << std::endl;
-          }
-  
-          if (sequenceDynamic[blockId][i].second[j] != '-') {
-            if (mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) != localScalarCoordBruteForce) {
-              std::cerr << "Degapped scalar coord mismatch at global coord (" << blockId << ", " << i << ", " << j << ") and global scalar coord " << globalScalarCoord << std::endl;
-              std::cerr << "Nuc: " << sequenceDynamic[blockId][i].second[j] << " ?= " << sequenceBruteForce[blockId][i].second[j] << std::endl;
-              std::cerr << "Degapped scalar coord: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " != " << localScalarCoordBruteForce << std::endl;
-              std::cerr << "Local block coord: " << globalScalarCoord - globalCoords.getBlockStartScalar(blockId) << std::endl;
-              std::exit(1);
-            } else {
-              if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical scalar coord at (" << blockId << ", " << i << ", " << j << ")... passed: " << mgsr::degapGlobal(globalScalarCoord, degapCoordIndex) << " == " << localScalarCoordBruteForce << std::endl;
-            }
-            ++localScalarCoordBruteForce;
-          }
-          ++globalScalarCoord;
-        }
-
-      }
-    }
-
-    if (globalScalarCoord - 1 != globalCoords.getBlockEndScalar(blockId)) {
-      std::cerr << "Global scalar coord block " << blockId << " end mismatch: dynamic " << globalScalarCoord - 1 << " != brute force " << globalCoords.getBlockEndScalar(blockId) << std::endl;
-      std::exit(1);
-    } else {
-      if (printCorrect && node->identifier == nodeToDebug) std::cout << "\tIdentical block " << blockId << " end scalar coord... passed: " << globalScalarCoord - 1 << " == " << globalCoords.getBlockEndScalar(blockId) << std::endl;
-    }
-  }
-
-  std::cout << "sequence and coordinate objects passed... " << std::flush;
-
-  // check syncmers
-  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
-  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
-  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForceRevcomp = seeding::rollingSyncmers(seeding::revcomp(ungappedSequence), k, s, open, t, false);
-  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersDynamic;
-  for (size_t i = 0; i < refOnSyncmers.size(); i++) {
-    if (refOnSyncmers[i].has_value()) {
-      const auto& [hash, endPos, isReverse] = refOnSyncmers[i].value();
-      syncmersDynamic.emplace_back(std::make_tuple(hash, isReverse, true, mgsr::degapGlobal(i, degapCoordIndex)));
-    }
-  }
-
-  if (syncmersBruteForce.size() != syncmersBruteForceRevcomp.size()) {
-    std::cout << "Syncmer brute force and revcomp count mismatch: forward " << syncmersBruteForce.size() << " != reverse " << syncmersBruteForceRevcomp.size() << std::endl;
-    std::exit(1);
-  } else {
-    for (size_t i = 0; i < syncmersBruteForce.size(); i++) {
-      const auto& [hashFwd, isReverseFwd, isSeedFwd, startPosFwd] = syncmersBruteForce[i];
-      const auto& [hashRev, isReverseRev, isSeedRev, startPosRev] = syncmersBruteForceRevcomp[syncmersBruteForceRevcomp.size() - i - 1];
-      if (hashFwd != hashRev || isReverseFwd == isReverseRev || startPosFwd != ungappedSequence.size() - k - startPosRev) {
-        std::cout << "Syncmer brute force and revcomp mismatch at " << i << "th syncmer: forward (" << hashFwd << ", " << startPosFwd << ", " << isReverseFwd << ") != reverse (" << hashRev << ", " << mgsr::degapGlobal(ungappedSequence.size() - k - startPosRev, degapCoordIndex) << ", " << isReverseRev << ")" << std::endl;
-        std::exit(1);
-      }
-    }
-    std::cout << node->identifier << " seq len: " << ungappedSequence.size() << "... num syncmers: " << syncmersBruteForce.size() << std::flush;
-  }
-
-
-  // check all syncmers
-  if (syncmersDynamic.size() != syncmersBruteForce.size()) {
-    std::cout << "Syncmer count mismatch: dynamic " << syncmersDynamic.size() << " != brute force " << syncmersBruteForce.size() << std::endl;
-    std::cout << "Dynamic syncmers: ";
-    for (const auto& syncmer : syncmersDynamic) {
-      std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-    }
-    std::cout << std::endl;
-    std::cout << "Brute force syncmers: ";
-    for (const auto& syncmer : syncmersBruteForce) {
-      std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-    }
-    std::cout << std::endl;
-    std::exit(1);
-  } else if (printCorrect && node->identifier == nodeToDebug) {
-    std::cout << "Identical syncmer count... passed: " << syncmersDynamic.size() << " == " << syncmersBruteForce.size() << std::endl;
-  }
-  
-  auto curSyncmerOnMapIt = refOnSyncmersMap.begin();
-  for (size_t i = 0; i < syncmersDynamic.size(); i++) {
-    const auto& [hash, isReverse, isSeed, startPos] = syncmersDynamic[i];
-    const auto& [hashBruteForce, isReverseBruteForce, isSeedBruteForce, startPosBruteForce] = syncmersBruteForce[i];
-    if (hash != hashBruteForce || isReverse != isReverseBruteForce || startPos != startPosBruteForce) {
-      std::cout << "Syncmer mismatch at " << i << "th syncmer: dynamic (" << hash << ", " << startPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
-      std::cout << "Dynamic syncmers: ";
-      for (const auto& syncmer : syncmersDynamic) {
-        std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-      }
-      std::cout << std::endl;
-      std::cout << "Brute force syncmers: ";
-      for (const auto& syncmer : syncmersBruteForce) {
-        std::cout << "(" << std::get<0>(syncmer) << ", " << std::get<3>(syncmer) << ", " << std::get<1>(syncmer) << "," << mgsr::regapGlobal(std::get<3>(syncmer), regapCoordIndex) << ") ";
-      }
-      std::cout << std::endl;
-      std::exit(1);
-    }
-    if (mgsr::regapGlobal(startPos, regapCoordIndex) != *curSyncmerOnMapIt) {
-      std::cout << "Syncmer on map mismatch at " << i << "th syncmer: dynamic/bruteforce " << startPos << " != map " << *curSyncmerOnMapIt << std::endl;
-      std::exit(1);
-    }
-    ++curSyncmerOnMapIt;
-  }
-  if (curSyncmerOnMapIt != refOnSyncmersMap.end()) {
-    std::cout << "SyncmerOnMap has more elements than syncmers: " << refOnSyncmersMap.size() << " != " << syncmersDynamic.size() << std::endl;
-    std::exit(1);
-  }
-  std::cout << "syncmers passed... " << std::flush;
-
-  // // check k-min-mers
-  // std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
-  // if (syncmersBruteForce.size() >= l) {
-  //   size_t forwardRolledHash = 0;
-  //   size_t reverseRolledHash = 0;
-  
-  //   // first kminmer
-  //   for (size_t i = 0; i < l; ++i) {
-  //     forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmersBruteForce[i]);
-  //     reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmersBruteForce[l-i-1]);
-  //   }
-  
-  //   if (forwardRolledHash != reverseRolledHash) {
-  //     size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-  //     kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[0]), std::get<3>(syncmersBruteForce[l-1])+k-1, reverseRolledHash < forwardRolledHash);
-  //   }
-  
-  //   // rest of kminmers
-  //   for (uint64_t i = 1; i < syncmersBruteForce.size()-l+1; ++i) {
-  //     if (!std::get<2>(syncmersBruteForce[i-1]) || !std::get<2>(syncmersBruteForce[i+l-1])) {
-  //       std::cout << "invalid syncmer" << std::endl;
-  //       exit(0);
-  //     }
-  //     const size_t& prevSyncmerHash = std::get<0>(syncmersBruteForce[i-1]);
-  //     const size_t& nextSyncmerHash = std::get<0>(syncmersBruteForce[i+l-1]);
-  //     forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
-  //     reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
-  
-  //     if (forwardRolledHash != reverseRolledHash) {
-  //       size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-  //       kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[i]), std::get<3>(syncmersBruteForce[i+l-1])+k-1, reverseRolledHash < forwardRolledHash);
-  //     }
-  //   }
-  // }
-
-
-  // std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersDynamic;
-  // for (size_t i = 0; i < refOnKminmers.size(); i++) {
-  //   if (refOnKminmers[i].has_value()) {
-  //     const auto& [startPos, endPos, hash, isReverse] = uniqueKminmers[refOnKminmers[i].value()];
-  //     kminmersDynamic.emplace_back(std::make_tuple(hash, mgsr::degapGlobal(startPos, degapCoordIndex), mgsr::degapGlobal(endPos, degapCoordIndex), isReverse));
-  //   }
-  // }
-
-  // if (kminmersDynamic.size() != kminmersBruteForce.size()) {
-  //   std::cout << "K-min-mer count mismatch: dynamic " << kminmersDynamic.size() << " != brute force " << kminmersBruteForce.size() << std::endl;
-  //   std::cout << "Dynamic k-min-mers: ";
-  //   for (const auto& kminmer : kminmersDynamic) {
-  //     std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
-  //   }
-  //   std::cout << std::endl;
-  //   std::cout << "Brute force k-min-mers: ";
-  //   for (const auto& kminmer : kminmersBruteForce) {
-  //     std::cout << "(" << std::get<0>(kminmer) << ", " << std::get<1>(kminmer) << ", " << mgsr::regapGlobal(std::get<1>(kminmer), regapCoordIndex) << ", " << std::get<2>(kminmer) << ", " << mgsr::regapGlobal(std::get<2>(kminmer), regapCoordIndex) << ", " << std::get<3>(kminmer) << ") ";
-  //   }
-  //   std::cout << std::endl;
-  //   std::exit(1);
-  // } else if (printCorrect && node->identifier == nodeToDebug) {
-  //   std::cout << "Identical k-min-mer count... passed: " << kminmersDynamic.size() << " == " << kminmersBruteForce.size() << std::endl;
-  // }
-
-  // for (size_t i = 0; i < kminmersDynamic.size(); i++) {
-  //   const auto& [hash, startPos, endPos, isReverse] = kminmersDynamic[i];
-  //   const auto& [hashBruteForce, startPosBruteForce, endPosBruteForce, isReverseBruteForce] = kminmersBruteForce[i];
-  //   if (hash != hashBruteForce || startPos != startPosBruteForce || endPos != endPosBruteForce || isReverse != isReverseBruteForce) {
-  //     std::cout << "K-min-mer mismatch at " << i << "th k-min-mer: dynamic (" << hash << ", " << startPos << ", " << endPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << endPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
-  //     std::exit(1);
-  //   }
-  // }
-  // std::cout << "k-min-mers passed... " << std::flush;
-
-  std::cout << "         " << node->identifier << " states passed brute force check" << std::endl;
-  
-}
-
-static void compareBruteForcePlace(
-  panmanUtils::Tree *T,
-  panmanUtils::Node *node,
-  const panmapUtils::GlobalCoords& globalCoords,
-  const std::map<uint64_t, uint64_t>& gapMap,
-  const std::map<uint64_t, uint64_t>& degapCoordIndex,
-  const std::map<uint64_t, uint64_t>& regapCoordIndex,
-  const std::map<uint64_t, uint64_t>& positionMap,
-  const std::unordered_map<size_t, std::vector<std::map<uint64_t, uint64_t>::iterator>>& hashToPositionMap,
-  const std::vector<seeding::uniqueKminmer_t>& seedInfos,
-  int k, int s, int t, int l, bool open
-) {
-  std::cout << "Checking " << node->identifier << " states with brute force at placement... " << std::flush;
-  // check sequence object
-  std::vector<std::vector<std::pair<char, std::vector<char>>>> sequenceBruteForce;
-  std::vector<char> blockExistsBruteForce;
-  std::vector<char> blockStrandBruteForce;
-  std::unordered_map<int, int> blockLengthsBruteForce;
-  panmapUtils::getSequenceFromReference(T, sequenceBruteForce, blockExistsBruteForce, blockStrandBruteForce, blockLengthsBruteForce, node->identifier);
-
-  std::string gappedSequenceBruteForce = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, true);
-  std::vector<std::pair<uint64_t, uint64_t>> gapMapBruteForce;
-  // checking gap map with brute force
-  for (uint64_t i = 0; i < gappedSequenceBruteForce.size(); i++) {
-    char nuc = gappedSequenceBruteForce[i];
-    if (nuc == '-') {
-      if (!gapMapBruteForce.empty() && gapMapBruteForce.back().second + 1 == i) {
-        ++gapMapBruteForce.back().second;
-      } else {
-        gapMapBruteForce.emplace_back(i, i);
-      }
-    }
-  }
-  
-  if (gapMapBruteForce.size() != gapMap.size()) {
-    std::cout << "Gap map size mismatch: dynamic " << gapMap.size() << " != brute force " << gapMapBruteForce.size() << std::endl;
-    std::cout << "Dynamic gap map:";
-    for (const auto& [a, b] : gapMap) {
-      std::cout << "(" << a << "," << b << ") ";
-    }
-    std::cout << std::endl;
-    std::cout << "Brute force gap map:";
-    for (const auto& [a, b] : gapMapBruteForce) {
-      std::cout << "(" << a << "," << b << ") ";
-    }
-    std::cout << std::endl;
-    std::exit(1);
-  }
-
-  size_t gapMapIndex = 0;
-  for (const auto& [a, b] : gapMap) {
-    if (a == gapMapBruteForce[gapMapIndex].first && b == gapMapBruteForce[gapMapIndex].second) {
-      ++gapMapIndex;
-    } else {
-      std::cout << "Gap map mismatch at gap map index " << gapMapIndex << " dynamic " << a << " " << b << " != brute force " << gapMapBruteForce[gapMapIndex].first << " " << gapMapBruteForce[gapMapIndex].second << std::endl;
-      std::cout << "Dynamic gap map:";
-      for (const auto& [a, b] : gapMap) {
-        std::cout << "(" << a << "," << b << ") ";
-      }
-      std::cout << std::endl;
-      std::cout << "Brute force gap map:";
-      for (const auto& [a, b] : gapMapBruteForce) {
-        std::cout << "(" << a << "," << b << ") ";
-      }
-      std::cout << std::endl;
-      std::exit(1);
-    }
-  }
-  
-  std::string ungappedSequence = panmapUtils::getStringFromSequence(sequenceBruteForce, blockLengthsBruteForce, blockExistsBruteForce, blockStrandBruteForce, false);
-  std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmersBruteForce = seeding::rollingSyncmers(ungappedSequence, k, s, open, t, false);
-  // check k-min-mers
-  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteForce;
-  if (syncmersBruteForce.size() >= l) {
-    size_t forwardRolledHash = 0;
-    size_t reverseRolledHash = 0;
-  
-    // first kminmer
-    for (size_t i = 0; i < l; ++i) {
-      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ std::get<0>(syncmersBruteForce[i]);
-      reverseRolledHash = seeding::rol(reverseRolledHash, k) ^ std::get<0>(syncmersBruteForce[l-i-1]);
-    }
-  
-    if (forwardRolledHash != reverseRolledHash) {
-      size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-      kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[0]), std::get<3>(syncmersBruteForce[l-1])+k-1, reverseRolledHash < forwardRolledHash);
-    }
-    
-    
-    // rest of kminmers
-    for (uint64_t i = 1; i < syncmersBruteForce.size()-l+1; ++i) {
-      if (!std::get<2>(syncmersBruteForce[i-1]) || !std::get<2>(syncmersBruteForce[i+l-1])) {
-        std::cout << "invalid syncmer" << std::endl;
-        exit(0);
-      }
-      const size_t& prevSyncmerHash = std::get<0>(syncmersBruteForce[i-1]);
-      const size_t& nextSyncmerHash = std::get<0>(syncmersBruteForce[i+l-1]);
-      forwardRolledHash = seeding::rol(forwardRolledHash, k) ^ seeding::rol(prevSyncmerHash, k * l) ^ nextSyncmerHash;
-      reverseRolledHash = seeding::ror(reverseRolledHash, k) ^ seeding::ror(prevSyncmerHash, k)     ^ seeding::rol(nextSyncmerHash, k * (l-1));
-  
-      if (forwardRolledHash != reverseRolledHash) {
-        size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
-        kminmersBruteForce.emplace_back(minHash, std::get<3>(syncmersBruteForce[i]), std::get<3>(syncmersBruteForce[i+l-1])+k-1, reverseRolledHash < forwardRolledHash);
-      }
-    }
-  }
-
-  std::vector<std::tuple<size_t, size_t, size_t, bool>> kminmersBruteDynamic;
-  for (const auto& [pos, infoIndex] : positionMap) {
-    kminmersBruteDynamic.emplace_back(
-      seedInfos[infoIndex].hash,
-      mgsr::degapGlobal(seedInfos[infoIndex].startPos, degapCoordIndex),
-      mgsr::degapGlobal(seedInfos[infoIndex].endPos, degapCoordIndex),
-      seedInfos[infoIndex].isReverse
-    );
-  }
-
-  if (kminmersBruteDynamic.size() != kminmersBruteForce.size()) {
-    std::cout << "K-min-mer count mismatch: dynamic " << kminmersBruteDynamic.size() << " != brute force " << kminmersBruteForce.size() << std::endl;
-    std::exit(1);
-  }
-
-  for (size_t i = 0; i < kminmersBruteDynamic.size(); i++) {
-    const auto& [hash, startPos, endPos, isReverse] = kminmersBruteDynamic[i];
-    const auto& [hashBruteForce, startPosBruteForce, endPosBruteForce, isReverseBruteForce] = kminmersBruteForce[i];
-    if (hash != hashBruteForce || startPos != startPosBruteForce || endPos != endPosBruteForce || isReverse != isReverseBruteForce) {
-      std::cout << "K-min-mer mismatch at " << i << "th k-min-mer: dynamic (" << hash << ", " << startPos << ", " << endPos << ", " << isReverse << ") != brute force (" << hashBruteForce << ", " << startPosBruteForce << ", " << endPosBruteForce << ", " << isReverseBruteForce << ")" << std::endl;
-      std::exit(1);
-    }
-  }
-
-  std::cout << "passed" << std::endl;
-}
-
-static void printTopN(const Eigen::VectorXd& myVector, size_t n) {
-  std::vector<size_t> indices(myVector.size());
-  std::iota(indices.begin(), indices.end(), 0);
-  std::sort(indices.begin(), indices.end(), [&myVector](size_t i, size_t j) {
-    return myVector(i) > myVector(j);
-  });
-  for (size_t i = 0; i < std::min(indices.size(), n); ++i) {
-    std::cout << myVector(indices[i]) << " ";
-  }
-  std::cout << std::endl;
-}
-
 
 void mgsr::MgsrLiteNode::initializeMutationData(
     std::vector<std::pair<uint32_t, bool>>& seedDeltas_,
@@ -1621,19 +1068,6 @@ int64_t mgsr::mgsrPlacer::getReadBruteForceScore(
   return pseudoScore;
 }
 
-static size_t getBruteForceKminmerOverlapCount(
-  const std::unordered_map<size_t, std::vector<std::pair<uint32_t, std::vector<uint64_t>>>>& seedmerToReads,
-  const std::unordered_map<size_t, std::vector<std::map<uint64_t, uint64_t>::iterator>>& hashToPositionMap
-) {
-  size_t binaryOverlapKminmerCount = 0;
-  for (const auto& [hash, positionMap] : hashToPositionMap) {
-    if (seedmerToReads.find(hash) != seedmerToReads.end()) {
-     ++binaryOverlapKminmerCount;
-    }
-  }
-  return binaryOverlapKminmerCount;
-}
-
 
 bool isCanonical(char nuc) {
   return (nuc == 'A' || nuc == 'T' || nuc == 'C' || nuc == 'G');
@@ -1803,20 +1237,6 @@ inline void applyMutations (
   }
 }
 
-template <typename T>
-static void inline perfect_shuffle(std::vector<T>& v) {
-  int n = v.size();
-
-  std::vector<T> canvas(n);
-
-  for (int i = 0; i < n / 2; i++) {
-    canvas[i*2] = v[i];
-    canvas[i*2+1] = v[i + n/2];
-  }
-
-  v = std::move(canvas);
-}
-
 void mgsr::extractReadSequences(
   const std::string& readPath1,
   const std::string& readPath2,
@@ -1832,7 +1252,7 @@ void mgsr::extractReadSequences(
     std::ifstream file(ampliconDepthPath);
     if (!file) {
       std::cerr << "Error: File " << ampliconDepthPath << " not found" << std::endl;
-      exit(0);
+      exit(1);
     }
     
     std::string line;
@@ -1932,7 +1352,7 @@ void mgsr::extractReadSequences(
     if (totalReads != forwardReads*2){
       std::cerr << "Error: File " << readPath2 << " does not contain the same number of reads as " << readPath1 << std::endl;
       std::cerr << "Read sizes: " << forwardReads << " (from " << readPath1 << ") and " << totalReads - forwardReads  << " (from " << readPath2 << ")" << std::endl;
-      exit(0);
+      exit(1);
     }
     
     // //Shuffle reads together, so that pairs are next to eatch other
@@ -2057,53 +1477,6 @@ void mgsr::ReadDebruijnGraph::sortReadsHelper(
   //     }
   //   }
   // }
-}
-
-void mgsr::ReadDebruijnGraph::exportToGFA(const std::string& filename) {
-    std::ofstream gfaFile(filename);
-  if (!gfaFile.is_open()) {
-    throw std::runtime_error("Cannot open GFA file for writing: " + filename);
-  }
-  
-  // Header line
-  gfaFile << "H\tVN:Z:1.0\n";
-  
-  // Export segments (nodes)
-  for (const auto& [hash, node] : hashToNode) {
-    gfaFile << "S\t" << hash << "\t" << node.get()->hash << "\n";
-  }
-  
-  // Export links (edges)
-  std::unordered_set<std::pair<size_t, size_t>, mgsr::PairHash> exportedEdges;
-  
-  for (const auto& [hash, node] : hashToNode) {
-    for (const auto& neighbor : node->neighbors) {
-      size_t neighborHash = neighbor->hash;
-      
-      // Avoid duplicate edges (undirected graph)
-      std::pair<size_t, size_t> edge = {std::min(hash, neighborHash), std::max(hash, neighborHash)};
-      if (exportedEdges.find(edge) != exportedEdges.end()) continue;
-      exportedEdges.insert(edge);
-      
-      // Determine orientation and overlap
-      int overlap = 1;
-      gfaFile << "L\t" << hash << "\t+\t" << neighborHash << "\t+\t" << overlap << "M\n";
-    }
-  }
-  
-  // Export paths for each connected component
-  for (size_t i = 0; i < connectedComponents.size(); ++i) {
-    if (connectedComponents[i].empty()) continue;
-    
-    gfaFile << "P\tcomponent_" << i << "\t";
-    for (size_t j = 0; j < connectedComponents[i].size(); ++j) {
-      if (j > 0) gfaFile << ",";
-      gfaFile << connectedComponents[i][j]->hash << "+";
-    }
-    gfaFile << "\t*\n";
-  }
-  
-  gfaFile.close();
 }
 
 void mgsr::ReadDebruijnGraph::buildGraph(std::vector<Read>& reads) {
@@ -2539,8 +1912,8 @@ void mgsr::ThreadsManager::initializeQueryData(
         // rest of kminmer
         for (uint64_t i = 1; i < syncmers.size()-l+1; ++i) {
           if (!std::get<2>(syncmers[i-1]) || !std::get<2>(syncmers[i+l-1])) {
-            std::cout << "invalid syncmer" << std::endl;
-            exit(0);
+            std::cerr << "invalid syncmer" << std::endl;
+            exit(1);
           }
 
           if (l == 1) {
@@ -4486,42 +3859,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
     }
   }
 
-
-
-
-  // // compare with brute force for debugging
-  // if (l > 1) {
-  //   if (dfsIndex >= 0) {
-
-  //     compareBruteForceBuild(T, node, blockSequences, globalCoords, gapMap, degapCoordIndex, regapCoordIndex, refOnSyncmers, refOnSyncmersMap, blockOnSyncmers, refOnKminmers, uniqueKminmers, kminmerToUniqueIndex, indexBuilder.getK(), indexBuilder.getS(), indexBuilder.getT(), indexBuilder.getL(), indexBuilder.getOpen());
-  //   }
-  // } else if (l == 1) {
-  //   for (size_t i = 0; i < refOnSyncmers.size(); i++) {
-  //     if (refOnSyncmers[i].has_value() != refOnKminmers[i].has_value()) {
-  //       std::cerr << "Error: refOnSyncmers and refOnKminmers inconsistent at position " << i << " in node " << node->identifier << std::endl;
-  //       exit(1);
-  //     }
-  //     if (refOnSyncmers[i].has_value()) {
-  //       if (refOnSyncmers[i].value().hash != uniqueKminmers[refOnKminmers[i].value()].hash) {
-  //         std::cerr << "Error: refOnSyncmers and refOnKminmers hash inconsistent at position " << i << " in node " << node->identifier << std::endl;
-  //         exit(1);
-  //       }
-  //       if (refOnSyncmers[i].value().isReverse != uniqueKminmers[refOnKminmers[i].value()].isReverse) {
-  //         std::cerr << "Error: refOnSyncmers and refOnKminmers strand inconsistent at position " << i << " in node " << node->identifier << std::endl;
-  //         exit(1);
-  //       }
-  //       if (refOnSyncmers[i].value().endPos != uniqueKminmers[refOnKminmers[i].value()].endPos) {
-  //         std::cerr << "Error: refOnSyncmers and refOnKminmers endPos inconsistent at position " << i << " in node " << node->identifier << std::endl;
-  //         exit(1);
-  //       }
-  //     }
-  //   }
-  // }
-
-
-
-
-
   revertGapMapInversions(gapRunBlockInversionBacktracks, gapMap);
   std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(gapRunBlockInversionBacktracks); // gapRunBlockInversionBacktracks is no longer needed... clear memory
 
@@ -5687,11 +5024,9 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<mgsr
     
     if (allUniqueToNonUnique) {
       // match to no match -> remove from minichains
-      /*chaining debug*/if (false) std::cout << "\tRead is allUniqueToNonUnique... removing minichains" << std::endl;
       extendChainRemoval(c, curEnd, affectedSeedmerInfos, curSeedmerList.size() - 1);
       // encode minichain_t
       mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, false};
-      /*chaining debug*/if (false) std::cout << "\t\tRemoving minichain: " << affectedSeedmerIndex << " " << curEnd << " " << 0ULL << "... encoded to " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
       auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
       curMinichainToUpdate.first = minichain;
       curMinichainToUpdate.second = false;
@@ -5699,13 +5034,11 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<mgsr
       ++readMinichainsRemoved;
     } else if (allNonUniqueToUnique) {
       // no match to match -> create minichains
-      /*chaining debug*/if (false) std::cout << "\tRead is allNonUniqueToUnique... adding minichains" << std::endl;
       bool rev = refRev != curSeedmerList[affectedSeedmerIndex].rev;
       auto positionItFromCurrentHash = hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
       extendChainAddition(c, curEnd, affectedSeedmerInfos, rev, positionItFromCurrentHash, readIndex);
       // encode minichain_t
       mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, rev};
-      /*chaining debug*/if (false) std::cout << "\t\tAdding minichain: " << affectedSeedmerIndex << " " << curEnd << " " << rev << "... encoded to " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
       auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
       curMinichainToUpdate.first = minichain;
       curMinichainToUpdate.second = true;
@@ -5717,38 +5050,21 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex, const std::vector<mgsr
     }
     i += (curEnd - affectedSeedmerIndex + 1);
   }
-  /*chaining debug*/if (false) std::cout << "\tGenerated " << curMinichainsToUpdateIndex << " minichains to " << (allUniqueToNonUnique ? "remove" : "add") << std::endl;
 
   if (allUniqueToNonUnique) {
     for (uint32_t i = 0; i < curMinichainsToUpdateIndex; ++i) {
       const auto& [minichain, toAdd] = minichainsToUpdate[i];
-      /*chaining debug*/if (false) std::cout << "\t\tRemoving minichain: " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
       removeFromMinichains(curMinichains, minichain);
-      /*chaining debug*/if (false) {
-        std::cout << "\t\tNow minichains are: ";
-        for (const auto& minichain : curMinichains) {
-          std::cout << "(" << minichain.begIndex << ", " << minichain.endIndex << ", " << minichain.rev << ") ";
-        }
-        std::cout << std::endl;
-      }
     }
   } else if (allNonUniqueToUnique) {
     bool wasEmpty = curMinichains.empty();
     for (uint32_t i = 0; i < curMinichainsToUpdateIndex; ++i) {
       const auto& [minichain, toAdd] = minichainsToUpdate[i];
-      /*chaining debug*/if (false) std::cout << "\t\tAdding minichain: " << minichain.begIndex << " " << minichain.endIndex << " " << minichain.rev << std::endl;
       if (wasEmpty) {
         curMinichains.push_back(minichain);
         ++readMinichainsAddedToEmpty;
       } else {
         addToMinichains(curSeedmerList, curMinichains, minichain);
-      }
-      /*chaining debug*/if (false) {
-        std::cout << "\t\tNow minichains are: ";
-        for (const auto& minichain : curMinichains) {
-          std::cout << "(" << minichain.begIndex << ", " << minichain.endIndex << ", " << minichain.rev << ") ";
-        }
-        std::cout << std::endl;
       }
     }
   }
@@ -6440,7 +5756,6 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
 
     size_t backtrackIndex = 0;
     for (auto& [readIndex, affectedSeedmerIndexInfo] : readToAffectedSeedmerIndex) {
-      /*chaining debug*/if (false) std::cout << "[" << node->identifier << " " << curDfsIndex << "] processingreadIndex: " << readIndex << std::endl;
 
       mgsr::Read& curRead = reads[readIndex];
       if (curRead.readType != mgsr::ReadType::PASS) continue;
@@ -6458,18 +5773,10 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
       readMinichainsBacktrack[backtrackIndex].second = curRead.minichains;
 
       if (allUniqueToNonUnique || allNonUniqueToUnique) {
-        /*chaining debug*/if (false) {
-          std::cout << "\tread is allUniqueToNonUnique " << allUniqueToNonUnique << " or allNonUniqueToUnique " << allNonUniqueToUnique << "... updating minichains" << std::endl;
-          for (const auto& minichain : curRead.minichains) {
-            std::cout << "\t\t(" << minichain.begIndex << ", " << minichain.endIndex << ", " << minichain.rev << ") ";
-          }
-          std::cout << std::endl;
-        }
         updateMinichains(readIndex, affectedSeedmerInfos, allUniqueToNonUnique, allNonUniqueToUnique);
       } else if (affectedSeedmerInfos.size() < curRead.seedmersList.size() / 2) {
         updateMinichainsMixed(readIndex, affectedSeedmerInfos);
       } else {
-        /*chaining debug*/if (false) std::cout << "\tread is not allUniqueToNonUnique or allNonUniqueToUnique... reinitializing minichains" << std::endl;
         initializeReadMinichains(curRead);
       }
       int32_t pseudoScore = getReadPseudoScore(curRead);

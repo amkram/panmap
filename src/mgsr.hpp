@@ -583,7 +583,6 @@ class ReadDebruijnGraph {
     void linkNodes(RDGNode* node1, RDGNode* node2);
     void identifyConnectedComponents();
     void searchComponentDFS(RDGNode* node, std::unordered_set<RDGNode*>& visited, std::vector<RDGNode*>& currentComponent);
-    void exportToGFA(const std::string& path);
     void sortReads(std::vector<Read>& reads, std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex);
     void sortReadsHelper(RDGNode* node, size_t& curReadIndex, std::vector<mgsr::Read>& reads, std::vector<mgsr::Read>& sortedReads, std::vector<std::vector<size_t>>& readSeedmersDuplicatesIndex, std::vector<std::vector<size_t>>& sortedReadSeedmersDuplicatesIndex);
 };

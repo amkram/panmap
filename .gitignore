@@ -54,6 +54,10 @@ src/3rdparty/samtools/htslib-1.20/config_vars.h
 src/3rdparty/samtools/htslib-1.20/hts-object-files
 src/3rdparty/samtools/htslib-1.20/version.h
 src/3rdparty/samtools/htslib-1.20/**/*.pico
+src/3rdparty/samtools/htslib-1.20/annot-tsv
+src/3rdparty/samtools/htslib-1.20/bgzip
+src/3rdparty/samtools/htslib-1.20/htsfile
+src/3rdparty/samtools/htslib-1.20/tabix
 
 # IDE / editor
 .vscode/
@@ -66,3 +70,11 @@ src/3rdparty/samtools/htslib-1.20/**/*.pico
 # Generated docs
 site/
 output/
+
+# panmap run outputs written next to inputs / repo root
+# (anchored so committed fixtures under src/test/data/ are NOT ignored)
+/isolate_*
+# generated index files (regenerable; none are committed)
+*.idx
+
+
