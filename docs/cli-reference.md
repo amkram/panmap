@@ -62,7 +62,7 @@ Use `--help` for common options or `--help-all` for the full list.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--force-leaf` | Restrict placement to leaf nodes (auto-enabled with `--stop genotype`) | off |
+| `--force-leaf` | Restrict placement to leaf nodes (auto-enabled unless `--stop place`) | off |
 | `--refine` | Alignment-based refinement of top candidates | off |
 | `--refine-top-pct` | Top fraction of nodes to refine | `0.01` |
 | `--refine-max-top-n` | Max nodes to align against | `150` |
