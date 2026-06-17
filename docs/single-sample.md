@@ -25,7 +25,9 @@ By default, panmap runs through **consensus**. Use `--stop` to stop at an earlie
 | Consensus | `consensus` (default) | `<prefix>.consensus.fa` | Generates consensus FASTA from variants |
 
 !!! note
-    When `--stop genotype` is used, `--force-leaf` is enabled automatically.
+    `--force-leaf` is enabled automatically whenever the pipeline runs past
+    placement (the default run, `--stop align`, `--stop genotype`, etc.). Only
+    `--stop place` allows reads to be placed on internal nodes.
 
 ## Example: SARS-CoV-2 genotyping from Illumina reads
 
@@ -75,7 +77,7 @@ panmap examples/data/sars_20000_twilight_dipper.panman \
 | `-t, --threads` | Number of threads | `1` |
 | `-a, --aligner` | `minimap2` or `bwa` | `minimap2` |
 | `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` |
-| `--force-leaf` | Restrict placement to leaf nodes | off (auto-enabled with `--stop genotype`) |
+| `--force-leaf` | Restrict placement to leaf nodes | off (auto-enabled unless `--stop place`) |
 | `--refine` | Alignment-based refinement of top candidates | off |
 
 ## Choosing an aligner
