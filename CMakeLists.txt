@@ -545,9 +545,11 @@ add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
 target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
 target_compile_options(bcftools PRIVATE -fPIC)
 
-# Define panmap executable sources using the correct list
-set(PANMAP_SOURCES_MAIN
-    src/main.cpp
+# Product sources minus main.cpp, compiled once into an OBJECT library (panmap_lib)
+# so that BOTH `panmap` and the test binary (panmap_tests) link the exact same
+# objects. This is the single owner of the source list -- no target re-lists these
+# files by hand. (Note: panmap_lib is distinct from panman_lib, the PanMAN submodule.)
+set(PANMAP_LIB_SOURCES
     src/conversion.cpp
     src/panmap_utils.cpp
     src/genotyping.cpp
@@ -558,6 +560,7 @@ set(PANMAP_SOURCES_MAIN
     src/mm_align.c
     src/pileup.c
     src/zstd_compression.cpp
+    ${LITE_CAPNP_SRCS}
 )
 
 # Find required packages before using them
@@ -582,8 +585,14 @@ set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(zstd)
 set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
 
-add_executable(panmap ${PANMAP_SOURCES_MAIN})
-add_dependencies(panmap build-deps index_capnp_generator tbb_build)
+add_library(panmap_lib OBJECT ${PANMAP_LIB_SOURCES})
+add_dependencies(panmap_lib panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
+
+# panmap links panmap_lib (an OBJECT library): this pulls in its object files AND
+# its PUBLIC usage requirements (include dirs, compile options, link libraries),
+# so main.cpp compiles in the identical environment. See target_link_libraries below.
+add_executable(panmap src/main.cpp)
+add_dependencies(panmap panmap_lib build-deps index_capnp_generator tbb_build)
 
 # Build simulate tool if enabled
 if(OPTION_BUILD_SIMULATE)
@@ -630,25 +639,25 @@ if(OPTION_BUILD_SIMULATE)
     )
 endif()
 
-# Build correctness tests if enabled
+# Unified test suite (one Boost.Test binary + the e2e shell script).
 if(OPTION_BUILD_TESTS)
     find_package(Boost REQUIRED COMPONENTS unit_test_framework)
-    
-    add_executable(correctness_tests 
-        src/test/correctness_tests.cpp
-        src/seeding.cpp
-        src/placement.cpp
-        src/index_single_mode.cpp
-        src/panmap_utils.cpp
-        src/zstd_compression.cpp
-        src/test/index_utils.cpp
-        src/mm_align.c
-        ${CMAKE_CURRENT_BINARY_DIR}/index_lite.capnp.c++
+    enable_testing()
+
+    # Shared test-support library: the ONE place tests build/load indices, extract
+    # seeds, walk paths, and compute the ground-truth metric oracle. It only needs
+    # headers at compile time; symbols resolve when panmap_tests links panmap_lib.
+    add_library(testsupport STATIC
+        src/test/helpers/metrics_oracle.cpp
+        src/test/helpers/seed_helpers.cpp
+        src/test/helpers/tree_helpers.cpp
+        src/test/helpers/test_index.cpp
+        src/test/helpers/traversal.cpp
     )
-    
-    add_dependencies(correctness_tests panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
-    
-    target_include_directories(correctness_tests PRIVATE
+    add_dependencies(testsupport panmap_lib panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
+    target_compile_definitions(testsupport PUBLIC
+        TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/test/data")
+    target_include_directories(testsupport PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/test
         ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
@@ -659,53 +668,47 @@ if(OPTION_BUILD_TESTS)
         ${panman_SOURCE_DIR}/src
         ${panman_BINARY_DIR}
     )
-    
-    target_link_libraries(correctness_tests PRIVATE
-        panman_lib
-        minimap2
-        ${Boost_LIBRARIES}
+
+    # The single test executable. Links panmap_lib (objects + transitive usage
+    # requirements) so it names ZERO product source files.
+    add_executable(panmap_tests
+        src/test/test_main.cpp
+        src/test/test_seeding.cpp
+        src/test/test_core_utils.cpp
+        src/test/test_index.cpp
+        src/test/test_placement.cpp
+        src/test/test_mgsr.cpp
+        src/test/test_genotyping.cpp
+        src/test/test_conversion.cpp
+    )
+    add_dependencies(panmap_tests panmap_lib panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
+    target_compile_definitions(panmap_tests PRIVATE BOOST_TEST_DYN_LINK)
+    target_link_libraries(panmap_tests PRIVATE
+        testsupport
+        panmap_lib
         Boost::unit_test_framework
-        ${PROTOBUF_LIBRARIES}
-        spdlog::spdlog
-        absl::flat_hash_map
-        absl::flat_hash_set
-        ${CAPNP_LIBRARY}
-        ${KJ_LIBRARY}
-        ${TBB_LIBRARY}
-        libzstd_static
-        ZLIB::ZLIB
-        pthread
-        m
     )
-    
-    target_compile_definitions(correctness_tests PRIVATE BOOST_TEST_DYN_LINK)
-    
-    # Set output directory to build/bin
-    set_target_properties(correctness_tests PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-    
-    # Enable CTest
-    enable_testing()
-    add_test(NAME correctness_tests COMMAND correctness_tests --log_level=test_suite WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_target_properties(panmap_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+    add_test(NAME unit COMMAND panmap_tests --log_level=test_suite WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
-# Integration tests (always available, run with: ctest -R integration)
+# End-to-end tests (always available, run with: ctest -R e2e)
 enable_testing()
-add_test(NAME integration_tests
-    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/src/test/integration_test.sh $<TARGET_FILE:panmap>
+add_test(NAME e2e
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/src/test/e2e/run_e2e.sh $<TARGET_FILE:panmap>
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# Add generated sources to panmap target
-  target_sources(panmap PRIVATE ${LITE_CAPNP_SRCS})
-
-# Add include directories
-target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/src)
-target_include_directories(panmap PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/include)
-target_include_directories(panmap PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-target_include_directories(panmap PUBLIC ${HTSLIB_INSTALL_DIR}/include)
+# Include directories live on panmap_lib as PUBLIC usage requirements so that both
+# the object library's own sources and consumers (panmap, panmap_tests) inherit them.
+# (The capnp generated source is already part of PANMAP_LIB_SOURCES.)
+target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/src)
+target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include)
+target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
+target_include_directories(panmap_lib PUBLIC ${HTSLIB_INSTALL_DIR}/include)
 
 # Pull in libdeflate
 FetchContent_Declare(deflate
@@ -714,8 +717,10 @@ FetchContent_Declare(deflate
 )
 FetchContent_MakeAvailable(deflate)
 
-# Link libraries
-target_link_libraries(panmap PRIVATE
+# Link libraries live on panmap_lib as PUBLIC so its sources compile with the right
+# usage requirements (include dirs / compile defs from panman, htslib, etc.) AND so
+# consumers (panmap, panmap_tests) inherit the full link set transitively.
+target_link_libraries(panmap_lib PUBLIC
     panman
     panman_lib
     bwa
@@ -739,11 +744,14 @@ target_link_libraries(panmap PRIVATE
     pthread
 )
 
+# panmap is just main.cpp + panmap_lib (objects + transitive usage requirements).
+target_link_libraries(panmap PRIVATE panmap_lib)
+
 # Set compiler options based on build type
 if(OPTION_DEBUG)
-    target_compile_options(panmap PUBLIC -g -O0 -ggdb)
+    target_compile_options(panmap_lib PUBLIC -g -O0 -ggdb)
 elseif(OPTION_PORTABLE)
-    target_compile_options(panmap PUBLIC
+    target_compile_options(panmap_lib PUBLIC
         -O3
         -march=x86-64-v3
         -mtune=generic
@@ -753,7 +761,7 @@ elseif(OPTION_PORTABLE)
         -fprefetch-loop-arrays
     )
 else()
-    target_compile_options(panmap PUBLIC 
+    target_compile_options(panmap_lib PUBLIC 
         -g -O3 
         -march=native
         -fno-omit-frame-pointer 
