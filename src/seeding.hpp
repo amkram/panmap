@@ -103,18 +103,6 @@ constexpr char comp(char c) {
     }
 }
 
-static std::string revcomp(const std::string& s) {
-    std::string cs;
-    cs.resize(s.size());
-    int csIndex = 0;
-    for (int i = s.size() - 1; i > -1; --i) {
-        char c = s[i];
-        cs[csIndex] = comp(c);
-        csIndex++;
-    }
-    return cs;
-}
-
 constexpr size_t chash(char c) {
     switch (c) {
         case 'a':
