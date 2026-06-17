@@ -1797,7 +1797,7 @@ int main(int argc, char** argv) {
         ("min-read-support", po::value<int>(&cfg.minReadSupport)->default_value(1), "Min reads for a seed (2=filter singletons)")
         ("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")
         ("extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")
-        ("force-leaf", po::bool_switch(&cfg.forceLeaf), "Restrict placement to leaf nodes only (default when --stop genotype)")
+        ("force-leaf", po::bool_switch(&cfg.forceLeaf), "Restrict placement to leaf nodes only (default unless --stop place)")
         ("refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")
         ("refine-top-pct", po::value<double>(&cfg.refineTopPct)->default_value(0.01), "Top % of nodes to refine (default 1%)")
         ("refine-max-top-n", po::value<int>(&cfg.refineMaxTopN)->default_value(150), "Max nodes to align against")
@@ -1946,8 +1946,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Default --force-leaf on when running genotype (unless user explicitly set it)
-    if (!vm.count("force-leaf") && cfg.stopAfter >= PipelineStage::Genotype) {
+    // Default --force-leaf on whenever the pipeline runs past placement
+    // (unless user explicitly set it). Only --stop place allows placement
+    // on internal nodes. Note: bool_switch always has a default, so
+    // vm.count() is always 1 here; use defaulted() to detect an explicit flag.
+    if (vm["force-leaf"].defaulted() && cfg.stopAfter > PipelineStage::Place) {
         cfg.forceLeaf = true;
     }
 
