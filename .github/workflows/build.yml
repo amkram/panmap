@@ -1,0 +1,47 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '*.md']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake git wget \
+          protobuf-compiler libprotobuf-dev \
+          libboost-program-options-dev libboost-iostreams-dev \
+          libboost-filesystem-dev libboost-system-dev libboost-date-time-dev \
+          libboost-test-dev liblzma-dev \
+          zlib1g-dev capnproto libcapnp-dev libhts-dev \
+          autoconf automake libtool libeigen3-dev
+
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: brew install cmake boost protobuf capnp htslib eigen autoconf automake libtool xz
+
+    - name: Configure
+      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
+
+    - name: Build
+      run: cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+    # Full suite (unit + e2e) on both OSes. Tests use structural assertions and the
+    # live-state metric oracle (no golden files), so there is no cross-OS determinism
+    # risk; the suite is verified to pass on both Linux and macOS.
+    - name: Test
+      run: ctest --test-dir build --output-on-failure -j2
