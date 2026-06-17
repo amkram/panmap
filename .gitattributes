@@ -1,7 +1,8 @@
-# Keep large demo/reference data out of `git archive` release tarballs.
-# These are used only by the examples/README and are not required to build
-# panmap, so excluding them shrinks the GitHub release source tarball that
-# bioconda (and others) download. src/test/data is intentionally kept so the
-# test suite still builds from a tarball.
+# Keep large demo/reference + test data out of `git archive` release tarballs.
+# None are required to BUILD panmap (the test-data copies are now gated behind
+# OPTION_BUILD_TESTS), so excluding them shrinks the GitHub release source tarball
+# that bioconda (and others) download. Tests are run from a git checkout, not a
+# release tarball.
 examples/data/ export-ignore
 data/ export-ignore
+src/test/data/ export-ignore

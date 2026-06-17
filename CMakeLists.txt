@@ -52,9 +52,9 @@ set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/external_cache" CACHE PATH "Cache
 # Add the custom cmake directories to the module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# Set TBB_DIR to match old build
-if(APPLE)
-    # Use system TBB on macOS (oneTBB 2019_U9 does not support ARM)
+# TBB: use the system library under USE_SYSTEM_LIBS (conda) or on macOS
+# (oneTBB 2019_U9 does not support ARM); otherwise build it from source.
+if(USE_SYSTEM_LIBS OR APPLE)
     find_package(TBB REQUIRED)
     set(TBB_LIBRARY TBB::tbb)
     add_custom_target(tbb_build) # no-op target for dependency compatibility
@@ -85,26 +85,34 @@ else()
     include_directories(${tbb_SOURCE_DIR}/include)
 endif()
 
-# Download and configure jsoncpp
-set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
-set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    jsoncpp
-    GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
-    GIT_TAG 1.9.5
-)
-FetchContent_MakeAvailable(jsoncpp)
+# jsoncpp: system (conda) under USE_SYSTEM_LIBS, else build from source
+if(USE_SYSTEM_LIBS)
+    find_package(jsoncpp REQUIRED)  # provides imported target jsoncpp_lib
+else()
+    set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
+    set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        jsoncpp
+        GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
+        GIT_TAG 1.9.5
+    )
+    FetchContent_MakeAvailable(jsoncpp)
+endif()
 
-# Pull in spdlog so its target is available before we define panmap
-FetchContent_Declare(
-    spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.11.0
-)
-FetchContent_MakeAvailable(spdlog)
+# spdlog: system (conda) under USE_SYSTEM_LIBS, else build from source
+if(USE_SYSTEM_LIBS)
+    find_package(spdlog REQUIRED)
+else()
+    FetchContent_Declare(
+        spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG v1.11.0
+    )
+    FetchContent_MakeAvailable(spdlog)
+endif()
 
-# Pull in Abseil for flat_hash_map
-if(APPLE)
+# Abseil (flat_hash_map): system under USE_SYSTEM_LIBS or macOS, else from source
+if(USE_SYSTEM_LIBS OR APPLE)
     find_package(absl REQUIRED)
 else()
     FetchContent_Declare(
@@ -123,32 +131,48 @@ endif()
 # Use find_library to get a concrete path (avoids IMPORTED target scope issues)
 set(PROTOBUF_LIB_PATH ${PROTOBUF_LIBRARY})
 
-# Include TBB and jsoncpp headers
-include_directories(${tbb_SOURCE_DIR}/include)
-include_directories(${jsoncpp_SOURCE_DIR}/include)
+# Include TBB and jsoncpp headers (only when built from source;
+# system/imported targets carry their own usage-requirement includes)
+if(NOT USE_SYSTEM_LIBS AND NOT APPLE)
+    include_directories(${tbb_SOURCE_DIR}/include)
+endif()
+if(NOT USE_SYSTEM_LIBS)
+    include_directories(${jsoncpp_SOURCE_DIR}/include)
+endif()
 include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
-# Build CapnProto from bundled source
-set(CAPNP_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto)
-set(CAPNP_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/capnp_install)
-ExternalProject_Add(capnp_tools
-    SOURCE_DIR ${CAPNP_SOURCE_DIR}
-    CMAKE_ARGS
-        -DCMAKE_INSTALL_PREFIX=${CAPNP_INSTALL_DIR}
-        -DCMAKE_BUILD_TYPE=Release
-        -DBUILD_TESTING=OFF
-    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release -j
-    INSTALL_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target install
-)
-set(CAPNP_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnp)
-set(CAPNPC_CXX_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnpc-c++)
-set(CAPNP_SCHEMA_DIR ${CAPNP_INSTALL_DIR}/include)
-set(CAPNP_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libcapnp.a)
-set(KJ_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libkj.a)
-
-message(STATUS "Building CapnProto from bundled source")
-
-include_directories(${CAPNP_INSTALL_DIR}/include)
+# Cap'n Proto: system (conda) under USE_SYSTEM_LIBS, else build from bundled source.
+# Both paths define the same vars/target (CAPNP_LIBRARY, KJ_LIBRARY, CAPNP_EXECUTABLE,
+# CAPNPC_CXX_EXECUTABLE, CAPNP_SCHEMA_DIR, and a 'capnp_tools' target) consumed below.
+if(USE_SYSTEM_LIBS)
+    find_library(CAPNP_LIBRARY NAMES capnp REQUIRED)
+    find_library(KJ_LIBRARY NAMES kj REQUIRED)
+    find_program(CAPNP_EXECUTABLE NAMES capnp REQUIRED)
+    find_program(CAPNPC_CXX_EXECUTABLE NAMES capnpc-c++ REQUIRED)
+    find_path(CAPNP_SCHEMA_DIR capnp/c++.capnp REQUIRED)
+    add_custom_target(capnp_tools)  # no-op: tools come from the system/conda prefix
+    message(STATUS "Using system Cap'n Proto: ${CAPNP_LIBRARY}")
+    include_directories(${CAPNP_SCHEMA_DIR})
+else()
+    set(CAPNP_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/capnproto)
+    set(CAPNP_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/capnp_install)
+    ExternalProject_Add(capnp_tools
+        SOURCE_DIR ${CAPNP_SOURCE_DIR}
+        CMAKE_ARGS
+            -DCMAKE_INSTALL_PREFIX=${CAPNP_INSTALL_DIR}
+            -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_TESTING=OFF
+        BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release -j
+        INSTALL_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target install
+    )
+    set(CAPNP_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnp)
+    set(CAPNPC_CXX_EXECUTABLE ${CAPNP_INSTALL_DIR}/bin/capnpc-c++)
+    set(CAPNP_SCHEMA_DIR ${CAPNP_INSTALL_DIR}/include)
+    set(CAPNP_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libcapnp.a)
+    set(KJ_LIBRARY ${CAPNP_INSTALL_DIR}/lib/libkj.a)
+    message(STATUS "Building CapnProto from bundled source")
+    include_directories(${CAPNP_INSTALL_DIR}/include)
+endif()
 
 # Add index_lite.capnp generation (the only capnp schema used)
 set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/index_lite.capnp")
@@ -262,12 +286,25 @@ endfunction()
 # Create a dummy JsonCpp library
 add_library(jsoncpp INTERFACE)
 
-# Fetch the panman source code (clone only, disable update)
-if(APPLE)
+# panman is built from source either way (no conda package).
+if(USE_SYSTEM_LIBS OR APPLE)
     set(PANMAN_TBB_COMPAT "true")
 else()
     set(PANMAN_TBB_COMPAT "false")
 endif()
+
+if(USE_SYSTEM_LIBS)
+    # Source pre-placed (e.g. the conda recipe's second source tarball); no network fetch.
+    if(NOT PANMAN_SOURCE_DIR)
+        set(PANMAN_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/panman")
+    endif()
+    set(panman_SOURCE_DIR "${PANMAN_SOURCE_DIR}")
+    set(panman_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/panman-build")
+    execute_process(COMMAND sed -i.bak "15d" "${panman_SOURCE_DIR}/src/panmanUtils.cpp")
+    execute_process(COMMAND sed -i.bak "s/PROJECT_VERSION/\"1.0\"/g" "${panman_SOURCE_DIR}/src/panmanUtils.cpp")
+    execute_process(COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_panman.sh "${panman_SOURCE_DIR}" ${PANMAN_TBB_COMPAT})
+else()
+    # Fetch the panman source code (clone only, disable update)
 FetchContent_Declare(
     panman
     GIT_REPOSITORY https://github.com/TurakhiaLab/panman
@@ -278,14 +315,12 @@ FetchContent_Declare(
                   sed -i.bak "s/PROJECT_VERSION/\\\"1.0\\\"/g" <SOURCE_DIR>/src/panmanUtils.cpp &&
                   sh ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_panman.sh <SOURCE_DIR> ${PANMAN_TBB_COMPAT}
 )
-
-# Force the population of the content
-FetchContent_GetProperties(panman)
-if(NOT panman_POPULATED)
-    FetchContent_Populate(panman)
-    
-    # Get the source directory
-    FetchContent_GetProperties(panman SOURCE_DIR panman_SOURCE_DIR BINARY_DIR panman_BINARY_DIR)
+    FetchContent_GetProperties(panman)
+    if(NOT panman_POPULATED)
+        FetchContent_Populate(panman)
+        FetchContent_GetProperties(panman SOURCE_DIR panman_SOURCE_DIR BINARY_DIR panman_BINARY_DIR)
+    endif()
+endif()
     
     # Generate version.hpp file for panman
     file(WRITE "${panman_SOURCE_DIR}/src/version.hpp" 
@@ -436,7 +471,6 @@ install(TARGETS panmanUtils panman_lib
     
     message(STATUS "Panman source directory: ${panman_SOURCE_DIR}")
     message(STATUS "Panman binary directory: ${panman_BINARY_DIR}")
-endif()
 
 # Add dependency on panman_lib in _deps/panman-build/
 add_dependencies(panman panman_lib)
@@ -463,22 +497,37 @@ add_custom_target(minimap2_target
     COMMENT "Building minimap2 library from src/3rdparty/minimap2"
 )
 
-# Build htslib using ExternalProject
-set(HTSLIB_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/htslib_install)
-ExternalProject_Add(htslib_ext
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20
-    CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-libdeflate
-    BUILD_COMMAND make -j lib-static
-    INSTALL_COMMAND make install
-    BUILD_IN_SOURCE 1 # htslib needs to be built in source
-    UPDATE_COMMAND "" # Don't try to update the source
-)
-# Create an imported target for htslib
-add_library(htslib STATIC IMPORTED GLOBAL)
-set_target_properties(htslib PROPERTIES
-    IMPORTED_LOCATION ${HTSLIB_INSTALL_DIR}/lib/libhts.a
-)
-add_dependencies(htslib htslib_ext)
+# htslib: system (conda) under USE_SYSTEM_LIBS, else build from bundled source.
+# Both paths define the imported target `htslib`, a no-op-able `htslib_ext`
+# dependency, and HTSLIB_INCLUDE_DIR (consumed below).
+if(USE_SYSTEM_LIBS)
+    find_library(HTS_LIBRARY NAMES hts REQUIRED)
+    find_path(HTS_INCLUDE_DIR htslib/hts.h REQUIRED)
+    add_library(htslib SHARED IMPORTED GLOBAL)
+    set_target_properties(htslib PROPERTIES
+        IMPORTED_LOCATION "${HTS_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${HTS_INCLUDE_DIR}"
+    )
+    add_custom_target(htslib_ext)  # no-op so 'DEPENDS/add_dependencies ... htslib_ext' resolves
+    set(HTSLIB_INCLUDE_DIR "${HTS_INCLUDE_DIR}")
+else()
+    # Build htslib using ExternalProject
+    set(HTSLIB_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/htslib_install)
+    ExternalProject_Add(htslib_ext
+        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20
+        CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${HTSLIB_INSTALL_DIR} --disable-lzma --disable-bz2 --disable-libcurl --disable-libdeflate
+        BUILD_COMMAND make -j lib-static
+        INSTALL_COMMAND make install
+        BUILD_IN_SOURCE 1 # htslib needs to be built in source
+        UPDATE_COMMAND "" # Don't try to update the source
+    )
+    add_library(htslib STATIC IMPORTED GLOBAL)
+    set_target_properties(htslib PROPERTIES
+        IMPORTED_LOCATION ${HTSLIB_INSTALL_DIR}/lib/libhts.a
+    )
+    add_dependencies(htslib htslib_ext)
+    set(HTSLIB_INCLUDE_DIR "${HTSLIB_INSTALL_DIR}/include")
+endif()
 
 
 # Define BWA sources
@@ -543,6 +592,11 @@ target_compile_options(bwa PRIVATE -fPIC)
 file(GLOB BCFTOOLS_SOURCES src/3rdparty/bcftools/*.c)
 add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
 target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
+if(USE_SYSTEM_LIBS)
+    # build.sh rewrites bcftools' vendored-relative htslib includes to <htslib/...>;
+    # point them at the conda htslib headers.
+    target_include_directories(bcftools PRIVATE ${HTS_INCLUDE_DIR})
+endif()
 target_compile_options(bcftools PRIVATE -fPIC)
 
 # Product sources minus main.cpp, compiled once into an OBJECT library (panmap_lib)
@@ -567,23 +621,31 @@ set(PANMAP_LIB_SOURCES
 find_package(Boost COMPONENTS program_options iostreams filesystem date_time REQUIRED)
 find_package(ZLIB REQUIRED)
 
-# Use FetchContent to get latest zstd with all modern features
-FetchContent_Declare(
-    zstd
-    GIT_REPOSITORY https://github.com/facebook/zstd.git
-    GIT_TAG v1.5.7
-    SOURCE_SUBDIR build/cmake
-)
+# zstd: system (conda) under USE_SYSTEM_LIBS, else build static from source.
+# Consumers link the target name `libzstd_static`, preserved in both paths.
+if(USE_SYSTEM_LIBS)
+    find_library(ZSTD_LIBRARY NAMES zstd REQUIRED)
+    add_library(libzstd_static INTERFACE IMPORTED)
+    set_target_properties(libzstd_static PROPERTIES INTERFACE_LINK_LIBRARIES "${ZSTD_LIBRARY}")
+else()
+    # Use FetchContent to get latest zstd with all modern features
+    FetchContent_Declare(
+        zstd
+        GIT_REPOSITORY https://github.com/facebook/zstd.git
+        GIT_TAG v1.5.7
+        SOURCE_SUBDIR build/cmake
+    )
 
-set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
-set(ZSTD_MULTITHREAD_SUPPORT ON CACHE BOOL "" FORCE)
-set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
-set(BUILD_SHARED_LIBS OFF)
-FetchContent_MakeAvailable(zstd)
-set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
+    set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(ZSTD_MULTITHREAD_SUPPORT ON CACHE BOOL "" FORCE)
+    set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS_SAVED "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF)
+    FetchContent_MakeAvailable(zstd)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVED}")
+endif()
 
 add_library(panmap_lib OBJECT ${PANMAP_LIB_SOURCES})
 add_dependencies(panmap_lib panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
@@ -614,7 +676,7 @@ if(OPTION_BUILD_SIMULATE)
         ${panman_SOURCE_DIR}/src
         ${panman_BINARY_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty
-        ${HTSLIB_INSTALL_DIR}/include
+        ${HTSLIB_INCLUDE_DIR}
     )
     
     target_link_libraries(simulate PRIVATE
@@ -664,7 +726,7 @@ if(OPTION_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2
         ${CMAKE_CURRENT_BINARY_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/include
-        ${HTSLIB_INSTALL_DIR}/include
+        ${HTSLIB_INCLUDE_DIR}
         ${panman_SOURCE_DIR}/src
         ${panman_BINARY_DIR}
     )
@@ -708,14 +770,21 @@ target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/src)
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
-target_include_directories(panmap_lib PUBLIC ${HTSLIB_INSTALL_DIR}/include)
+target_include_directories(panmap_lib PUBLIC ${HTSLIB_INCLUDE_DIR})
 
-# Pull in libdeflate
-FetchContent_Declare(deflate
-    GIT_REPOSITORY https://github.com/ebiggers/libdeflate
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(deflate)
+# libdeflate: system (conda) under USE_SYSTEM_LIBS, else build from source.
+# Consumers link the target name `libdeflate_shared`, preserved in both paths.
+if(USE_SYSTEM_LIBS)
+    find_library(DEFLATE_LIBRARY NAMES deflate REQUIRED)
+    add_library(libdeflate_shared INTERFACE IMPORTED)
+    set_target_properties(libdeflate_shared PROPERTIES INTERFACE_LINK_LIBRARIES "${DEFLATE_LIBRARY}")
+else()
+    FetchContent_Declare(deflate
+        GIT_REPOSITORY https://github.com/ebiggers/libdeflate
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(deflate)
+endif()
 
 # Link libraries live on panmap_lib as PUBLIC so its sources compile with the right
 # usage requirements (include dirs / compile defs from panman, htslib, etc.) AND so
@@ -747,7 +816,8 @@ target_link_libraries(panmap_lib PUBLIC
 # panmap is just main.cpp + panmap_lib (objects + transitive usage requirements).
 target_link_libraries(panmap PRIVATE panmap_lib)
 
-# Set compiler options based on build type
+# Set compiler options based on build type. Applied to panmap_lib PUBLIC so the
+# object library's sources compile with these flags AND consumers inherit them.
 if(OPTION_DEBUG)
     target_compile_options(panmap_lib PUBLIC -g -O0 -ggdb)
 elseif(OPTION_PORTABLE)
@@ -761,22 +831,25 @@ elseif(OPTION_PORTABLE)
         -fprefetch-loop-arrays
     )
 else()
-    target_compile_options(panmap_lib PUBLIC 
-        -g -O3 
+    target_compile_options(panmap_lib PUBLIC
+        -g -O3
         -march=native
-        -fno-omit-frame-pointer 
+        -fno-omit-frame-pointer
         -ftree-vectorize
         -funroll-loops
         -fprefetch-loop-arrays
     )
 endif()
 
-# Unit testing data
-configure_file(src/test/data/test.aligned.fa test.aligned.fa COPYONLY)
-configure_file(src/test/data/test.nwk test.nwk COPYONLY)
-configure_file(src/test/data/test.json test.json COPYONLY)
-configure_file(src/test/data/test.pmat test.pmat COPYONLY)
-configure_file(src/test/data/test.fastq test.fastq COPYONLY)
+# Unit testing data (only needed when building tests; lets a tests-off
+# build, e.g. conda, skip src/test/data entirely so it can be export-ignored)
+if(OPTION_BUILD_TESTS)
+    configure_file(src/test/data/test.aligned.fa test.aligned.fa COPYONLY)
+    configure_file(src/test/data/test.nwk test.nwk COPYONLY)
+    configure_file(src/test/data/test.json test.json COPYONLY)
+    configure_file(src/test/data/test.pmat test.pmat COPYONLY)
+    configure_file(src/test/data/test.fastq test.fastq COPYONLY)
+endif()
 
 install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
