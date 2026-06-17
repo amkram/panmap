@@ -250,7 +250,7 @@ void seedsFromFastq(const int32_t& k,
         if (readSequences.size() != static_cast<size_t>(forwardReads) * 2) {
             std::cerr << "Error: File " << fastqPath2 << " does not contain the same number of reads as " << fastqPath1
                       << std::endl;
-            exit(0);
+            exit(1);
         }
 
         // Shuffle reads together, so that pairs are next to each other

@@ -60,7 +60,6 @@ void buildMutationMatricesHelper(mutationMatrices& mutMat,
                                  std::unordered_map<int64_t, int64_t>& insCount,
                                  std::unordered_map<int64_t, int64_t>& delCount);
 
-std::vector<std::vector<double>> scaleMutationSpectrum(const mutationMatrices& mutMat, double mutationRate);
 std::string applyMutationSpectrum(const std::string& line, const std::vector<std::vector<double>>& scaled_submat);
 
 }  // namespace genotyping

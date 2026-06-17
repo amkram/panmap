@@ -13,21 +13,12 @@ namespace genotyping {
 struct mutationMatrices;
 }
 
-void createMplp(std::string& bestMatchSequence,
-                sam_hdr_t* header,
-                bam1_t** bamRecords,
-                int numBams,
-                std::string& mpileupFileName,
-                char*& mplpString);
-
 void createMplpBcf(const std::string& prefix,
                    const std::string& refFileName,
                    const std::string& bestMatchSequence,
                    const std::string& bamFileName,
                    std::string& mpileupFileName,
                    bool baq = false);
-
-void createVcf(char* mplpString, const genotyping::mutationMatrices& mutMat, std::string& vcfFileName, bool keep_alts);
 
 void createVcfWithMutationMatrices(std::string& prefix,
                                    std::string& mpileupFileName,

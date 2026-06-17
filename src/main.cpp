@@ -76,29 +76,6 @@ inline const char* bold() {
     return output::style::bold();
 }
 
-inline const char* dim() {
-    return output::style::dim();
-}
-
-inline const char* red() {
-    return output::style::red();
-}
-
-inline const char* green() {
-    return output::style::green();
-}
-
-inline const char* yellow() {
-    return output::style::yellow();
-}
-
-inline const char* blue() {
-    return output::style::blue();
-}
-
-inline const char* cyan() {
-    return output::style::cyan();
-}
 }  // namespace color
 
 enum class PipelineStage {
@@ -138,7 +115,7 @@ struct Config {
     int t = 0;                    // syncmer offset
     bool openSyncmer = false;     // Open syncmer
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
-    double seedMaskFraction = 0;  // Mask top 0.1% most frequent seeds
+    double seedMaskFraction = 0;  // Fraction of most-frequent seeds to mask (0 disables masking)
     int minSeedQuality = 0;       // Min avg Phred quality for seed region (0=disabled)
     int trimStart = 0;            // Trim N bases from start of each read (primer removal)
     int trimEnd = 0;              // Trim N bases from end of each read (primer removal)

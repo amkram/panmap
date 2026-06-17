@@ -1,3 +1,5 @@
+#pragma once
+
 #include <minimap2/mmpriv.h>
 #include <stdbool.h>
 #include <stdint.h>
