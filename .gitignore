@@ -76,5 +76,6 @@ output/
 /isolate_*
 # generated index files (regenerable; none are committed)
 *.idx
+*.midx
 
 
