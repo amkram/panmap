@@ -71,11 +71,8 @@ This demo run should take about 2 minutes to complete.
 ```bash
 data_dir=examples/data; output_dir=examples/output; mkdir -p $output_dir
 
-# Build an index for metagenomics mode
-panmap $data_dir/sars_20000_twilight_dipper.panman --index-mgsr $output_dir/sars_20000_twilight_dipper.midx 
-
-# Run panmap with --meta option
-panmap  $data_dir/sars_20000_twilight_dipper.panman $data_dir/sars20000_5hap_*.fastq.gz --meta --index $output_dir/sars_20000_twilight_dipper.midx --threads 4 --em-delta-threshold 0.00001 --output $output_dir/example
+# Run panmap in metagenomic mode (the MGSR index is built automatically on first use)
+panmap $data_dir/sars_20000_twilight_dipper.panman $data_dir/sars20000_5hap_*.fastq.gz --meta --threads 4 --em-delta-threshold 0.00001 --output $output_dir/example
 ```
 
 This outputs a `.mgsr.abundance.out` file containing the haplotype abundance for each sample.
@@ -91,12 +88,9 @@ This demo run should take about 2.5 minutes to complete.
 data_dir=examples/data; output_dir=examples/output; mkdir -p $output_dir
 cp data/vertebrate_mtdna/v_mtdna.panman $data_dir/
 
-# Build an index for metagenomics mode with ancient dna parameters
-panmap $data_dir/v_mtdna.panman --index-mgsr $data_dir/v_mtdna.midx -k 15 -s 8 -l 1
-
-# Run Panmap with --filter-and-assign option
-panmap $data_dir/v_mtdna.panman $data_dir/subsampled.fastq.gz --meta -i $data_dir/v_mtdna.midx --filter-and-assign \
-  --discard 0.6 --dust 5 --taxonomic-metadata $data_dir/v_mtdna.meta.tsv -t 4 --breadth-ratio --output $output_dir/subsampled
+# Run Panmap with --filter-and-assign option (index built automatically with the given -k/-s/-l)
+panmap $data_dir/v_mtdna.panman $data_dir/subsampled.fastq.gz --meta --filter-and-assign \
+  -k 15 -s 8 -l 1 --discard 0.6 --dust 5 --taxonomic-metadata $data_dir/v_mtdna.meta.tsv -t 4 --breadth-ratio --output $output_dir/subsampled
 ```
 
 This outputs 3 files:

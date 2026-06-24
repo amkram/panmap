@@ -135,7 +135,6 @@ struct Config {
     size_t topOc = 1000;
     uint32_t maskReads = 0;
     uint32_t maskSeeds = 0;
-    std::string indexMgsr;
     std::string ampliconDepth;
     double maskReadsRelativeFrequency = 0.0;
     double maskSeedsRelativeFrequency = 0.0;
@@ -344,6 +343,11 @@ void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std
 /* INDEXING */
 
 bool buildMgsrIndex(const Config& cfg) {
+    if (fs::exists(cfg.index) && !cfg.forceReindex) {
+        output::done("index", cfg.index, "cached");
+        return true;
+    }
+
     auto tg = loadPanMAN(cfg.panman);
     if (!tg || tg->trees.empty()) {
         logging::err("Failed to load pangenome");
@@ -353,8 +357,8 @@ bool buildMgsrIndex(const Config& cfg) {
     panmanUtils::Tree* T = &tg->trees[0];
     mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, cfg.indexFull);
     mgsrIndexBuilder.buildIndex();
-    mgsrIndexBuilder.writeIndex(cfg.indexMgsr, cfg.indexPacked);
-    std::cout << (cfg.indexFull ? "Full" : "Lite") << " MGSR index written to " << cfg.indexMgsr << std::endl;
+    mgsrIndexBuilder.writeIndex(cfg.index, cfg.indexPacked);
+    std::cout << (cfg.indexFull ? "Full" : "Lite") << " MGSR index written to " << cfg.index << std::endl;
     return true;
 }
 
@@ -1106,17 +1110,9 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
 bool runMetagenomic(const Config& cfg) {
     std::cout << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads << std::endl;
 
-    // Checking IO. Metagenomic mode needs an MGSR index (.midx), not a single-sample
-    // placement index (.idx) -- loading the latter silently maps 0 reads.
-    if (fs::path(cfg.index).extension() == ".idx") {
-        std::cerr << "Error: " << cfg.index << " is a single-sample (placement) index. "
-                     "Metagenomic mode requires an MGSR index; build one with:\n"
-                  << "  panmap " << cfg.panman << " --index-mgsr " << cfg.panman << ".midx" << std::endl;
-        return false;
-    }
+    // Checking IO (the MGSR index is auto-built/validated before we get here).
     if (cfg.index.empty() || !fs::exists(cfg.index)) {
-        std::cerr << "Error: MGSR index " << cfg.index << " does not exist. Build one with:\n"
-                  << "  panmap " << cfg.panman << " --index-mgsr " << cfg.index << std::endl;
+        std::cerr << "Error: index file " << cfg.index << " does not exist" << std::endl;
         return false;
     }
 
@@ -1200,7 +1196,7 @@ bool runMetagenomic(const Config& cfg) {
     // Backstop: a non-MGSR index loads with no seed info and would silently map 0 reads.
     if (T.seedInfos.empty()) {
         std::cerr << "Error: " << cfg.index << " is not a valid MGSR index (no seed info). "
-                     "Rebuild it with: panmap " << cfg.panman << " --index-mgsr " << cfg.index << std::endl;
+                     "Rebuild it by re-running with --reindex." << std::endl;
         return false;
     }
 
@@ -1755,8 +1751,7 @@ int main(int argc, char** argv) {
     
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()
-        ("index-mgsr", po::value<std::string>(&cfg.indexMgsr), "Path to build/rebuild MGSR index")
-        ("index-full", po::bool_switch(&cfg.indexFull), "Build full index (default index-mgsr builds lite index)")
+        ("index-full", po::bool_switch(&cfg.indexFull), "Build full MGSR index (default is lite)")
         ("index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")
         ("read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")
         ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
@@ -1974,13 +1969,17 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        // metagenomics mode related
-        if (!cfg.indexMgsr.empty()) {
-            if (!buildMgsrIndex(cfg)) return 1;
-            return 0;
-        }
-
         if (cfg.metagenomic) {
+            // Metagenomic mode uses an MGSR index (.midx), not a single-sample placement
+            // index (.idx). Auto-build it (cached unless --reindex), like placement does.
+            if (fs::path(cfg.index).extension() == ".idx") {
+                output::error("{} is a single-sample (placement) index; metagenomic mode uses .midx. "
+                              "Pass --index <name>.midx (built automatically if missing).", cfg.index);
+                return 1;
+            }
+            if (!buildMgsrIndex(cfg)) return 1;
+            if (cfg.stopAfter == PipelineStage::Index) return 0;
+
             // filter-and-assign batches internally; deconvolution mutates the tree per
             // run, so loop it per sample (each runMetagenomic call builds a fresh tree).
             if (cfg.filterAndAssign || cfg.batchFile.empty()) {

@@ -86,12 +86,12 @@ $PANMAP "$TESTDATA/rsv_4K.panman" "$TESTDATA/MZ515733.1.fastq" \
 check "vcf exists" test -f "$TMPDIR/full_fq.vcf"
 check "bam exists" test -f "$TMPDIR/full_fq.bam"
 
-# Test 8: Metagenomic abundance (--index-mgsr + --meta) — exercises the EM path
+# Test 8: Metagenomic abundance (--meta auto-builds the .midx index) — exercises the EM path
 echo "[8] Metagenomic abundance"
-$PANMAP "$TESTDATA/rsv_4K.panman" --index-mgsr "$TMPDIR/rsv.mgsr.idx" -t 2 >/dev/null 2>&1
-check "mgsr index created" test -s "$TMPDIR/rsv.mgsr.idx"
+$PANMAP "$TESTDATA/rsv_4K.panman" --meta --index "$TMPDIR/rsv.mgsr.midx" --stop index -t 2 >/dev/null 2>&1
+check "mgsr index created" test -s "$TMPDIR/rsv.mgsr.midx"
 $PANMAP "$TESTDATA/rsv_4K.panman" "$TESTDATA/MZ515733.1.fastq" \
-    --meta --index "$TMPDIR/rsv.mgsr.idx" -o "$TMPDIR/meta" -t 2 >/dev/null 2>&1
+    --meta --index "$TMPDIR/rsv.mgsr.midx" -o "$TMPDIR/meta" -t 2 >/dev/null 2>&1
 ABUND="$TMPDIR/meta.mgsr.abundance.out"
 check "abundance output created" test -s "$ABUND"
 # All reads are from MZ515733.1, so it must be the dominant haplotype.
@@ -176,7 +176,7 @@ def emit(g, n, pre):
 emit(a, 700, "A"); emit(b, 300, "B"); out.close()
 PY
 $PANMAP "$TESTDATA/rsv_4K.panman" "$TMPDIR/mix.fastq" \
-    --meta --index "$TMPDIR/rsv.mgsr.idx" -o "$TMPDIR/mix" -t 2 >/dev/null 2>&1
+    --meta --index "$TMPDIR/rsv.mgsr.midx" -o "$TMPDIR/mix" -t 2 >/dev/null 2>&1
 MIX="$TMPDIR/mix.mgsr.abundance.out"
 check "mixture abundance created" test -s "$MIX"
 check "exactly 2 haplotypes" test "$(grep -c . "$MIX")" -eq 2

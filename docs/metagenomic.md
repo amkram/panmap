@@ -44,11 +44,7 @@ samtools fastq --no-sc SRR19707934.trimmed.sorted.bam \
 ### 2. Run panmap
 
 ```bash
-# Build index
-panmap ../examples/data/sars_20000_twilight_dipper.panman \
-  --index-mgsr sars_20000_twilight_dipper.midx
-
-# Estimate abundances
+# The MGSR index (.midx) is built automatically on first run.
 panmap ../examples/data/sars_20000_twilight_dipper.panman \
   SRR19707934.trimmed.fastq \
   --meta \
@@ -84,25 +80,17 @@ python3 ../scripts/assign_lineage.py \
 
 Assign reads directly to pangenome nodes. Useful for ancient or environmental DNA (aeDNA) where the goal is species identification rather than abundance estimation.
 
-### 1. Build index
-
-For aeDNA reads, use `-k 15 -s 8 -l 1`:
+For aeDNA reads, use `-k 15 -s 8 -l 1` (the `.midx` index is built automatically with
+these parameters on first run):
 
 ```bash
 mkdir example_run && cd example_run
 
 panmap ../examples/data/v_mtdna.panman \
-  --index-mgsr v_mtdna.midx \
-  -k 15 -s 8 -l 1
-```
-
-### 2. Run filter and assign
-
-```bash
-panmap ../examples/data/v_mtdna.panman \
   ../examples/data/subsampled.fastq.gz \
   --meta \
-  -i v_mtdna.midx \
+  --index v_mtdna.midx \
+  -k 15 -s 8 -l 1 \
   --filter-and-assign \
   --discard 0.6 --dust 5 \
   --taxonomic-metadata ../examples/data/v_mtdna.meta.tsv \
@@ -126,7 +114,8 @@ panmap ../examples/data/v_mtdna.panman \
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--index-mgsr <file>` | Build/rebuild MGSR index at this path | -- |
+| `--index <file>` | Reuse/build the `.midx` MGSR index at this path (auto-built if absent) | derived from output/panman |
+| `--reindex` | Force rebuild the index | off |
 | `--index-full` | Build full index (default is lite) | off |
 | `--index-packed` | Build packed Cap'n Proto message | off |
 | `--read-packed` | Read packed Cap'n Proto message | off |
