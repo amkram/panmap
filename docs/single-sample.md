@@ -18,7 +18,7 @@ By default, panmap runs through **consensus**. Use `--stop` to stop at an earlie
 
 | Stage | `--stop` value | Output | Description |
 |-------|---------------|--------|-------------|
-| Index | `index` | `<prefix>.idx` | Builds seed index from the PanMAN |
+| Index | `index` | `<panman>.idx` | Builds seed index from the PanMAN (next to the PanMAN) |
 | Place | `place` | `<prefix>.placement.tsv` | Places reads onto the pangenome tree |
 | Align | `align` | `<prefix>.bam` | Aligns reads to closest reference |
 | Genotype | `genotype` | `<prefix>.vcf` | Calls variants from alignments |
@@ -53,20 +53,21 @@ panmap examples/data/sars_20000_twilight_dipper.panman \
 
 | File | Contents |
 |------|----------|
-| `my_sample.idx` | Seed index (reusable for future runs with `--index`) |
 | `my_sample.placement.tsv` | Placement on the pangenome tree |
 | `my_sample.bam` | Reads aligned to the closest reference |
 | `my_sample.vcf` | Called variants |
 | `my_sample.consensus.fa` | Consensus sequence |
 
+The seed index is built once next to the PanMAN (`sars_20000_twilight_dipper.panman.idx`) and reused automatically on later runs.
+
 ### 4. Reuse the index
 
-Once built, the index can be reused across samples:
+The index is cached next to the PanMAN and reused automatically across samples — no flag needed. Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location:
 
 ```bash
 panmap examples/data/sars_20000_twilight_dipper.panman \
   sample2_R1.fq.gz sample2_R2.fq.gz \
-  --index my_sample.idx --stop consensus -t 8 -o sample2
+  --stop consensus -t 8 -o sample2
 ```
 
 ## Common options

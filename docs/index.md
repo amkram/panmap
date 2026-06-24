@@ -14,7 +14,7 @@ conda install -c bioconda panmap
 panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
 
 # Metagenomic abundance estimation
-panmap ref.panman reads.fq --meta --index ref.midx -t 8 -o sample
+panmap ref.panman reads.fq --meta -t 8 -o sample
 ```
 
 ## Modes

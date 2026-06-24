@@ -128,7 +128,6 @@ struct Config {
     int zstdLevel = 7;
 
     // Metagenomic options
-    bool indexFull = false;
     bool indexPacked = false;
     bool readPacked = false;
     bool noProgress = false;
@@ -355,10 +354,10 @@ bool buildMgsrIndex(const Config& cfg) {
     }
 
     panmanUtils::Tree* T = &tg->trees[0];
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, cfg.indexFull);
+    mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, /*indexFull=*/false);
     mgsrIndexBuilder.buildIndex();
     mgsrIndexBuilder.writeIndex(cfg.index, cfg.indexPacked);
-    std::cout << (cfg.indexFull ? "Full" : "Lite") << " MGSR index written to " << cfg.index << std::endl;
+    std::cout << "MGSR index written to " << cfg.index << std::endl;
     return true;
 }
 
@@ -1751,7 +1750,6 @@ int main(int argc, char** argv) {
     
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()
-        ("index-full", po::bool_switch(&cfg.indexFull), "Build full MGSR index (default is lite)")
         ("index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")
         ("read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")
         ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
@@ -1908,12 +1906,13 @@ int main(int argc, char** argv) {
     }
 
     // Set defaults
-    // If index not explicitly set, derive from output prefix if set, otherwise from panman.
-    // Metagenomic mode uses a distinct MGSR index extension (.midx) so it never collides
-    // with the single-sample placement index (.idx).
+    // The index path is always derived from the panman (placement -> .idx, metagenomic
+    // -> .midx); -o does not affect it. Pass --index to load a specific pre-built index.
     if (cfg.index.empty()) {
-        std::string ext = cfg.metagenomic ? ".midx" : ".idx";
-        cfg.index = (cfg.output.empty() ? cfg.panman : cfg.output) + ext;
+        cfg.index = cfg.panman + (cfg.metagenomic ? ".midx" : ".idx");
+    } else if (!fs::exists(cfg.index)) {
+        output::error("index file not found: {} (--index expects a pre-built index)", cfg.index);
+        return 1;
     }
     // Only set default output if we're not in dump mode (dump modes handle their own output)
     if (cfg.output.empty() && cfg.dumpNodeId.empty()) {

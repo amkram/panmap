@@ -48,7 +48,6 @@ samtools fastq --no-sc SRR19707934.trimmed.sorted.bam \
 panmap ../examples/data/sars_20000_twilight_dipper.panman \
   SRR19707934.trimmed.fastq \
   --meta \
-  --index sars_20000_twilight_dipper.midx \
   --amplicon-depth SRR19707934.amplicon_stacks.tsv \
   --mask-reads-relative-frequency 0.01 \
   --em-delta-threshold 0.00001 \
@@ -89,7 +88,6 @@ mkdir example_run && cd example_run
 panmap ../examples/data/v_mtdna.panman \
   ../examples/data/subsampled.fastq.gz \
   --meta \
-  --index v_mtdna.midx \
   -k 15 -s 8 -l 1 \
   --filter-and-assign \
   --discard 0.6 --dust 5 \
@@ -114,9 +112,8 @@ panmap ../examples/data/v_mtdna.panman \
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--index <file>` | Reuse/build the `.midx` MGSR index at this path (auto-built if absent) | derived from output/panman |
+| `--index <file>` | Load a pre-built `.midx` MGSR index from this path | default: auto-built at `<panman>.midx` |
 | `--reindex` | Force rebuild the index | off |
-| `--index-full` | Build full index (default is lite) | off |
 | `--index-packed` | Build packed Cap'n Proto message | off |
 | `--read-packed` | Read packed Cap'n Proto message | off |
 | `--no-progress` | Disable progress bars | off |
