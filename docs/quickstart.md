@@ -30,12 +30,8 @@ This produces `sample.bam`, `sample.vcf`, and `sample.consensus.fa`.
 Estimate which lineages are present in a mixed sample:
 
 ```bash
-# Build metagenomic index (once per pangenome)
-panmap ref.panman --index-mgsr ref.idx
-
-# Estimate abundances
-panmap ref.panman reads.fq \
-  --meta --index ref.idx -t 8 -o sample
+# The metagenomic index (.midx) is built automatically on first run
+panmap ref.panman reads.fq --meta -t 8 -o sample
 ```
 
 Output: `sample.mgsr.abundance.out`
@@ -43,14 +39,30 @@ Output: `sample.mgsr.abundance.out`
 ## Partial pipelines
 
 ```bash
-# Build index only
-panmap ref.panman --stop index -o ref
-
-# Place reads (default)
+# Place reads (default; the index is built automatically if absent)
 panmap ref.panman reads.fq -o sample
 
 # Place and align, skip genotyping
 panmap ref.panman reads.fq --stop align -o sample
+```
+
+## Managing indexes
+
+panmap builds the index automatically on first run and reuses it after. The path is
+derived from the panman (not `-o`): a placement index at `<panman>.idx` and an MGSR
+index at `<panman>.midx` under `--meta`.
+
+```bash
+# Build the index only, next to the panman (no reads needed)
+panmap ref.panman --stop index          # -> ref.panman.idx   (placement)
+panmap ref.panman --meta --stop index   # -> ref.panman.midx  (metagenomic)
+
+# Build to a custom path with --index-out (output), then load it with --index (input)
+panmap ref.panman --stop index --index-out /data/ref.idx
+panmap ref.panman reads.fq --index /data/ref.idx -o sample
+
+# Force a rebuild
+panmap ref.panman reads.fq --reindex -o sample
 ```
 
 ## Next steps
