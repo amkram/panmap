@@ -26,10 +26,9 @@ Use `--help` for common options or `--help-all` for the full list.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-i, --index` | Path to pre-built index file | derived from output/panman |
+| `-i, --index` | Load a pre-built index from this path | default: auto-built at `<panman>.idx` (`.midx` under `--meta`) |
+| `--index-out` | Write the built index to this path | default: next to the panman |
 | `-f, --reindex` | Force rebuild index | off |
-| `--index-mgsr` | Build/rebuild MGSR index (metagenomic) | -- |
-| `--index-full` | Build full index instead of lite | off |
 | `--index-packed` | Build packed Cap'n Proto message | off |
 | `--read-packed` | Read packed Cap'n Proto message | off |
 | `--zstd-level` | ZSTD compression level for index (1-22) | `7` |
