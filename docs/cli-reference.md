@@ -108,14 +108,13 @@ Use `--help` for common options or `--help-all` for the full list.
 | `--ambiguous-score-threshold` | Discard reads scoring outside max families by absolute value | `0` |
 | `--breadth-ratio` | Calculate observed/expected breadth ratio | off |
 | `--pseudochain` | Use pseudo-chains for read scoring | off |
-| `--batch-files-path` | TSV file containing batch file paths | -- |
 | `--batch-size` | Batch size for filtering and assigning | `1000000` |
 
 ## Batch mode
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--batch` | File listing samples, one per line: `reads1 [reads2] [output_prefix]` | -- |
+| `--batch` | File listing samples, one per line: `reads1 [reads2] [output_prefix]` (works in normal and `--meta` modes) | -- |
 
 ## Utility
 

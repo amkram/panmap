@@ -155,7 +155,6 @@ struct Config {
     int ambiguousScoreThreshold = 0;
     bool breadthRatio = false;
     bool pseudochain = false;
-    std::string batchFilesPath;
     size_t batchSize = 1000000;
 
     // Utility modes
@@ -832,43 +831,67 @@ struct BatchEntry {
   std::string prefix;
 };
 
-bool readBatchFiles(const std::string& batchFilesPath, std::vector<BatchEntry>& entries) {
-  validateInputFile(batchFilesPath, "batch files TSV");
-  std::ifstream batchIn(batchFilesPath);
+// Parse a batch file: one sample per line, "reads1 [reads2] [output_prefix]"
+// (whitespace- or tab-separated). The output prefix is optional and auto-derived
+// from reads1 when omitted. Shared by single-sample batch and metagenomic modes.
+bool readBatchFiles(const std::string& batchPath, std::vector<BatchEntry>& entries) {
+  std::ifstream batchIn(batchPath);
   if (!batchIn.is_open()) {
-    logging::err("Cannot open batch files TSV: {}", batchFilesPath);
-    exit(1);
+    output::error("Cannot open batch file: {}", batchPath);
+    return false;
   }
   std::string line;
   size_t lineNum = 0;
   while (std::getline(batchIn, line)) {
     ++lineNum;
     boost::trim(line);
-    if (line.empty() || line[0] == '#') {
-      continue;
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream iss(line);
+    BatchEntry e;
+    iss >> e.reads1;
+    if (e.reads1.empty()) continue;
+    std::string field2, field3;
+    iss >> field2 >> field3;
+    if (!field2.empty()) {
+      if (!field3.empty()) {
+        e.reads2 = field2;
+        e.prefix = field3;
+      } else {
+        // One optional field: reads2 if it looks like a FASTQ, otherwise an output prefix.
+        std::string lower = field2;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        if (lower.find(".fastq") != std::string::npos || lower.find(".fq") != std::string::npos)
+          e.reads2 = field2;
+        else
+          e.prefix = field2;
+      }
     }
-    std::vector<std::string> cols;
-    boost::split(cols, line, boost::is_any_of("\t"), boost::token_compress_on);
-    for (auto& c : cols) {
-      boost::trim(c);
+    if (e.prefix.empty()) {
+      fs::path p(e.reads1);
+      std::string stem = p.stem().string();
+      for (const auto& suffix : {"_R1", "_R2", "_1", "_2", ".R1", ".R2"}) {
+        if (stem.size() > strlen(suffix) && stem.substr(stem.size() - strlen(suffix)) == suffix) {
+          stem = stem.substr(0, stem.size() - strlen(suffix));
+          break;
+        }
+      }
+      for (const auto& ext : {".fastq", ".fq"}) {
+        if (stem.size() > strlen(ext) && stem.substr(stem.size() - strlen(ext)) == ext) {
+          stem = stem.substr(0, stem.size() - strlen(ext));
+          break;
+        }
+      }
+      e.prefix = (p.parent_path() / stem).string();
     }
-    while (!cols.empty() && cols.back().empty()) {
-      cols.pop_back();
-    }
-    if (cols.size() == 2) {
-      validateInputFile(cols[0], "reads1 (batch TSV)");
-      entries.push_back({cols[0], "", cols[1]});
-    } else if (cols.size() == 3) {
-      validateInputFile(cols[0], "reads1 (batch TSV)");
-      validateInputFile(cols[1], "reads2 (batch TSV)");
-      entries.push_back({cols[0], cols[1], cols[2]});
-    } else {
-      logging::err("Batch TSV {} line {}: expected 2 or 3 tab-separated columns, got {}",
-                   batchFilesPath,
-                   lineNum,
-                   cols.size());
+    if (!fs::exists(e.reads1)) {
+      output::error("Batch line {}: reads file not found: {}", lineNum, e.reads1);
       return false;
     }
+    if (!e.reads2.empty() && !fs::exists(e.reads2)) {
+      output::error("Batch line {}: reads file not found: {}", lineNum, e.reads2);
+      return false;
+    }
+    entries.push_back(std::move(e));
   }
   return true;
 }
@@ -918,9 +941,9 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
                          cfg.breadthRatio,
                          cfg.batchSize,
                          cfg.output);
-  } else if (!cfg.batchFilesPath.empty()) {
+  } else if (!cfg.batchFile.empty()) {
     std::vector<BatchEntry> batchEntries;
-    if (!readBatchFiles(cfg.batchFilesPath, batchEntries)) {
+    if (!readBatchFiles(cfg.batchFile, batchEntries)) {
       return false;
     }
     for (size_t i = 0; i < batchEntries.size(); ++i) {
@@ -1096,13 +1119,13 @@ bool runMetagenomic(const Config& cfg) {
 
 
     if (cfg.reads1.empty()) {
-      if (cfg.batchFilesPath.empty()) {
+      if (cfg.batchFile.empty()) {
         std::cerr << "Error: Reads1 file is required when not using batch mode" << std::endl;
         return false;
       } else {
         // check if batch files path exists
         std::vector<BatchEntry> dummyBatchEntries;
-        if (!readBatchFiles(cfg.batchFilesPath, dummyBatchEntries)) {
+        if (!readBatchFiles(cfg.batchFile, dummyBatchEntries)) {
           std::cerr << "Error: Failed to read batch files" << std::endl;
           return false;
         }
@@ -1201,77 +1224,9 @@ int runGenotyping(const Config& cfg);
 int runConsensus(const Config& cfg);
 
 int runBatchPlacement(const Config& cfg) {
-    // Parse batch file
-    std::ifstream batchIn(cfg.batchFile);
-    if (!batchIn.is_open()) {
-        output::error("Cannot open batch file: {}", cfg.batchFile);
-        return 1;
-    }
-
-    struct BatchSample {
-        std::string reads1, reads2, outputPrefix;
-    };
-
-    std::vector<BatchSample> samples;
-    std::string line;
-    int lineNum = 0;
-    while (std::getline(batchIn, line)) {
-        lineNum++;
-        // Skip empty lines and comments
-        if (line.empty() || line[0] == '#') continue;
-        std::istringstream iss(line);
-        BatchSample s;
-        iss >> s.reads1;
-        if (s.reads1.empty()) continue;
-        // Optional second field (reads2 or output prefix)
-        std::string field2, field3;
-        iss >> field2 >> field3;
-        if (!field2.empty()) {
-            // If field3 exists: field2=reads2, field3=output
-            // If only field2: check if it looks like a fastq (reads2) or output prefix
-            if (!field3.empty()) {
-                s.reads2 = field2;
-                s.outputPrefix = field3;
-            } else {
-                // Heuristic: if it ends with .fastq/.fq/.gz, it's reads2
-                std::string lower = field2;
-                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                if (lower.find(".fastq") != std::string::npos || lower.find(".fq") != std::string::npos) {
-                    s.reads2 = field2;
-                } else {
-                    s.outputPrefix = field2;
-                }
-            }
-        }
-        // Auto-derive output prefix if not specified
-        if (s.outputPrefix.empty()) {
-            fs::path p(s.reads1);
-            std::string stem = p.stem().string();
-            for (const auto& suffix : {"_R1", "_R2", "_1", "_2", ".R1", ".R2"}) {
-                if (stem.size() > strlen(suffix) && stem.substr(stem.size() - strlen(suffix)) == suffix) {
-                    stem = stem.substr(0, stem.size() - strlen(suffix));
-                    break;
-                }
-            }
-            for (const auto& ext : {".fastq", ".fq"}) {
-                if (stem.size() > strlen(ext) && stem.substr(stem.size() - strlen(ext)) == ext) {
-                    stem = stem.substr(0, stem.size() - strlen(ext));
-                    break;
-                }
-            }
-            s.outputPrefix = (p.parent_path() / stem).string();
-        }
-        if (!fs::exists(s.reads1)) {
-            output::error("Batch line {}: reads file not found: {}", lineNum, s.reads1);
-            return 1;
-        }
-        if (!s.reads2.empty() && !fs::exists(s.reads2)) {
-            output::error("Batch line {}: reads file not found: {}", lineNum, s.reads2);
-            return 1;
-        }
-        samples.push_back(std::move(s));
-    }
-    batchIn.close();
+    // Parse batch file (shared "reads1 [reads2] [output_prefix]" format with --meta)
+    std::vector<BatchEntry> samples;
+    if (!readBatchFiles(cfg.batchFile, samples)) return 1;
 
     if (samples.empty()) {
         output::error("No samples found in batch file");
@@ -1325,8 +1280,8 @@ int runBatchPlacement(const Config& cfg) {
     // Pre-load seed changes by running placement on the first sample.
     {
         const auto& s = samples[0];
-        std::string outPath = s.outputPrefix + ".placement.tsv";
-        fs::path outDir = fs::path(s.outputPrefix).parent_path();
+        std::string outPath = s.prefix + ".placement.tsv";
+        fs::path outDir = fs::path(s.prefix).parent_path();
         if (!outDir.empty()) fs::create_directories(outDir);
 
         output::config().quiet = true;
@@ -1338,20 +1293,20 @@ int runBatchPlacement(const Config& cfg) {
         if (result.bestLogContainmentNodeId.empty()) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::high_resolution_clock::now() - start);
-            fmt::print(stderr, "[1/{}] {} -> NO PLACEMENT ({}ms)\n", samples.size(), s.outputPrefix, elapsed.count());
+            fmt::print(stderr, "[1/{}] {} -> NO PLACEMENT ({}ms)\n", samples.size(), s.prefix, elapsed.count());
             failCount++;
         } else {
             if (cfg.stopAfter >= PipelineStage::Align) {
                 Config sampleCfg = cfg;
-                sampleCfg.output = s.outputPrefix;
+                sampleCfg.output = s.prefix;
                 sampleCfg.reads1 = s.reads1;
                 sampleCfg.reads2 = s.reads2;
                 if (runAlignment(sampleCfg, result, fullTreePtr) != 0) {
-                    fmt::print(stderr, "[1/{}] {} -> alignment failed\n", samples.size(), s.outputPrefix);
+                    fmt::print(stderr, "[1/{}] {} -> alignment failed\n", samples.size(), s.prefix);
                     failCount++;
                 } else if (cfg.stopAfter >= PipelineStage::Genotype) {
                     if (runGenotyping(sampleCfg) != 0) {
-                        fmt::print(stderr, "[1/{}] {} -> genotyping failed\n", samples.size(), s.outputPrefix);
+                        fmt::print(stderr, "[1/{}] {} -> genotyping failed\n", samples.size(), s.prefix);
                         failCount++;
                     } else {
                         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1359,7 +1314,7 @@ int runBatchPlacement(const Config& cfg) {
                         fmt::print(stderr,
                                    "[1/{}] {} -> {} ({}ms)\n",
                                    samples.size(),
-                                   s.outputPrefix,
+                                   s.prefix,
                                    result.bestLogContainmentNodeId,
                                    elapsed.count());
                         successCount++;
@@ -1370,7 +1325,7 @@ int runBatchPlacement(const Config& cfg) {
                     fmt::print(stderr,
                                "[1/{}] {} -> {} ({}ms)\n",
                                samples.size(),
-                               s.outputPrefix,
+                               s.prefix,
                                result.bestLogContainmentNodeId,
                                elapsed.count());
                     successCount++;
@@ -1381,7 +1336,7 @@ int runBatchPlacement(const Config& cfg) {
                 fmt::print(stderr,
                            "[1/{}] {} -> {} ({}ms)\n",
                            samples.size(),
-                           s.outputPrefix,
+                           s.prefix,
                            result.bestLogContainmentNodeId,
                            elapsed.count());
                 successCount++;
@@ -1400,9 +1355,9 @@ int runBatchPlacement(const Config& cfg) {
             for (size_t i = range.begin(); i < range.end(); i++) {
                 if (signals::check_interrupted()) continue;
                 const auto& s = samples[i];
-                std::string outPath = s.outputPrefix + ".placement.tsv";
+                std::string outPath = s.prefix + ".placement.tsv";
 
-                fs::path outDir = fs::path(s.outputPrefix).parent_path();
+                fs::path outDir = fs::path(s.prefix).parent_path();
                 if (!outDir.empty()) fs::create_directories(outDir);
 
                 placement::PlacementResult result;
@@ -1418,7 +1373,7 @@ int runBatchPlacement(const Config& cfg) {
                                "[{}/{}] {} -> NO PLACEMENT ({}ms)\n",
                                n,
                                samples.size(),
-                               s.outputPrefix,
+                               s.prefix,
                                elapsed.count());
                     atomicFail.fetch_add(1, std::memory_order_relaxed);
                     continue;
@@ -1427,14 +1382,14 @@ int runBatchPlacement(const Config& cfg) {
                 bool sampleOk = true;
                 if (cfg.stopAfter >= PipelineStage::Align) {
                     Config sampleCfg = cfg;
-                    sampleCfg.output = s.outputPrefix;
+                    sampleCfg.output = s.prefix;
                     sampleCfg.reads1 = s.reads1;
                     sampleCfg.reads2 = s.reads2;
 
                     if (runAlignment(sampleCfg, result, fullTreePtr) != 0) {
                         int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
                         std::lock_guard<std::mutex> lock(progressMutex);
-                        fmt::print(stderr, "[{}/{}] {} -> alignment failed\n", n, samples.size(), s.outputPrefix);
+                        fmt::print(stderr, "[{}/{}] {} -> alignment failed\n", n, samples.size(), s.prefix);
                         atomicFail.fetch_add(1, std::memory_order_relaxed);
                         continue;
                     }
@@ -1443,7 +1398,7 @@ int runBatchPlacement(const Config& cfg) {
                         if (runGenotyping(sampleCfg) != 0) {
                             int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
                             std::lock_guard<std::mutex> lock(progressMutex);
-                            fmt::print(stderr, "[{}/{}] {} -> genotyping failed\n", n, samples.size(), s.outputPrefix);
+                            fmt::print(stderr, "[{}/{}] {} -> genotyping failed\n", n, samples.size(), s.prefix);
                             atomicFail.fetch_add(1, std::memory_order_relaxed);
                             continue;
                         }
@@ -1458,7 +1413,7 @@ int runBatchPlacement(const Config& cfg) {
                            "[{}/{}] {} -> {} ({}ms)\n",
                            n,
                            samples.size(),
-                           s.outputPrefix,
+                           s.prefix,
                            result.bestLogContainmentNodeId,
                            totalElapsedSample.count());
                 atomicSuccess.fetch_add(1, std::memory_order_relaxed);
@@ -1781,7 +1736,7 @@ int main(int argc, char** argv) {
         ("refine-neighbor-radius", po::value<int>(&cfg.refineNeighborRadius)->default_value(2), "Expand to neighbors within N branches")
         ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150), "Max additional nodes from neighbor expansion")
         ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7), "ZSTD compression level for index (1-22)")
-        ("batch", po::value<std::string>(&cfg.batchFile), "Batch file listing samples (one per line: reads1 [reads2] [output_prefix])");
+        ("batch", po::value<std::string>(&cfg.batchFile), "Batch file listing samples (one per line: reads1 [reads2] [output_prefix]); works in normal and --meta modes");
     
     po::options_description metagenomic("Metagenomic");
     metagenomic.add_options()
@@ -1818,7 +1773,6 @@ int main(int argc, char** argv) {
         ("ambiguous-score-threshold", po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families")
         ("breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")
         ("pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")
-        ("batch-files-path", po::value<std::string>(&cfg.batchFilesPath), "Path to tsv file containg batch file paths")
         ("batch-size", po::value<size_t>(&cfg.batchSize)->default_value(1000000), "Batch size for filtering and assigning reads");
     
     po::options_description developer("Developer");
@@ -1830,13 +1784,14 @@ int main(int argc, char** argv) {
         ("write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")
         ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
 
-    // Positional arguments (always hidden)
+    // Positional arguments (always hidden): panman, then one or more read files
+    std::vector<std::string> readFiles;
     po::options_description positional;
     positional.add_options()("panman", po::value<std::string>(&cfg.panman), "")(
-        "reads1", po::value<std::string>(&cfg.reads1), "")("reads2", po::value<std::string>(&cfg.reads2), "");
+        "reads", po::value<std::vector<std::string>>(&readFiles), "");
 
     po::positional_options_description pos;
-    pos.add("panman", 1).add("reads1", 1).add("reads2", 1);
+    pos.add("panman", 1).add("reads", -1);
 
     // Combine option groups
     po::options_description all;  // For parsing
@@ -1892,6 +1847,17 @@ int main(int argc, char** argv) {
         output::error("PanMAN file required");
         return 1;
     }
+
+    // Map positional read files: <reads1> [reads2]. Reject more than a pair.
+    if (readFiles.size() > 2) {
+        output::error("Too many read files provided. Provide one file for single end "
+                      "reads, two for paired ends, or use --batch for multiple samples");
+        std::cerr << "Provided " << readFiles.size() << " files:\n";
+        for (const auto& f : readFiles) std::cerr << "  " << f << "\n";
+        return 1;
+    }
+    if (!readFiles.empty()) cfg.reads1 = readFiles[0];
+    if (readFiles.size() >= 2) cfg.reads2 = readFiles[1];
 
     // Auto-detect: if panman arg looks like an index file (.pmi/.idx), use it as the index
     {
