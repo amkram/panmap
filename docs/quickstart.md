@@ -31,11 +31,11 @@ Estimate which lineages are present in a mixed sample:
 
 ```bash
 # Build metagenomic index (once per pangenome)
-panmap ref.panman --index-mgsr ref.idx
+panmap ref.panman --index-mgsr ref.midx
 
 # Estimate abundances
 panmap ref.panman reads.fq \
-  --meta --index ref.idx -t 8 -o sample
+  --meta --index ref.midx -t 8 -o sample
 ```
 
 Output: `sample.mgsr.abundance.out`

@@ -1106,9 +1106,17 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
 bool runMetagenomic(const Config& cfg) {
     std::cout << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads << std::endl;
 
-    // Checking IO
+    // Checking IO. Metagenomic mode needs an MGSR index (.midx), not a single-sample
+    // placement index (.idx) -- loading the latter silently maps 0 reads.
+    if (fs::path(cfg.index).extension() == ".idx") {
+        std::cerr << "Error: " << cfg.index << " is a single-sample (placement) index. "
+                     "Metagenomic mode requires an MGSR index; build one with:\n"
+                  << "  panmap " << cfg.panman << " --index-mgsr " << cfg.panman << ".midx" << std::endl;
+        return false;
+    }
     if (cfg.index.empty() || !fs::exists(cfg.index)) {
-        std::cerr << "Error: Index file " << cfg.index << " does not exist" << std::endl;
+        std::cerr << "Error: MGSR index " << cfg.index << " does not exist. Build one with:\n"
+                  << "  panmap " << cfg.panman << " --index-mgsr " << cfg.index << std::endl;
         return false;
     }
 
@@ -1188,6 +1196,13 @@ bool runMetagenomic(const Config& cfg) {
                  cfg.threads,
                  lowMemory,
                  true);
+
+    // Backstop: a non-MGSR index loads with no seed info and would silently map 0 reads.
+    if (T.seedInfos.empty()) {
+        std::cerr << "Error: " << cfg.index << " is not a valid MGSR index (no seed info). "
+                     "Rebuild it with: panmap " << cfg.panman << " --index-mgsr " << cfg.index << std::endl;
+        return false;
+    }
 
     // initialize threads manager
     mgsr::ThreadsManager threadsManager(&T,
@@ -1898,13 +1913,12 @@ int main(int argc, char** argv) {
     }
 
     // Set defaults
-    // If index not explicitly set, derive from output prefix if set, otherwise from panman
+    // If index not explicitly set, derive from output prefix if set, otherwise from panman.
+    // Metagenomic mode uses a distinct MGSR index extension (.midx) so it never collides
+    // with the single-sample placement index (.idx).
     if (cfg.index.empty()) {
-        if (!cfg.output.empty()) {
-            cfg.index = cfg.output + ".idx";
-        } else {
-            cfg.index = cfg.panman + ".idx";
-        }
+        std::string ext = cfg.metagenomic ? ".midx" : ".idx";
+        cfg.index = (cfg.output.empty() ? cfg.panman : cfg.output) + ext;
     }
     // Only set default output if we're not in dump mode (dump modes handle their own output)
     if (cfg.output.empty() && cfg.dumpNodeId.empty()) {
@@ -1967,7 +1981,26 @@ int main(int argc, char** argv) {
         }
 
         if (cfg.metagenomic) {
-            if (!runMetagenomic(cfg)) return 1;
+            // filter-and-assign batches internally; deconvolution mutates the tree per
+            // run, so loop it per sample (each runMetagenomic call builds a fresh tree).
+            if (cfg.filterAndAssign || cfg.batchFile.empty()) {
+                if (!runMetagenomic(cfg)) return 1;
+            } else {
+                std::vector<BatchEntry> samples;
+                if (!readBatchFiles(cfg.batchFile, samples)) return 1;
+                for (size_t i = 0; i < samples.size(); ++i) {
+                    Config sampleCfg = cfg;
+                    sampleCfg.batchFile.clear();
+                    sampleCfg.reads1 = samples[i].reads1;
+                    sampleCfg.reads2 = samples[i].reads2;
+                    sampleCfg.output = samples[i].prefix;
+                    if (samples.size() > 1) {
+                        std::cout << "[" << (i + 1) << "/" << samples.size() << "] "
+                                  << samples[i].reads1 << " -> " << sampleCfg.output << std::endl;
+                    }
+                    if (!runMetagenomic(sampleCfg)) return 1;
+                }
+            }
             std::cout << "Metagenomic mode run completed" << std::endl;
             return 0;
         }
