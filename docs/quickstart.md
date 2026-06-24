@@ -48,21 +48,21 @@ panmap ref.panman reads.fq --stop align -o sample
 
 ## Managing indexes
 
-panmap builds the index automatically on first run: a placement index (`.idx`) in
-the default pipeline and an MGSR index (`.midx`) under `--meta`. To build one
-explicitly or reuse a prebuilt index:
+panmap builds the index automatically on first run and reuses it after. The path is
+derived from the panman (not `-o`): a placement index at `<panman>.idx` and an MGSR
+index at `<panman>.midx` under `--meta`.
 
 ```bash
-# Build the index only (no reads)
-panmap ref.panman --stop index -o ref          # -> ref.idx  (placement)
-panmap ref.panman --meta --stop index -o ref   # -> ref.midx (metagenomic)
-
-# Reuse a prebuilt index with --index
-panmap ref.panman reads.fq --index ref.idx -o sample
-panmap ref.panman reads.fq --meta --index ref.midx -o sample
+# Build the index only, next to the panman (no reads needed)
+panmap ref.panman --stop index          # -> ref.panman.idx   (placement)
+panmap ref.panman --meta --stop index   # -> ref.panman.midx  (metagenomic)
 
 # Force a rebuild
 panmap ref.panman reads.fq --reindex -o sample
+
+# Load a pre-built index from another location
+panmap ref.panman reads.fq --index /path/to/ref.panman.idx -o sample
+panmap ref.panman reads.fq --meta --index /path/to/ref.panman.midx -o sample
 ```
 
 ## Next steps
