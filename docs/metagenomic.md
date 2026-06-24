@@ -46,13 +46,13 @@ samtools fastq --no-sc SRR19707934.trimmed.sorted.bam \
 ```bash
 # Build index
 panmap ../examples/data/sars_20000_twilight_dipper.panman \
-  --index-mgsr sars_20000_twilight_dipper.idx
+  --index-mgsr sars_20000_twilight_dipper.midx
 
 # Estimate abundances
 panmap ../examples/data/sars_20000_twilight_dipper.panman \
   SRR19707934.trimmed.fastq \
   --meta \
-  --index sars_20000_twilight_dipper.idx \
+  --index sars_20000_twilight_dipper.midx \
   --amplicon-depth SRR19707934.amplicon_stacks.tsv \
   --mask-reads-relative-frequency 0.01 \
   --em-delta-threshold 0.00001 \
@@ -92,7 +92,7 @@ For aeDNA reads, use `-k 15 -s 8 -l 1`:
 mkdir example_run && cd example_run
 
 panmap ../examples/data/v_mtdna.panman \
-  --index-mgsr v_mtdna.idx \
+  --index-mgsr v_mtdna.midx \
   -k 15 -s 8 -l 1
 ```
 
@@ -102,7 +102,7 @@ panmap ../examples/data/v_mtdna.panman \
 panmap ../examples/data/v_mtdna.panman \
   ../examples/data/subsampled.fastq.gz \
   --meta \
-  -i v_mtdna.idx \
+  -i v_mtdna.midx \
   --filter-and-assign \
   --discard 0.6 --dust 5 \
   --taxonomic-metadata ../examples/data/v_mtdna.meta.tsv \
