@@ -95,7 +95,8 @@ struct Config {
 
     // Output
     std::string output;  // Output prefix
-    std::string index;   // Index file path
+    std::string index;     // Pre-built index to load (--index)
+    std::string indexOut;  // Where to write the index when building (--index-out)
 
     // Pipeline control
     PipelineStage stopAfter = PipelineStage::Place;
@@ -1720,7 +1721,8 @@ int main(int argc, char** argv) {
     
     po::options_description advanced("Advanced");
     advanced.add_options()
-        ("index,i", po::value<std::string>(&cfg.index), "Index file path")
+        ("index,i", po::value<std::string>(&cfg.index), "Load a pre-built index from this path")
+        ("index-out", po::value<std::string>(&cfg.indexOut), "Write the built index to this path (default: next to the panman)")
         ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
         ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
         ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
@@ -1909,9 +1911,13 @@ int main(int argc, char** argv) {
     // The index path is always derived from the panman (placement -> .idx, metagenomic
     // -> .midx); -o does not affect it. Pass --index to load a specific pre-built index.
     if (cfg.index.empty()) {
-        cfg.index = cfg.panman + (cfg.metagenomic ? ".midx" : ".idx");
+        // No pre-built index (--index) given: build at --index-out if set, else next to the panman.
+        cfg.index = cfg.indexOut.empty()
+                        ? cfg.panman + (cfg.metagenomic ? ".midx" : ".idx")
+                        : cfg.indexOut;
     } else if (!fs::exists(cfg.index)) {
-        output::error("index file not found: {} (--index expects a pre-built index)", cfg.index);
+        output::error("index file not found: {} (--index expects a pre-built index; "
+                      "use --index-out to build at a custom path)", cfg.index);
         return 1;
     }
     // Only set default output if we're not in dump mode (dump modes handle their own output)
