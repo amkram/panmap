@@ -162,5 +162,5 @@ panmap ../examples/data/v_mtdna.panman \
 | `--ambiguous-score-threshold` | Discard reads scoring outside max families by absolute value | `0` |
 | `--breadth-ratio` | Calculate observed/expected breadth ratio | off |
 | `--pseudochain` | Use pseudo-chains for read scoring | off |
-| `--batch-files-path <file>` | TSV file containing batch file paths | -- |
+| `--batch <file>` | Batch file, one sample per line: `reads1 [reads2] [output_prefix]` (also used in single-sample mode) | -- |
 | `--batch-size` | Batch size for filtering and assigning | `1000000` |
