@@ -57,12 +57,12 @@ index at `<panman>.midx` under `--meta`.
 panmap ref.panman --stop index          # -> ref.panman.idx   (placement)
 panmap ref.panman --meta --stop index   # -> ref.panman.midx  (metagenomic)
 
+# Build to a custom path with --index-out (output), then load it with --index (input)
+panmap ref.panman --stop index --index-out /data/ref.idx
+panmap ref.panman reads.fq --index /data/ref.idx -o sample
+
 # Force a rebuild
 panmap ref.panman reads.fq --reindex -o sample
-
-# Load a pre-built index from another location
-panmap ref.panman reads.fq --index /path/to/ref.panman.idx -o sample
-panmap ref.panman reads.fq --meta --index /path/to/ref.panman.midx -o sample
 ```
 
 ## Next steps

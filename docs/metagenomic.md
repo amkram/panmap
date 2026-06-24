@@ -113,6 +113,7 @@ panmap ../examples/data/v_mtdna.panman \
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--index <file>` | Load a pre-built `.midx` MGSR index from this path | default: auto-built at `<panman>.midx` |
+| `--index-out <file>` | Write the built `.midx` index to this path | default: next to the panman |
 | `--reindex` | Force rebuild the index | off |
 | `--index-packed` | Build packed Cap'n Proto message | off |
 | `--read-packed` | Read packed Cap'n Proto message | off |
