@@ -294,8 +294,9 @@ else()
     set(PANMAN_TBB_COMPAT "false")
 endif()
 
-if(USE_SYSTEM_LIBS)
-    # Source pre-placed (e.g. the conda recipe's second source tarball); no network fetch.
+if(PANMAN_SOURCE_DIR OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/panman")
+    # Source pre-placed (e.g. the conda recipe's second source tarball) or
+    # user-provided via -DPANMAN_SOURCE_DIR; no network fetch.
     if(NOT PANMAN_SOURCE_DIR)
         set(PANMAN_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/panman")
     endif()
@@ -656,6 +657,8 @@ add_dependencies(panmap_lib panman_lib minimap2_target build-deps index_capnp_ge
 # so main.cpp compiles in the identical environment. See target_link_libraries below.
 add_executable(panmap src/main.cpp)
 add_dependencies(panmap panmap_lib build-deps index_capnp_generator tbb_build)
+# Place the binary in build/bin (matches the docs and the simulate/test targets)
+set_target_properties(panmap PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 # Build simulate tool if enabled
 if(OPTION_BUILD_SIMULATE)

@@ -28,7 +28,24 @@ docker run --rm -v $(pwd):/data -w /data alanalohaucsc/panmap:latest \
 
 ## Building from source
 
-### Dependencies
+### With conda (recommended)
+
+The repository ships an `environment.yml` with all build dependencies, so nothing
+needs to be installed system-wide:
+
+```bash
+conda env create -f environment.yml
+conda activate panmap
+export CPATH="$CONDA_PREFIX/include" LIBRARY_PATH="$CONDA_PREFIX/lib"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_LIBS=ON
+cmake --build build -j
+```
+
+`-DUSE_SYSTEM_LIBS=ON` builds against the conda-provided Cap'n Proto, htslib,
+Protobuf, and Abseil; the `CPATH`/`LIBRARY_PATH` exports let the bundled aligners
+find the conda headers and libraries. The binary is at `build/bin/panmap`.
+
+### With system packages
 
 | Package | Ubuntu/Debian |
 |---------|---------------|
@@ -37,15 +54,12 @@ docker run --rm -v $(pwd):/data -w /data alanalohaucsc/panmap:latest \
 | Protobuf | `protobuf-compiler`, `libprotobuf-dev` |
 | Boost | `libboost-program-options-dev`, `libboost-iostreams-dev`, `libboost-filesystem-dev`, `libboost-system-dev`, `libboost-date-time-dev` |
 | zlib | `zlib1g-dev` |
-| htslib | `libhts-dev` |
-| Cap'n Proto | `capnproto`, `libcapnp-dev` |
 | Eigen3 | `libeigen3-dev` |
-
-### Build
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
 ```
 
-The binary is at `build/bin/panmap`.
+The binary is at `build/bin/panmap`. Cap'n Proto and htslib are built from the
+bundled sources automatically.
