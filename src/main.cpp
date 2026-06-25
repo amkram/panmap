@@ -977,7 +977,7 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
   auto end_time_filterAndAssign = std::chrono::high_resolution_clock::now();
   auto duration_filterAndAssign =
       std::chrono::duration_cast<std::chrono::milliseconds>(end_time_filterAndAssign - start_time_filterAndAssign);
-  std::cout << "Filter and assign took " << static_cast<double>(duration_filterAndAssign.count()) / 1000.0 << "s\n"
+  output::trace() << "Filter and assign took " << static_cast<double>(duration_filterAndAssign.count()) / 1000.0 << "s\n"
             << std::endl;
   return true;
 }
@@ -990,7 +990,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
     auto end_time_initializeQueryData = std::chrono::high_resolution_clock::now();
     auto duration_initializeQueryData = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time_initializeQueryData - start_time_initializeQueryData);
-    std::cout << "Initialize query data took " << static_cast<double>(duration_initializeQueryData.count()) / 1000.0
+    output::trace() << "Initialize query data took " << static_cast<double>(duration_initializeQueryData.count()) / 1000.0
               << "s\n"
               << std::endl;
 
@@ -1012,7 +1012,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
     auto end_time_collapseIdenticalScoringNodes = std::chrono::high_resolution_clock::now();
     auto duration_collapseIdenticalScoringNodes = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time_collapseIdenticalScoringNodes - start_time_collapseIdenticalScoringNodes);
-    std::cout << "Collapsed identical scoring nodes in "
+    output::trace() << "Collapsed identical scoring nodes in "
               << static_cast<double>(duration_collapseIdenticalScoringNodes.count()) / 1000.0 << "s\n"
               << std::endl;
 
@@ -1033,9 +1033,9 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
             ++num_discarded;
         }
     }
-    std::cout << num_unmapped << " reads unmapped... " << std::endl;
-    std::cout << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
-    std::cout << threadsManager.reads.size() - num_unmapped - num_discarded << " reads mapped to nodes..." << std::endl;
+    output::detail() << num_unmapped << " reads unmapped... " << std::endl;
+    output::detail() << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
+    output::detail() << threadsManager.reads.size() - num_unmapped - num_discarded << " reads mapped to nodes..." << std::endl;
     if (threadsManager.reads.size() - num_unmapped - num_discarded == 0) {
         std::cerr << "No reads remain for node scoring and EM after discarding low-score reads... Exiting... "
                   << std::endl;
@@ -1057,20 +1057,20 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
 
     for (size_t i = 0; i < cfg.emMaximumRounds; ++i) {
         squareEM.runSquareEM();
-        std::cout << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size()
+        output::trace() << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size()
                   << " to ";
         bool removed = squareEM.removeLowPropNodes();
-        std::cout << squareEM.nodes.size() << std::endl;
+        output::trace() << squareEM.nodes.size() << std::endl;
         if (!removed) {
             break;
         }
     }
-    std::cout << std::endl;
+    output::trace() << std::endl;
 
     auto end_time_squareEM = std::chrono::high_resolution_clock::now();
     auto duration_squareEM =
         std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
-    std::cout << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n"
+    output::trace() << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n"
               << std::endl;
 
     std::vector<uint64_t> indices(squareEM.nodes.size());
@@ -1079,7 +1079,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
         return squareEM.props[i] > squareEM.props[j];
     });
 
-    std::cout << "writing abundance file: " << cfg.output + ".mgsr.abundance.out" << std::endl;
+    output::detail() << "writing abundance file: " << cfg.output + ".mgsr.abundance.out" << std::endl;
     std::ofstream abundanceOutput(cfg.output + ".mgsr.abundance.out");
     abundanceOutput << std::setprecision(5) << std::fixed;
     for (size_t i = 0; i < indices.size(); ++i) {
@@ -1108,7 +1108,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
 }
 
 bool runMetagenomic(const Config& cfg) {
-    std::cout << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads << std::endl;
+    output::trace() << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads << std::endl;
 
     // Checking IO (the MGSR index is auto-built/validated before we get here).
     if (cfg.index.empty() || !fs::exists(cfg.index)) {
@@ -2013,7 +2013,7 @@ int main(int argc, char** argv) {
                     if (!runMetagenomic(sampleCfg)) return 1;
                 }
             }
-            std::cout << "Metagenomic mode run completed" << std::endl;
+            output::trace() << "Metagenomic mode run completed" << std::endl;
             return 0;
         }
 

@@ -6,6 +6,7 @@
 #include <string>
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -133,6 +134,37 @@ inline void debug(const std::string& msg) {
     if (!config().verbose) return;
     std::cerr << style::dim() << msg << style::reset() << "\n";
 }
+
+// Buffered single-line stream rendered in dim/gray, so routine log lines recede
+// and the styled stage lines stand out. `detail()` is visible by default (unless
+// --quiet); `trace()` is shown only under --verbose. Existing call sites convert
+// by swapping the stream object only: `output::detail() << "x " << n << "\n";`.
+class LineBuf {
+  public:
+    explicit LineBuf(bool enabled) : enabled_(enabled) {}
+    LineBuf(LineBuf&& o) noexcept
+        : oss_(std::move(o.oss_)), enabled_(o.enabled_), done_(o.done_) { o.done_ = true; }
+    ~LineBuf() { emit(); }
+    template <typename T>
+    LineBuf& operator<<(const T& v) { if (enabled_ && !done_) oss_ << v; return *this; }
+    // ostream manipulators (std::endl / std::flush) flush the line immediately.
+    LineBuf& operator<<(std::ostream& (*)(std::ostream&)) { emit(); return *this; }
+  private:
+    void emit() {
+        if (done_) return;
+        done_ = true;
+        if (!enabled_) return;
+        std::string s = oss_.str();
+        if (!s.empty() && s.back() == '\n') s.pop_back();
+        if (s.empty()) return;
+        std::cerr << style::dim() << s << style::reset() << "\n";
+    }
+    std::ostringstream oss_;
+    bool enabled_;
+    bool done_ = false;
+};
+inline LineBuf detail() { return LineBuf(!config().quiet); }
+inline LineBuf trace()  { return LineBuf(config().verbose && !config().quiet); }
 
 // One-line tool+version banner. No subtitle in default mode.
 inline void banner(const std::string& version, const std::string& /*subtitle*/ = "") {
