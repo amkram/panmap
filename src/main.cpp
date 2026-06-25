@@ -1161,23 +1161,31 @@ bool runMetagenomic(const Config& cfg) {
     std::unique_ptr<FdReader> fdReader;
     ::capnp::MessageReader* baseReader = nullptr;
 
+    // Pick the reader by sniffing the format rather than attempting the ZSTD
+    // reader first: MGSR indexes are plain (uncompressed) capnp, so a try-first
+    // approach logged a spurious "Not a valid ZSTD frame" on every run.
+    bool indexIsZstd = false;
+    {
+        std::ifstream probe(cfg.index, std::ios::binary);
+        unsigned char magic[4] = {0, 0, 0, 0};
+        probe.read(reinterpret_cast<char*>(magic), sizeof(magic));
+        indexIsZstd = (magic[0] == 0x28 && magic[1] == 0xB5 && magic[2] == 0x2F && magic[3] == 0xFD);
+    }
+
     try {
-        compressedReader = std::make_unique<IndexReader>(cfg.index, cfg.threads);
-        baseReader = compressedReader.get();
-    } catch (...) {
-        try {
-            std::cerr << "Trying to open index file as packed file..." << std::endl;
-            if (cfg.readPacked) {
-                packedFdReader = std::make_unique<PackedFdReader>(cfg.index);
-                baseReader = packedFdReader->reader.get();
-            } else {
-                fdReader = std::make_unique<FdReader>(cfg.index);
-                baseReader = fdReader->reader.get();
-            }
-        } catch (...) {
-            std::cerr << "Failed to open index file" << std::endl;
-            return false;
+        if (indexIsZstd) {
+            compressedReader = std::make_unique<IndexReader>(cfg.index, cfg.threads);
+            baseReader = compressedReader.get();
+        } else if (cfg.readPacked) {
+            packedFdReader = std::make_unique<PackedFdReader>(cfg.index);
+            baseReader = packedFdReader->reader.get();
+        } else {
+            fdReader = std::make_unique<FdReader>(cfg.index);
+            baseReader = fdReader->reader.get();
         }
+    } catch (...) {
+        std::cerr << "Failed to open index file" << std::endl;
+        return false;
     }
 
     LiteIndex::Reader indexReader = baseReader->getRoot<LiteIndex>();
