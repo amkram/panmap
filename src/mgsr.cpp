@@ -214,7 +214,7 @@ void mgsr::MgsrLiteTree::loadTaxonomicMetadata(
   const std::string& taxonomicRank,
   std::unordered_map<std::string, int>& sampleToTaxonIndex
 ) {
-  std::cerr << "Starting to read in taxonomic metadata from " << taxonomicMetadataPath << std::endl;
+  output::trace() << "Starting to read in taxonomic metadata from " << taxonomicMetadataPath << std::endl;
   std::ifstream infile(taxonomicMetadataPath);
   if (!infile.is_open()) {
     std::cerr << "Error opening taxonomic metadata file: " << taxonomicMetadataPath << std::endl;
@@ -269,7 +269,7 @@ void mgsr::MgsrLiteTree::loadTaxonomicMetadata(
     sampleToTaxonIndex[sampleId] = it->second;
   }
   infile.close();
-  std::cerr << "Number of unique taxons (" << taxonomicRank << "): " << taxons.size() << std::endl;
+  output::detail() << "Number of unique taxons (" << taxonomicRank << "): " << taxons.size() << std::endl;
 }
 
 void mgsr::MgsrLiteTree::initialize(
@@ -286,7 +286,7 @@ void mgsr::MgsrLiteTree::initialize(
     loadTaxonomicMetadata(taxonomicMetadataPath, taxonomicRank, sampleToTaxonIndex);
   }
 
-  std::cerr << "Starting to initialize MgsrLiteTree from index..." << std::endl;
+  output::trace() << "Starting to initialize MgsrLiteTree from index..." << std::endl;
   this->numThreads = numThreads;
   this->lowMemory = lowMemory;
 
@@ -320,7 +320,7 @@ void mgsr::MgsrLiteTree::initialize(
   seedInfos.resize(seedHashesReader.size());
 
   size_t seedInfos_chunkSize = (seedHashesReader.size() + numThreads - 1) / numThreads;
-  std::cerr << "Start to read in seedInfos" << std::endl;
+  output::trace() << "Start to read in seedInfos" << std::endl;
   tbb::enumerable_thread_specific<std::unordered_set<size_t>> localRefSeedHashSets;
   tbb::parallel_for(tbb::blocked_range<size_t>(0, seedHashesReader.size(), seedInfos_chunkSize),
     [&](const tbb::blocked_range<size_t>& range) {
@@ -341,12 +341,12 @@ void mgsr::MgsrLiteTree::initialize(
     refSeedHashSet.merge(local);
   }
 
-  std::cerr << "Successfully read in seedInfos, size: " << seedInfos.size() << std::endl;
+  output::trace() << "Successfully read in seedInfos, size: " << seedInfos.size() << std::endl;
 
   seedDeltas.resize(perNodeChangesReader.size());
   gapRunDeltas.resize(perNodeChangesReader.size());
   invertedBlocks.resize(perNodeChangesReader.size());
-  std::cerr << "Starting to read in perNodeChanges" << std::endl;
+  output::trace() << "Starting to read in perNodeChanges" << std::endl;
   tbb::parallel_for(tbb::blocked_range<size_t>(0, perNodeChangesReader.size()),
     [&](const tbb::blocked_range<size_t>& range) {
       for (size_t i = range.begin(); i < range.end(); i++) {
@@ -384,7 +384,7 @@ void mgsr::MgsrLiteTree::initialize(
         }
       }
     });
-  std::cerr << "Successfully read in perNodeChanges, size: " << perNodeChangesReader.size() << std::endl;
+  output::trace() << "Successfully read in perNodeChanges, size: " << perNodeChangesReader.size() << std::endl;
 
   auto seedChangeHashesReader = indexReader.getSeedChangeHashes();
   auto nodeChangeOffsetsReader = indexReader.getNodeChangeOffsets();
@@ -396,7 +396,7 @@ void mgsr::MgsrLiteTree::initialize(
     totalSeedChanges += seedChangeHashesReader[i].size();
   }
   size_t numSegs = seedChangeHashesReader.size();
-  std::cerr << "Total seed changes: " << totalSeedChanges << " in " << numSegs << " segments" << std::endl;
+  output::trace() << "Total seed changes: " << totalSeedChanges << " in " << numSegs << " segments" << std::endl;
 
 
   std::vector<refSeedChange> refSeedChanges;
@@ -405,7 +405,7 @@ void mgsr::MgsrLiteTree::initialize(
   refSeedChanges.resize(totalSeedChanges);
   size_t seedChangeHashes_chunkSize = (totalSeedChanges + numThreads - 1) / numThreads;
 
-  std::cerr << "Start to read in seed change hashes, parent counts, and child counts" << std::endl;
+  output::trace() << "Start to read in seed change hashes, parent counts, and child counts" << std::endl;
   const size_t GRAIN_SIZE = 262144; // 256K items per chunk
   const size_t CAPNP_SPLIT = 500'000'000;
   for (size_t seg = 0; seg < numSegs; seg++) {
@@ -424,13 +424,13 @@ void mgsr::MgsrLiteTree::initialize(
       }, tbb::simple_partitioner());
   }
 
-  std::cerr << "Successfully read in seed change hashes, parent counts, and child counts, size: " << refSeedChanges.size() << std::endl;
+  output::trace() << "Successfully read in seed change hashes, parent counts, and child counts, size: " << refSeedChanges.size() << std::endl;
 
   nodeChangeOffsets.resize(nodeChangeOffsetsReader.size());
   for (size_t i = 0; i < nodeChangeOffsetsReader.size(); i++) {
     nodeChangeOffsets[i] = nodeChangeOffsetsReader[i];
   }
-  std::cerr << "Successfully read in node change offsets, size: " << nodeChangeOffsets.size() << std::endl;
+  output::trace() << "Successfully read in node change offsets, size: " << nodeChangeOffsets.size() << std::endl;
 
   if (seedInfos.size() > 0 && refSeedChanges.size() > 0) {
     std::cerr << "Error: both seed infos and ref seed changes found in index!" << std::endl;
@@ -862,8 +862,8 @@ void mgsr::MgsrLiteTree::collapseIdenticalScoringNodes(const absl::flat_hash_set
     }
   });
 
-  std::cerr << "Tree collapsed... Pruned " << detachedNodes.size() << " nodes, " << allLiteNodes.size() - detachedNodes.size() << " nodes remain." << std::endl;
-  std::cerr << "\tPruned " << originalSeedDeltasCount.load() - prunedSeedDeltasCount.load() << " seed deltas, " << prunedSeedDeltasCount.load() << " seed deltas remain." << std::endl;
+  output::trace() << "Tree collapsed... Pruned " << detachedNodes.size() << " nodes, " << allLiteNodes.size() - detachedNodes.size() << " nodes remain." << std::endl;
+  output::trace() << "\tPruned " << originalSeedDeltasCount.load() - prunedSeedDeltasCount.load() << " seed deltas, " << prunedSeedDeltasCount.load() << " seed deltas remain." << std::endl;
 }
 
 void mgsr::MgsrLiteTree::buildNewickRecursive(const MgsrLiteNode* node, std::ostringstream& oss, bool useCollapsed) const {
@@ -1360,7 +1360,7 @@ void mgsr::extractReadSequences(
   }
 
   for (size_t i = 0; i < readSequences.size(); ++i) {
-    std::cerr << "Group " << i << " has " << readSequences[i].size() << " reads" << std::endl;
+    output::detail() << "Group " << i << " has " << readSequences[i].size() << " reads" << std::endl;
   }
 }
 
@@ -1796,7 +1796,7 @@ void mgsr::ThreadsManager::initializeQueryData(
   uint32_t maskReadsEnds,
   bool fast_mode
 ) {
-  std::cerr << "Processing query reads... k=" << k << ", s=" << s << ", l=" << l << ", t=" << t << ", openSyncmer=" << openSyncmer << std::endl;
+  output::trace() << "Processing query reads... k=" << k << ", s=" << s << ", l=" << l << ", t=" << t << ", openSyncmer=" << openSyncmer << std::endl;
   
   std::vector<std::vector<std::string>> readSequencesByGroup;
   std::vector<std::vector<std::string>> readNamesByGroup;
@@ -2226,18 +2226,18 @@ void mgsr::ThreadsManager::initializeQueryData(
   numThreads = threadsToUse;
   liteTree->numThreads = threadsToUse;
 
-  std::cerr << "Discarded " << numLowComplexityRawReads << " low complexity raw reads" << std::endl;
-  std::cerr << "Collapsed " << rawReadsSize - numLowComplexityRawReads << " filtered raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
+  output::detail() << "Discarded " << numLowComplexityRawReads << " low complexity raw reads" << std::endl;
+  output::detail() << "Collapsed " << rawReadsSize - numLowComplexityRawReads << " filtered raw reads to " << originalReadsSize << " sketched kminmer sets" << std::endl;
   if (maskReads > 0 || maskReadsRelativeFrequency > 0) {
-    std::cerr << "Mask-reads " << (maskReads > 0 ? maskReads : maskReadsRelativeFrequency) << " turned on: " << numMaskReads << " reads containing low coverage kminmers will be skipped during placement and EM... "
+    output::detail() << "Mask-reads " << (maskReads > 0 ? maskReads : maskReadsRelativeFrequency) << " turned on: " << numMaskReads << " reads containing low coverage kminmers will be skipped during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
   }
   if (maskSeeds > 0 || maskSeedsRelativeFrequency > 0) {
-    std::cerr << "Mask-seeds " << (maskSeeds > 0 ? maskSeeds : maskSeedsRelativeFrequency) << " turned on: " << numMaskSeeds << " seeds are removed during placement and EM... "
+    output::detail() << "Mask-seeds " << (maskSeeds > 0 ? maskSeeds : maskSeedsRelativeFrequency) << " turned on: " << numMaskSeeds << " seeds are removed during placement and EM... "
               << "Total reads to process: " << numPassedReads << std::endl;
   }
   for (size_t i = 0; i < threadsToUse; ++i) {
-    std::cerr << "  Thread " << i << " will process " << threadRanges[i].second - threadRanges[i].first << " reads: " << threadRanges[i].first << " -> " << threadRanges[i].second << std::endl;
+    output::trace() << "  Thread " << i << " will process " << threadRanges[i].second - threadRanges[i].first << " reads: " << threadRanges[i].first << " -> " << threadRanges[i].second << std::endl;
   }
 }
 
@@ -3869,7 +3869,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(
   }
 
   nodeToDfsIndex[node->identifier] = dfsIndex;
-  std::cout << "\rdfsIndex: " << dfsIndex << std::flush;
+  if(output::config().verbose) std::cout << "\rdfsIndex: " << dfsIndex << std::flush;
   for (panmanUtils::Node *child : node->children) {
     dfsIndex++;
     buildIndexHelper(child, emptyNodes, blockSequences, blockExistsDelayed, blockStrandDelayed, globalCoords, gapMap, invertedBlocks, dfsIndex);
@@ -4000,7 +4000,7 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
 
 
 
-  std::cout << "Finished building index!" << std::endl;
+  output::trace() << "Finished building index!" << std::endl;
 }
 
 void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path, bool packed) {
@@ -4009,14 +4009,14 @@ void mgsr::mgsrIndexBuilder::writeIndex(const std::string& path, bool packed) {
     std::cerr << "Error: failed to open file " << path << std::endl;
     std::exit(1);
   }
-  std::cout << "Writing index to " << path << std::endl;
+  output::trace() << "Writing index to " << path << std::endl;
   if (packed) {
     capnp::writePackedMessageToFd(fd, outMessage);
   } else {
     capnp::writeMessageToFd(fd, outMessage);
   }
   close(fd);
-  std::cout << "Index written to " << path << std::endl;
+  output::trace() << "Index written to " << path << std::endl;
 }
 
 int mgsr::open_file(const std::string& path) {
@@ -4292,13 +4292,13 @@ void mgsr::squareEM::runSquareEM() {
     }
 
     if (maxChangeThreshold == 0) {
-      std::cout << "\rEM iteration " << curIteration << " difference: " << std::fixed << std::setprecision(8) << difference << std::flush;
+      if(output::config().verbose) std::cout << "\rEM iteration " << curIteration << " difference: " << std::fixed << std::setprecision(8) << difference << std::flush;
       if (abs(difference) < eta || curIteration >= maximumIterations) {
         break;
       }
     } else {
       double max_change = (props - props0).array().abs().maxCoeff();
-      std::cout << "\rEM iteration " << curIteration << " max_change: " << std::fixed << std::setprecision(8) << max_change << std::flush;
+      if(output::config().verbose) std::cout << "\rEM iteration " << curIteration << " max_change: " << std::fixed << std::setprecision(8) << max_change << std::flush;
 
       if (max_change < maxChangeThreshold || curIteration >= maximumIterations) {
         break;
@@ -5535,7 +5535,7 @@ void mgsr::mgsrPlacer::computeOverlapCoefficientsHelper(
   std::vector<std::pair<std::string, double>>& overlapCoefficients
 ) {
   if (curDfsIndex % 1000 == 0) {
-    std::cout << "\r" << curDfsIndex << " / " << liteTree->allLiteNodes.size() - liteTree->detachedNodes.size() << std::flush;
+    if(output::config().verbose) std::cout << "\r" << curDfsIndex << " / " << liteTree->allLiteNodes.size() - liteTree->detachedNodes.size() << std::flush;
   }
 
   size_t binaryOverlapKminmerCountBacktrack = binaryOverlapKminmerCount;
@@ -5621,7 +5621,7 @@ std::vector<std::pair<std::string, double>> mgsr::mgsrPlacer::computeOverlapCoef
   computeOverlapCoefficientsHelper(liteTree->root, allSeedmerHashesSet, overlapCoefficients);
 
   auto end_time = std::chrono::high_resolution_clock::now();
-  std::cerr << "\nComputed overlap coefficients in: "
+  output::trace() << "\nComputed overlap coefficients in: "
             << static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count()) / 1000.0
             << " s." << std::endl;
 
@@ -6412,7 +6412,7 @@ void mgsr::mgsrPlacer::calculateBreadthRatio(
 
   breaths.emplace_back(node, mgsr::breadthInfo{totalRefSeeds, observedBreadthCount, observedBreadthRatio, totalDepth, meanDepth, expectedBreadthRatio, observedToExpectedBreadthRatio});
 
-  std::cerr << "\rCalculating breadth ratio at DFS index " << node->collapsedDfsIndex << " / " << liteTree->getNumActiveNodes() << std::flush;
+  if(output::config().verbose) std::cerr << "\rCalculating breadth ratio at DFS index " << node->collapsedDfsIndex << " / " << liteTree->getNumActiveNodes() << std::flush;
 
   // Recursively calculate breadth ratio for children
   for (auto child : node->collapsedChildren) {
@@ -6580,7 +6580,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   }
 
   if (!seedNodesFrequency.empty()) {
-    std::cerr << "Pruned " << prunedReads << " reads due to ambiguous seedmers." << std::endl;
+    output::detail() << "Pruned " << prunedReads << " reads due to ambiguous seedmers." << std::endl;
   }
 
 
@@ -6623,7 +6623,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     for (const auto& readIdx : activeReads) {
       rawReadRemaining += readSeedmersDuplicatesIndex[readIdx].size();
     }
-    std::cerr << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << ", raw reading remaining: " << rawReadRemaining << std::endl;
+    output::trace() << "inserted " << topWEPPNode->identifier << " into selected nodes. WEPP score: " << std::fixed << std::setprecision(5) << topWEPPNode->sumWEPPScore << "... corrected: " << topWEPPNode->sumWEPPScoreCorrected << ", active reads remaining: " << activeReads.size() << ", raw reading remaining: " << rawReadRemaining << std::endl;
     if (selectedNodes.size() >= 300) break;
 
 
@@ -6703,7 +6703,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
         continue;
       }
       if (node->identifier == liteTree->debugNodeID) {
-        std::cerr << "Debug node " << node->identifier << " corrected WEPP score: " << node->sumWEPPScoreCorrected << std::endl;
+        output::trace() << "Debug node " << node->identifier << " corrected WEPP score: " << node->sumWEPPScoreCorrected << std::endl;
       }
       if (topWEPPNode == nullptr || node->sumWEPPScoreCorrected.sum > topWEPPNode->sumWEPPScoreCorrected.sum) {
         topWEPPNode = node;
@@ -6719,7 +6719,7 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
   }
   auto end_time_selectNodes = std::chrono::high_resolution_clock::now();
   auto duration_selectNodes = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_selectNodes - start_time_selectNodes);
-  std::cerr << "\n\nSelected nodes in " << static_cast<double>(duration_selectNodes.count()) / 1000.0 << "s\n" << std::endl;
+  output::trace() << "\n\nSelected nodes in " << static_cast<double>(duration_selectNodes.count()) / 1000.0 << "s\n" << std::endl;
 
 
 }
@@ -6742,7 +6742,7 @@ void mgsr::ThreadsManager::countSeedNodesFrequencyHelper(
   size_t& curDFSIndex
 ) {
   if (progressBar && curDFSIndex % 10000 == 0) {
-    std::cerr << "\rcurDFSIndex " << curDFSIndex << " / " << liteTree->getNumActiveNodes() << std::endl;
+    if(output::config().verbose) std::cerr << "\rcurDFSIndex " << curDFSIndex << " / " << liteTree->getNumActiveNodes() << std::endl;
   }
 
   processingNode = node;
@@ -6979,7 +6979,7 @@ void mgsr::ThreadsManager::computeNodeSeedScores() {
     }
     selectedNodes.insert(maxCorrectedScoreNode);
     maxCorrectedScoreNode->selected = true;
-    std::cerr << "Selected node " << maxCorrectedScoreNode->identifier << " with corrected seed score " << maxCorrectedScore << ", was (" << nodeSeedScores[maxCorrectedScoreNode] << "), selected nodes so far: " << selectedNodes.size() << ", remaining seeds: " << seedWeights.size() << std::endl;
+    output::trace() << "Selected node " << maxCorrectedScoreNode->identifier << " with corrected seed score " << maxCorrectedScore << ", was (" << nodeSeedScores[maxCorrectedScoreNode] << "), selected nodes so far: " << selectedNodes.size() << ", remaining seeds: " << seedWeights.size() << std::endl;
 
     if (selectedNodes.size() == 300) break;
     
@@ -7706,7 +7706,7 @@ void mgsr::ThreadsManager::computeKminmerCoverageHelper(
 
 
   if (dfsIndex % 100 == 0) {
-    std::cout << "\rComputing Kminmer Coverage " << dfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
+    if(output::config().verbose) std::cout << "\rComputing Kminmer Coverage " << dfsIndex << " / " << liteTree->allLiteNodes.size() << std::flush;
   }
   auto curNodeDfsIndex = dfsIndex;
   for (auto child : node->children) {
@@ -7845,9 +7845,9 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId, std::vecto
 }
 
 void mgsr::ThreadsManager::printStats() {
-  std::cout << "Thread\tnumReads\tnumInitialized\tnumAdded\tnumRemoved\tnumUpdated" << std::endl;
+  output::trace() << "Thread\tnumReads\tnumInitialized\tnumAdded\tnumRemoved\tnumUpdated" << std::endl;
   for (size_t i = 0; i < threadRanges.size(); ++i) {
-    std::cout << i << "\t" << threadRanges[i].second - threadRanges[i].first << "\t" << readMinichainsInitialized[i] << "\t" << readMinichainsAdded[i] << "\t" << readMinichainsRemoved[i] << "\t" << readMinichainsUpdated[i] << std::endl;
+    output::trace() << i << "\t" << threadRanges[i].second - threadRanges[i].first << "\t" << readMinichainsInitialized[i] << "\t" << readMinichainsAdded[i] << "\t" << readMinichainsRemoved[i] << "\t" << readMinichainsUpdated[i] << std::endl;
   }
 }
 
@@ -7922,14 +7922,14 @@ mgsr::squareEM::squareEM(
         probableNodes.push_back(node);
       }
     }
-    std::cout << "Overlap coefficients selected " << probableNodes.size() << " nodes, emLeavesOnly: " << emLeavesOnly << std::endl;
+    output::detail() << "Overlap coefficients selected " << probableNodes.size() << " nodes, emLeavesOnly: " << emLeavesOnly << std::endl;
   } else if (useReadWeightedScores) {
     for (const auto& [identifier, node] : liteTree.allLiteNodes) {
       if (node->selected || node->selectedNeighbor) {
         probableNodes.push_back(node);
       }
     }
-    std::cout << "Read weighted node scores selected " << probableNodes.size() << " nodes" << std::endl;
+    output::detail() << "Read weighted node scores selected " << probableNodes.size() << " nodes" << std::endl;
   }
   // std::vector<mgsr::MgsrLiteNode> significantOverlapNodes;
 
@@ -7962,7 +7962,7 @@ mgsr::squareEM::squareEM(
     ++numSigReads;
   }
   
-  std::cout << "Number of significant reads: " << numSigReads << std::endl;
+  output::detail() << "Number of significant reads: " << numSigReads << std::endl;
 
   std::vector<std::vector<uint32_t>> scoreMatrix(probableNodes.size(), std::vector<uint32_t>(numSigReads, 0));
   tbb::parallel_for(size_t(0), numThreads, [&](size_t threadIdx) {
@@ -8071,8 +8071,8 @@ mgsr::squareEM::squareEM(
     }
   }
 
-  std::cout << "Probs matrix size: " << probs.rows() << "x" << probs.cols() << std::endl;
-  std::cout << "Props vector size: " << props.size() << std::endl;
+  output::trace() << "Probs matrix size: " << probs.rows() << "x" << probs.cols() << std::endl;
+  output::trace() << "Props vector size: " << props.size() << std::endl;
 }
 
 
