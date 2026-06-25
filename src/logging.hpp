@@ -165,6 +165,16 @@ inline std::string pad_left(const std::string& s, int w) {
     if ((int)s.size() >= w) return s;
     return std::string(w - s.size(), ' ') + s;
 }
+// Truncate to w display columns, keeping the tail (the most informative end of a
+// file path) behind a leading ellipsis. Assumes ASCII content (paths, counts).
+inline std::string truncate_tail(const std::string& s, int w) {
+    if (w <= 0) return "";
+    if ((int)s.size() <= w) return s;
+    const char* ell = config().plain ? "..." : "…";
+    int ellCols = config().plain ? 3 : 1;
+    if (w <= ellCols) return s.substr(s.size() - w);
+    return std::string(ell) + s.substr(s.size() - (w - ellCols));
+}
 
 // Format an integer with thousands separators (commas) for terminal display.
 inline std::string fmt_count(uint64_t n) {
@@ -184,10 +194,23 @@ inline void write_status_line(const std::string& icon,
                               const std::string& stat,
                               int64_t ms) {
     if (config().quiet) return;
+    // The subject column flexes to the terminal width so the stat/time columns
+    // stay aligned across rows; long subjects (paths) are tail-truncated. On a
+    // non-TTY (piped/log) keep the full subject and the original min width.
+    int subjectW;
+    if (config().isTTY) {
+        int iconW = config().plain ? static_cast<int>(icon.size()) : 1;
+        int reserved = 2 + iconW + 2 + kLabelWidth + 2 + 2 + kStatWidth + 2 + kTimeWidth;
+        subjectW = term_width() - reserved;
+        if (subjectW < 16) subjectW = 16;
+        if (subjectW > 64) subjectW = 64;
+    } else {
+        subjectW = static_cast<int>(subject.size()) > kSubjectWidth ? static_cast<int>(subject.size()) : kSubjectWidth;
+    }
     std::cerr << "  " << icon_color << icon << style::reset() << "  "
               << style::bold() << pad_right(label, kLabelWidth) << style::reset() << "  "
-              << pad_right(subject, kSubjectWidth) << "  "
-              << style::dim() << pad_right(stat, kStatWidth) << style::reset() << "  ";
+              << pad_right(truncate_tail(subject, subjectW), subjectW) << "  "
+              << style::dim() << pad_right(truncate_tail(stat, kStatWidth), kStatWidth) << style::reset() << "  ";
     if (ms >= 0) {
         std::cerr << style::dim() << pad_left(format_duration(ms), kTimeWidth) << style::reset();
     }
