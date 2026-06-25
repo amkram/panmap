@@ -160,6 +160,7 @@ else()
         SOURCE_DIR ${CAPNP_SOURCE_DIR}
         CMAKE_ARGS
             -DCMAKE_INSTALL_PREFIX=${CAPNP_INSTALL_DIR}
+            -DCMAKE_INSTALL_LIBDIR=lib  # force lib/ (not lib64) so the paths below resolve on all distros
             -DCMAKE_BUILD_TYPE=Release
             -DBUILD_TESTING=OFF
         BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release -j
