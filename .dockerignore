@@ -7,3 +7,9 @@ output
 site
 docs
 recipe
+external_cache
+examples
+data
+llms
+manuscript.md
+review.md
