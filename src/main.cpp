@@ -1307,7 +1307,8 @@ int runBatchPlacement(const Config& cfg) {
         placement::PlacementResult result;
         auto start = std::chrono::high_resolution_clock::now();
         placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, batchParams, fullTreePtr);
-        output::config().quiet = false;
+        // Keep per-stage output suppressed through align/genotype too, so the first
+        // sample shows only the compact [i/N] line like the parallel samples below.
 
         if (result.bestLogContainmentNodeId.empty()) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1362,6 +1363,7 @@ int runBatchPlacement(const Config& cfg) {
             }
         }
     }
+    output::config().quiet = false;
 
     // Process remaining samples in parallel (seed changes already loaded, tree is read-only)
     if (samples.size() > 1) {
