@@ -1,10 +1,10 @@
 # Conda environment for building panmap from source (no system-level installs).
 #   conda env create -f environment.yml
 #   conda activate panmap
-#   export CPATH="$CONDA_PREFIX/include" LIBRARY_PATH="$CONDA_PREFIX/lib"
-#   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_LIBS=ON
+#   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build -j
 # The binary is at build/bin/panmap.
+# In an active conda env the build auto-detects and uses the conda libraries.
 name: panmap
 channels:
   - conda-forge

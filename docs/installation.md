@@ -36,14 +36,13 @@ needs to be installed system-wide:
 ```bash
 conda env create -f environment.yml
 conda activate panmap
-export CPATH="$CONDA_PREFIX/include" LIBRARY_PATH="$CONDA_PREFIX/lib"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_LIBS=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-`-DUSE_SYSTEM_LIBS=ON` builds against the conda-provided Cap'n Proto, htslib,
-Protobuf, and Abseil; the `CPATH`/`LIBRARY_PATH` exports let the bundled aligners
-find the conda headers and libraries. The binary is at `build/bin/panmap`.
+In an activated conda environment the build automatically uses the conda-provided
+libraries (Cap'n Proto, htslib, Protobuf, Abseil, ...). The binary is at
+`build/bin/panmap`.
 
 ### With system packages
 
