@@ -12,6 +12,4 @@ examples/check_examples.sh
 | `meta_abundance/` | `--meta` abundance | `example.mgsr.abundance.out` |
 | `filter_assign/` | `--filter-and-assign` | `subsampled.mgsr.assignedReads.fastq`, `.assignedReads.out`, `.assignedReadsLCANode.out` |
 
-The checker normalizes fields that vary between runs: VCF header date/version/paths,
-abundance row order, and thread-dependent read numbering (resolved to read names).
 BAM and index files are not stored.
