@@ -1588,7 +1588,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
             logging::err("Cannot write reference file: {}", refFileName);
             return 1;
         }
-        outFile << ">ref\n" << bestMatchSequence << "\n";
+        outFile << ">" << nodeId << "\n" << bestMatchSequence << "\n";
         outFile.close();
     }
 
@@ -1610,7 +1610,8 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
 
     // Opts 2+3: Parallel alignment with direct BAM construction
     bool pairedEndReads = !cfg.reads2.empty();
-    alignAndWriteBam(readSequences, readQuals, readNames, bestMatchSequence, bamFileName, pairedEndReads, cfg.threads);
+    alignAndWriteBam(
+        readSequences, readQuals, readNames, bestMatchSequence, bamFileName, pairedEndReads, cfg.threads, nodeId);
 
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
@@ -1629,18 +1630,23 @@ int runGenotyping(const Config& cfg) {
     std::string mpileupFileName = cfg.output + ".mpileup";
     std::string vcfFileName = cfg.output + ".vcf";
 
-    // Read reference sequence
+    // Reference sequence and its contig name (node id) from the .ref.fa header.
     std::string bestMatchSequence;
+    std::string refName = "ref";
     std::ifstream ref(refFileName);
     std::string line;
     while (std::getline(ref, line)) {
-        if (line[0] != '>') bestMatchSequence += line;
+        if (!line.empty() && line[0] == '>') {
+            refName = line.substr(1, line.find_first_of(" \t", 1) - 1);
+        } else {
+            bestMatchSequence += line;
+        }
     }
 
     auto start = std::chrono::high_resolution_clock::now();
 
     // Create mpileup and VCF
-    createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq);
+    createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq, refName);
     createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred);
 
     auto elapsed =
@@ -1668,9 +1674,26 @@ int runConsensus(const Config& cfg) {
     std::string vcfFileName = cfg.output + ".vcf";
     std::string consensusFileName = cfg.output + ".consensus.fa";
 
+    // Contig name (node id) from the .ref.fa header.
+    std::string refName = "ref";
+    {
+        std::ifstream ref(refFileName);
+        std::string line;
+        while (std::getline(ref, line)) {
+            if (!line.empty() && line[0] == '>') {
+                refName = line.substr(1, line.find_first_of(" \t", 1) - 1);
+                break;
+            }
+        }
+    }
+    // Name the consensus after the sample, recording the reference it maps to.
+    std::string sample = cfg.output.substr(cfg.output.find_last_of("/\\") + 1);
+    if (sample.empty()) sample = "sample";
+    std::string consensusHeader = sample + "_consensus ref=" + refName;
+
     auto start = std::chrono::high_resolution_clock::now();
 
-    if (createConsensus(vcfFileName, refFileName, consensusFileName) != 0) {
+    if (createConsensus(vcfFileName, refFileName, consensusFileName, consensusHeader) != 0) {
         logging::err("bcftools consensus failed");
         return 1;
     }
