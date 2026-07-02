@@ -41,8 +41,7 @@ Or built from source with conda (no system-level installs):
 ```bash
 conda env create -f environment.yml
 conda activate panmap
-export CPATH="$CONDA_PREFIX/include" LIBRARY_PATH="$CONDA_PREFIX/lib"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_LIBS=ON && cmake --build build -j
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ```
 
 ## Quick start (demo)
