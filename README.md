@@ -110,6 +110,15 @@ This outputs 3 files:
 
 - `.mgsr.assignedReadsLCANode.out` file containg the number of reads assigned to the LCA node and the indices of the reads assigned. As reads may be assigned to multiple nodes, the LCA node of a read if the LCA of all the nodes it was assigned to
 
+## Verifying outputs
+
+Reference results for the three demos are in
+[examples/expected/](examples/expected/). Check a fresh run against them:
+
+```bash
+examples/check_examples.sh
+```
+
 ## Modes
 
 - **Single-sample** (default): Place reads, align to closest reference, call variants (BAM + VCF)
