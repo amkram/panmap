@@ -18,7 +18,8 @@ void createMplpBcf(const std::string& prefix,
                    const std::string& bestMatchSequence,
                    const std::string& bamFileName,
                    std::string& mpileupFileName,
-                   bool baq = false);
+                   bool baq = false,
+                   const std::string& refName = "ref");
 
 void createVcfWithMutationMatrices(std::string& prefix,
                                    std::string& mpileupFileName,
@@ -27,7 +28,8 @@ void createVcfWithMutationMatrices(std::string& prefix,
 
 int createConsensus(const std::string& vcfFileName,
                     const std::string& refFileName,
-                    const std::string& consensusFileName);
+                    const std::string& consensusFileName,
+                    const std::string& consensusHeader = "");
 
 // Direct alignment-to-BAM pipeline: parallel minimap2 alignment with direct
 // bam1_t construction (no SAM text intermediate). Writes sorted BAM file.
@@ -37,4 +39,5 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
                       std::string& reference,
                       const std::string& bamFileName,
                       bool pairedEndReads,
-                      int n_threads);
+                      int n_threads,
+                      const std::string& refName = "ref");

@@ -78,12 +78,13 @@ void createMplpBcf(const std::string& prefix,
                    const std::string& bestMatchSequence,
                    const std::string& bamFileName,
                    std::string& mpileupFileName,
-                   bool baq) {
+                   bool baq,
+                   const std::string& refName) {
     std::string outRefFileName = "";
     if (refFileName.size() == 0) {
         outRefFileName = prefix + ".tmp.reference.fa";
         std::ofstream outRefFile{outRefFileName};
-        outRefFile << ">ref\n";
+        outRefFile << ">" << refName << "\n";
         outRefFile << bestMatchSequence << "\n";
         outRefFile.close();
     } else {
@@ -160,7 +161,8 @@ void createVcfWithMutationMatrices(std::string& prefix,
 
 int createConsensus(const std::string& vcfFileName,
                     const std::string& refFileName,
-                    const std::string& consensusFileName) {
+                    const std::string& consensusFileName,
+                    const std::string& consensusHeader) {
     // bcftools consensus requires a bgzipped + tabix-indexed VCF.
     // Transparently produce a .vcf.gz next to the plain .vcf for the consensus call.
     std::string bgzVcf = vcfFileName + ".gz";
@@ -203,7 +205,31 @@ int createConsensus(const std::string& vcfFileName,
 
     const char* args[] = {
         "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), bgzVcf.c_str()};
-    return run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args), /*silenceStderr=*/true);
+    int rc = run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args), /*silenceStderr=*/true);
+    if (rc != 0) return rc;
+
+    // bcftools consensus names the output after the reference contig; rename it.
+    if (!consensusHeader.empty()) {
+        std::string tmpName = consensusFileName + ".tmp";
+        std::ifstream in(consensusFileName);
+        std::ofstream out(tmpName);
+        if (in && out) {
+            std::string line;
+            bool renamed = false;
+            while (std::getline(in, line)) {
+                if (!renamed && !line.empty() && line[0] == '>') {
+                    out << ">" << consensusHeader << "\n";
+                    renamed = true;
+                } else {
+                    out << line << "\n";
+                }
+            }
+            in.close();
+            out.close();
+            std::rename(tmpName.c_str(), consensusFileName.c_str());
+        }
+    }
+    return 0;
 }
 
 static uint16_t compute_sam_flags(
@@ -339,7 +365,8 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
                       std::string& reference,
                       const std::string& bamFileName,
                       bool pairedEndReads,
-                      int n_threads) {
+                      int n_threads,
+                      const std::string& refName) {
     int n_reads = static_cast<int>(readSequences.size());
 
     // Prepare C arrays
@@ -367,7 +394,8 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
                        pairedEndReads,
                        n_threads);
 
-    std::string samHeaderStr = "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:ref\tLN:" + std::to_string(reference.length());
+    std::string samHeaderStr =
+        "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:" + refName + "\tLN:" + std::to_string(reference.length());
     sam_hdr_t* header = sam_hdr_parse(samHeaderStr.length(), samHeaderStr.c_str());
 
     std::vector<std::pair<int32_t, bam1_t*>> bam_entries;
