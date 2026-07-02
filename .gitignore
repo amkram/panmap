@@ -78,4 +78,8 @@ output/
 *.idx
 *.midx
 
+!examples/expected/
+!examples/expected/**
+/examples/data/v_mtdna.panman
+
 
