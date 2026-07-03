@@ -3,9 +3,8 @@
 ## Building from source
 
 ```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 ```
 
 ### Dependencies
@@ -22,18 +21,19 @@ Other dependencies (TBB, jsoncpp, spdlog, abseil, zstd, libdeflate) are fetched 
 
 ## Testing
 
-Integration tests run against test data in `src/test/data/`:
+Tests are off by default. Enable them with `-DOPTION_BUILD_TESTS=ON`. There are two
+CTest targets: `unit` (a Boost.Test binary, `panmap_tests`) and `e2e` (an
+end-to-end pipeline script). Both run against test data in `src/test/data/`.
 
 ```bash
-ctest --test-dir build -R integration --output-on-failure
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
+cmake --build build -j
+ctest --test-dir build --output-on-failure        # unit + e2e
+ctest --test-dir build -R unit --output-on-failure   # unit only
+ctest --test-dir build -R e2e  --output-on-failure   # e2e only
 ```
 
-Unit tests (requires Boost.Test):
-```bash
-cmake .. -DOPTION_BUILD_TESTS=ON
-make -j$(nproc)
-ctest --test-dir build --output-on-failure
-```
+See `TESTING.md` for details.
 
 ## Code style
 
@@ -43,8 +43,13 @@ ctest --test-dir build --output-on-failure
 - Use `const` references for read-only parameters
 - Add `[[nodiscard]]` to functions returning error codes
 
+Formatting is checked in CI (the `format` job runs `clang-format --dry-run
+--Werror` over first-party sources). Run `clang-format -i` on your changes
+before opening a PR.
+
 ## Pull requests
 
 1. Create a feature branch from `main`
-2. Ensure `ctest -R integration` passes
-3. Keep commits focused and messages concise
+2. Ensure `ctest --test-dir build --output-on-failure` passes (unit + e2e)
+3. Ensure the `format` check passes (`clang-format --dry-run --Werror`)
+4. Keep commits focused and messages concise
