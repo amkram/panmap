@@ -53,8 +53,7 @@ struct GroundTruthMetrics {
      * @param nodeGenome  hash -> genome count for this node (from reconstructGenomeSeeds)
      * @param state       the running PlacementGlobalState (filtered reads + log counts)
      */
-    static GroundTruthMetrics compute(const SeedCountMap& nodeGenome,
-                                      const placement::PlacementGlobalState& state);
+    static GroundTruthMetrics compute(const SeedCountMap& nodeGenome, const placement::PlacementGlobalState& state);
 
     // The five scores, each dividing by the live denominator carried in state.
     // These mirror placement::NodeMetrics::get*Score exactly.

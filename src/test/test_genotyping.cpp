@@ -77,12 +77,10 @@ BOOST_AUTO_TEST_CASE(mm_parse_valid) {
 
 BOOST_AUTO_TEST_CASE(mm_parse_invalid_throws) {
     // Truncated: only the 4 submat rows, no indel lines (idx != 6).
-    BOOST_CHECK_THROW(parseMm("1 20 25 34\n21 1 24 12\n20 22 1 23\n20 21 19 1\n"),
-                      std::invalid_argument);
+    BOOST_CHECK_THROW(parseMm("1 20 25 34\n21 1 24 12\n20 22 1 23\n20 21 19 1\n"), std::invalid_argument);
 
     // Submat row with the wrong field count.
-    BOOST_CHECK_THROW(parseMm("1 20 25\n21 1 24 12\n20 22 1 23\n20 21 19 1\n1:0.05\n1:0.05\n"),
-                      std::invalid_argument);
+    BOOST_CHECK_THROW(parseMm("1 20 25\n21 1 24 12\n20 22 1 23\n20 21 19 1\n1:0.05\n1:0.05\n"), std::invalid_argument);
 
     // Indel line not in size:prob format (no colon).
     BOOST_CHECK_THROW(parseMm("1 20 25 34\n21 1 24 12\n20 22 1 23\n20 21 19 1\n40 50\n1:0.05\n"),

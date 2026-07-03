@@ -203,8 +203,7 @@ int createConsensus(const std::string& vcfFileName,
         return 1;
     }
 
-    const char* args[] = {
-        "consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), bgzVcf.c_str()};
+    const char* args[] = {"consensus", "-f", refFileName.c_str(), "-o", consensusFileName.c_str(), bgzVcf.c_str()};
     int rc = run_bcftools_in_fork(main_consensus, 6, const_cast<char**>(args), /*silenceStderr=*/true);
     if (rc != 0) return rc;
 
