@@ -54,29 +54,72 @@ inline void init(bool quiet = false, bool verbose = false, bool plain = false) {
     if (!config().isTTY) config().plain = true;
 
     spdlog::set_pattern("%v");
-    if (quiet)         spdlog::set_level(spdlog::level::err);
-    else if (verbose)  spdlog::set_level(spdlog::level::debug);
-    else               spdlog::set_level(spdlog::level::info);
+    if (quiet)
+        spdlog::set_level(spdlog::level::err);
+    else if (verbose)
+        spdlog::set_level(spdlog::level::debug);
+    else
+        spdlog::set_level(spdlog::level::info);
 }
 
 namespace style {
-inline const char* reset()   { return config().plain ? "" : "\033[0m";  }
-inline const char* bold()    { return config().plain ? "" : "\033[1m";  }
-inline const char* dim()     { return config().plain ? "" : "\033[2m";  }
-inline const char* red()     { return config().plain ? "" : "\033[31m"; }
-inline const char* green()   { return config().plain ? "" : "\033[32m"; }
-inline const char* yellow()  { return config().plain ? "" : "\033[33m"; }
-inline const char* blue()    { return config().plain ? "" : "\033[34m"; }
-inline const char* magenta() { return config().plain ? "" : "\033[35m"; }
-inline const char* cyan()    { return config().plain ? "" : "\033[36m"; }
+inline const char* reset() {
+    return config().plain ? "" : "\033[0m";
+}
+
+inline const char* bold() {
+    return config().plain ? "" : "\033[1m";
+}
+
+inline const char* dim() {
+    return config().plain ? "" : "\033[2m";
+}
+
+inline const char* red() {
+    return config().plain ? "" : "\033[31m";
+}
+
+inline const char* green() {
+    return config().plain ? "" : "\033[32m";
+}
+
+inline const char* yellow() {
+    return config().plain ? "" : "\033[33m";
+}
+
+inline const char* blue() {
+    return config().plain ? "" : "\033[34m";
+}
+
+inline const char* magenta() {
+    return config().plain ? "" : "\033[35m";
+}
+
+inline const char* cyan() {
+    return config().plain ? "" : "\033[36m";
+}
 }  // namespace style
 
 namespace box {
-inline const char* arrow() { return config().plain ? "->"   : "→"; }
-inline const char* check() { return config().plain ? "[ok]" : "✓"; }
-inline const char* cross() { return config().plain ? "[x]"  : "✗"; }
-inline const char* dot()   { return config().plain ? "*"    : "·"; }
-inline const char* bullet(){ return config().plain ? "*"    : "•"; }
+inline const char* arrow() {
+    return config().plain ? "->" : "→";
+}
+
+inline const char* check() {
+    return config().plain ? "[ok]" : "✓";
+}
+
+inline const char* cross() {
+    return config().plain ? "[x]" : "✗";
+}
+
+inline const char* dot() {
+    return config().plain ? "*" : "·";
+}
+
+inline const char* bullet() {
+    return config().plain ? "*" : "•";
+}
 }  // namespace box
 
 // Spinner frames (Braille pattern, 10 frames at ~80ms = ~12fps)
@@ -99,6 +142,7 @@ inline void error(fmt::format_string<Args...> fmt, Args&&... args) {
     std::cerr << style::red() << "error" << style::reset() << style::dim() << ": " << style::reset()
               << fmt::format(fmt, std::forward<Args>(args)...) << "\n";
 }
+
 inline void error(const std::string& msg) {
     std::cerr << style::red() << "error" << style::reset() << style::dim() << ": " << style::reset() << msg << "\n";
 }
@@ -109,6 +153,7 @@ inline void warn(fmt::format_string<Args...> fmt, Args&&... args) {
     std::cerr << style::yellow() << "warn" << style::reset() << style::dim() << ": " << style::reset()
               << fmt::format(fmt, std::forward<Args>(args)...) << "\n";
 }
+
 inline void warn(const std::string& msg) {
     if (config().quiet) return;
     std::cerr << style::yellow() << "warn" << style::reset() << style::dim() << ": " << style::reset() << msg << "\n";
@@ -120,6 +165,7 @@ inline void info(fmt::format_string<Args...> fmt, Args&&... args) {
     if (!config().verbose) return;
     std::cerr << style::dim() << fmt::format(fmt, std::forward<Args>(args)...) << style::reset() << "\n";
 }
+
 inline void info(const std::string& msg) {
     if (!config().verbose) return;
     std::cerr << style::dim() << msg << style::reset() << "\n";
@@ -130,6 +176,7 @@ inline void debug(fmt::format_string<Args...> fmt, Args&&... args) {
     if (!config().verbose) return;
     std::cerr << style::dim() << fmt::format(fmt, std::forward<Args>(args)...) << style::reset() << "\n";
 }
+
 inline void debug(const std::string& msg) {
     if (!config().verbose) return;
     std::cerr << style::dim() << msg << style::reset() << "\n";
@@ -140,16 +187,26 @@ inline void debug(const std::string& msg) {
 // --quiet); `trace()` is shown only under --verbose. Existing call sites convert
 // by swapping the stream object only: `output::detail() << "x " << n << "\n";`.
 class LineBuf {
-  public:
+   public:
     explicit LineBuf(bool enabled) : enabled_(enabled) {}
-    LineBuf(LineBuf&& o) noexcept
-        : oss_(std::move(o.oss_)), enabled_(o.enabled_), done_(o.done_) { o.done_ = true; }
+
+    LineBuf(LineBuf&& o) noexcept : oss_(std::move(o.oss_)), enabled_(o.enabled_), done_(o.done_) { o.done_ = true; }
+
     ~LineBuf() { emit(); }
+
     template <typename T>
-    LineBuf& operator<<(const T& v) { if (enabled_ && !done_) oss_ << v; return *this; }
+    LineBuf& operator<<(const T& v) {
+        if (enabled_ && !done_) oss_ << v;
+        return *this;
+    }
+
     // ostream manipulators (std::endl / std::flush) flush the line immediately.
-    LineBuf& operator<<(std::ostream& (*)(std::ostream&)) { emit(); return *this; }
-  private:
+    LineBuf& operator<<(std::ostream& (*)(std::ostream&)) {
+        emit();
+        return *this;
+    }
+
+   private:
     void emit() {
         if (done_) return;
         done_ = true;
@@ -159,18 +216,25 @@ class LineBuf {
         if (s.empty()) return;
         std::cerr << style::dim() << s << style::reset() << "\n";
     }
+
     std::ostringstream oss_;
     bool enabled_;
     bool done_ = false;
 };
-inline LineBuf detail() { return LineBuf(!config().quiet); }
-inline LineBuf trace()  { return LineBuf(config().verbose && !config().quiet); }
+
+inline LineBuf detail() {
+    return LineBuf(!config().quiet);
+}
+
+inline LineBuf trace() {
+    return LineBuf(config().verbose && !config().quiet);
+}
 
 // One-line tool+version banner. No subtitle in default mode.
 inline void banner(const std::string& version, const std::string& /*subtitle*/ = "") {
     if (config().quiet) return;
-    std::cerr << style::bold() << "panmap" << style::reset()
-              << style::dim() << " " << version << style::reset() << "\n\n";
+    std::cerr << style::bold() << "panmap" << style::reset() << style::dim() << " " << version << style::reset()
+              << "\n\n";
 }
 
 // Stage line columns:
@@ -181,22 +245,29 @@ inline void banner(const std::string& version, const std::string& /*subtitle*/ =
 // the min just push the next column over (no truncation). All input strings
 // must be plain text (no ANSI codes), or width math will be wrong — embed
 // styling outside via the helpers below.
-constexpr int kLabelWidth   = 6;
+constexpr int kLabelWidth = 6;
 constexpr int kSubjectWidth = 22;
-constexpr int kStatWidth    = 14;
-constexpr int kTimeWidth    = 6;
+constexpr int kStatWidth = 14;
+constexpr int kTimeWidth = 6;
 
-inline std::string status_ok()   { return fmt::format("{}{}{}", style::green(), box::check(), style::reset()); }
-inline std::string status_fail() { return fmt::format("{}{}{}", style::red(),   box::cross(), style::reset()); }
+inline std::string status_ok() {
+    return fmt::format("{}{}{}", style::green(), box::check(), style::reset());
+}
+
+inline std::string status_fail() {
+    return fmt::format("{}{}{}", style::red(), box::cross(), style::reset());
+}
 
 inline std::string pad_right(const std::string& s, int w) {
     if ((int)s.size() >= w) return s;
     return s + std::string(w - s.size(), ' ');
 }
+
 inline std::string pad_left(const std::string& s, int w) {
     if ((int)s.size() >= w) return s;
     return std::string(w - s.size(), ' ') + s;
 }
+
 // Truncate to w display columns, keeping the tail (the most informative end of a
 // file path) behind a leading ellipsis. Assumes ASCII content (paths, counts).
 inline std::string truncate_tail(const std::string& s, int w) {
@@ -239,22 +310,19 @@ inline void write_status_line(const std::string& icon,
     } else {
         subjectW = static_cast<int>(subject.size()) > kSubjectWidth ? static_cast<int>(subject.size()) : kSubjectWidth;
     }
-    std::cerr << "  " << icon_color << icon << style::reset() << "  "
-              << style::bold() << pad_right(label, kLabelWidth) << style::reset() << "  "
-              << pad_right(truncate_tail(subject, subjectW), subjectW) << "  "
-              << style::dim() << pad_right(truncate_tail(stat, kStatWidth), kStatWidth) << style::reset() << "  ";
+    std::cerr << "  " << icon_color << icon << style::reset() << "  " << style::bold() << pad_right(label, kLabelWidth)
+              << style::reset() << "  " << pad_right(truncate_tail(subject, subjectW), subjectW) << "  " << style::dim()
+              << pad_right(truncate_tail(stat, kStatWidth), kStatWidth) << style::reset() << "  ";
     if (ms >= 0) {
         std::cerr << style::dim() << pad_left(format_duration(ms), kTimeWidth) << style::reset();
     }
     std::cerr << "\n";
 }
 
-inline void done(const std::string& label,
-                 const std::string& subject,
-                 const std::string& stat = "",
-                 int64_t ms = -1) {
+inline void done(const std::string& label, const std::string& subject, const std::string& stat = "", int64_t ms = -1) {
     write_status_line(box::check(), style::green(), label, subject, stat, ms);
 }
+
 inline void fail(const std::string& label, const std::string& subject, const std::string& stat = "") {
     write_status_line(box::cross(), style::red(), label, subject, stat, -1);
 }
@@ -264,10 +332,11 @@ inline void done(const std::string& what) {
     if (!config().verbose) return;
     std::cerr << style::dim() << "  " << status_ok() << " " << what << style::reset() << "\n";
 }
+
 inline void done(const std::string& what, int64_t ms) {
     if (!config().verbose) return;
-    std::cerr << style::dim() << "  " << status_ok() << " " << what
-              << " (" << format_duration(ms) << ")" << style::reset() << "\n";
+    std::cerr << style::dim() << "  " << status_ok() << " " << what << " (" << format_duration(ms) << ")"
+              << style::reset() << "\n";
 }
 
 // Trailing blank line so the prompt has breathing room.
@@ -281,23 +350,28 @@ inline void stage(const std::string& name) {
     if (!config().verbose) return;
     std::cerr << style::dim() << box::arrow() << " " << name << style::reset() << "\n";
 }
+
 template <typename... Args>
 inline void step(fmt::format_string<Args...> fmt, Args&&... args) {
     if (!config().verbose) return;
     std::cerr << style::dim() << "  " << fmt::format(fmt, std::forward<Args>(args)...) << style::reset() << "\n";
 }
+
 inline void step(const std::string& msg) {
     if (!config().verbose) return;
     std::cerr << style::dim() << "  " << msg << style::reset() << "\n";
 }
+
 // --- Indeterminate progress message (one-line, overwritten) ---
 inline void progress(const std::string& msg) {
     if (config().quiet || !config().isTTY || config().plain) return;
     std::cerr << "\r\033[K" << style::dim() << "  " << msg << style::reset() << std::flush;
 }
+
 inline void progress_clear() {
     if (config().isTTY && !config().plain) std::cerr << "\r\033[K" << std::flush;
 }
+
 inline void progress_pct(const std::string& task, size_t current, size_t total, int64_t elapsed_ms = -1) {
     if (config().quiet || !config().isTTY || config().plain) return;
     int pct = total > 0 ? static_cast<int>((current * 100) / total) : 0;
@@ -314,8 +388,7 @@ inline void progress_pct(const std::string& task, size_t current, size_t total, 
 // On completion, clear() leaves the line empty so caller can emit a done() line.
 class ProgressBar {
    public:
-    ProgressBar(std::string label, uint64_t total)
-        : label_(std::move(label)), total_(total) {
+    ProgressBar(std::string label, uint64_t total) : label_(std::move(label)), total_(total) {
         start_ = std::chrono::steady_clock::now();
         last_render_ = start_ - std::chrono::seconds(1);
     }
@@ -326,10 +399,12 @@ class ProgressBar {
         current_.store(current, std::memory_order_relaxed);
         maybe_render();
     }
+
     void add(uint64_t delta = 1) {
         current_.fetch_add(delta, std::memory_order_relaxed);
         maybe_render();
     }
+
     void set_label(const std::string& l) {
         std::lock_guard<std::mutex> g(mu_);
         label_ = l;
@@ -342,8 +417,7 @@ class ProgressBar {
     }
 
     int64_t elapsed_ms() const {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now() - start_).count();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_).count();
     }
 
    private:
@@ -364,9 +438,9 @@ class ProgressBar {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_).count();
 
         int frame = static_cast<int>(elapsed / 80);
-        std::string spin  = spinner_frame(frame);
-        std::string pct   = fmt::format("{:>3}%", static_cast<int>(frac * 100));
-        std::string ela   = format_duration(elapsed);
+        std::string spin = spinner_frame(frame);
+        std::string pct = fmt::format("{:>3}%", static_cast<int>(frac * 100));
+        std::string ela = format_duration(elapsed);
 
         // Layout: "  <spin> <label-padded> <bar>  <pct>  · <ela>"
         std::string label_padded = label_;
@@ -394,12 +468,9 @@ class ProgressBar {
         bar += style::reset();
 
         std::cerr << "\r\033[K"
-                  << "  " << style::cyan() << spin << style::reset() << "  "
-                  << style::bold() << label_padded << style::reset() << "  "
-                  << bar << "  "
-                  << style::bold() << pct << style::reset() << "  "
-                  << style::dim() << pad_left(ela, kTimeWidth) << style::reset()
-                  << std::flush;
+                  << "  " << style::cyan() << spin << style::reset() << "  " << style::bold() << label_padded
+                  << style::reset() << "  " << bar << "  " << style::bold() << pct << style::reset() << "  "
+                  << style::dim() << pad_left(ela, kTimeWidth) << style::reset() << std::flush;
     }
 
     std::string label_;
@@ -454,15 +525,48 @@ inline void install_handlers() {
 
 // Legacy logging namespace (default-visible info now requires --verbose)
 namespace logging {
-template <typename... Args> inline void debug(fmt::format_string<Args...> f, Args&&... a) { output::debug(f, std::forward<Args>(a)...); }
-template <typename... Args> inline void info (fmt::format_string<Args...> f, Args&&... a) { output::info (f, std::forward<Args>(a)...); }
-template <typename... Args> inline void warn (fmt::format_string<Args...> f, Args&&... a) { output::warn (f, std::forward<Args>(a)...); }
-template <typename... Args> inline void err  (fmt::format_string<Args...> f, Args&&... a) { output::error(f, std::forward<Args>(a)...); }
-template <typename... Args> inline void msg  (fmt::format_string<Args...> f, Args&&... a) { output::info (f, std::forward<Args>(a)...); }
+template <typename... Args>
+inline void debug(fmt::format_string<Args...> f, Args&&... a) {
+    output::debug(f, std::forward<Args>(a)...);
+}
 
-inline void debug(const std::string& s) { output::debug(s); }
-inline void info (const std::string& s) { output::info (s); }
-inline void warn (const std::string& s) { output::warn (s); }
-inline void err  (const std::string& s) { output::error(s); }
-inline void msg  (const std::string& s) { output::info (s); }
+template <typename... Args>
+inline void info(fmt::format_string<Args...> f, Args&&... a) {
+    output::info(f, std::forward<Args>(a)...);
+}
+
+template <typename... Args>
+inline void warn(fmt::format_string<Args...> f, Args&&... a) {
+    output::warn(f, std::forward<Args>(a)...);
+}
+
+template <typename... Args>
+inline void err(fmt::format_string<Args...> f, Args&&... a) {
+    output::error(f, std::forward<Args>(a)...);
+}
+
+template <typename... Args>
+inline void msg(fmt::format_string<Args...> f, Args&&... a) {
+    output::info(f, std::forward<Args>(a)...);
+}
+
+inline void debug(const std::string& s) {
+    output::debug(s);
+}
+
+inline void info(const std::string& s) {
+    output::info(s);
+}
+
+inline void warn(const std::string& s) {
+    output::warn(s);
+}
+
+inline void err(const std::string& s) {
+    output::error(s);
+}
+
+inline void msg(const std::string& s) {
+    output::info(s);
+}
 }  // namespace logging

@@ -94,7 +94,7 @@ struct Config {
     std::string reads2;  // Second read file for paired-end
 
     // Output
-    std::string output;  // Output prefix
+    std::string output;    // Output prefix
     std::string index;     // Pre-built index to load (--index)
     std::string indexOut;  // Where to write the index when building (--index-out)
 
@@ -356,7 +356,8 @@ bool buildMgsrIndex(const Config& cfg) {
     }
 
     panmanUtils::Tree* T = &tg->trees[0];
-    mgsr::mgsrIndexBuilder mgsrIndexBuilder(T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, /*indexFull=*/false);
+    mgsr::mgsrIndexBuilder mgsrIndexBuilder(
+        T, cfg.k, cfg.s, cfg.t, cfg.l, cfg.openSyncmer, cfg.impute, /*indexFull=*/false);
     mgsrIndexBuilder.buildIndex();
     mgsrIndexBuilder.writeIndex(cfg.index, cfg.indexPacked);
     std::cout << "MGSR index written to " << cfg.index << std::endl;
@@ -383,10 +384,7 @@ bool buildIndex(const Config& cfg) {
     builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel);
 
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-    output::done("index",
-                 cfg.index,
-                 fmt::format("{} nodes", output::fmt_count(tg->trees[0].allNodes.size())),
-                 ms);
+    output::done("index", cfg.index, fmt::format("{} nodes", output::fmt_count(tg->trees[0].allNodes.size())), ms);
     return true;
 }
 
@@ -467,7 +465,8 @@ void scoreReadsMultiThreaded(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& thread
     auto end_time_place = std::chrono::high_resolution_clock::now();
     auto duration_place = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_place - start_time_place);
     progressTracker.finalDisplay();
-    output::done("place", "metagenomic",
+    output::done("place",
+                 "metagenomic",
                  fmt::format("{} reads", output::fmt_count(threadsManager.reads.size())),
                  duration_place.count());
 }
@@ -703,18 +702,18 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
         for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
             assignedReadsOut << "," << identicalNodeId;
         }
-        
+
         std::string taxonNames;
         if (node->taxonIndices.empty()) {
-          taxonNames = ".";
+            taxonNames = ".";
         } else {
-          bool first = true;
-          for (size_t taxonIndex : node->taxonIndices) {
-            if (!first) taxonNames += ",";
-            taxonNames += T.taxons[taxonIndex];
-            first = false;
-          }
-        }   
+            bool first = true;
+            for (size_t taxonIndex : node->taxonIndices) {
+                if (!first) taxonNames += ",";
+                taxonNames += T.taxons[taxonIndex];
+                first = false;
+            }
+        }
 
         std::sort(readIndices.begin(), readIndices.end());
         assignedReadsOut << "\t" << taxonNames << "\t" << readIndices.size() << "\t";
@@ -741,17 +740,17 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
         for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
             assignedReadsLCANodeOut << "," << identicalNodeId;
         }
-        
+
         std::string taxonNames;
         if (node->taxonIndices.empty()) {
-          taxonNames = ".";
+            taxonNames = ".";
         } else {
-          bool first = true;
-          for (size_t taxonIndex : node->taxonIndices) {
-            if (!first) taxonNames += ",";
-            taxonNames += T.taxons[taxonIndex];
-            first = false;
-          }
+            bool first = true;
+            for (size_t taxonIndex : node->taxonIndices) {
+                if (!first) taxonNames += ",";
+                taxonNames += T.taxons[taxonIndex];
+                first = false;
+            }
         }
 
         std::sort(readIndices.begin(), readIndices.end());
@@ -831,156 +830,160 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
 }
 
 struct BatchEntry {
-  std::string reads1;
-  std::string reads2;
-  std::string prefix;
+    std::string reads1;
+    std::string reads2;
+    std::string prefix;
 };
 
 // Parse a batch file: one sample per line, "reads1 [reads2] [output_prefix]"
 // (whitespace- or tab-separated). The output prefix is optional and auto-derived
 // from reads1 when omitted. Shared by single-sample batch and metagenomic modes.
 bool readBatchFiles(const std::string& batchPath, std::vector<BatchEntry>& entries) {
-  std::ifstream batchIn(batchPath);
-  if (!batchIn.is_open()) {
-    output::error("Cannot open batch file: {}", batchPath);
-    return false;
-  }
-  std::string line;
-  size_t lineNum = 0;
-  while (std::getline(batchIn, line)) {
-    ++lineNum;
-    boost::trim(line);
-    if (line.empty() || line[0] == '#') continue;
-    std::istringstream iss(line);
-    BatchEntry e;
-    iss >> e.reads1;
-    if (e.reads1.empty()) continue;
-    std::string field2, field3;
-    iss >> field2 >> field3;
-    if (!field2.empty()) {
-      if (!field3.empty()) {
-        e.reads2 = field2;
-        e.prefix = field3;
-      } else {
-        // One optional field: reads2 if it looks like a FASTQ, otherwise an output prefix.
-        std::string lower = field2;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        if (lower.find(".fastq") != std::string::npos || lower.find(".fq") != std::string::npos)
-          e.reads2 = field2;
-        else
-          e.prefix = field2;
-      }
+    std::ifstream batchIn(batchPath);
+    if (!batchIn.is_open()) {
+        output::error("Cannot open batch file: {}", batchPath);
+        return false;
     }
-    if (e.prefix.empty()) {
-      fs::path p(e.reads1);
-      std::string stem = p.stem().string();
-      for (const auto& suffix : {"_R1", "_R2", "_1", "_2", ".R1", ".R2"}) {
-        if (stem.size() > strlen(suffix) && stem.substr(stem.size() - strlen(suffix)) == suffix) {
-          stem = stem.substr(0, stem.size() - strlen(suffix));
-          break;
+    std::string line;
+    size_t lineNum = 0;
+    while (std::getline(batchIn, line)) {
+        ++lineNum;
+        boost::trim(line);
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream iss(line);
+        BatchEntry e;
+        iss >> e.reads1;
+        if (e.reads1.empty()) continue;
+        std::string field2, field3;
+        iss >> field2 >> field3;
+        if (!field2.empty()) {
+            if (!field3.empty()) {
+                e.reads2 = field2;
+                e.prefix = field3;
+            } else {
+                // One optional field: reads2 if it looks like a FASTQ, otherwise an output prefix.
+                std::string lower = field2;
+                std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                if (lower.find(".fastq") != std::string::npos || lower.find(".fq") != std::string::npos)
+                    e.reads2 = field2;
+                else
+                    e.prefix = field2;
+            }
         }
-      }
-      for (const auto& ext : {".fastq", ".fq"}) {
-        if (stem.size() > strlen(ext) && stem.substr(stem.size() - strlen(ext)) == ext) {
-          stem = stem.substr(0, stem.size() - strlen(ext));
-          break;
+        if (e.prefix.empty()) {
+            fs::path p(e.reads1);
+            std::string stem = p.stem().string();
+            for (const auto& suffix : {"_R1", "_R2", "_1", "_2", ".R1", ".R2"}) {
+                if (stem.size() > strlen(suffix) && stem.substr(stem.size() - strlen(suffix)) == suffix) {
+                    stem = stem.substr(0, stem.size() - strlen(suffix));
+                    break;
+                }
+            }
+            for (const auto& ext : {".fastq", ".fq"}) {
+                if (stem.size() > strlen(ext) && stem.substr(stem.size() - strlen(ext)) == ext) {
+                    stem = stem.substr(0, stem.size() - strlen(ext));
+                    break;
+                }
+            }
+            e.prefix = (p.parent_path() / stem).string();
         }
-      }
-      e.prefix = (p.parent_path() / stem).string();
+        if (!fs::exists(e.reads1)) {
+            output::error("Batch line {}: reads file not found: {}", lineNum, e.reads1);
+            return false;
+        }
+        if (!e.reads2.empty() && !fs::exists(e.reads2)) {
+            output::error("Batch line {}: reads file not found: {}", lineNum, e.reads2);
+            return false;
+        }
+        entries.push_back(std::move(e));
     }
-    if (!fs::exists(e.reads1)) {
-      output::error("Batch line {}: reads file not found: {}", lineNum, e.reads1);
-      return false;
-    }
-    if (!e.reads2.empty() && !fs::exists(e.reads2)) {
-      output::error("Batch line {}: reads file not found: {}", lineNum, e.reads2);
-      return false;
-    }
-    entries.push_back(std::move(e));
-  }
-  return true;
+    return true;
 }
 
 bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
-  auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
+    auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
 
-  auto start_time_buildEulerTour = std::chrono::high_resolution_clock::now();
-  T.buildEulerTour();
-  auto end_time_buildEulerTour = std::chrono::high_resolution_clock::now();
-  auto duration_buildEulerTour =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end_time_buildEulerTour - start_time_buildEulerTour);
-  std::cout << "Built Euler tour in " << static_cast<double>(duration_buildEulerTour.count()) / 1000.0 << "s\n"
-            << std::endl;
-
-  if (cfg.breadthRatio) {
-    auto start_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
-    T.calculateRefSeedCounts();
-    auto end_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
-    auto duration_calculateRefSeedCounts = std::chrono::duration_cast<std::chrono::milliseconds>(
-        end_time_calculateRefSeedCounts - start_time_calculateRefSeedCounts);
-    std::cout << "Calculated reference seed counts in "
-              << static_cast<double>(duration_calculateRefSeedCounts.count()) / 1000.0 << "s\n"
+    auto start_time_buildEulerTour = std::chrono::high_resolution_clock::now();
+    T.buildEulerTour();
+    auto end_time_buildEulerTour = std::chrono::high_resolution_clock::now();
+    auto duration_buildEulerTour =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_time_buildEulerTour - start_time_buildEulerTour);
+    std::cout << "Built Euler tour in " << static_cast<double>(duration_buildEulerTour.count()) / 1000.0 << "s\n"
               << std::endl;
-  }
 
-  auto start_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
-  T.toRefSeedDeltas();
-  auto end_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
-  auto duration_toRefSeedDeltas =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end_time_toRefSeedDeltas - start_time_toRefSeedDeltas);
-  std::cout << "Converted to reference seed deltas in "
-            << static_cast<double>(duration_toRefSeedDeltas.count()) / 1000.0 << "s\n"
-            << std::endl;
+    if (cfg.breadthRatio) {
+        auto start_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
+        T.calculateRefSeedCounts();
+        auto end_time_calculateRefSeedCounts = std::chrono::high_resolution_clock::now();
+        auto duration_calculateRefSeedCounts = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_time_calculateRefSeedCounts - start_time_calculateRefSeedCounts);
+        std::cout << "Calculated reference seed counts in "
+                  << static_cast<double>(duration_calculateRefSeedCounts.count()) / 1000.0 << "s\n"
+                  << std::endl;
+    }
 
-  if (!cfg.reads1.empty()) {
-    filterAndAssignBatch(threadsManager,
-                         T,
-                         cfg.reads1,
-                         cfg.reads2,
-                         cfg.dust,
-                         cfg.discard,
-                         cfg.maskReadEnds,
-                         cfg.ambiguousScoreThreshold,
-                         cfg.ambiguousScoreThresholdRatio,
-                         cfg.maximumTaxonNumber,
-                         cfg.breadthRatio,
-                         cfg.batchSize,
-                         cfg.output);
-  } else if (!cfg.batchFile.empty()) {
-    std::vector<BatchEntry> batchEntries;
-    if (!readBatchFiles(cfg.batchFile, batchEntries)) {
-      return false;
+    auto start_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+    T.toRefSeedDeltas();
+    auto end_time_toRefSeedDeltas = std::chrono::high_resolution_clock::now();
+    auto duration_toRefSeedDeltas =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_time_toRefSeedDeltas - start_time_toRefSeedDeltas);
+    std::cout << "Converted to reference seed deltas in "
+              << static_cast<double>(duration_toRefSeedDeltas.count()) / 1000.0 << "s\n"
+              << std::endl;
+
+    if (!cfg.reads1.empty()) {
+        filterAndAssignBatch(threadsManager,
+                             T,
+                             cfg.reads1,
+                             cfg.reads2,
+                             cfg.dust,
+                             cfg.discard,
+                             cfg.maskReadEnds,
+                             cfg.ambiguousScoreThreshold,
+                             cfg.ambiguousScoreThresholdRatio,
+                             cfg.maximumTaxonNumber,
+                             cfg.breadthRatio,
+                             cfg.batchSize,
+                             cfg.output);
+    } else if (!cfg.batchFile.empty()) {
+        std::vector<BatchEntry> batchEntries;
+        if (!readBatchFiles(cfg.batchFile, batchEntries)) {
+            return false;
+        }
+        for (size_t i = 0; i < batchEntries.size(); ++i) {
+            const auto& entry = batchEntries[i];
+            if (entry.reads2.empty()) {
+                logging::info(
+                    "filter-and-assign batch entry {}: reads1={}, prefix={}", i + 1, entry.reads1, entry.prefix);
+            } else {
+                logging::info("filter-and-assign batch entry {}: reads1={}, reads2={}, prefix={}",
+                              i + 1,
+                              entry.reads1,
+                              entry.reads2,
+                              entry.prefix);
+            }
+            filterAndAssignBatch(threadsManager,
+                                 T,
+                                 entry.reads1,
+                                 entry.reads2,
+                                 cfg.dust,
+                                 cfg.discard,
+                                 cfg.maskReadEnds,
+                                 cfg.ambiguousScoreThreshold,
+                                 cfg.ambiguousScoreThresholdRatio,
+                                 cfg.maximumTaxonNumber,
+                                 cfg.breadthRatio,
+                                 cfg.batchSize,
+                                 entry.prefix);
+        }
     }
-    for (size_t i = 0; i < batchEntries.size(); ++i) {
-      const auto& entry = batchEntries[i];
-      if (entry.reads2.empty()) {
-        logging::info("filter-and-assign batch entry {}: reads1={}, prefix={}",
-                      i + 1, entry.reads1, entry.prefix);
-      } else {
-        logging::info("filter-and-assign batch entry {}: reads1={}, reads2={}, prefix={}",
-                      i + 1, entry.reads1, entry.reads2, entry.prefix);
-      }
-      filterAndAssignBatch(threadsManager,
-                           T,
-                           entry.reads1,
-                           entry.reads2,
-                           cfg.dust,
-                           cfg.discard,
-                           cfg.maskReadEnds,
-                           cfg.ambiguousScoreThreshold,
-                           cfg.ambiguousScoreThresholdRatio,
-                           cfg.maximumTaxonNumber,
-                           cfg.breadthRatio,
-                           cfg.batchSize,
-                           entry.prefix);
-    }
-  }
-  auto end_time_filterAndAssign = std::chrono::high_resolution_clock::now();
-  auto duration_filterAndAssign =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end_time_filterAndAssign - start_time_filterAndAssign);
-  output::trace() << "Filter and assign took " << static_cast<double>(duration_filterAndAssign.count()) / 1000.0 << "s\n"
-            << std::endl;
-  return true;
+    auto end_time_filterAndAssign = std::chrono::high_resolution_clock::now();
+    auto duration_filterAndAssign =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_time_filterAndAssign - start_time_filterAndAssign);
+    output::trace() << "Filter and assign took " << static_cast<double>(duration_filterAndAssign.count()) / 1000.0
+                    << "s\n"
+                    << std::endl;
+    return true;
 }
 
 bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
@@ -991,9 +994,9 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
     auto end_time_initializeQueryData = std::chrono::high_resolution_clock::now();
     auto duration_initializeQueryData = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time_initializeQueryData - start_time_initializeQueryData);
-    output::trace() << "Initialize query data took " << static_cast<double>(duration_initializeQueryData.count()) / 1000.0
-              << "s\n"
-              << std::endl;
+    output::trace() << "Initialize query data took "
+                    << static_cast<double>(duration_initializeQueryData.count()) / 1000.0 << "s\n"
+                    << std::endl;
 
     // compute overlap coefficients
     {
@@ -1014,8 +1017,8 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
     auto duration_collapseIdenticalScoringNodes = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time_collapseIdenticalScoringNodes - start_time_collapseIdenticalScoringNodes);
     output::trace() << "Collapsed identical scoring nodes in "
-              << static_cast<double>(duration_collapseIdenticalScoringNodes.count()) / 1000.0 << "s\n"
-              << std::endl;
+                    << static_cast<double>(duration_collapseIdenticalScoringNodes.count()) / 1000.0 << "s\n"
+                    << std::endl;
 
     scoreReadsMultiThreaded(T, threadsManager, cfg);
 
@@ -1036,7 +1039,8 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
     }
     output::detail() << num_unmapped << " reads unmapped... " << std::endl;
     output::detail() << num_discarded << " reads discarded due to low parsimony score... " << std::endl;
-    output::detail() << threadsManager.reads.size() - num_unmapped - num_discarded << " reads mapped to nodes..." << std::endl;
+    output::detail() << threadsManager.reads.size() - num_unmapped - num_discarded << " reads mapped to nodes..."
+                     << std::endl;
     if (threadsManager.reads.size() - num_unmapped - num_discarded == 0) {
         std::cerr << "No reads remain for node scoring and EM after discarding low-score reads... Exiting... "
                   << std::endl;
@@ -1058,8 +1062,8 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
 
     for (size_t i = 0; i < cfg.emMaximumRounds; ++i) {
         squareEM.runSquareEM();
-        output::trace() << "\nRound " << i << " of squareEM completed... nodes size changed from " << squareEM.nodes.size()
-                  << " to ";
+        output::trace() << "\nRound " << i << " of squareEM completed... nodes size changed from "
+                        << squareEM.nodes.size() << " to ";
         bool removed = squareEM.removeLowPropNodes();
         output::trace() << squareEM.nodes.size() << std::endl;
         if (!removed) {
@@ -1072,7 +1076,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
     auto duration_squareEM =
         std::chrono::duration_cast<std::chrono::milliseconds>(end_time_squareEM - start_time_squareEM);
     output::trace() << "SquareEM completed in " << static_cast<double>(duration_squareEM.count()) / 1000.0 << "s\n"
-              << std::endl;
+                    << std::endl;
 
     std::vector<uint64_t> indices(squareEM.nodes.size());
     std::iota(indices.begin(), indices.end(), 0);
@@ -1109,7 +1113,8 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
 }
 
 bool runMetagenomic(const Config& cfg) {
-    output::trace() << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads << std::endl;
+    output::trace() << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads
+                    << std::endl;
 
     // Checking IO (the MGSR index is auto-built/validated before we get here).
     if (cfg.index.empty() || !fs::exists(cfg.index)) {
@@ -1122,24 +1127,23 @@ bool runMetagenomic(const Config& cfg) {
         return false;
     }
 
-
     if (cfg.reads1.empty()) {
-      if (cfg.batchFile.empty()) {
-        std::cerr << "Error: Reads1 file is required when not using batch mode" << std::endl;
-        return false;
-      } else {
-        // check if batch files path exists
-        std::vector<BatchEntry> dummyBatchEntries;
-        if (!readBatchFiles(cfg.batchFile, dummyBatchEntries)) {
-          std::cerr << "Error: Failed to read batch files" << std::endl;
-          return false;
+        if (cfg.batchFile.empty()) {
+            std::cerr << "Error: Reads1 file is required when not using batch mode" << std::endl;
+            return false;
+        } else {
+            // check if batch files path exists
+            std::vector<BatchEntry> dummyBatchEntries;
+            if (!readBatchFiles(cfg.batchFile, dummyBatchEntries)) {
+                std::cerr << "Error: Failed to read batch files" << std::endl;
+                return false;
+            }
         }
-      }
     } else {
-      if (!fs::exists(cfg.reads1)) {
-        std::cerr << "Error: Reads1 file " << cfg.reads1 << " does not exist" << std::endl;
-        return false;
-      }
+        if (!fs::exists(cfg.reads1)) {
+            std::cerr << "Error: Reads1 file " << cfg.reads1 << " does not exist" << std::endl;
+            return false;
+        }
     }
 
     if (!cfg.reads2.empty() && !fs::exists(cfg.reads2)) {
@@ -1204,8 +1208,10 @@ bool runMetagenomic(const Config& cfg) {
 
     // Backstop: a non-MGSR index loads with no seed info and would silently map 0 reads.
     if (T.seedInfos.empty()) {
-        std::cerr << "Error: " << cfg.index << " is not a valid MGSR index (no seed info). "
-                     "Rebuild it by re-running with --reindex." << std::endl;
+        std::cerr << "Error: " << cfg.index
+                  << " is not a valid MGSR index (no seed info). "
+                     "Rebuild it by re-running with --reindex."
+                  << std::endl;
         return false;
     }
 
@@ -1391,12 +1397,8 @@ int runBatchPlacement(const Config& cfg) {
                         std::chrono::high_resolution_clock::now() - start);
                     int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
                     std::lock_guard<std::mutex> lock(progressMutex);
-                    fmt::print(stderr,
-                               "[{}/{}] {} -> NO PLACEMENT ({}ms)\n",
-                               n,
-                               samples.size(),
-                               s.prefix,
-                               elapsed.count());
+                    fmt::print(
+                        stderr, "[{}/{}] {} -> NO PLACEMENT ({}ms)\n", n, samples.size(), s.prefix, elapsed.count());
                     atomicFail.fetch_add(1, std::memory_order_relaxed);
                     continue;
                 }
@@ -1617,10 +1619,8 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
 
-    output::done("align",
-                 bamFileName,
-                 fmt::format("{} reads", output::fmt_count(readSequences.size())),
-                 elapsed.count());
+    output::done(
+        "align", bamFileName, fmt::format("{} reads", output::fmt_count(readSequences.size())), elapsed.count());
     return 0;
 }
 
@@ -1663,10 +1663,7 @@ int runGenotyping(const Config& cfg) {
         }
     }
 
-    output::done("call",
-                 vcfFileName,
-                 fmt::format("{} variants", output::fmt_count(numVariants)),
-                 elapsed.count());
+    output::done("call", vcfFileName, fmt::format("{} variants", output::fmt_count(numVariants)), elapsed.count());
     return 0;
 }
 
@@ -1710,7 +1707,8 @@ int runConsensus(const Config& cfg) {
         while (std::getline(fa, ln)) {
             if (ln.empty() || ln[0] == '>') continue;
             consLen += ln.size();
-            for (char c : ln) if (c == 'N' || c == 'n') ++nCount;
+            for (char c : ln)
+                if (c == 'N' || c == 'n') ++nCount;
         }
     }
     std::string stat;
@@ -1729,7 +1727,8 @@ void printUsage() {
     std::cout << color::bold() << "panmap" << color::reset() << " v" << VERSION << "\n";
     std::cout << "Pangenome-based sequence placement, alignment, and genotyping\n\n";
     std::cout << color::bold() << "Usage:" << color::reset() << "  panmap [options] <panman> [reads.fq] [reads2.fq]\n";
-    std::cout << color::bold() << "Output:" << color::reset() << " <prefix>.vcf, <prefix>.bam, <prefix>.consensus.fa, ...\n"
+    std::cout << color::bold() << "Output:" << color::reset()
+              << " <prefix>.vcf, <prefix>.bam, <prefix>.consensus.fa, ...\n"
               << "        (prefix defaults to reads filename, or use -o)\n\n";
 }
 
@@ -1740,94 +1739,145 @@ int main(int argc, char** argv) {
 
     // === Common options (shown in --help) ===
     po::options_description visible("Options");
-    visible.add_options()
-        ("help,h", "Show help (--help-all for more)")
-        ("help-all", "Show all options")
-        ("version,V", "Show version")
-        ("output,o", po::value<std::string>(&cfg.output), "Output prefix")
-        ("threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")
-        ("stop", po::value<std::string>()->default_value("consensus"), "Stop after: index|place|align|genotype|consensus")
-        ("meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")
-        ("aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")
-        ("verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")
-        ("quiet,q", po::bool_switch(&cfg.quiet), "Quiet output")
-        ("no-color", po::bool_switch(&cfg.plain), "No colors");
-    
+    visible.add_options()("help,h", "Show help (--help-all for more)")("help-all", "Show all options")(
+        "version,V", "Show version")("output,o", po::value<std::string>(&cfg.output), "Output prefix")(
+        "threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")(
+        "stop",
+        po::value<std::string>()->default_value("consensus"),
+        "Stop after: index|place|align|genotype|consensus")(
+        "meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")(
+        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")(
+        "verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")(
+        "quiet,q", po::bool_switch(&cfg.quiet), "Quiet output")("no-color", po::bool_switch(&cfg.plain), "No colors");
+
     po::options_description advanced("Advanced");
-    advanced.add_options()
-        ("index,i", po::value<std::string>(&cfg.index), "Load a pre-built index from this path")
-        ("index-out", po::value<std::string>(&cfg.indexOut), "Write the built index to this path (default: next to the panman)")
-        ("reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")
-        ("dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")
-        ("impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")
-        ("no-mutation-spectrum", po::bool_switch(&cfg.noMutationSpectrum), "Disable mutation spectrum filtering in VCF genotyping")
-        ("baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")
-        ("kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")
-        ("syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")
-        ("offset", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")
-        ("lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")
-        ("open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")
-        ("flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")
-        ("seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0), "Mask top seed fraction")
-        ("min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0), "Min seed quality")
-        ("trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")
-        ("trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")
-        ("min-read-support", po::value<int>(&cfg.minReadSupport)->default_value(1), "Min reads for a seed (2=filter singletons)")
-        ("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")
-        ("extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")
-        ("force-leaf", po::bool_switch(&cfg.forceLeaf), "Restrict placement to leaf nodes only (default unless --stop place)")
-        ("refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")
-        ("refine-top-pct", po::value<double>(&cfg.refineTopPct)->default_value(0.01), "Top % of nodes to refine (default 1%)")
-        ("refine-max-top-n", po::value<int>(&cfg.refineMaxTopN)->default_value(150), "Max nodes to align against")
-        ("refine-neighbor-radius", po::value<int>(&cfg.refineNeighborRadius)->default_value(2), "Expand to neighbors within N branches")
-        ("refine-max-neighbor-n", po::value<int>(&cfg.refineMaxNeighborN)->default_value(150), "Max additional nodes from neighbor expansion")
-        ("zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7), "ZSTD compression level for index (1-22)")
-        ("batch", po::value<std::string>(&cfg.batchFile), "Batch file listing samples (one per line: reads1 [reads2] [output_prefix]); works in normal and --meta modes");
-    
+    advanced.add_options()("index,i", po::value<std::string>(&cfg.index), "Load a pre-built index from this path")(
+        "index-out",
+        po::value<std::string>(&cfg.indexOut),
+        "Write the built index to this path (default: next to the panman)")(
+        "reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")(
+        "dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")(
+        "impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")(
+        "no-mutation-spectrum",
+        po::bool_switch(&cfg.noMutationSpectrum),
+        "Disable mutation spectrum filtering in VCF genotyping")(
+        "baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")(
+        "kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")(
+        "syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")(
+        "offset", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")(
+        "lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")(
+        "open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")(
+        "flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")(
+        "seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0), "Mask top seed fraction")(
+        "min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0), "Min seed quality")(
+        "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")(
+        "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")(
+        "min-read-support",
+        po::value<int>(&cfg.minReadSupport)->default_value(1),
+        "Min reads for a seed (2=filter singletons)")("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")(
+        "extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")(
+        "force-leaf",
+        po::bool_switch(&cfg.forceLeaf),
+        "Restrict placement to leaf nodes only (default unless --stop place)")(
+        "refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")(
+        "refine-top-pct",
+        po::value<double>(&cfg.refineTopPct)->default_value(0.01),
+        "Top % of nodes to refine (default 1%)")(
+        "refine-max-top-n", po::value<int>(&cfg.refineMaxTopN)->default_value(150), "Max nodes to align against")(
+        "refine-neighbor-radius",
+        po::value<int>(&cfg.refineNeighborRadius)->default_value(2),
+        "Expand to neighbors within N branches")("refine-max-neighbor-n",
+                                                 po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
+                                                 "Max additional nodes from neighbor expansion")(
+        "zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7), "ZSTD compression level for index (1-22)")(
+        "batch",
+        po::value<std::string>(&cfg.batchFile),
+        "Batch file listing samples (one per line: reads1 [reads2] [output_prefix]); works in normal and --meta modes");
+
     po::options_description metagenomic("Metagenomic");
-    metagenomic.add_options()
-        ("index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")
-        ("read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")
-        ("no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
-    
+    metagenomic.add_options()(
+        "index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")(
+        "read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")(
+        "no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
+
     po::options_description em("Metagenomic: EM");
-    em.add_options()
-        ("top-oc", po::value<size_t>(&cfg.topOc)->default_value(1000), "Select top <int> nodes by overlap coefficients to send to EM")
-        ("mask-reads", po::value<uint32_t>(&cfg.maskReads)->default_value(0), "mask reads containing k-min-mers with total occurrence <= threshold")
-        ("mask-seeds", po::value<uint32_t>(&cfg.maskSeeds)->default_value(0), "mask k-min-mer seeds in query with total occurrence <= threshold")
-        ("amplicon-depth", po::value<std::string>(&cfg.ampliconDepth), "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")
-        ("mask-reads-relative-frequency", po::value<double>(&cfg.maskReadsRelativeFrequency)->default_value(0.0), "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")
-        ("mask-seeds-relative-frequency", po::value<double>(&cfg.maskSeedsRelativeFrequency)->default_value(0.0), "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")
-        ("em-convergence-threshold", po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001), "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-convergence-threshold)")
-        ("em-delta-threshold", po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0), "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or em-delta-threshold, default is em-delta-threshold)")
-        ("em-maximum-rounds", po::value<uint32_t>(&cfg.emMaximumRounds)->default_value(5), "EM maximum rounds")
-        ("em-maximum-iterations", po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000), "EM maximum iterations")
-        ("em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
-    
+    em.add_options()("top-oc",
+                     po::value<size_t>(&cfg.topOc)->default_value(1000),
+                     "Select top <int> nodes by overlap coefficients to send to EM")(
+        "mask-reads",
+        po::value<uint32_t>(&cfg.maskReads)->default_value(0),
+        "mask reads containing k-min-mers with total occurrence <= threshold")(
+        "mask-seeds",
+        po::value<uint32_t>(&cfg.maskSeeds)->default_value(0),
+        "mask k-min-mer seeds in query with total occurrence <= threshold")(
+        "amplicon-depth",
+        po::value<std::string>(&cfg.ampliconDepth),
+        "Path to amplicon depth TSV file (if specified, will be used to mask-reads/seeds basedd)")(
+        "mask-reads-relative-frequency",
+        po::value<double>(&cfg.maskReadsRelativeFrequency)->default_value(0.0),
+        "mask reads containing k-min-mers with relative frequency < threadshold * amplicon_depth")(
+        "mask-seeds-relative-frequency",
+        po::value<double>(&cfg.maskSeedsRelativeFrequency)->default_value(0.0),
+        "mask k-min-mer seeds in query with with relative frequency < threadshold * amplicon_depth")(
+        "em-convergence-threshold",
+        po::value<double>(&cfg.emConvergenceThreshold)->default_value(0.00001),
+        "EM converges when likelihood difference is less than <float> (choose em-convergence-threshold or "
+        "em-delta-threshold, default is em-convergence-threshold)")(
+        "em-delta-threshold",
+        po::value<double>(&cfg.emDeltaThreshold)->default_value(0.0),
+        "EM converges when maximum proportion change is less than <float> (choose em-convergence-threshold or "
+        "em-delta-threshold, default is em-delta-threshold)")(
+        "em-maximum-rounds", po::value<uint32_t>(&cfg.emMaximumRounds)->default_value(5), "EM maximum rounds")(
+        "em-maximum-iterations",
+        po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000),
+        "EM maximum iterations")(
+        "em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
+
     po::options_description filterAndAssign("Metagenomic: Filter and Assign");
-    filterAndAssign.add_options()
-        ("filter-and-assign", po::bool_switch(&cfg.filterAndAssign), "Filter and assign reads to nodes without running EM")
-        ("dust", po::value<double>(&cfg.dust)->default_value(100.0), "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")
-        ("discard", po::value<double>(&cfg.discard)->default_value(0.0), "Discard reads with maximum parsimony score < FLOAT * read_total_seed (default 0, i.e. no discard)")
-        ("mask-read-ends", po::value<uint32_t>(&cfg.maskReadEnds)->default_value(0), "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")
-        ("taxonomic-metadata", po::value<std::string>(&cfg.taxonomicMetadata), "Path to taxonomic metadata TSV file")
-        ("taxonomic-rank", po::value<std::string>(&cfg.taxonomicRank)->default_value("Family"), "Taxonomic rank to use for filtering and assigning reads (should match the column name in the taxonomic metadata TSV file), only applicable if taxonomic-metadata is provided")
-        ("maximum-taxon-number", po::value<size_t>(&cfg.maximumTaxonNumber)->default_value(1), "Discard reads assigned to nodes spanning more than <int> distinct taxonos at the specified taxonomic rank, only applicable if taxonomic-metadata is provided")
-        ("ambiguous-score-threshold-ratio", po::value<double>(&cfg.ambiguousScoreThresholdRatio)->default_value(0.0), "Discard reads scoring max score - <double> * max score outside of the max scoring families")
-        ("ambiguous-score-threshold", po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0), "Discard reads scoring max score - <int> outside of the max scoring families")
-        ("breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")
-        ("pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")
-        ("batch-size", po::value<size_t>(&cfg.batchSize)->default_value(1000000), "Batch size for filtering and assigning reads");
-    
+    filterAndAssign.add_options()("filter-and-assign",
+                                  po::bool_switch(&cfg.filterAndAssign),
+                                  "Filter and assign reads to nodes without running EM")(
+        "dust",
+        po::value<double>(&cfg.dust)->default_value(100.0),
+        "Discard reads with Prinseq scale dust score > <FLOAT> (default 100, i.e. no dust filtering)")(
+        "discard",
+        po::value<double>(&cfg.discard)->default_value(0.0),
+        "Discard reads with maximum parsimony score < FLOAT * read_total_seed (default 0, i.e. no discard)")(
+        "mask-read-ends",
+        po::value<uint32_t>(&cfg.maskReadEnds)->default_value(0),
+        "mask <int> bases from the beginning and end of reads (for ancient eDNA damage)")(
+        "taxonomic-metadata", po::value<std::string>(&cfg.taxonomicMetadata), "Path to taxonomic metadata TSV file")(
+        "taxonomic-rank",
+        po::value<std::string>(&cfg.taxonomicRank)->default_value("Family"),
+        "Taxonomic rank to use for filtering and assigning reads (should match the column name in the taxonomic "
+        "metadata TSV file), only applicable if taxonomic-metadata is provided")(
+        "maximum-taxon-number",
+        po::value<size_t>(&cfg.maximumTaxonNumber)->default_value(1),
+        "Discard reads assigned to nodes spanning more than <int> distinct taxonos at the specified taxonomic rank, "
+        "only applicable if taxonomic-metadata is provided")(
+        "ambiguous-score-threshold-ratio",
+        po::value<double>(&cfg.ambiguousScoreThresholdRatio)->default_value(0.0),
+        "Discard reads scoring max score - <double> * max score outside of the max scoring families")(
+        "ambiguous-score-threshold",
+        po::value<int>(&cfg.ambiguousScoreThreshold)->default_value(0),
+        "Discard reads scoring max score - <int> outside of the max scoring families")(
+        "breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")(
+        "pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")(
+        "batch-size",
+        po::value<size_t>(&cfg.batchSize)->default_value(1000000),
+        "Batch size for filtering and assigning reads");
+
     po::options_description developer("Developer");
-    developer.add_options()
-        ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
-        ("reference-node", po::value<std::string>(&cfg.referenceNode), "Skip placement; use this node as the reference")
-        ("dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")
-        ("write-meta-read-scores-filtered", po::bool_switch(&cfg.writeMetaReadScoresFiltered), "Write filtered meta read scores to TSV file")
-        ("write-meta-read-scores-unfiltered", po::bool_switch(&cfg.writeMetaReadScoresUnfiltered), "Write unfiltered meta read scores to TSV file")
-        ("write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")
-        ("seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
+    developer.add_options()("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")(
+        "reference-node", po::value<std::string>(&cfg.referenceNode), "Skip placement; use this node as the reference")(
+        "dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")(
+        "write-meta-read-scores-filtered",
+        po::bool_switch(&cfg.writeMetaReadScoresFiltered),
+        "Write filtered meta read scores to TSV file")("write-meta-read-scores-unfiltered",
+                                                       po::bool_switch(&cfg.writeMetaReadScoresUnfiltered),
+                                                       "Write unfiltered meta read scores to TSV file")(
+        "write-ocranks", po::bool_switch(&cfg.writeOCRanks), "Write overlap coefficients info to TSV file")(
+        "seed", po::value<int>(&cfg.seed)->default_value(42), "Random seed");
 
     // Positional arguments (always hidden): panman, then one or more read files
     std::vector<std::string> readFiles;
@@ -1895,8 +1945,9 @@ int main(int argc, char** argv) {
 
     // Map positional read files: <reads1> [reads2]. Reject more than a pair.
     if (readFiles.size() > 2) {
-        output::error("Too many read files provided. Provide one file for single end "
-                      "reads, two for paired ends, or use --batch for multiple samples");
+        output::error(
+            "Too many read files provided. Provide one file for single end "
+            "reads, two for paired ends, or use --batch for multiple samples");
         std::cerr << "Provided " << readFiles.size() << " files:\n";
         for (const auto& f : readFiles) std::cerr << "  " << f << "\n";
         return 1;
@@ -1947,12 +1998,12 @@ int main(int argc, char** argv) {
     // -> .midx); -o does not affect it. Pass --index to load a specific pre-built index.
     if (cfg.index.empty()) {
         // No pre-built index (--index) given: build at --index-out if set, else next to the panman.
-        cfg.index = cfg.indexOut.empty()
-                        ? cfg.panman + (cfg.metagenomic ? ".midx" : ".idx")
-                        : cfg.indexOut;
+        cfg.index = cfg.indexOut.empty() ? cfg.panman + (cfg.metagenomic ? ".midx" : ".idx") : cfg.indexOut;
     } else if (!fs::exists(cfg.index)) {
-        output::error("index file not found: {} (--index expects a pre-built index; "
-                      "use --index-out to build at a custom path)", cfg.index);
+        output::error(
+            "index file not found: {} (--index expects a pre-built index; "
+            "use --index-out to build at a custom path)",
+            cfg.index);
         return 1;
     }
     // Only set default output if we're not in dump mode (dump modes handle their own output)
@@ -2013,8 +2064,10 @@ int main(int argc, char** argv) {
             // Metagenomic mode uses an MGSR index (.midx), not a single-sample placement
             // index (.idx). Auto-build it (cached unless --reindex), like placement does.
             if (fs::path(cfg.index).extension() == ".idx") {
-                output::error("{} is a single-sample (placement) index; metagenomic mode uses .midx. "
-                              "Pass --index <name>.midx (built automatically if missing).", cfg.index);
+                output::error(
+                    "{} is a single-sample (placement) index; metagenomic mode uses .midx. "
+                    "Pass --index <name>.midx (built automatically if missing).",
+                    cfg.index);
                 return 1;
             }
             if (!buildMgsrIndex(cfg)) return 1;
@@ -2034,8 +2087,8 @@ int main(int argc, char** argv) {
                     sampleCfg.reads2 = samples[i].reads2;
                     sampleCfg.output = samples[i].prefix;
                     if (samples.size() > 1) {
-                        std::cout << "[" << (i + 1) << "/" << samples.size() << "] "
-                                  << samples[i].reads1 << " -> " << sampleCfg.output << std::endl;
+                        std::cout << "[" << (i + 1) << "/" << samples.size() << "] " << samples[i].reads1 << " -> "
+                                  << sampleCfg.output << std::endl;
                     }
                     if (!runMetagenomic(sampleCfg)) return 1;
                 }
@@ -2099,7 +2152,6 @@ int main(int argc, char** argv) {
         }
         if (signals::check_interrupted()) return 130;
         if (cfg.stopAfter == PipelineStage::Genotype) return finishWithSummary();
-
 
         // Stage 5: Consensus
         if (runConsensus(cfg) != 0) {

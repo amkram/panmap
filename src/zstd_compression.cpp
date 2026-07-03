@@ -225,10 +225,10 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
     double throughput = decompressedSize / (1024.0 * 1024.0 * duration.count() / 1000.0);
 
     logging::debug("Decompression complete: {} -> {} bytes in {}ms ({:.1f} MB/s)",
-                  compressedSize,
-                  decompressedSize,
-                  duration.count(),
-                  throughput);
+                   compressedSize,
+                   decompressedSize,
+                   duration.count(),
+                   throughput);
 
     return true;
 }

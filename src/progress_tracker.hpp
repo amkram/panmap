@@ -12,9 +12,7 @@
 class ProgressTracker {
    public:
     ProgressTracker(size_t numThreads, const std::vector<uint64_t>& totalNodesPerThread)
-        : threadProgress(numThreads),
-          threadTotals(totalNodesPerThread),
-          numThreads_(numThreads) {
+        : threadProgress(numThreads), threadTotals(totalNodesPerThread), numThreads_(numThreads) {
         for (size_t i = 0; i < numThreads; ++i) {
             threadProgress[i].store(0, std::memory_order_relaxed);
         }
