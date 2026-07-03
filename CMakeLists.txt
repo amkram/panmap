@@ -731,6 +731,8 @@ if(OPTION_BUILD_TESTS)
         src/test/helpers/traversal.cpp
     )
     add_dependencies(testsupport panmap_lib panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
+    # Link panmap_lib PUBLIC so its headers (spdlog, panman) reach testsupport.
+    target_link_libraries(testsupport PUBLIC panmap_lib)
     target_compile_definitions(testsupport PUBLIC
         TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/test/data")
     target_include_directories(testsupport PUBLIC
