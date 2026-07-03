@@ -29,6 +29,7 @@ struct RSVPanmanFixture {
     RSVPanmanFixture();
 
     panmanUtils::Tree* tree() const { return T; }
+
     std::string genomeOf(const std::string& nodeId) const;
     std::vector<std::string> nodeIds() const;
 
