@@ -158,6 +158,7 @@ struct Config {
 
     // Utility modes
     std::string dumpNodeId;
+    std::string referenceNode;
     bool writeMetaReadScoresFiltered = false;
     bool writeMetaReadScoresUnfiltered = false;
     bool writeOCRanks = false;
@@ -1821,6 +1822,7 @@ int main(int argc, char** argv) {
     po::options_description developer("Developer");
     developer.add_options()
         ("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")
+        ("reference-node", po::value<std::string>(&cfg.referenceNode), "Skip placement; use this node as the reference")
         ("dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")
         ("write-meta-read-scores-filtered", po::bool_switch(&cfg.writeMetaReadScoresFiltered), "Write filtered meta read scores to TSV file")
         ("write-meta-read-scores-unfiltered", po::bool_switch(&cfg.writeMetaReadScoresUnfiltered), "Write unfiltered meta read scores to TSV file")
@@ -2069,15 +2071,22 @@ int main(int argc, char** argv) {
 
         if (cfg.reads1.empty()) return finishWithSummary();
 
-        auto placement = runPlacement(cfg);
-        if (signals::check_interrupted()) return 130;
-        if (!placement) {
-            output::fail("place", "no placement found");
-            return 1;
+        placement::PlacementResult placementResult;
+        if (!cfg.referenceNode.empty()) {
+            placementResult.bestLogContainmentNodeId = cfg.referenceNode;
+            output::done("place", cfg.referenceNode, "forced reference (placement skipped)", 0);
+        } else {
+            auto placement = runPlacement(cfg);
+            if (signals::check_interrupted()) return 130;
+            if (!placement) {
+                output::fail("place", "no placement found");
+                return 1;
+            }
+            placementResult = *placement;
         }
         if (cfg.stopAfter == PipelineStage::Place) return finishWithSummary();
 
-        if (runAlignment(cfg, *placement) != 0) {
+        if (runAlignment(cfg, placementResult) != 0) {
             output::fail("align", "alignment failed");
             return 1;
         }
