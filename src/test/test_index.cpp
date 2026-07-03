@@ -106,8 +106,7 @@ BOOST_AUTO_TEST_CASE(delta_reconstruction_equals_direct) {
         const bool genomeHasN = genome.find('N') != std::string::npos;
         for (const auto& [h, count] : direct) {
             auto it = reconstructed.find(h);
-            BOOST_REQUIRE_MESSAGE(it != reconstructed.end(),
-                                  "missing seed for node " << nodeId);
+            BOOST_REQUIRE_MESSAGE(it != reconstructed.end(), "missing seed for node " << nodeId);
             BOOST_TEST(it->second == count);
         }
         if (!genomeHasN) {
