@@ -82,7 +82,6 @@ output/
 !examples/expected/**
 /examples/data/v_mtdna.panman
 
-# ── Cleanup additions ──────────────────────────────────────────────
 /manuscript.md
 /review.md
 /reviewer_response/
