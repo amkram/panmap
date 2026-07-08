@@ -4,7 +4,8 @@
 panmap <panman> [reads1.fq] [reads2.fq] [options]
 ```
 
-Use `--help` for common options or `--help-all` for the full list.
+Use `--help` for common options or `--help-all` for the full list. This page
+mirrors `panmap --help-all` for version 0.1.2.
 
 ## General
 
@@ -15,9 +16,9 @@ Use `--help` for common options or `--help-all` for the full list.
 | `-V, --version` | Show version | -- |
 | `-o, --output` | Output file prefix | derived from reads filename |
 | `-t, --threads` | Number of threads | `1` |
-| `-a, --aligner` | `minimap2` or `bwa` | `minimap2` |
 | `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` |
 | `--meta` | Enable metagenomic mode | off |
+| `-a, --aligner` | `minimap2` or `bwa` | `minimap2` |
 | `-v, --verbose` | Verbose output | off |
 | `-q, --quiet` | Errors only | off |
 | `--no-color` | Disable colored output | off |
@@ -26,8 +27,8 @@ Use `--help` for common options or `--help-all` for the full list.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-i, --index` | Load a pre-built index from this path | default: auto-built at `<panman>.idx` (`.midx` under `--meta`) |
-| `--index-out` | Write the built index to this path | default: next to the panman |
+| `-i, --index` | Load a pre-built index from this path | auto-built at `<panman>.idx` (`.midx` under `--meta`) |
+| `--index-out` | Write the built index to this path | next to the panman |
 | `-f, --reindex` | Force rebuild index | off |
 | `--index-packed` | Build packed Cap'n Proto message | off |
 | `--read-packed` | Read packed Cap'n Proto message | off |
@@ -72,8 +73,8 @@ Use `--help` for common options or `--help-all` for the full list.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--impute` | Impute N's from parent (skip _->N mutations) | off |
-| `--no-mutation-spectrum` | Disable mutation spectrum filtering in VCF | off |
+| `--impute` | Impute N's from parent (skip `_->N` mutations) | off |
+| `--no-mutation-spectrum` | Disable mutation-spectrum filtering in VCF | off |
 | `--baq` | Enable Base Alignment Quality in mpileup | off |
 
 ## Metagenomic: EM algorithm
@@ -81,13 +82,13 @@ Use `--help` for common options or `--help-all` for the full list.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--top-oc` | Top N nodes by overlap coefficient to send to EM | `1000` |
-| `--mask-reads` | Mask reads with k-min-mer total occurrence <= threshold | `0` |
-| `--mask-seeds` | Mask k-min-mer seeds with total occurrence <= threshold | `0` |
-| `--amplicon-depth` | Amplicon depth TSV for frequency-based masking | -- |
-| `--mask-reads-relative-frequency` | Mask reads with relative frequency < threshold * amplicon_depth | `0.0` |
-| `--mask-seeds-relative-frequency` | Mask seeds with relative frequency < threshold * amplicon_depth | `0.0` |
-| `--em-convergence-threshold` | Converge when likelihood difference < threshold | `0.00001` |
-| `--em-delta-threshold` | Converge when max proportion change < threshold | `0.0` |
+| `--mask-reads` | Mask reads whose k-min-mers have total occurrence ≤ threshold | `0` |
+| `--mask-seeds` | Mask k-min-mer seeds with total occurrence ≤ threshold | `0` |
+| `--amplicon-depth` | Amplicon-depth TSV for frequency-based masking | -- |
+| `--mask-reads-relative-frequency` | Mask reads with relative frequency < threshold × amplicon depth | `0` |
+| `--mask-seeds-relative-frequency` | Mask seeds with relative frequency < threshold × amplicon depth | `0` |
+| `--em-convergence-threshold` | Converge when the likelihood difference < threshold | `1e-05` |
+| `--em-delta-threshold` | Converge when the max proportion change < threshold | `0` |
 | `--em-maximum-rounds` | Maximum EM rounds | `5` |
 | `--em-maximum-iterations` | Maximum EM iterations per round | `1000` |
 | `--em-leaves-only` | Only run EM on leaf (sample) nodes | off |
@@ -97,15 +98,16 @@ Use `--help` for common options or `--help-all` for the full list.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--filter-and-assign` | Assign reads to nodes without EM | off |
-| `--dust` | Discard reads with DUST score > threshold | `100.0` (no filtering) |
-| `--discard` | Discard reads with parsimony score < threshold * total seeds | `0.0` (no discard) |
-| `--mask-read-ends` | Mask N bases from read ends (for aeDNA damage) | `0` |
+| `--filter-and-assign` | Assign reads to nodes without running EM | off |
+| `--dust` | Discard reads with a PRINSEQ DUST score > threshold | `100` (no filtering) |
+| `--discard` | Discard reads with max parsimony score < threshold × total seeds | `0` (no discard) |
+| `--mask-read-ends` | Mask N bases from both read ends (for aeDNA damage) | `0` |
 | `--taxonomic-metadata` | TSV with taxonomic metadata per node | -- |
-| `--maximum-families` | Discard reads spanning > N taxonomic families | `1` |
-| `--ambiguous-score-threshold-ratio` | Discard reads scoring outside max families by ratio | `0.0` |
-| `--ambiguous-score-threshold` | Discard reads scoring outside max families by absolute value | `0` |
-| `--breadth-ratio` | Calculate observed/expected breadth ratio | off |
+| `--taxonomic-rank` | Taxonomic rank (column in the metadata TSV) to filter/assign on | `Family` |
+| `--maximum-taxon-number` | Discard reads spanning more than N distinct taxa at that rank | `1` |
+| `--ambiguous-score-threshold-ratio` | Discard reads scoring outside the max-scoring taxa by this ratio | `0` |
+| `--ambiguous-score-threshold` | Discard reads scoring outside the max-scoring taxa by this absolute value | `0` |
+| `--breadth-ratio` | Compute observed/expected breadth ratio | off |
 | `--pseudochain` | Use pseudo-chains for read scoring | off |
 | `--batch-size` | Batch size for filtering and assigning | `1000000` |
 
@@ -115,9 +117,16 @@ Use `--help` for common options or `--help-all` for the full list.
 |--------|-------------|---------|
 | `--batch` | File listing samples, one per line: `reads1 [reads2] [output_prefix]` (works in normal and `--meta` modes) | -- |
 
-## Utility
+## Developer
 
-| Option | Description |
-|--------|-------------|
-| `--dump-sequence <node>` | Extract FASTA for a single node |
-| `--dump-sequences <nodes...>` | Extract FASTA for multiple node IDs |
+Low-level flags for debugging and reproducibility.
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--seed` | Random seed | `42` |
+| `--reference-node` | Skip placement and use this node as the reference | -- |
+| `--dump-sequence` | Write the FASTA for a single node and exit | -- |
+| `--dump-all-scores` | Write all node placement scores to a TSV | -- |
+| `--write-meta-read-scores-filtered` | Write filtered per-read meta scores to a TSV | off |
+| `--write-meta-read-scores-unfiltered` | Write unfiltered per-read meta scores to a TSV | off |
+| `--write-ocranks` | Write overlap-coefficient ranks to a TSV | off |
