@@ -107,3 +107,12 @@ output/
 /examples/data/*.panman.*.fa
 
 /scripts/mutation_check.sh
+
+# Manuscript and scratch working files (kept locally, not part of the source tree)
+/evaluation/
+/manu1.txt
+/manu1_clean.pdf
+/references.html
+/references.docx
+~$*
+/info/
