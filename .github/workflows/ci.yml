@@ -35,13 +35,35 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build -j"$(nproc)"
-      - name: Test
-        run: ctest --test-dir build --output-on-failure -j2
+      - name: Diagnose Test 5 abort (stress loop + backtrace)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+          echo '/tmp/core.%p' | sudo tee /proc/sys/kernel/core_pattern
+          ulimit -c unlimited
+          T=$(mktemp -d); cp src/test/data/rsv_4K.panman "$T/"
+          NODE=src/test/data/rsv_4K.panman.random.node_1330.fa
+          build/bin/panmap "$T/rsv_4K.panman" --stop index -t 2 >/dev/null 2>&1
+          ab=0
+          for i in $(seq 1 100); do
+            if ! build/bin/panmap "$T/rsv_4K.panman" "$NODE" --stop genotype -o "$T/g" -t 2 >"$T/out" 2>&1; then
+              rc=$?; ab=$((ab+1))
+              echo "==================== ABORT run $i (exit $rc) ===================="
+              echo "----- output -----"; cat "$T/out"
+              core=$(ls -t /tmp/core.* 2>/dev/null | head -1)
+              if [ -n "$core" ]; then
+                echo "----- backtrace ($core) -----"
+                gdb -batch -ex 'bt' build/bin/panmap "$core" 2>&1 | head -50
+              fi
+              break
+            fi
+          done
+          echo "aborts in 100 runs: $ab"
+          true
 
-  # Cross-platform safety net. macOS runners bill ~10x, so only on push to main.
-  build-test-macos:
+  # (macos + docker jobs omitted on this diagnostic branch)
+  _unused-macos:
     name: build & test (macos)
-    if: github.event_name == 'push'
+    if: false
     runs-on: macos-14
     defaults:
       run:
@@ -62,6 +84,7 @@ jobs:
   # Validates the vendored from-source build path and the shipped image.
   docker:
     name: docker build
+    if: false  # disabled on diagnostic branch
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
