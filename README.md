@@ -1,6 +1,7 @@
 # Panmap
 
 
+[![CI](https://github.com/amkram/panmap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/amkram/panmap/actions/workflows/ci.yml)
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/panmap?label=bioconda)](https://anaconda.org/bioconda/panmap)
 [![Conda downloads](https://img.shields.io/conda/dn/bioconda/panmap?label=conda%20downloads)](https://anaconda.org/bioconda/panmap)
 [![biocontainer](https://img.shields.io/badge/biocontainer-quay.io-blue)](https://quay.io/repository/biocontainers/panmap?tab=tags)
