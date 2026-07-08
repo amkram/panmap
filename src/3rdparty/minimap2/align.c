@@ -793,7 +793,12 @@ static void mm_align1(void *km, const mm_mapopt_t *opt, const mm_idx_t *mi, int 
 					if (zdrop_code == 2) r2->split_inv = 1;
 				}
 				break;
-			} else r->p->dp_score += ez->score;
+			// panmap: guard r->p. A gap-fill segment can yield n_cigar==0 while not
+			// z-dropped (empty/degenerate segment between adjacent anchors, score~0), in
+			// which case mm_append_cigar never allocated r->p. Dereferencing it here
+			// segfaults; observed on arm64 (ksw2 NEON path) with long self-alignments.
+			// score is ~0 for such segments, so skipping the add is correct.
+			} else if (r->p) r->p->dp_score += ez->score;
 			rs = re, qs = qe;
 		}
 	}
