@@ -59,10 +59,15 @@ Output: `SRR19707934.mgsr.abundance.out` -- estimated node abundances.
 ### 3. Identify lineages
 
 ```bash
-panmap ../examples/data/sars_20000_twilight_dipper.panman \
-  --dump-sequences "$(cut -f1 SRR19707934.mgsr.abundance.out \
-    | tr ',' '\n' | grep '\S' | tr '\n' ' ' | sed 's/ $//g')" \
-  --output SRR19707934
+# Extract the reference sequence for each abundant node into one FASTA.
+# --dump-sequence writes one node per call, so loop over the abundance output.
+: > SRR19707934.dump-sequences.fa
+cut -f1 SRR19707934.mgsr.abundance.out | tr ',' '\n' | grep '\S' | while IFS= read -r node; do
+  panmap ../examples/data/sars_20000_twilight_dipper.panman \
+    --dump-sequence "$node" -o node.fa >/dev/null
+  cat node.fa >> SRR19707934.dump-sequences.fa
+done
+rm -f node.fa
 
 pangolin SRR19707934.dump-sequences.fa \
   --outfile SRR19707934.pangolin.csv
@@ -144,7 +149,8 @@ panmap ../examples/data/v_mtdna.panman \
 | `--discard` | Discard reads with parsimony score < threshold * total seeds | `0.0` (no discard) |
 | `--mask-read-ends` | Mask N bases from read ends (for aeDNA damage) | `0` |
 | `--taxonomic-metadata <file>` | TSV with taxonomic metadata per node | -- |
-| `--maximum-families` | Discard reads spanning > N taxonomic families | `1` |
+| `--taxonomic-rank` | Taxonomic rank (column in the metadata TSV) to filter/assign on | `Family` |
+| `--maximum-taxon-number` | Discard reads spanning more than N distinct taxa at that rank | `1` |
 | `--ambiguous-score-threshold-ratio` | Discard reads scoring outside max families by ratio | `0.0` |
 | `--ambiguous-score-threshold` | Discard reads scoring outside max families by absolute value | `0` |
 | `--breadth-ratio` | Calculate observed/expected breadth ratio | off |
