@@ -10,6 +10,7 @@
 #include <iostream>
 #include <span>
 #include <map>
+#include <array>
 #include <unordered_set>
 #include <tuple>
 #include <climits>
@@ -33,6 +34,13 @@ std::string getStringFromSequence(const std::vector<std::vector<std::pair<char, 
                                   bool aligned);
 
 std::string getStringFromReference(panmanUtils::Tree* tree, std::string reference, bool aligned);
+
+void simulateSNPsOnSequence(
+  std::string& sequence,
+  std::vector<std::tuple<char,char, uint32_t>>& snpRecords,
+  uint32_t numsnps,
+  std::mt19937& rng
+);
 
 class LiteNode {
    public:
