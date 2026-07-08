@@ -499,9 +499,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
 else()
     set(MINIMAP2_MAKE_ARGS "")
 endif()
+# Minimap2 uses its own Makefile, so it does not inherit CMake's include/lib
+# dirs. Under USE_SYSTEM_LIBS (conda) zlib lives only in the env, so point the
+# sub-make's compiler at it via CPATH/LIBRARY_PATH (gcc/clang honor these). No-op
+# otherwise: system/apt zlib is already on the default search path.
+if(USE_SYSTEM_LIBS AND DEFINED ENV{CONDA_PREFIX})
+    set(_mm2_env "CPATH=$ENV{CONDA_PREFIX}/include:$ENV{CPATH}"
+                 "LIBRARY_PATH=$ENV{CONDA_PREFIX}/lib:$ENV{LIBRARY_PATH}")
+else()
+    set(_mm2_env "")
+endif()
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND cd ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 && make clean && make -j ${MINIMAP2_MAKE_ARGS}
+    COMMAND ${CMAKE_COMMAND} -E env ${_mm2_env} make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 clean
+    COMMAND ${CMAKE_COMMAND} -E env ${_mm2_env} make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 -j ${MINIMAP2_MAKE_ARGS}
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}/bin/minimap2
