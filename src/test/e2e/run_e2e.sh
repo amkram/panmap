@@ -73,18 +73,24 @@ check "0 variants for exact match" test "$NVARS" -eq 0
 # Test 4: Placement with internal node sequence
 echo "[4] Placement - internal node"
 NODE_FA=$(ls "$TESTDATA"/rsv_4K.panman.random.node_*.fa | head -1)
+NODE_ID=$(basename "$NODE_FA" | sed -E 's/.*\.random\.(node_[0-9]+)\.fa/\1/')
 drive $PANMAP "$TMPDIR/rsv_4K.panman" "$NODE_FA" \
     --stop place -o "$TMPDIR/place_node" -t 2
 check "placement file created" test -f "$TMPDIR/place_node.placement.tsv"
+# Feeding a node's own sequence should place it back on that node.
+check "placed to $NODE_ID" grep -q "$NODE_ID" "$TMPDIR/place_node.placement.tsv"
 NODE_SCORE=$(awk -F'\t' '/^log_raw/ {print $2}' "$TMPDIR/place_node.placement.tsv")
-check "log_raw score > 0" awk "BEGIN {exit ($NODE_SCORE > 0) ? 0 : 1}"
+check "log_raw score > 50" awk "BEGIN {exit ($NODE_SCORE > 50) ? 0 : 1}"
 
-# Test 5: Full pipeline with internal node (should produce variants)
+# Test 5: Full pipeline with internal node. force-leaf sends the alignment to the
+# closest leaf, which differs from the internal node, so variants are expected.
 echo "[5] Full pipeline - internal node"
 drive $PANMAP "$TMPDIR/rsv_4K.panman" "$NODE_FA" \
     --stop genotype -o "$TMPDIR/full_node" -t 2
 check "vcf exists" test -f "$TMPDIR/full_node.vcf"
 check "bam exists" test -f "$TMPDIR/full_node.bam"
+NODE_NVARS=$(grep -cv '^#' "$TMPDIR/full_node.vcf" || true)
+check "internal node produces variants" test "$NODE_NVARS" -gt 0
 
 # Test 6: Placement with FASTQ input (quality scores present)
 echo "[6] Placement - fastq input"
@@ -157,8 +163,10 @@ while IFS=$'\t' read -r POS REF ALT; do
         '!/^#/ && $2==p && $4==r && $5==a {ok=1} END{exit ok?0:1}' "$TMPDIR/snp.vcf"
 done < "$TMPDIR/truth.txt"
 
-# Test 11: Paired-end reads (R1 + R2)
-echo "[11] Paired-end reads"
+# Test 11: Two FASTQ inputs (R1 + R2). These are independent halves of the tiling,
+# not true mate pairs, so this exercises the two-file input path rather than
+# insert-size / paired-end handling.
+echo "[11] Two FASTQ inputs (R1 + R2)"
 python3 - "$TESTDATA/MZ515733.1.fa" "$TMPDIR/pe_R1.fastq" "$TMPDIR/pe_R2.fastq" <<'PY'
 import sys
 inp, r1p, r2p = sys.argv[1], sys.argv[2], sys.argv[3]
