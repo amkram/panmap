@@ -17,8 +17,8 @@ This installs `panmap` and `panmanUtils`. [Mamba](https://mamba.readthedocs.io/)
 
 ## Docker
 
-A container image is built automatically for every Bioconda release by
-[BioContainers](https://biocontainers.pro/):
+[BioContainers](https://biocontainers.pro/) builds a container image for each
+Bioconda release:
 
 ```bash
 docker pull quay.io/biocontainers/panmap:0.1.2--0
@@ -26,7 +26,7 @@ docker run --rm quay.io/biocontainers/panmap:0.1.2--0 panmap -h
 ```
 
 Pick a concrete tag from the
-[tags page](https://quay.io/repository/biocontainers/panmap?tab=tags) — BioContainers
+[tags page](https://quay.io/repository/biocontainers/panmap?tab=tags); BioContainers
 images are not tagged `latest`. To run on local files, mount the working directory:
 
 ```bash
@@ -49,7 +49,7 @@ docker run --rm panmap panmap -h
 ### With conda (recommended)
 
 The repository ships an `environment.yml` with every build and runtime
-dependency, so nothing needs to be installed system-wide:
+dependency:
 
 ```bash
 conda env create -f environment.yml && conda activate panmap
@@ -58,17 +58,16 @@ cmake --build build -j
 build/bin/panmap -h
 ```
 
-That's it — no flags or environment variables required. When a conda environment
-is active, the build detects it automatically: it links against the conda-provided
-Cap'n Proto, htslib, Protobuf, Abseil, TBB, and zlib, and points the bundled
-aligners at the environment's headers and libraries for you. The binary is at
-`build/bin/panmap`.
+With a conda environment active, the build links against the conda-provided
+Cap'n Proto, htslib, Protobuf, Abseil, TBB, and zlib, and passes the
+environment's include and library paths to the bundled aligners. No extra flags
+or environment variables are needed. The binary is at `build/bin/panmap`.
 
 ### Without conda (system packages)
 
 Install the dependencies below, then build. Cap'n Proto, htslib, and the other
-heavier libraries are compiled from the bundled sources automatically, so the
-system list is short:
+heavier libraries are compiled from the bundled sources, so the system list is
+short:
 
 | Dependency | Ubuntu / Debian package |
 |------------|-------------------------|
@@ -88,6 +87,6 @@ build/bin/panmap -h
 !!! tip "Build options"
     - `-DUSE_SYSTEM_LIBS=ON` links against system or conda copies of Cap'n Proto,
       htslib, Protobuf, and Abseil instead of building them from source. It is
-      enabled automatically inside a conda environment.
+      on by default inside a conda environment.
     - `-DOPTION_BUILD_TESTS=ON` builds the unit and end-to-end test suites
       (run with `ctest --test-dir build`).

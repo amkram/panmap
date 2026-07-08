@@ -3,8 +3,8 @@
 ## Installation and build
 
 **Build fails looking for `zlib.h`, Cap'n Proto, or htslib headers.**
-Build inside the conda environment — it wires up all include and library paths
-automatically:
+Build inside the conda environment, which supplies the include and library paths
+the build needs:
 
 ```bash
 conda env create -f environment.yml && conda activate panmap
@@ -20,7 +20,7 @@ Building without conda? Install the system packages listed under
 ## Running panmap
 
 **Results look stale after changing seed parameters.** The index is cached next
-to the PanMAN and reused automatically. After changing `-k/-s/-l` or other
+to the PanMAN and reused on later runs. After changing `-k/-s/-l` or other
 index-affecting options, force a rebuild:
 
 ```bash
@@ -59,5 +59,5 @@ EM (`--meta`) is heavier than single-sample placement. See
 - Reference outputs for the bundled examples are in
   [`examples/expected/`](https://github.com/amkram/panmap/tree/main/examples/expected).
 
-Still stuck? Open an issue at
+Report other issues at
 [github.com/amkram/panmap/issues](https://github.com/amkram/panmap/issues).

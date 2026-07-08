@@ -78,7 +78,7 @@ Germany/IMS-10036-.../2021|OU071802.1|2021-02-03 0.15086
 ## Indexes
 
 Indexes are written next to the PanMAN, not under the output prefix, and are
-reused automatically on later runs.
+reused on later runs.
 
 | File | Built by | Purpose |
 |------|----------|---------|
