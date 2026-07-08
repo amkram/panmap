@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['*.md', 'docs/**']
+  pull_request:
+    branches: [main]
+
+# One run per ref; cancel superseded runs to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Primary gate (every PR + push): build against conda libs — the bioconda
+  # distribution path — and run the full unit + end-to-end suite. Fast because
+  # conda ships prebuilt binary deps (no from-source capnp/htslib/protobuf).
+  build-test:
+    name: build & test (linux)
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j2
+
+  # Cross-platform safety net. macOS runners bill ~10x, so only on push to main.
+  build-test-macos:
+    name: build & test (macos)
+    if: github.event_name == 'push'
+    runs-on: macos-14
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j2
+
+  # Validates the vendored from-source build path and the shipped image.
+  docker:
+    name: docker build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t panmap .
+      - name: Smoke test
+        run: |
+          docker run --rm panmap --version
+          docker run --rm panmap --help
