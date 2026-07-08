@@ -33,17 +33,23 @@ option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013+)" OFF)
-# Inside an active conda env, use its libraries by default and add its include/
-# lib dirs, so no -DUSE_SYSTEM_LIBS or CPATH/LIBRARY_PATH exports are needed.
+# Default to system libraries when building inside an active conda env, so a plain
+# cmake in an activated env "just works"; otherwise build the bundled sources.
 if(DEFINED ENV{CONDA_PREFIX})
-    list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
-    include_directories(SYSTEM "$ENV{CONDA_PREFIX}/include")
-    link_directories("$ENV{CONDA_PREFIX}/lib")
     set(_use_system_libs_default ON)
 else()
     set(_use_system_libs_default OFF)
 endif()
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" ${_use_system_libs_default})
+
+# Point the build at an active conda env ONLY when actually using its libraries.
+# Injecting the env's include/lib dirs unconditionally leaks its headers (e.g. an
+# incompatible protobuf) into a bundled (USE_SYSTEM_LIBS=OFF) build and breaks it.
+if(USE_SYSTEM_LIBS AND DEFINED ENV{CONDA_PREFIX})
+    list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
+    include_directories(SYSTEM "$ENV{CONDA_PREFIX}/include")
+    link_directories("$ENV{CONDA_PREFIX}/lib")
+endif()
 
 # Set consistent compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
