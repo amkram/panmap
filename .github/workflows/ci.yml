@@ -6,6 +6,7 @@ on:
     paths-ignore: ['*.md', 'docs/**']
   pull_request:
     branches: [main]
+    paths-ignore: ['*.md', 'docs/**']
 
 # One run per ref; cancel superseded runs to save minutes.
 concurrency:
