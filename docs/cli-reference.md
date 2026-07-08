@@ -124,6 +124,7 @@ Low-level flags for debugging and reproducibility.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--seed` | Random seed | `42` |
+| `--random-seed` | Legacy string seed for the dump utilities (hashed) | -- |
 | `--reference-node` | Skip placement and use this node as the reference | -- |
 | `--dump-sequence` | Write the FASTA for a single node and exit | -- |
 | `--dump-sequences` | Write FASTAs for a list of node IDs to `<output>.dump-sequences.fa` | -- |
