@@ -2,122 +2,123 @@
 
 Pangenome-based sequence placement, alignment, and genotyping.
 
-[Documentation](https://amkram.github.io/panmap/) | [Preprint](https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1)
+[Documentation](https://amkram.github.io/panmap/) · [Preprint](https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1)
 
-## System requirements
+Given reads and a [PanMAN](https://github.com/TurakhiaLab/panman) pangenome, panmap places each sample on the pangenome, then either aligns and genotypes it against the closest reference (single-sample mode) or estimates haplotype abundances and assigns reads to pangenome nodes (`--meta`).
 
-Panmap was developed and benchmarked on a Linux compute server (dual Intel Xeon Gold 6338, 128 threads, Ubuntu 22.04 LTS)
-and also tested on macOS 14.3 (MacBook Air, Apple M3, 8 cores, 16 GB RAM, arm64).
+## Install
 
-For typical use, Panmap runs on any Linux machine with a modern x86-64 CPU and at least 8 GB of RAM. macOS
-(Apple Silicon) is also supported through conda and Docker. No non-standard hardware is required.
-
-## Installation
-
-Panmap can be installed with conda, which takes about 2 minutes
+With conda (~2 min):
 
 ```bash
 conda install -c conda-forge -c bioconda panmap
 panmap -h
 ```
 
-
-Or built with Docker, which takes about 6 minutes:
-
-```bash
-docker build -t panmap .
-docker run --rm panmap panmap -h
-```
-
-Or pulled with Docker:
+With Docker (pulled from registry):
 
 ```bash
 docker pull quay.io/biocontainers/panmap:0.1.1--0
 docker run --rm panmap panmap -h
 ```
 
-Or built from source with conda (no system-level installs):
+Or build locally with Docker (~6 min):
 
 ```bash
-conda env create -f environment.yml
-conda activate panmap
-export CPATH="$CONDA_PREFIX/include" LIBRARY_PATH="$CONDA_PREFIX/lib"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_LIBS=ON && cmake --build build -j
+docker build -t panmap .
+docker run --rm panmap panmap -h
 ```
 
-## Quick start (demo)
-
-### Single-sample Pipeline
-
-```
-index  -->  place  -->  align  -->  genotype  -->  consensus
- .idx    .placement.tsv  .bam       .vcf        .consensus.fa
-```
-
-By default, panmap runs the full pipeline. Use `--stop <stage>` to run fewer stages.
-
-**Example:**
+Or build from source with conda:
 
 ```bash
-panmap examples/data/sars_20000_twilight_dipper.panman examples/data/isolate_R1.fastq.gz examples/data/isolate_R2.fastq.gz
+conda env create -f environment.yml && conda activate panmap
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+build/bin/panmap -h
 ```
 
-This places, genotypes, and assembles a small set of SARS-CoV-2 reads against a 20,000 genome PanMAN (should complete in ~0.6s).
+## System requirements
 
-**Outputs**:
-- Placement:  `isolate_R1.placement.tsv`
-- Closest reference:  `isolate_R1.ref.fa`
-- Read alignments to closest reference:  `isolate_R1.bam` + `isolate_R1.bam.bai`
-- Variants from closest reference:   `isolate_R1.vcf`
-- Consensus:  `isolate_R1.consensus.fa`
+Any modern Linux/macOS machine with an x86-64 CPU or Apple Silicon and ≥8 GB RAM. 
 
-### For metagenomic samples
+Developed and benchmarked on a Linux server (dual Intel Xeon Gold 6338, 128 threads, Ubuntu 22.04 LTS), and also tested on macOS 14.3 (MacBook Air, Apple M3, 8 cores, 16 GB RAM, arm64).
 
-**Esimating haplotype abundance**
 
-This demo run should take about 2 minutes to complete.
+## Single-sample mode (default)
+
+**Usage**:
 
 ```bash
-data_dir=examples/data; output_dir=examples/output; mkdir -p $output_dir
-
-# Run panmap in metagenomic mode (the MGSR index is built automatically on first use)
-panmap $data_dir/sars_20000_twilight_dipper.panman $data_dir/sars20000_5hap_*.fastq.gz --meta --threads 4 --em-delta-threshold 0.00001 --output $output_dir/example
+panmap [options] <pangenome.panman> <reads1.fastq> [reads2.fastq]
 ```
 
-This outputs a `.mgsr.abundance.out` file containing the haplotype abundance for each sample.
-
-Reads used above were simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples, refer to the
-full documentation linked below or README in examples/wastewater for more details.
-
-**Filter and assign reads**
-
-This demo run should take about 2.5 minutes to complete.
+**Example**:
 
 ```bash
-data_dir=examples/data; output_dir=examples/output; mkdir -p $output_dir
-cp data/vertebrate_mtdna/v_mtdna.panman $data_dir/
+panmap examples/data/sars_20000_twilight_dipper.panman \
+       examples/data/isolate_R1.fastq.gz examples/data/isolate_R2.fastq.gz
+```
+This places, genotypes, and assembles a small set of SARS-CoV-2 reads against a 20,000 genome PanMAN (~0.6s).
 
-# Run Panmap with --filter-and-assign option (index built automatically with the given -k/-s/-l)
-panmap $data_dir/v_mtdna.panman $data_dir/subsampled.fastq.gz --meta --filter-and-assign \
-  -k 15 -s 8 -l 1 --discard 0.6 --dust 5 --taxonomic-metadata $data_dir/v_mtdna.meta.tsv -t 4 --breadth-ratio --output $output_dir/subsampled
+Outputs (prefix defaults to the reads filename, `isolate_R1`):
+
+| File | Contents |
+|---|---|
+| `.placement.tsv` | best-match node per placement metric |
+| `.ref.fa` | closest reference genome |
+| `.bam`, `.bam.bai` | reads aligned to the closest reference |
+| `.vcf` | variants vs the closest reference |
+| `.consensus.fa` | sample consensus |
+
+
+By default, panmap runs the full pipeline (`index → place → align → genotype → consensus`). Use `--stop <stage>` to run fewer stages.
+
+
+## Metagenomic mode (`--meta`)
+
+
+**Estimate haplotype abundances**:
+
+```bash
+panmap --meta [options] <pangenome.panman> <reads...>
 ```
 
-This outputs 3 files:
+**Example** (~2 min):
 
-- `.mgsr.assignedReads.fastq` file containing the reads that were assigned
+```bash
+mkdir -p examples/output
+panmap --meta -t 4 --em-delta-threshold 0.00001 -o examples/output/example \
+       examples/data/sars_20000_twilight_dipper.panman
+       examples/data/sars20000_5hap_*.fastq.gz \       
+```
 
-- `.mgsr.assignedReads.out` file containing the number of reads assigned to each node and the indices of the reads assigned, with respect to the the .mgsr.assignedReads.fastq file
+Writes `examples/output/example.mgsr.abundance.out` (haplotype abundance per sample). These are simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples see the [full documentation](https://amkram.github.io/panmap/) or [examples/wastewater](examples/wastewater).
 
-- `.mgsr.assignedReadsLCANode.out` file containg the number of reads assigned to the LCA node and the indices of the reads assigned. As reads may be assigned to multiple nodes, the LCA node of a read if the LCA of all the nodes it was assigned to
+**Filter and assign reads**:
 
-## Modes
+```bash
+panmap --meta --filter-and-assign [options] <pangenome.panman> <reads...>
+```
 
-- **Single-sample** (default): Place reads, align to closest reference, call variants (BAM + VCF)
-- **Metagenomic** (`--meta`): Estimate haplotype abundance or assign reads to pangenome nodes
+**Example** (~2.5 min):
+
+```bash
+cp data/vertebrate_mtdna/v_mtdna.panman examples/data/
+panmap examples/data/v_mtdna.panman examples/data/subsampled.fastq.gz \
+       --meta --filter-and-assign -k 15 -s 8 -l 1 --discard 0.6 --dust 5 \
+       --breadth-ratio -t 4 --taxonomic-metadata examples/data/v_mtdna.meta.tsv -o examples/output/subsampled
+```
+
+Writes three files (prefix `examples/output/subsampled`):
+
+- `.mgsr.assignedReads.fastq` — the reads that were assigned
+- `.mgsr.assignedReads.out` — per node: number of reads assigned and their indices into the fastq
+- `.mgsr.assignedReadsLCANode.out` — per LCA node: number of reads assigned and their indices; a read's LCA node is the LCA of all nodes it was assigned to
+
+## Verify
+
+Reference outputs for the demos are in [examples/expected/](examples/expected/).
 
 ## Links
 
-- [Full documentation](https://amkram.github.io/panmap/)
-- [Installation options](https://amkram.github.io/panmap/installation/)
-- [CLI reference](https://amkram.github.io/panmap/cli-reference/)
-- [PanMAN format](https://github.com/TurakhiaLab/panman)
+[Full documentation](https://amkram.github.io/panmap/) · [Installation options](https://amkram.github.io/panmap/installation/) · [CLI reference](https://amkram.github.io/panmap/cli-reference/) · [PanMAN format](https://github.com/TurakhiaLab/panman)

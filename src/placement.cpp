@@ -1078,11 +1078,11 @@ void placeLite(PlacementResult& result,
 
         uint32_t l = indexRoot.getL();
         logging::debug("Index parameters: k={}, s={}, t={}, l={}{}",
-                      params.k,
-                      params.s,
-                      params.t,
-                      l,
-                      params.hpc ? ", hpc=on" : "");
+                       params.k,
+                       params.s,
+                       params.t,
+                       l,
+                       params.hpc ? ", hpc=on" : "");
 
         if (l == 0) {
             logging::info("l=0: Using raw syncmers instead of k-minimizers");
@@ -1480,9 +1480,9 @@ void placeLite(PlacementResult& result,
                 logging::debug(
                     "K-minimizer extraction (Q{} filtered): {}ms", params.minSeedQuality, duration_kminimizer.count());
                 logging::debug("Extracted {} unique k-minimizers from {} reads (filtered {} low-quality seeds)",
-                              state.seedFreqInReads.size(),
-                              allReadSequences.size(),
-                              totalFiltered);
+                               state.seedFreqInReads.size(),
+                               allReadSequences.size(),
+                               totalFiltered);
 
             } else {
                 // Original path: deduplicate reads first for efficiency
@@ -1630,8 +1630,8 @@ void placeLite(PlacementResult& result,
                     std::chrono::duration_cast<std::chrono::milliseconds>(time_kminimizer_end - time_kminimizer_start);
                 logging::debug("K-minimizer extraction: {}ms", duration_kminimizer.count());
                 logging::debug("Extracted {} unique k-minimizers from {} reads",
-                              state.seedFreqInReads.size(),
-                              allReadSequences.size());
+                               state.seedFreqInReads.size(),
+                               allReadSequences.size());
             }  // end of else block for non-quality-filtered path (l > 0)
         }
     }
@@ -1825,9 +1825,9 @@ void placeLite(PlacementResult& result,
                           filteredSeedCount);
         }
         logging::debug("Precomputed magnitude: log={:.6f}, total read seed frequency: {}, unique read seeds: {}",
-                      state.logReadMagnitude,
-                      state.totalReadSeedFrequency,
-                      state.readUniqueSeedCount);
+                       state.logReadMagnitude,
+                       state.totalReadSeedFrequency,
+                       state.readUniqueSeedCount);
     }
     auto time_magnitude_end = std::chrono::high_resolution_clock::now();
     auto duration_magnitude =
@@ -1848,8 +1848,8 @@ void placeLite(PlacementResult& result,
             }
         }
         logging::debug("Weighted containment: {} seeds with inverse genome counts, denominator={:.6f}",
-                      state.seedInverseGenomeCounts.size(),
-                      state.weightedContainmentDenominator);
+                       state.seedInverseGenomeCounts.size(),
+                       state.weightedContainmentDenominator);
     }
 
     placement::NodeMetrics rootMetrics;

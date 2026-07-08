@@ -33,7 +33,17 @@ option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013+)" OFF)
-option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" OFF)
+# Inside an active conda env, use its libraries by default and add its include/
+# lib dirs, so no -DUSE_SYSTEM_LIBS or CPATH/LIBRARY_PATH exports are needed.
+if(DEFINED ENV{CONDA_PREFIX})
+    list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
+    include_directories(SYSTEM "$ENV{CONDA_PREFIX}/include")
+    link_directories("$ENV{CONDA_PREFIX}/lib")
+    set(_use_system_libs_default ON)
+else()
+    set(_use_system_libs_default OFF)
+endif()
+option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" ${_use_system_libs_default})
 
 # Set consistent compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
@@ -721,6 +731,8 @@ if(OPTION_BUILD_TESTS)
         src/test/helpers/traversal.cpp
     )
     add_dependencies(testsupport panmap_lib panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
+    # Link panmap_lib PUBLIC so its headers (spdlog, panman) reach testsupport.
+    target_link_libraries(testsupport PUBLIC panmap_lib)
     target_compile_definitions(testsupport PUBLIC
         TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/test/data")
     target_include_directories(testsupport PUBLIC

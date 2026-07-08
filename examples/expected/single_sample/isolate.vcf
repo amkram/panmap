@@ -1,0 +1,41 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##bcftoolsVersion=1.21+htslib-1.20
+##bcftoolsCommand=mpileup -Ou -B -f examples/expected/single_sample/isolate.ref.fa -o examples/expected/single_sample/isolate.mpileup examples/expected/single_sample/isolate.bam
+##reference=file://examples/expected/single_sample/isolate.ref.fa
+##contig=<ID=England/CAMC-141DBEA/2021|OU190639.1|2021-03-19,length=29830>
+##ALT=<ID=*,Description="Represents allele(s) other than observed.">
+##INFO=<ID=INDEL,Number=0,Type=Flag,Description="Indicates that the variant is an INDEL.">
+##INFO=<ID=IDV,Number=1,Type=Integer,Description="Maximum number of raw reads supporting an indel">
+##INFO=<ID=IMF,Number=1,Type=Float,Description="Maximum fraction of raw reads supporting an indel">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Raw read depth">
+##INFO=<ID=VDB,Number=1,Type=Float,Description="Variant Distance Bias for filtering splice-site artefacts in RNA-seq data (bigger is better)",Version="3">
+##INFO=<ID=RPBZ,Number=1,Type=Float,Description="Mann-Whitney U-z test of Read Position Bias (closer to 0 is better)">
+##INFO=<ID=MQBZ,Number=1,Type=Float,Description="Mann-Whitney U-z test of Mapping Quality Bias (closer to 0 is better)">
+##INFO=<ID=BQBZ,Number=1,Type=Float,Description="Mann-Whitney U-z test of Base Quality Bias (closer to 0 is better)">
+##INFO=<ID=MQSBZ,Number=1,Type=Float,Description="Mann-Whitney U-z test of Mapping Quality vs Strand Bias (closer to 0 is better)">
+##INFO=<ID=SCBZ,Number=1,Type=Float,Description="Mann-Whitney U-z test of Soft-Clip Length Bias (closer to 0 is better)">
+##INFO=<ID=SGB,Number=1,Type=Float,Description="Segregation based metric, http://samtools.github.io/bcftools/rd-SegBias.pdf">
+##INFO=<ID=MQ0F,Number=1,Type=Float,Description="Fraction of MQ0 reads (smaller is better)">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="List of Phred-scaled genotype likelihoods">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths (high-quality bases)">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##INFO=<ID=AF1,Number=1,Type=Float,Description="Max-likelihood estimate of the first ALT allele frequency (assuming HWE)">
+##INFO=<ID=AF2,Number=1,Type=Float,Description="Max-likelihood estimate of the first and second group ALT allele frequency (assuming HWE)">
+##INFO=<ID=AC1,Number=1,Type=Float,Description="Max-likelihood estimate of the first ALT allele count (no HWE assumption)">
+##INFO=<ID=MQ,Number=1,Type=Integer,Description="Root-mean-square mapping quality of covering reads">
+##INFO=<ID=FQ,Number=1,Type=Float,Description="Phred probability of all samples being the same">
+##INFO=<ID=PV4,Number=4,Type=Float,Description="P-values for strand bias, baseQ bias, mapQ bias and tail distance bias">
+##INFO=<ID=G3,Number=3,Type=Float,Description="ML estimate of genotype frequencies">
+##INFO=<ID=HWE,Number=1,Type=Float,Description="Chi^2 based HWE test P-value based on G3">
+##INFO=<ID=DP4,Number=4,Type=Integer,Description="Number of high-quality ref-forward , ref-reverse, alt-forward and alt-reverse bases">
+##bcftools_callVersion=1.21+htslib-1.20
+##bcftools_callCommand=call --ploidy 1 -c -A -O v -o examples/expected/single_sample/isolate.vcf.raw examples/expected/single_sample/isolate.mpileup; Date=Thu Jul  2 15:02:16 2026
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	examples/expected/single_sample/isolate.bam
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	884	.	C	T	17.9537	.	DP=60;VDB=7.06928e-15;SGB=-0.692562;RPBZ=-2.62948;MQBZ=-1.01533;BQBZ=1.45263;SCBZ=2.22766;MQ0F=0;AF1=0.5;AC1=1;DP4=9,0,22,0;MQ=56;FQ=-999;PV4=1,1,0.153219,0.0117226	GT:PL:AD	1:255,200:9,22
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	3364	.	A	G	5.2698	.	DP=2;SGB=-0.379885;MQ0F=0;AF1=1;AC1=1;DP4=0,0,1,0;MQ=48;FQ=-999	GT:PL:AD	1:48,0:0,1
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	8593	.	C	T	20.9537	.	DP=10;VDB=0.0221621;SGB=-0.511536;RPBZ=1.93649;MQBZ=2;BQBZ=0;SCBZ=-1.93649;MQ0F=0;AF1=0.5;AC1=1;DP4=2,0,3,0;MQ=57;FQ=-999;PV4=1,1,1,0	GT:PL:AD	1:137,79:2,3
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	22013	.	C	T	217.9537	.	DP=49;VDB=0.787572;SGB=-0.692914;MQ0F=0;AF1=1;AC1=1;DP4=0,0,25,0;MQ=59;FQ=-999	GT:PL:AD	1:255,0:0,25
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	22552	.	C	T	144.9537	.	DP=105;VDB=3.57567e-21;SGB=-0.693147;RPBZ=-0.955562;MQBZ=-0.318541;BQBZ=2.85354;SCBZ=-0.336072;MQ0F=0;AF1=0.5;AC1=1;DP4=7,0,46,0;MQ=54;FQ=-999;PV4=1,1,0.494948,1	GT:PL:AD	1:255,73:7,46
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	24206	.	C	T	113.9537	.	DP=22;VDB=5.52906e-06;SGB=-0.662043;RPBZ=3.14643;MQBZ=0.130289;BQBZ=-0.471405;SCBZ=1.63299;MQ0F=0;AF1=0.5;AC1=1;DP4=2,0,9,0;MQ=53;FQ=-999;PV4=1,0.33089,0.368445,0	GT:PL:AD	1:219,68:2,9
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	25520	.	C	G	10.6311	.	DP=4;VDB=0.22;SGB=-0.453602;MQ0F=0.25;AF1=1;AC1=1;DP4=0,0,2,0;MQ=42;FQ=-999	GT:PL:AD	1:62,0:0,2
