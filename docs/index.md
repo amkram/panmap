@@ -39,12 +39,29 @@ panmap ref.panman reads.fq --meta -t 8 -o sample
 
 <div class="grid cards" markdown>
 
-- :material-download: **[Installation](installation.md)** — Bioconda, Docker, building from source
-- :material-rocket-launch: **[Quick Start](quickstart.md)** — pipeline overview and basic examples
-- :material-dna: **[Single-Sample Mode](single-sample.md)** — genotyping walkthrough
-- :material-flask: **[Metagenomic Mode](metagenomic.md)** — wastewater and aeDNA workflows
-- :material-file-document: **[Outputs](outputs.md)** — every file panmap writes
-- :material-console: **[CLI Reference](cli-reference.md)** — all options and flags
+-   :material-download: **[Installation](installation.md)**
+
+    Bioconda, Docker, and building from source.
+
+-   :material-rocket-launch: **[Quick Start](quickstart.md)**
+
+    Pipeline overview and basic examples.
+
+-   :material-dna: **[Single-Sample Mode](single-sample.md)**
+
+    Genotyping walkthrough.
+
+-   :material-flask: **[Metagenomic Mode](metagenomic.md)**
+
+    Wastewater and aeDNA workflows.
+
+-   :material-file-document: **[Outputs](outputs.md)**
+
+    Every file panmap writes.
+
+-   :material-console: **[CLI Reference](cli-reference.md)**
+
+    All options and flags.
 
 </div>
 

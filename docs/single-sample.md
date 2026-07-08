@@ -62,7 +62,7 @@ The seed index is built once next to the PanMAN (`sars_20000_twilight_dipper.pan
 
 ### 4. Reuse the index
 
-The index is cached next to the PanMAN and reused automatically across samples — no flag needed. Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location:
+The index is cached next to the PanMAN and reused across samples with no flag needed. Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location:
 
 ```bash
 panmap examples/data/sars_20000_twilight_dipper.panman \
