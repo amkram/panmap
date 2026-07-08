@@ -144,7 +144,8 @@ panmap ../examples/data/v_mtdna.panman \
 | `--discard` | Discard reads with parsimony score < threshold * total seeds | `0.0` (no discard) |
 | `--mask-read-ends` | Mask N bases from read ends (for aeDNA damage) | `0` |
 | `--taxonomic-metadata <file>` | TSV with taxonomic metadata per node | -- |
-| `--maximum-families` | Discard reads spanning > N taxonomic families | `1` |
+| `--taxonomic-rank` | Taxonomic rank (column in the metadata TSV) to filter/assign on | `Family` |
+| `--maximum-taxon-number` | Discard reads spanning more than N distinct taxa at that rank | `1` |
 | `--ambiguous-score-threshold-ratio` | Discard reads scoring outside max families by ratio | `0.0` |
 | `--ambiguous-score-threshold` | Discard reads scoring outside max families by absolute value | `0` |
 | `--breadth-ratio` | Calculate observed/expected breadth ratio | off |
