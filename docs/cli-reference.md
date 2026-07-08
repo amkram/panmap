@@ -126,6 +126,9 @@ Low-level flags for debugging and reproducibility.
 | `--seed` | Random seed | `42` |
 | `--reference-node` | Skip placement and use this node as the reference | -- |
 | `--dump-sequence` | Write the FASTA for a single node and exit | -- |
+| `--dump-sequences` | Write FASTAs for a list of node IDs to `<output>.dump-sequences.fa` | -- |
+| `--simulate-snps` | SNPs to inject per `--dump-sequences` node (positional) | -- |
+| `--dump-random-nodeIDs` | Write N random leaf node IDs to `<output>.randomNodeIDs.txt` | `0` |
 | `--dump-all-scores` | Write all node placement scores to a TSV | -- |
 | `--write-meta-read-scores-filtered` | Write filtered per-read meta scores to a TSV | off |
 | `--write-meta-read-scores-unfiltered` | Write unfiltered per-read meta scores to a TSV | off |

@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -158,6 +159,9 @@ struct Config {
 
     // Utility modes
     std::string dumpNodeId;
+    std::vector<std::string> dumpSequences;  // Dump FASTA for a list of node IDs
+    std::vector<uint32_t> simulateSNPs;      // SNPs to inject per --dump-sequences node
+    uint32_t dumpRandomNodeIDs = 0;          // Dump N random leaf node IDs
     std::string referenceNode;
     bool writeMetaReadScoresFiltered = false;
     bool writeMetaReadScoresUnfiltered = false;
@@ -1732,6 +1736,37 @@ void printUsage() {
               << "        (prefix defaults to reads filename, or use -o)\n\n";
 }
 
+// Inject `numsnps` random substitutions into `sequence` (avoiding the first/last
+// 1000 bp), recording each as (ref, alt, pos). Used by --dump-sequences / --simulate-snps.
+static void simulateSNPsOnSequence(std::string& sequence,
+                                   std::vector<std::tuple<char, char, uint32_t>>& snpRecords,
+                                   uint32_t numsnps, std::mt19937& rng) {
+    if (numsnps == 0 || sequence.size() < 2000) return;
+    const char notA[3] = {'C', 'G', 'T'};
+    const char notC[3] = {'A', 'G', 'T'};
+    const char notG[3] = {'A', 'C', 'T'};
+    const char notT[3] = {'A', 'C', 'G'};
+    std::uniform_int_distribution<uint32_t> distNuc(0, 2);
+    std::uniform_int_distribution<uint32_t> distPos(1000, sequence.size() - 1000);
+    std::unordered_set<uint32_t> visited;
+    snpRecords.clear();
+    snpRecords.reserve(numsnps);
+    while (snpRecords.size() < numsnps) {
+        uint32_t pos = distPos(rng);
+        if (!visited.insert(pos).second) continue;
+        switch (sequence[pos]) {
+            case 'A': snpRecords.emplace_back('A', notA[distNuc(rng)], pos); break;
+            case 'C': snpRecords.emplace_back('C', notC[distNuc(rng)], pos); break;
+            case 'G': snpRecords.emplace_back('G', notG[distNuc(rng)], pos); break;
+            case 'T': snpRecords.emplace_back('T', notT[distNuc(rng)], pos); break;
+            default: continue;
+        }
+    }
+    std::sort(snpRecords.begin(), snpRecords.end(),
+              [](const auto& a, const auto& b) { return std::get<2>(a) < std::get<2>(b); });
+    for (const auto& [ref, alt, pos] : snpRecords) sequence[pos] = alt;
+}
+
 int main(int argc, char** argv) {
     Config cfg;
 
@@ -1869,6 +1904,15 @@ int main(int argc, char** argv) {
 
     po::options_description developer("Developer");
     developer.add_options()("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")(
+        "dump-sequences",
+        po::value<std::vector<std::string>>(&cfg.dumpSequences)->multitoken(),
+        "Dump FASTA for a list of node IDs to <output>.dump-sequences.fa")(
+        "simulate-snps",
+        po::value<std::vector<uint32_t>>(&cfg.simulateSNPs)->multitoken(),
+        "SNPs to inject per --dump-sequences node (positional, matches node order)")(
+        "dump-random-nodeIDs",
+        po::value<uint32_t>(&cfg.dumpRandomNodeIDs)->default_value(0),
+        "Dump N random leaf node IDs to <output>.randomNodeIDs.txt")(
         "reference-node", po::value<std::string>(&cfg.referenceNode), "Skip placement; use this node as the reference")(
         "dump-all-scores", po::value<std::string>(&cfg.dumpAllScores), "Dump all node scores to TSV file")(
         "write-meta-read-scores-filtered",
@@ -2057,6 +2101,69 @@ int main(int argc, char** argv) {
                 cfg.output.empty() ? cfg.panman + "." + sanitizeFilename(cfg.dumpNodeId) + ".fa" : cfg.output;
             saveNodeSequence(&tg->trees[0], cfg.dumpNodeId, outPath);
             std::cout << cfg.dumpNodeId << "\n";
+            return 0;
+        }
+
+        // Utility: dump N random leaf node IDs (used to sample nodes for test fixtures)
+        if (cfg.dumpRandomNodeIDs > 0) {
+            auto tg = loadPanMAN(cfg.panman);
+            panmanUtils::Tree* T = &tg->trees[0];
+            std::vector<std::string_view> leafIDs;
+            leafIDs.reserve(T->allNodes.size());
+            for (const auto& [nodeID, node] : T->allNodes)
+                if (node->children.empty()) leafIDs.push_back(nodeID);
+            std::sort(leafIDs.begin(), leafIDs.end(), std::greater<std::string_view>());
+            std::mt19937 rng(cfg.seed);
+            std::shuffle(leafIDs.begin(), leafIDs.end(), rng);
+            std::string outPath =
+                cfg.output.empty() ? cfg.panman + ".randomNodeIDs.txt" : cfg.output + ".randomNodeIDs.txt";
+            std::ofstream outFile(outPath);
+            for (size_t i = 0; i < std::min<size_t>(cfg.dumpRandomNodeIDs, leafIDs.size()); i++)
+                outFile << leafIDs[i] << "\n";
+            std::cout << outPath << "\n";
+            return 0;
+        }
+
+        // Utility: dump FASTA for a list of node IDs, optionally injecting simulated SNPs
+        if (!cfg.dumpSequences.empty()) {
+            auto tg = loadPanMAN(cfg.panman);
+            panmanUtils::Tree* T = &tg->trees[0];
+            // Each --dump-sequences argument may itself be a space-separated list of IDs.
+            std::vector<std::string> nodeIDs;
+            for (const auto& group : cfg.dumpSequences) {
+                std::istringstream iss(group);
+                std::string id;
+                while (iss >> id) nodeIDs.push_back(id);
+            }
+            if (!cfg.simulateSNPs.empty() && cfg.simulateSNPs.size() != nodeIDs.size()) {
+                output::error("--simulate-snps count ({}) must match the number of node IDs ({})",
+                              cfg.simulateSNPs.size(), nodeIDs.size());
+                return 1;
+            }
+            std::mt19937 rng(cfg.seed);
+            std::string outPath =
+                cfg.output.empty() ? cfg.panman + ".dump-sequences.fa" : cfg.output + ".dump-sequences.fa";
+            std::ofstream outFile(outPath);
+            if (!outFile) {
+                output::error("cannot write {}", outPath);
+                return 1;
+            }
+            for (size_t i = 0; i < nodeIDs.size(); i++) {
+                const auto& nodeID = nodeIDs[i];
+                if (T->allNodes.find(nodeID) == T->allNodes.end()) {
+                    output::error("node ID '{}' not found in the tree", nodeID);
+                    return 1;
+                }
+                std::string sequence = panmapUtils::getStringFromReference(T, nodeID, false);
+                std::vector<std::tuple<char, char, uint32_t>> snpRecords;
+                if (!cfg.simulateSNPs.empty())
+                    simulateSNPsOnSequence(sequence, snpRecords, cfg.simulateSNPs[i], rng);
+                outFile << ">" << nodeID;
+                for (const auto& [ref, alt, pos] : snpRecords) outFile << " " << ref << pos << alt;
+                outFile << "\n";
+                for (size_t j = 0; j < sequence.size(); j += 80) outFile << sequence.substr(j, 80) << "\n";
+            }
+            std::cout << outPath << "\n";
             return 0;
         }
 
