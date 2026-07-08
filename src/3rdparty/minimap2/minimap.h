@@ -5,7 +5,10 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define MM_VERSION "2.26-r1175"
+// panmap fork of minimap2 2.26 (r1175). See PATCHES.md in this directory for the
+// list of local modifications. Version is tagged 2.26-panmap so the provenance is
+// visible in `minimap2 --version` and BAM @PG lines.
+#define MM_VERSION "2.26-panmap"
 
 #define MM_F_NO_DIAG       (0x001LL) // no exact diagonal hit
 #define MM_F_NO_DUAL       (0x002LL) // skip pairs where query name is lexicographically larger than target name
@@ -153,7 +156,6 @@ typedef struct {
 	float alt_drop;
 
 	int a, b, q, e, q2, e2; // matching score, mismatch, gap-open and gap-ext penalties
-	int transition; // transition mismatch score (A:G, C:T)
 	int sc_ambi; // score when one or both bases are "N"
 	int noncan;      // cost of non-canonical splicing sites
 	int junc_bonus;
