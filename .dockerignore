@@ -11,5 +11,11 @@ external_cache
 examples
 data
 llms
+evaluation
+reviewer_response
 manuscript.md
+manu1.txt
 review.md
+references.html
+*.bam
+*.bam.bai
