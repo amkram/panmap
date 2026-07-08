@@ -67,6 +67,13 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
 
     mm_verbose = 0;  // suppress warnings
 
+    // Initialize ALL options to minimap2 defaults before applying any preset. mm_set_opt
+    // with a named preset only sets a subset of fields; the map-ont/map-hifi branches
+    // below do not otherwise initialize mopt, so occupancy fields (e.g. mid_occ_frac)
+    // would be read from uninitialized stack memory. That garbage reaches
+    // mm_mapopt_update -> mm_idx_cal_max_occ and causes a flaky out-of-bounds crash.
+    mm_set_opt(0, iopt, mopt);
+
     if (avg_len < 500) {
         if (for_scoring) {
             // Replicate minimap2 sr preset scoring/index params exactly.
@@ -75,7 +82,6 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
             // Without MM_F_SR, minimap2 uses gapped alignment — same scoring params,
             // correct results, no crash.  We still set MM_F_FRAG_MODE + MM_F_HEAP_SORT
             // so mm_map_frag pairs reads correctly.
-            mm_set_opt(0, iopt, mopt);
             // Index params (same as sr)
             iopt->k = 21;
             iopt->w = 11;
