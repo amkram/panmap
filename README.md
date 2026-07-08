@@ -1,4 +1,4 @@
-# panmap
+# Panmap
 
 
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/panmap?label=bioconda)](https://anaconda.org/bioconda/panmap)
