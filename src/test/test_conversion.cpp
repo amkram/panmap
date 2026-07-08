@@ -39,7 +39,12 @@ BOOST_AUTO_TEST_CASE(align_and_write_bam_structure) {
     BOOST_REQUIRE(!readSequences.empty());
 
     std::string bamPath = tmpBam();
-    alignAndWriteBam(readSequences, readQuals, readNames, reference, bamPath, /*pairedEndReads=*/false,
+    alignAndWriteBam(readSequences,
+                     readQuals,
+                     readNames,
+                     reference,
+                     bamPath,
+                     /*pairedEndReads=*/false,
                      /*n_threads=*/1);
 
     BOOST_REQUIRE(std::filesystem::exists(bamPath));

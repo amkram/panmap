@@ -91,9 +91,10 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), oracle.logRawScore(state), 1e-3);
         BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), oracle.logCosineScore(state), 1e-3);
         BOOST_CHECK_CLOSE(m.getWeightedContainmentScore(state.weightedContainmentDenominator),
-                          oracle.weightedContainmentScore(state), 1e-3);
-        BOOST_CHECK_CLOSE(m.getLogContainmentScore(state.logContainmentDenominator),
-                          oracle.logContainmentScore(state), 1e-3);
+                          oracle.weightedContainmentScore(state),
+                          1e-3);
+        BOOST_CHECK_CLOSE(
+            m.getLogContainmentScore(state.logContainmentDenominator), oracle.logContainmentScore(state), 1e-3);
         BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 1u);
 
         // Hand-derived ground truth for r=3, g=2 (independently verified, not via the

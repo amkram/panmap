@@ -34,10 +34,15 @@ class IndexData {
     std::vector<uint32_t> offsets;  // size == numNodes + 1
 
     size_t numNodesPlusOne() const { return offsets.size(); }
+
     size_t numChanges() const { return offsets.empty() ? 0 : offsets.back(); }
+
     uint64_t hashAt(size_t i) const { return hashes[i]; }
+
     int64_t parentCountAt(size_t i) const { return parentCounts[i]; }
+
     int64_t childCountAt(size_t i) const { return childCounts[i]; }
+
     uint32_t nodeChangeOffset(size_t node) const { return offsets[node]; }
 };
 
@@ -64,6 +69,7 @@ class TestIndex {
     TestIndex& operator=(const TestIndex&) = delete;
 
     IndexData& data() { return data_; }
+
     const std::string& path() const { return path_; }
 
    private:

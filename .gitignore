@@ -78,4 +78,32 @@ output/
 *.idx
 *.midx
 
+!examples/expected/
+!examples/expected/**
+/examples/data/v_mtdna.panman
 
+/manuscript.md
+/review.md
+/reviewer_response/
+/llms/
+
+/build_conda/
+/build_baseline/
+/build_ci/
+
+/*.placement.tsv
+/*.consensus.fa
+/*.mpileup
+/*.ref.fa
+/*.ref.fa.fai
+/*.bam
+/*.bam.bai
+/*.vcf
+/*.vcf.gz
+/*.vcf.gz.tbi
+/*.mgsr.*.out
+/gmon.out
+
+/examples/data/*.panman.*.fa
+
+/scripts/mutation_check.sh

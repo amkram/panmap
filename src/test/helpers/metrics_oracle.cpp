@@ -22,10 +22,10 @@ GroundTruthMetrics GroundTruthMetrics::compute(const SeedCountMap& nodeGenome,
         const double logReadCount = it->second;
 
         m.presenceIntersectionCount++;
-        m.logRawNumerator += logReadCount / static_cast<double>(genomeCount);   // placement.cpp:240-242
-        m.logCosineNumerator += logReadCount * logGenome;                       // placement.cpp:246
+        m.logRawNumerator += logReadCount / static_cast<double>(genomeCount);      // placement.cpp:240-242
+        m.logCosineNumerator += logReadCount * logGenome;                          // placement.cpp:246
         m.weightedContainmentNumerator += 1.0 / static_cast<double>(genomeCount);  // placement.cpp:253-255
-        m.logContainmentNumerator += logReadCount;                             // placement.cpp:260
+        m.logContainmentNumerator += logReadCount;                                 // placement.cpp:260
     }
     return m;
 }
@@ -43,9 +43,8 @@ double GroundTruthMetrics::logCosineScore(const placement::PlacementGlobalState&
 }
 
 double GroundTruthMetrics::containmentScore(const placement::PlacementGlobalState& state) const {
-    return (state.readUniqueSeedCount > 0)
-               ? static_cast<double>(presenceIntersectionCount) / state.readUniqueSeedCount
-               : 0.0;
+    return (state.readUniqueSeedCount > 0) ? static_cast<double>(presenceIntersectionCount) / state.readUniqueSeedCount
+                                           : 0.0;
 }
 
 double GroundTruthMetrics::weightedContainmentScore(const placement::PlacementGlobalState& state) const {
@@ -55,9 +54,7 @@ double GroundTruthMetrics::weightedContainmentScore(const placement::PlacementGl
 }
 
 double GroundTruthMetrics::logContainmentScore(const placement::PlacementGlobalState& state) const {
-    return (state.logContainmentDenominator > 0.0)
-               ? logContainmentNumerator / state.logContainmentDenominator
-               : 0.0;
+    return (state.logContainmentDenominator > 0.0) ? logContainmentNumerator / state.logContainmentDenominator : 0.0;
 }
 
 }  // namespace indexUtils
