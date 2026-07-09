@@ -1,0 +1,76 @@
+site_name: panmap
+site_description: Pangenome-based sequence placement, alignment, and genotyping
+site_url: https://amkram.github.io/panmap/
+repo_url: https://github.com/amkram/panmap
+repo_name: amkram/panmap
+edit_uri: edit/main/docs/
+docs_dir: .
+site_dir: ../site
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - def_list
+  - md_in_html
+  - attr_list
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/amkram/panmap
+    - icon: fontawesome/solid/flask
+      link: https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1
+      name: bioRxiv preprint
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Quick Start: quickstart.md
+  - Guide:
+      - Single-Sample Mode: single-sample.md
+      - Metagenomic Mode: metagenomic.md
+      - Outputs: outputs.md
+  - Reference:
+      - CLI Reference: cli-reference.md
+      - Troubleshooting: troubleshooting.md
