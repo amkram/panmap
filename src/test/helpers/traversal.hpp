@@ -3,9 +3,8 @@
 /**
  * @file traversal.hpp
  * @brief Reconstruct a node's genome seed set by accumulating index deltas along the
- *        root..node path. Absorbs the copy-pasted delta-traversal + nodeChangeOffsets
- *        snippets. Single concern: produce the seed multiset; metric checks are done
- *        elsewhere against the live PlacementGlobalState.
+ *        root..node path. Produces the seed multiset only; metric checks live
+ *        elsewhere, against the live PlacementGlobalState.
  */
 
 #include "metrics_oracle.hpp"  // indexUtils::SeedCountMap

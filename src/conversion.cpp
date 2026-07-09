@@ -16,9 +16,9 @@ extern "C" {
 #include <htslib/tbx.h>
 }
 
-// Run a bcftools function in a forked child process to avoid global state conflicts.
-// bcftools main_mpileup/main_vcfcall use global optind and other process-wide state,
-// so forking gives each call its own address space for safe parallelism.
+// Run a bcftools function in a forked child process. bcftools main_* use global optind
+// and other process-wide state; forking gives each call its own address space for safe
+// parallelism.
 static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv, bool silenceStderr = true) {
     bool verbose = output::config().verbose;
     bool fullSilence = silenceStderr && !verbose;
@@ -130,7 +130,6 @@ void createVcfWithMutationMatrices(std::string& prefix,
         run_bcftools_in_fork(main_vcfcall, 10, const_cast<char**>(call_args));
     }
 
-    // Read raw VCF and apply mutation spectrum or filter non-ref variants
     std::ifstream rawVcfIn(rawVcfFile);
     bool hasSpectrum = !substMatrixPhred.empty();
     std::ofstream vcfOutFile{vcfFileName};
@@ -140,7 +139,7 @@ void createVcfWithMutationMatrices(std::string& prefix,
             std::string spectrum_applied_line = genotyping::applyMutationSpectrum(line, substMatrixPhred);
             if (spectrum_applied_line.size() > 0) vcfOutFile << spectrum_applied_line << "\n";
         } else {
-            // No spectrum: write non-ref variants only
+            // No spectrum: write header plus non-ref variants only
             if (line.empty()) continue;
             if (line[0] == '#') {
                 vcfOutFile << line << "\n";
@@ -164,7 +163,6 @@ int createConsensus(const std::string& vcfFileName,
                     const std::string& consensusFileName,
                     const std::string& consensusHeader) {
     // bcftools consensus requires a bgzipped + tabix-indexed VCF.
-    // Transparently produce a .vcf.gz next to the plain .vcf for the consensus call.
     std::string bgzVcf = vcfFileName + ".gz";
 
     {
@@ -299,7 +297,6 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
     for (int j = 0; j < aln->n_cigar; j++) full_cigar[ci++] = aln->cigar[j];
     if (clip3 > 0) full_cigar[ci++] = (clip3 << 4) | BAM_CSOFT_CLIP;
 
-    // Prepare sequence and quality in BAM orientation
     // BAM stores reverse-strand reads as reverse-complemented seq with reversed qual
     std::string bam_seq(read_len, 'N');
     std::string bam_qual(read_len, '\0');
@@ -328,7 +325,6 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
         }
     }
 
-    // Compute TLEN and mate info
     int32_t tlen = 0;
     int32_t mtid = -1;
     hts_pos_t mpos_val = -1;
@@ -368,7 +364,6 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
                       const std::string& refName) {
     int n_reads = static_cast<int>(readSequences.size());
 
-    // Prepare C arrays
     std::vector<const char*> read_ptrs(n_reads);
     std::vector<const char*> qual_ptrs(n_reads);
     std::vector<const char*> name_ptrs(n_reads);
@@ -483,7 +478,6 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
         }
     }
 
-    // Cleanup
     for (auto& [pos, rec] : bam_entries) {
         bam_destroy1(rec);
     }

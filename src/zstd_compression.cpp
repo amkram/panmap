@@ -117,7 +117,6 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
 
     outputData.resize(decompressedSize);
 
-    // Check if the compressed data has multiple frames
     size_t numFrames = 0;
     size_t pos = 0;
     while (pos < compressedSize) {

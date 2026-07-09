@@ -20,7 +20,6 @@ namespace ts {
 int32_t findNodeIndex(const panmapUtils::LiteTree& tree, const std::string& id);
 
 // Path from root down to the target node (inclusive), in root..target order.
-// Absorbs the copy-pasted root-walk loops.
 std::vector<panmapUtils::LiteNode*> pathToRoot(const panmapUtils::LiteTree& tree, int32_t targetDfsIndex);
 
 // Loads src/test/data/rsv_4K.panman once; exposes the tree and on-demand genome

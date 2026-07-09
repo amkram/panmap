@@ -4,16 +4,13 @@
  * @file metrics_oracle.hpp
  * @brief Independent ground-truth oracle for placement metrics.
  *
- * The oracle reproduces the five placement scores EXACTLY, by:
- *   (a) computing the per-seed numerators with the same formulas as
- *       placement::NodeMetrics::computeChildMetrics (placement.cpp:206-260), and
- *   (b) dividing by the live denominators carried in PlacementGlobalState, which
- *       already encode the minReadSupport read filter and the root-derived inverse
- *       genome counts (placement.cpp state setup).
- *
- * It does NOT reconstruct the read filter or the root inverse counts itself: it
- * reads them from the running PlacementGlobalState. This is what lets a test assert
- * (live getter == oracle) within float epsilon and have it MEAN something.
+ * Reproduces the five placement scores exactly:
+ *   (a) per-seed numerators use the same formulas as
+ *       placement::NodeMetrics::computeChildMetrics (placement.cpp:206-260);
+ *   (b) denominators come from the live PlacementGlobalState, which already encodes
+ *       the minReadSupport read filter and the root-derived inverse genome counts.
+ * Reading the denominators from the running state (rather than recomputing them) is
+ * what makes (live getter == oracle) within float epsilon a meaningful assertion.
  *
  * Formulas (verbatim from placement.cpp computeChildMetrics):
  *   genomeMagnitudeSquared        = Σ_{seed∈genome}            log(1+gc)²            (placement.cpp:215)
