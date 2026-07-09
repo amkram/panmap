@@ -1065,7 +1065,6 @@ applyMutations(panmanUtils::Node* node,
                bool imputeAmb) {
     std::vector<char>& blockExists = blockSequences.blockExists;
     std::vector<char>& blockStrand = blockSequences.blockStrand;
-    std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
     // process block mutations
     for (const auto& blockMutation : node->blockMutation) {
@@ -1119,8 +1118,8 @@ applyMutations(panmanUtils::Node* node,
 
         for (int i = 0; i < length; i++) {
             panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
-            if ((pos.nucPosition == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) ||
-                (pos.nucPosition >= sequence[pos.primaryBlockId].size())) {
+            if ((pos.nucPosition == blockSequences.blockLength(pos.primaryBlockId) - 1 && pos.nucGapPosition == -1) ||
+                (pos.nucPosition >= blockSequences.blockLength(pos.primaryBlockId))) {
                 continue;
             }
             lastOffset = i;
@@ -2650,7 +2649,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
 
     const std::vector<char>& blockExists = blockSequences.blockExists;
     const std::vector<char>& blockStrand = blockSequences.blockStrand;
-    const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
     std::sort(localMutationRanges.begin(),
               localMutationRanges.end(),
@@ -2927,7 +2925,6 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
 
     const std::vector<char>& blockExists = blockSequences.blockExists;
     const std::vector<char>& blockStrand = blockSequences.blockStrand;
-    const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
     std::sort(localMutationRanges.begin(),
               localMutationRanges.end(),

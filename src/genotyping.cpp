@@ -213,12 +213,12 @@ static constexpr int getIndexFromNucleotide(char nuc) {
 }
 
 static char getNucFromTuple(const std::tuple<int64_t, int64_t, int64_t>& tupleCoord,
-                            const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence) {
+                            const panmapUtils::BlockSequences& sequence) {
     const auto& [blockId, nucPos, nucGapPos] = tupleCoord;
     if (nucGapPos == -1) {
-        return sequence[blockId][nucPos].first;
+        return sequence.mainBase(blockId, nucPos);
     }
-    return sequence[blockId][nucPos].second[nucGapPos];
+    return sequence.gapBase(blockId, nucPos, nucGapPos);
 }
 
 void clearBlockBaseCounts(int32_t blockId,
@@ -226,7 +226,7 @@ void clearBlockBaseCounts(int32_t blockId,
                           std::vector<int64_t>& curBaseCounts,
                           std::vector<int64_t>& parentBaseCountsBacktrack,
                           const panmapUtils::GlobalCoords& globalCoords,
-                          const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence) {
+                          const panmapUtils::BlockSequences& sequence) {
     std::tuple<int64_t, int64_t, int64_t> coord = globalCoords.getBlockStartTuple(blockId);
     std::tuple<int64_t, int64_t, int64_t> end = globalCoords.getBlockEndTuple(blockId);
 
@@ -273,7 +273,7 @@ static void applyMutations(panmanUtils::Tree* tree,
     std::vector<char>& blockExists = blockSequences.blockExists;
     std::vector<char>& blockStrand = blockSequences.blockStrand;
 
-    std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
+    const panmapUtils::BlockSequences& sequence = blockSequences;
     for (const auto& blockMutation : node->blockMutation) {
         const int32_t& blockId = blockMutation.primaryBlockId;
         const bool& isInsertion = blockMutation.blockMutInfo;
