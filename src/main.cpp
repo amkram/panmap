@@ -2051,11 +2051,10 @@ int main(int argc, char** argv) {
 
           std::mt19937 rng;
           if (cfg.randomSeed.empty()) {
-            std::hash<std::string> hasher;
-            rng = std::mt19937(hasher(cfg.randomSeed));
+            rng = std::mt19937(42);  // documented default when --random-seed is omitted
           } else {
-            std::random_device rd;
-            rng = std::mt19937(rd());
+            std::hash<std::string> hasher;
+            rng = std::mt19937(hasher(cfg.randomSeed));  // reproducible seed from the provided string
           }
 
           uint32_t num_nodes = cfg.dumpRandomNodeIDs;
@@ -2084,11 +2083,10 @@ int main(int argc, char** argv) {
 
           std::mt19937 rng;
           if (cfg.randomSeed.empty()) {
-            std::hash<std::string> hasher;
-            rng = std::mt19937(hasher(cfg.randomSeed));
+            rng = std::mt19937(42);  // documented default when --random-seed is omitted
           } else {
-            std::random_device rd;
-            rng = std::mt19937(rd());
+            std::hash<std::string> hasher;
+            rng = std::mt19937(hasher(cfg.randomSeed));  // reproducible seed from the provided string
           }
 
           std::vector<std::string> nodeIDs;
