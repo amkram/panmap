@@ -42,7 +42,7 @@ struct TraversalParams {
     int trimStart = 0;  // Trim N bases from start of each read before seeding (for primer removal)
     int trimEnd = 0;    // Trim N bases from end of each read before seeding (for primer removal)
     int minReadSupport =
-        1;             // Minimum read count for a seed to be included (1 = all seeds, 2 = filter single-read seeds)
+        -1;            // Min read count for a seed; -1 = auto (2 if est. coverage > 3x, else 1), 1 = all seeds, 2 = filter singletons
     bool hpc = false;  // Homopolymer-compressed seeds (from index)
 
     // ========================================
