@@ -41,7 +41,6 @@ struct GroundTruthMetrics {
     double weightedContainmentNumerator = 0.0;
     double logContainmentNumerator = 0.0;
     size_t presenceIntersectionCount = 0;
-    size_t genomeUniqueSeedCount = 0;
 
     /**
      * @brief Compute numerators from a node's reconstructed genome seed set and the

@@ -11,7 +11,7 @@
 class ProgressTracker {
    public:
     ProgressTracker(size_t numThreads, const std::vector<uint64_t>& totalNodesPerThread)
-        : threadProgress(numThreads), threadTotals(totalNodesPerThread), numThreads_(numThreads) {
+        : threadProgress(numThreads), numThreads_(numThreads) {
         for (size_t i = 0; i < numThreads; ++i) {
             threadProgress[i].store(0, std::memory_order_relaxed);
         }
@@ -34,10 +34,8 @@ class ProgressTracker {
     void finalDisplay() {
         if (!bar_) return;
         uint64_t totalProgress = 0;
-        uint64_t totalNodes = 0;
         for (size_t i = 0; i < numThreads_; ++i) {
             totalProgress += threadProgress[i].load(std::memory_order_relaxed);
-            totalNodes += threadTotals[i];
         }
         bar_->set(totalProgress);
         bar_->clear();
@@ -56,7 +54,6 @@ class ProgressTracker {
     }
 
     std::vector<std::atomic<uint64_t>> threadProgress;
-    std::vector<uint64_t> threadTotals;
     size_t numThreads_;
     std::unique_ptr<output::ProgressBar> bar_;
 };
