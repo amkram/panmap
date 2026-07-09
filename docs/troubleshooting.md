@@ -48,7 +48,7 @@ sufficient.
 least `--stop genotype`; for a consensus, use the default.
 
 **Out of memory or very slow on a large PanMAN.** Placement scales with the
-number of nodes. Give panmap more threads (`-t`), and note that the metagenomic
+number of nodes. Give panmap more threads (`-t`); the metagenomic
 EM (`--meta`) is heavier than single-sample placement. See
 [System requirements](installation.md) for the ~8 GB baseline.
 

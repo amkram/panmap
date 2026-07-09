@@ -7,7 +7,7 @@
 #include <numeric>
 #include "logging.hpp"
 
-// Aggregates per-thread progress into a single sleek progress bar.
+// Aggregates per-thread progress into a single progress bar.
 // Public API matches the previous per-thread tracker so callers don't change.
 class ProgressTracker {
    public:

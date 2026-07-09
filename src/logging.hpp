@@ -243,7 +243,7 @@ inline void banner(const std::string& version, const std::string& /*subtitle*/ =
 // Subject and stat are left-padded to a min width so columns align across
 // stages; time is right-padded so right edges line up. Values longer than
 // the min just push the next column over (no truncation). All input strings
-// must be plain text (no ANSI codes), or width math will be wrong — embed
+// must be plain text (no ANSI codes), or width math will be wrong; embed
 // styling outside via the helpers below.
 constexpr int kLabelWidth = 6;
 constexpr int kSubjectWidth = 22;
@@ -501,7 +501,7 @@ inline bool check_interrupted(bool print_message = true) {
 }
 
 // Async-signal-safe handler. Exits immediately on the first Ctrl-C/SIGTERM
-// rather than waiting for the inner work loop to poll a flag — long stages
+// rather than waiting for the inner work loop to poll a flag. Long stages
 // (8M-node index, EM rounds) never poll, so the polite path looked stuck.
 // Output files are written all-at-once at stage end, so an interrupt
 // mid-stage simply leaves no partial artifact.

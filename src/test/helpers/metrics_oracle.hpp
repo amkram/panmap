@@ -37,7 +37,7 @@ namespace indexUtils {
 using SeedCountMap = absl::flat_hash_map<uint64_t, int64_t>;
 
 struct GroundTruthMetrics {
-    // Numerators only — denominators come from PlacementGlobalState at score time.
+    // Numerators only; denominators come from PlacementGlobalState at score time.
     double logRawNumerator = 0.0;
     double logCosineNumerator = 0.0;
     double genomeMagnitudeSquared = 0.0;

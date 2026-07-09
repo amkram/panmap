@@ -5,7 +5,7 @@ The default mode. Places reads from one sample onto the pangenome tree, aligns t
 ## Basic usage
 
 ```bash
-# Run full pipeline (default -- through consensus)
+# Run full pipeline (default: through consensus)
 panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
 
 # Stop at an earlier stage
@@ -83,8 +83,8 @@ panmap examples/data/sars_20000_twilight_dipper.panman \
 
 ## Choosing an aligner
 
-- **minimap2** (default) -- fast, good for most use cases
-- **bwa** -- may be preferable for short reads or when higher sensitivity is needed
+- **minimap2** (default): fast, good for most cases
+- **bwa**: higher sensitivity, may be preferable for short reads
 
 ```bash
 panmap ref.panman reads.fq -a bwa -o sample

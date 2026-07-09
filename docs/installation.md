@@ -65,7 +65,7 @@ or environment variables are needed. The binary is at `build/bin/panmap`.
 
 ### Faster builds
 
-Install `ccache` and `ninja` for much faster rebuilds:
+Install `ccache` and `ninja` for faster rebuilds:
 
 ```bash
 conda install -c conda-forge ccache ninja   # or: brew install ccache ninja

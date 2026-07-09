@@ -514,7 +514,7 @@ class Read {
 
 struct RDGNode {
     size_t hash;
-    std::unordered_set<RDGNode*> neighbors;  // vector of pointers to neighbors
+    std::unordered_set<RDGNode*> neighbors;
     std::vector<uint32_t> readIndicesMid;    // vector of read indices whose mid seedmer start at this seedmer. will be
                                              // seedmerList.size() / 2 + 1
     std::vector<uint32_t> readIndicesCovered;
@@ -731,10 +731,6 @@ class ThreadsManager {
                                      size_t& curDFSIndex);
     void computeNodeSeedScores();
 
-    // ThreadsManager(panmapUtils::LiteTree* liteTree, const std::vector<std::string>& readSequences, int k, int s, int
-    // t, int l, bool openSyncmer) : liteTree(liteTree) {
-    //   initializeQueryData(readSequences, k, s, t, l, openSyncmer);
-    // }
     ThreadsManager(MgsrLiteTree* liteTree,
                    const std::string& prefix,
                    size_t numThreads,
@@ -847,7 +843,6 @@ class mgsrPlacer {
     // current query kminmer structures
     std::span<mgsr::Read> reads;
     std::vector<std::vector<size_t>> readSeedmersDuplicatesIndex;
-    // std::vector<mgsr::readType> readTypes;
     absl::flat_hash_map<size_t, std::vector<std::pair<uint32_t, uint32_t>>> seedmerToReads;
     absl::flat_hash_set<size_t>* allSeedmerHashesSet;
 
@@ -1139,5 +1134,4 @@ class squareEM {
     void resetIteration();
 };
 
-// end of namespace mgsr
 }  // namespace mgsr
