@@ -120,7 +120,7 @@ struct Config {
     int minSeedQuality = 0;       // Min avg Phred quality for seed region (0=disabled)
     int trimStart = 0;            // Trim N bases from start of each read (primer removal)
     int trimEnd = 0;              // Trim N bases from end of each read (primer removal)
-    int minReadSupport = 1;       // Min reads for a seed to be counted (2 = filter singletons)
+    int minReadSupport = -1;      // Min reads for a seed to be counted; -1 = auto (2 if est. coverage > 3x, else 1)
     bool hpc = false;             // Homopolymer-compressed seeds
     bool extentGuard = false;     // Guard seed deletions at genome extent boundaries
 
@@ -1750,8 +1750,8 @@ int main(int argc, char** argv) {
         "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")(
         "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")(
         "min-read-support",
-        po::value<int>(&cfg.minReadSupport)->default_value(1),
-        "Min reads for a seed (2=filter singletons)")("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")(
+        po::value<int>(&cfg.minReadSupport)->default_value(-1),
+        "Min reads for a seed; -1=auto (filter singletons only when est. coverage >3x), 1=keep all, 2=filter singletons")("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")(
         "extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")(
         "force-leaf",
         po::bool_switch(&cfg.forceLeaf),

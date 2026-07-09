@@ -1731,7 +1731,35 @@ void placeLite(PlacementResult& result,
         size_t filteredSeedCount = 0;
         size_t lowSupportSeeds = 0;
 
-        const int64_t minSupport = params.minReadSupport;
+        // min-read-support < 0 means "auto": only filter singleton seeds when the
+        // estimated coverage is high enough that singletons are dominated by
+        // sequencing errors rather than genuine low-depth signal. Coverage is
+        // estimated from the read-count distribution itself (no genome length
+        // needed): a seed observed in >=2 reads is almost always a genuine genomic
+        // k-mer (random sequencing errors rarely recur across reads), and its read
+        // count approximates local depth, so the mean read count over these
+        // multiply-observed seeds estimates coverage. Below ~3x most true seeds are
+        // themselves singletons and must be kept (min-read-support 1); above it the
+        // singletons are overwhelmingly errors, so require >=2 reads.
+        int64_t minSupport = params.minReadSupport;
+        if (minSupport < 0) {
+            uint64_t multiSeedFreqSum = 0;
+            uint64_t multiSeedCount = 0;
+            for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
+                if (readCount >= 2) {
+                    multiSeedFreqSum += static_cast<uint64_t>(readCount);
+                    multiSeedCount++;
+                }
+            }
+            const double estCov =
+                (multiSeedCount > 0) ? static_cast<double>(multiSeedFreqSum) / static_cast<double>(multiSeedCount)
+                                     : 0.0;
+            minSupport = (estCov > 3.0) ? 2 : 1;
+            logging::info("Auto min-read-support: est coverage ~{:.1f}x ({} multi-read seeds) -> min-read-support {}",
+                          estCov,
+                          multiSeedCount,
+                          minSupport);
+        }
 
         for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
             state.totalReadSeedFrequency += readCount;
