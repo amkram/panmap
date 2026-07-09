@@ -1202,8 +1202,8 @@ void index_single_mode::IndexBuilder::buildIndex() {
     size_t numNodes = T->allNodes.size();
 
     capnp::List<BlockRange>::Builder blockRangesBuilder =
-        liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
-    for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
+        liteTreeBuilder.initBlockRanges(globalCoords.numBlocks());
+    for (size_t i = 0; i < globalCoords.numBlocks(); i++) {
         blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
         blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
     }
@@ -1363,7 +1363,6 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
     int64_t numBranches = 0;
 
     panmapUtils::BlockSequences blockSequences(T);
-    auto& sequence = blockSequences.sequence;
 
     // Simple DFS: apply block+nuc mutations, count substitutions, recurse, undo
     std::function<void(panmanUtils::Node*)> dfs = [&](panmanUtils::Node* node) {
@@ -1388,7 +1387,7 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
 
                 for (int i = 0; i < length; i++) {
                     panmapUtils::Coordinate pos(nucMutation, i);
-                    if (pos.nucPosition >= sequence[pos.primaryBlockId].size()) continue;
+                    if (pos.nucPosition >= blockSequences.blockLength(pos.primaryBlockId)) continue;
 
                     char oldNuc = blockSequences.getSequenceBase(pos);
                     int newNucCode = (nucMutation.nucs >> (4 * (5 - i))) & 0xF;
@@ -2606,8 +2605,8 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
 
     capnp::List<BlockRange>::Builder blockRangesBuilder =
-        liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
-    for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
+        liteTreeBuilder.initBlockRanges(globalCoords.numBlocks());
+    for (size_t i = 0; i < globalCoords.numBlocks(); i++) {
         blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
         blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
     }
