@@ -262,7 +262,6 @@ namespace placement {
 using ::panmanUtils::Node;
 using ::panmanUtils::Tree;
 
-class PlacementResult;
 
 // Generates a score update function: stores score on node, updates best score/index, tracks ties.
 #define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices)   \
