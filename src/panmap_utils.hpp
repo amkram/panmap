@@ -217,8 +217,8 @@ struct NewSyncmerRange {
     Coordinate begCoord;
     Coordinate endCoord;
     std::string localRangeSeq;
-    std::vector<uint64_t> localRangeCoordToGlobalScalarCoords;
-    std::vector<uint64_t> localRangeCoordToBlockId;
+    std::vector<uint32_t> localRangeCoordToGlobalScalarCoords;
+    std::vector<uint32_t> localRangeCoordToBlockId;
     std::vector<uint64_t> seedsToDelete;
 };
 
