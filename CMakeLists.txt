@@ -2,6 +2,17 @@ cmake_minimum_required(VERSION 3.14)
 
 project(panmap VERSION 0.1.2)
 
+# Use ccache as a compiler launcher when it is installed. This is a large win on
+# incremental and CI rebuilds: unchanged translation units (notably mgsr.cpp,
+# ~25s at -O3) are served from cache instead of recompiled. No-op if ccache is
+# absent, and overridable with -DCMAKE_CXX_COMPILER_LAUNCHER=.
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "ccache found: ${CCACHE_PROGRAM} (used as compiler launcher)")
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif()
+
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/version.h"
