@@ -241,7 +241,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         }
 
         newSyncmerRanges.emplace_back(
-            syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint64_t>(), std::vector<uint64_t>());
+            syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint32_t>(), std::vector<uint32_t>());
         curSyncmerRange = newSyncmerRanges.back();
         if (reachedEnd) {
             offsetsToDelete = k - offset - 1;
@@ -281,9 +281,9 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         }
 
         std::string& localRangeSeq = syncmerRange.localRangeSeq;
-        std::vector<uint64_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
+        std::vector<uint32_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
         std::vector<uint64_t>& seedsToDelete = syncmerRange.seedsToDelete;
-        std::vector<uint64_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
+        std::vector<uint32_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
 
         const size_t estimatedSize =
             (curEndCoordScalar > curCoordScalar) ? (curEndCoordScalar - curCoordScalar + 1) : 256;
@@ -803,8 +803,8 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 
         // Apply HPC if enabled: compress localRangeSeq and remap coordinate arrays
         std::string effectiveSeq;
-        std::vector<uint64_t> effectiveCoords;
-        std::vector<uint64_t> effectiveBlockIds;
+        std::vector<uint32_t> effectiveCoords;
+        std::vector<uint32_t> effectiveBlockIds;
         if (hpc_) {
             auto [hpcSeq, hpcMapping] = seeding::hpcCompressWithMapping(localRangeSeq);
             effectiveSeq = std::move(hpcSeq);
@@ -1703,8 +1703,8 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
 
         // Apply HPC if enabled: compress localRangeSeq and remap coordinate arrays
         std::string effectiveSeq;
-        std::vector<uint64_t> effectiveCoords;
-        std::vector<uint64_t> effectiveBlockIds;
+        std::vector<uint32_t> effectiveCoords;
+        std::vector<uint32_t> effectiveBlockIds;
         if (hpc_) {
             auto [hpcSeq, hpcMapping] = seeding::hpcCompressWithMapping(localRangeSeq);
             effectiveSeq = std::move(hpcSeq);

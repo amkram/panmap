@@ -2841,7 +2841,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         }
 
         newSyncmerRanges.emplace_back(
-            syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint64_t>(), std::vector<uint64_t>());
+            syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint32_t>(), std::vector<uint32_t>());
         curSyncmerRange = newSyncmerRanges.back();
         if (reachedEnd) {
             offsetsToDelete = k - offset - 1;
@@ -2856,13 +2856,13 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         panmapUtils::Coordinate curCoord = syncmerRange.begCoord;
         panmapUtils::Coordinate curEndCoord = syncmerRange.endCoord;
         std::string& localRangeSeq = syncmerRange.localRangeSeq;
-        std::vector<uint64_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
+        std::vector<uint32_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
         std::vector<uint64_t>& seedsToDelete = syncmerRange.seedsToDelete;
-        std::vector<uint64_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
+        std::vector<uint32_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
         localRangeSeq = "";
-        std::vector<uint64_t>().swap(localRangeCoordToGlobalScalarCoords);
+        std::vector<uint32_t>().swap(localRangeCoordToGlobalScalarCoords);
         std::vector<uint64_t>().swap(seedsToDelete);
-        std::vector<uint64_t>().swap(localRangeCoordToBlockId);
+        std::vector<uint32_t>().swap(localRangeCoordToBlockId);
         while (true) {
             if (!blockExists[curCoord.primaryBlockId]) {
                 if (curCoord.primaryBlockId == curEndCoord.primaryBlockId) {
@@ -3121,7 +3121,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         }
 
         newSyncmerRanges.emplace_back(
-            syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint64_t>(), std::vector<uint64_t>());
+            syncmerRangeBegCoord, syncmerRangeEndCoord, "", std::vector<uint32_t>(), std::vector<uint32_t>());
         curSyncmerRange = newSyncmerRanges.back();
         if (reachedEnd) {
             offsetsToDelete = k - offset - 1;
@@ -3161,13 +3161,13 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         }
 
         std::string& localRangeSeq = syncmerRange.localRangeSeq;
-        std::vector<uint64_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
+        std::vector<uint32_t>& localRangeCoordToGlobalScalarCoords = syncmerRange.localRangeCoordToGlobalScalarCoords;
         std::vector<uint64_t>& seedsToDelete = syncmerRange.seedsToDelete;
-        std::vector<uint64_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
+        std::vector<uint32_t>& localRangeCoordToBlockId = syncmerRange.localRangeCoordToBlockId;
         localRangeSeq = "";
-        std::vector<uint64_t>().swap(localRangeCoordToGlobalScalarCoords);
+        std::vector<uint32_t>().swap(localRangeCoordToGlobalScalarCoords);
         std::vector<uint64_t>().swap(seedsToDelete);
-        std::vector<uint64_t>().swap(localRangeCoordToBlockId);
+        std::vector<uint32_t>().swap(localRangeCoordToBlockId);
         bool recomputeBlock = false;
         bool recomputeInProgress = false;
         while (true) {
