@@ -1320,6 +1320,9 @@ int runBatchPlacement(const Config& cfg) {
                     if (runGenotyping(sampleCfg) != 0) {
                         fmt::print(stderr, "[1/{}] {} -> genotyping failed\n", samples.size(), s.prefix);
                         failCount++;
+                    } else if (cfg.stopAfter >= PipelineStage::Consensus && runConsensus(sampleCfg) != 0) {
+                        fmt::print(stderr, "[1/{}] {} -> consensus failed\n", samples.size(), s.prefix);
+                        failCount++;
                     } else {
                         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::high_resolution_clock::now() - start);
@@ -1407,6 +1410,16 @@ int runBatchPlacement(const Config& cfg) {
                             int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
                             std::lock_guard<std::mutex> lock(progressMutex);
                             fmt::print(stderr, "[{}/{}] {} -> genotyping failed\n", n, samples.size(), s.prefix);
+                            atomicFail.fetch_add(1, std::memory_order_relaxed);
+                            continue;
+                        }
+                    }
+
+                    if (cfg.stopAfter >= PipelineStage::Consensus) {
+                        if (runConsensus(sampleCfg) != 0) {
+                            int n = completedCount.fetch_add(1, std::memory_order_relaxed) + 1;
+                            std::lock_guard<std::mutex> lock(progressMutex);
+                            fmt::print(stderr, "[{}/{}] {} -> consensus failed\n", n, samples.size(), s.prefix);
                             atomicFail.fetch_add(1, std::memory_order_relaxed);
                             continue;
                         }
