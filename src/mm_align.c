@@ -49,8 +49,7 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
                                 const char* reference,
                                 int n_reads,
                                 const int* r_lens,
-                                int for_scoring,
-                                int paired_end) {
+                                int for_scoring) {
     int avg_len = 150;
     if (n_reads > 0) {
         int64_t total_len = 0;
@@ -117,107 +116,7 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
     return mi;
 }
 
-// Helper: emit one SAM line for a single-end read, or return NULL if unmapped.
-// Sets *out_rs to the 1-based reference start position (for sorting) or INT_MAX.
-static char* emit_sam_se(const mm_idx_t* mi,
-                         const mm_mapopt_t* mopt,
-                         int read_len,
-                         const char* read_seq,
-                         const char* read_qual,
-                         const char* read_name,
-                         mm_reg1_t* reg,
-                         int n_reg,
-                         int* out_rs) {
-    if (n_reg == 0 || reg[0].score <= 0 || reg[0].score > read_len) {
-        *out_rs = INT_MAX;
-        return NULL;
-    }
-    kstring_t sam = {0, 0, 0};
-    mm_bseq1_t t;
-    t.l_seq = read_len;
-    t.seq = (char*)read_seq;
-    t.name = (char*)read_name;
-    t.qual = (char*)read_qual;
 
-    int n_regs_arr[1] = {n_reg};
-    const mm_reg1_t* regs_arr[1] = {reg};
-    mm_write_sam3(&sam, mi, &t, 0, 0, 1, n_regs_arr, regs_arr, NULL, 0, 0);
-    *out_rs = reg[0].rs + 1;
-    return sam.s;
-}
-
-// r_lens is INPUT read lengths, OVERWRITTEN with 1-based ref start positions.
-void align_reads(const char* reference,
-                 int n_reads,
-                 const char** reads,
-                 const char** quality,
-                 const char** read_names,
-                 int* r_lens,
-                 char** sam_alignments,
-                 bool pairedEndReads) {
-    mm_idxopt_t iopt;
-    mm_mapopt_t mopt;
-
-    // for_scoring=1: safe sr-like config (no MM_F_SR); see setup_minimap2.
-    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1, pairedEndReads ? 1 : 0);
-    if (!mi) return;
-    mm_tbuf_t* tbuf = mm_tbuf_init();
-
-    if (pairedEndReads) {
-        for (int k = 0; k < n_reads / 2; k++) {
-            int qlens[2] = {r_lens[k * 2], r_lens[k * 2 + 1]};
-            const char* seqs[2] = {reads[k * 2], reads[k * 2 + 1]};
-            mm_reg1_t* reg[2] = {NULL, NULL};
-            int n_reg[2] = {0, 0};
-
-            mm_map_frag(mi, 2, qlens, seqs, n_reg, reg, tbuf, &mopt, NULL);
-
-            if (n_reg[0] == 0 || n_reg[1] == 0 || reg[0] == NULL || reg[1] == NULL || reg[0]->score <= 0 ||
-                reg[1]->score <= 0) {
-                sam_alignments[k * 2] = NULL;
-                sam_alignments[k * 2 + 1] = NULL;
-                r_lens[k * 2] = INT_MAX;
-                r_lens[k * 2 + 1] = INT_MAX;
-            } else {
-                // R1
-                kstring_t sam1 = {0, 0, 0};
-                mm_bseq1_t t1;
-                t1.l_seq = qlens[0];
-                t1.seq = (char*)reads[k * 2];
-                t1.name = (char*)read_names[k * 2];
-                t1.qual = (char*)quality[k * 2];
-                const mm_reg1_t* creg[2] = {reg[0], reg[1]};
-                mm_write_sam3(&sam1, mi, &t1, 0, 0, 2, n_reg, creg, NULL, 0, 0);
-                r_lens[k * 2] = reg[0]->rs + 1;
-                sam_alignments[k * 2] = sam1.s;
-                // R2
-                kstring_t sam2 = {0, 0, 0};
-                mm_bseq1_t t2;
-                t2.l_seq = qlens[1];
-                t2.seq = (char*)reads[k * 2 + 1];
-                t2.name = (char*)read_names[k * 2 + 1];
-                t2.qual = (char*)quality[k * 2 + 1];
-                mm_write_sam3(&sam2, mi, &t2, 1, 0, 2, n_reg, creg, NULL, 0, 0);
-                r_lens[k * 2 + 1] = reg[1]->rs + 1;
-                sam_alignments[k * 2 + 1] = sam2.s;
-            }
-
-            free_regs(reg[0], n_reg[0]);
-            free_regs(reg[1], n_reg[1]);
-        }
-    } else {
-        for (int k = 0; k < n_reads; k++) {
-            int n_reg = 0;
-            mm_reg1_t* reg = mm_map(mi, r_lens[k], reads[k], &n_reg, tbuf, &mopt, NULL);
-
-            sam_alignments[k] =
-                emit_sam_se(mi, &mopt, r_lens[k], reads[k], quality[k], read_names[k], reg, n_reg, &r_lens[k]);
-            free_regs(reg, n_reg);
-        }
-    }
-    mm_tbuf_destroy(tbuf);
-    mm_idx_destroy(mi);
-}
 
 // Edit distance (blen - mlen + ambiguous bases) for the primary alignment,
 // or full read length if unmapped.
@@ -254,7 +153,7 @@ int64_t score_reads_vs_reference(
     mm_idxopt_t iopt;
     mm_mapopt_t mopt;
 
-    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1, paired_end ? 1 : 0);
+    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1);
     if (!mi) return 0;
     mm_tbuf_t* tbuf = mm_tbuf_init();
 
@@ -394,7 +293,7 @@ void align_reads_direct(const char* reference,
                         int n_threads) {
     mm_idxopt_t iopt;
     mm_mapopt_t mopt;
-    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1, pairedEndReads ? 1 : 0);
+    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1);
     if (!mi) return;
 
     if (n_threads < 1) n_threads = 1;

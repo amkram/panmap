@@ -8,17 +8,6 @@
 extern "C" {
 #endif
 
-// Align reads to reference using minimap2's native seeding.
-// r_lens is INPUT read lengths but OVERWRITTEN with 1-based ref start positions
-// (or INT_MAX for unmapped reads) on output.
-void align_reads(const char* reference,
-                 int n_reads,
-                 const char** reads,
-                 const char** quality,
-                 const char** read_names,
-                 int* r_lens,
-                 char** sam_alignments,
-                 bool pairedEndReads);
 
 // Simple alignment scoring for refinement (no pre-computed seeds needed)
 // Returns negative total edit distance (higher = fewer errors = better)
