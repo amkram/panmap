@@ -116,3 +116,4 @@ output/
 /references.docx
 ~$*
 /info/
+CMakeUserPresets.json
