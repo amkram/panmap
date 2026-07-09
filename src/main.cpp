@@ -979,8 +979,6 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
 }
 
 bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
-    auto start_time_deconvolution = std::chrono::high_resolution_clock::now();
-
     auto start_time_initializeQueryData = std::chrono::high_resolution_clock::now();
     threadsManager.initializeQueryData(cfg.reads1, cfg.reads2, cfg.ampliconDepth, cfg.dust, cfg.maskReadEnds);
     auto end_time_initializeQueryData = std::chrono::high_resolution_clock::now();
@@ -1390,7 +1388,6 @@ int runBatchPlacement(const Config& cfg) {
                     continue;
                 }
 
-                bool sampleOk = true;
                 if (cfg.stopAfter >= PipelineStage::Align) {
                     Config sampleCfg = cfg;
                     sampleCfg.output = s.prefix;

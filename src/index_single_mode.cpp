@@ -42,7 +42,6 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
 
     const std::vector<char>& blockExists = blockSequences.blockExists;
     const std::vector<char>& blockStrand = blockSequences.blockStrand;
-    const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
     // Schwartzian transform: compute scalar coords once, sort by them
     if (localMutationRanges.size() > 1) {
@@ -90,7 +89,6 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         auto [curBegCoord, curEndCoord] = mergedLocalMutationRanges[localMutationRangeIndex];
         auto syncmerRangeBegCoord = curBegCoord;
         auto syncmerRangeEndCoord = curEndCoord;
-        auto curBegScalarTest = globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
         auto curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
         auto leftGapMapIt =
             gapMap.lower_bound(globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]));
@@ -109,13 +107,11 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
             if (leftGapMapIt == gapMap.begin()) {
                 if (curBegScalar - 1 > leftGapMapIt->second) {
                     globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
-                    --curBegScalarTest;
                 } else if (curBegScalar >= leftGapMapIt->first) {
                     if (leftGapMapIt->first == 0) {
                         break;
                     } else {
                         curBegScalar = leftGapMapIt->first - 1;
-                        curBegScalarTest = leftGapMapIt->first - 1;
                         curBegCoord = globalCoords.getCoordFromScalar(curBegScalar);
                         if (!blockStrand[curBegCoord.primaryBlockId]) {
                             curBegCoord = globalCoords.getCoordFromScalar(curBegScalar, false);
@@ -124,10 +120,8 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                 }
             } else if (curBegScalar - 1 > leftGapMapIt->second) {
                 globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
-                --curBegScalarTest;
             } else {
                 curBegScalar = leftGapMapIt->first - 1;
-                curBegScalarTest = leftGapMapIt->first - 1;
                 curBegCoord = globalCoords.getCoordFromScalar(curBegScalar);
                 if (!blockStrand[curBegCoord.primaryBlockId]) {
                     curBegCoord = globalCoords.getCoordFromScalar(curBegScalar, false);
@@ -141,8 +135,6 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                                                     blockStrand[curSyncmerRange.endCoord.primaryBlockId])) {
                 // reached current newSyncmerRange... merge
                 curBegCoord = curSyncmerRange.begCoord;
-                curBegScalarTest =
-                    globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
                 syncmerRangeBegCoord = curBegCoord;
                 newSyncmerRanges.pop_back();
                 break;
@@ -150,8 +142,6 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
 
             if (!blockExists[curBegCoord.primaryBlockId]) {
                 curBegCoord = globalCoords.blockEdgeCoords[curBegCoord.primaryBlockId].start;
-                curBegScalarTest =
-                    globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
                 continue;
             }
 
@@ -844,7 +834,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
                 // Hard mask: skip all seed operations in flanked regions
                 if (startPosGlobal < hardMaskStart || startPosGlobal > hardMaskEnd) continue;
                 if (!wasSeed && isSeed) {
-                    auto it = refOnSyncmersMap.insert(startPosGlobal).first;
+                    refOnSyncmersMap.insert(startPosGlobal);
                     refOnSyncmersChangeRecord.emplace_back(
                         startPosGlobal, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
                     blockOnSyncmersChangeRecord.emplace_back(
@@ -960,7 +950,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         auto indexingIt = curIt;
         size_t forwardHash = 0;
         size_t reverseHash = 0;
-        bool shortRange = false;
 
         std::vector<size_t> startingSyncmerHashes;
         for (size_t j = 0; j < l; j++) {
@@ -1515,14 +1504,6 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
 
 void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads, int zstdLevel) {
     output::step("Serializing index...");
-
-    kj::ArrayPtr<const kj::ArrayPtr<const capnp::word>> segments = outMessage.getSegmentsForOutput();
-
-    size_t totalWords = 0;
-    for (auto seg : segments) {
-        totalWords += seg.size();
-    }
-    size_t totalBytes = totalWords * sizeof(capnp::word);
 
     kj::Array<capnp::word> flatArray = capnp::messageToFlatArray(outMessage);
     const void* data = flatArray.begin();
