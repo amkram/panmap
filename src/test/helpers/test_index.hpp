@@ -2,9 +2,8 @@
 
 /**
  * @file test_index.hpp
- * @brief TestIndex RAII fixture + loadIndex(): the ONE place tests build/load a
- *        panmap index. Absorbs the capnp-reader + IndexBuilder + decompress
- *        boilerplate that was copy-pasted across the old correctness_tests.cpp.
+ * @brief TestIndex RAII fixture + loadIndex(): the one place tests build/load a
+ *        panmap index.
  */
 
 #include "panmanUtils.hpp"

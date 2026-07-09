@@ -29,26 +29,8 @@ struct mutationMatrices {
         : submat(4, std::vector<double>(4, 0.0)), maxInsLogProb(100.0), maxDelLogProb(100.0), filled(false) {}
 };
 
-/**
- * Fill mutation matrices from a file
- *
- * @param mutMat Mutation matrices to fill
- * @param inf Input file stream to read from
- */
 void fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf);
 
-/**
- * Build mutation matrices helper function
- *
- * @param mutMat Mutation matrices to fill
- * @param tree Tree to process
- * @param node Current node being processed
- * @param parentBaseCounts Parent base counts
- * @param totalBaseCounts Total base counts
- * @param subCount Substitution counts
- * @param insCount Insertion counts
- * @param delCount Deletion counts
- */
 void buildMutationMatricesHelper(mutationMatrices& mutMat,
                                  panmanUtils::Tree* tree,
                                  panmanUtils::Node* node,

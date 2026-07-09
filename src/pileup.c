@@ -37,9 +37,7 @@ int our_mplp_get_ref(mplp_aux_t* ma, int tid, char** ref, hts_pos_t* ref_len) {
         return 0;
     }
 
-    // Do we need to reference count this so multiple mplp_aux_t can
-    // track which references are in use?
-    // For now we just cache the last two. Sufficient?
+    // Caches only the last two references, LRU-style.
     if (tid == r->ref_id[0]) {
         *ref = r->ref[0];
         *ref_len = r->ref_len[0];
@@ -47,7 +45,6 @@ int our_mplp_get_ref(mplp_aux_t* ma, int tid, char** ref, hts_pos_t* ref_len) {
     }
 
     if (tid == r->ref_id[1]) {
-        // Last, swap over
         int tmp_id;
         hts_pos_t tmp_len;
         tmp_id = r->ref_id[0];
@@ -66,7 +63,7 @@ int our_mplp_get_ref(mplp_aux_t* ma, int tid, char** ref, hts_pos_t* ref_len) {
         return 1;
     }
 
-    // New, so migrate to old and load new
+    // New tid: evict old, load new.
     free(r->ref[1]);
     r->ref[1] = r->ref[0];
     r->ref_id[1] = r->ref_id[0];
@@ -74,7 +71,7 @@ int our_mplp_get_ref(mplp_aux_t* ma, int tid, char** ref, hts_pos_t* ref_len) {
 
     r->ref_id[0] = tid;
 
-    r->ref[0] = global_ref_string;  // Ugly use of global variables
+    r->ref[0] = global_ref_string;
     r->ref_len[0] = global_ref_length;
 
     if (!r->ref[0]) {
@@ -230,10 +227,7 @@ int our_mplp_func(void* data, bam1_t* b) {
 
         if (ret < 0) break;
 
-        // The 'B' cigar operation is not part of the specification, considering as
-        // obsolete.
-        //  bam_remove_B(b);
-        if (b->core.tid < 0 || (b->core.flag & BAM_FUNMAP)) {  // exclude unmapped reads
+        if (b->core.tid < 0 || (b->core.flag & BAM_FUNMAP)) {
             skip = 1;
             continue;
         }
@@ -248,12 +242,12 @@ int our_mplp_func(void* data, bam1_t* b) {
             continue;
         }
 
-        if (ma->conf->bed && ma->conf->all == 0) {  // test overlap
+        if (ma->conf->bed && ma->conf->all == 0) {
             skip = !bed_overlap(ma->conf->bed, sam_hdr_tid2name(ma->h, b->core.tid), b->core.pos, bam_endpos(b));
             if (skip) continue;
         }
 
-        if (ma->conf->rghash) {  // exclude read groups
+        if (ma->conf->rghash) {
             uint8_t* rg = bam_aux_get(b, "RG");
             skip = (rg && khash_str2int_get(ma->conf->rghash, (const char*)(rg + 1), NULL) == 0);
             if (skip) continue;
@@ -267,7 +261,7 @@ int our_mplp_func(void* data, bam1_t* b) {
 
         if (b->core.tid >= 0) {
             has_ref = our_mplp_get_ref(ma, b->core.tid, &ref, &ref_len);
-            if (has_ref && ref_len <= b->core.pos) {  // exclude reads outside of the reference sequence
+            if (has_ref && ref_len <= b->core.pos) {  // read starts past end of reference
                 fprintf(stderr,
                         "[%s] Skipping because %" PRIhts_pos " is outside of %" PRIhts_pos " [ref:%d]\n",
                         __func__,
@@ -301,13 +295,6 @@ int our_mplp_func(void* data, bam1_t* b) {
     return ret;
 }
 
-/*
- * Performs pileup
- * @param conf configuration for this pileup
- * @param n number of files specified in fn
- * @param fn filenames
- * @param fn_idx index filenames
- */
 int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string) {
     mplp_aux_t** data;
     int i, tid, *n_plp, tid0 = 0, max_depth, n = 1;
@@ -316,9 +303,8 @@ int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string
     mplp_ref_t mp_ref = MPLP_REF_INIT;
 
     bam_mplp_t iter;
-    sam_hdr_t* h = NULL; /* header of first file in input list */
+    sam_hdr_t* h = NULL;
     char* ref;
-    // FILE *pileup_fp = NULL;
 
     kstring_t buf;
     mplp_pileup_t gplp;
@@ -335,24 +321,20 @@ int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string
     }
 
     for (i = 0; i < n; ++i) {
-        sam_hdr_t* h_tmp = sam_header;  // Providing sam header
+        sam_hdr_t* h_tmp = sam_header;
         data[i] = calloc(1, sizeof(mplp_aux_t));
 
         data[i]->conf = conf;
         data[i]->ref = &mp_ref;
 
-        // bam_smpl_add(sm, fn[i], (conf->flag&MPLP_IGNORE_RG)? 0 :
-        // sam_hdr_str(h_tmp));
-
         data[i]->iter = NULL;
 
         if (i == 0)
-            h = data[i]->h = h_tmp;  // save the header of the first file
+            h = data[i]->h = h_tmp;
         else {
             sam_hdr_destroy(h_tmp);
 
-            // we store only the first file's header; it's (alleged to be)
-            // compatible with the i-th file's target_name lookup needs
+            // Reuse first file's header for target_name lookups.
             data[i]->h = h;
         }
     }
@@ -375,10 +357,9 @@ int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string
     hts_pos_t last_pos = -1;
     int one_seq = 0;
 
-    // begin pileup
     while ((ret = bam_mplp64_auto(iter, &tid, &pos, n_plp, plp)) > 0) {
-        one_seq = 1;                                             // at least 1 output
-        if (conf->reg && (pos < beg0 || pos >= end0)) continue;  // out of the region requested
+        one_seq = 1;
+        if (conf->reg && (pos < beg0 || pos >= end0)) continue;  // outside requested region
 
         our_mplp_get_ref(data[0], tid, &ref, &ref_len);
 
@@ -436,7 +417,6 @@ int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string
                     int c = p->qpos < p->b->core.l_qseq ? bam_get_qual(p->b)[p->qpos] : 0;
                     if (c >= conf->min_baseQ) {
                         n++;
-                        // TODO what do i do
                         if (our_pileup_seq(mplp_string,
                                            plp[i] + j,
                                            pos,
@@ -457,7 +437,6 @@ int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string
                     kputc('*', mplp_string);
                 }
 
-                /* Print base qualities */
                 n = 0;
                 ks_free(&ks);
                 kputc('\t', mplp_string);
@@ -510,8 +489,6 @@ int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string
     }
 
 fail:
-    // clean up
-    // if (pileup_fp && conf->output_fname) fclose(pileup_fp);
     free(buf.s);
     for (i = 0; i < gplp.n; ++i) free(gplp.plp[i]);
     free(gplp.plp);
@@ -527,22 +504,11 @@ fail:
     free(data);
     free(plp);
     free(n_plp);
-    // free(mp_ref.ref[0]);
-    // free(mp_ref.ref[1]);
     return ret;
 }
 
-// takes as input:
-//   a pointer to a header type (sam_hdr_t)
-//   an array of (bam1_t *)
-//   an int for length of array
-//   a pointer to a reference string
-//   an int for ref string length
-//
-//   a pointer to an empty kstring_t for output (this will be populated with the
-//   mpileup string)
-//
-// destroys the header and nothing else
+// Writes the mpileup output for bam_lines against ref_string into mplp_string.
+// Destroys `header`; frees nothing else.
 void bam_and_ref_to_mplp(
     sam_hdr_t* header, bam1_t** bam_lines, int nbams, char* ref_string, int lref, kstring_t* mplp_string) {
     mplp_conf_t mplp;

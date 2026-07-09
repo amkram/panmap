@@ -68,11 +68,10 @@ BOOST_AUTO_TEST_CASE(litetree_structure_invariants) {
         BOOST_REQUIRE(node != nullptr);  // no holes in the dfs index
         if (node->parent != nullptr) {
             withParent++;
-            // parent<->child links are consistent
+            // parent<->child links agree
             auto& sibs = node->parent->children;
             BOOST_TEST((std::find(sibs.begin(), sibs.end(), node) != sibs.end()));
         }
-        // resolveNodeId round-trips the node's identifier
         BOOST_TEST(tree.resolveNodeId(static_cast<uint32_t>(i)) == node->identifier);
     }
     // Exactly one node (the root) has no parent.

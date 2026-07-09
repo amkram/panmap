@@ -16,7 +16,6 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
     }
     panmanUtils::Node* referenceNode = tree->allNodes[reference];
 
-    // get path from root to reference node
     std::vector<panmanUtils::Node*> pathFromRoot;
     panmanUtils::Node* it = referenceNode;
     while (it != tree->root) {
@@ -26,7 +25,7 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
     pathFromRoot.push_back(tree->root);
     std::reverse(pathFromRoot.begin(), pathFromRoot.end());
 
-    // get block sequence (blockSequence[i] = true if block i is on on the reference node)
+    // blockSequence[i] = true if block i is present on the reference node
     std::vector<char> blockSequence(tree->blocks.size() + 1, false);
     for (auto node : pathFromRoot) {
         for (const auto& blockMutation : node->blockMutation) {
@@ -43,7 +42,6 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
         }
     }
 
-    // initialize sequence, blockExists, blockStrand, blockLengths
     sequence.clear();
     blockExists.clear();
     blockStrand.clear();
@@ -53,7 +51,6 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
     blockStrand.resize(tree->blocks.size() + 1, true);
     int32_t maxBlockId = 0;
 
-    // fill in the skeleton of the sequence object
     for (int32_t blockId = 0; blockId < tree->blocks.size(); blockId++) {
         blockLengths[blockId] = 0;
         maxBlockId = std::max(maxBlockId, blockId);
@@ -99,7 +96,6 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
     blockExists.resize(maxBlockId + 1);
     blockStrand.resize(maxBlockId + 1);
 
-    // Assign nuc gaps
     auto& gaps = tree->gaps;
     for (size_t i = 0; i < gaps.size(); i++) {
         int32_t primaryBId = gaps[i].primaryBlockId;
@@ -118,9 +114,7 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
         }
     }
 
-    // apply mutations from root to reference node
     for (auto node : pathFromRoot) {
-        // apply block mutations
         for (const auto& blockMutation : node->blockMutation) {
             int32_t blockId = blockMutation.primaryBlockId;
             bool insertion = blockMutation.blockMutInfo;
@@ -141,7 +135,6 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
             }
         }
 
-        // apply nuc mutations
         for (const auto& nucMutation : node->nucMutation) {
             int32_t blockId = nucMutation.primaryBlockId;
             if (!blockSequence[blockId]) {
@@ -173,7 +166,6 @@ std::string getStringFromSequence(const std::vector<std::vector<std::pair<char, 
         if (blockExists[i]) {
             if (blockStrand[i]) {
                 for (size_t j = 0; j < sequence[i].size(); j++) {
-                    // Gap nucs
                     for (size_t k = 0; k < sequence[i][j].second.size(); k++) {
                         if (sequence[i][j].second[k] != '-') {
                             seqString += sequence[i][j].second[k];
@@ -181,7 +173,6 @@ std::string getStringFromSequence(const std::vector<std::vector<std::pair<char, 
                             seqString += '-';
                         }
                     }
-                    // Main nuc
                     if (sequence[i][j].first != '-' && sequence[i][j].first != 'x') {
                         seqString += sequence[i][j].first;
                     } else if (aligned && sequence[i][j].first != 'x') {
@@ -190,14 +181,13 @@ std::string getStringFromSequence(const std::vector<std::vector<std::pair<char, 
                 }
             } else {
                 for (size_t j = sequence[i].size() - 1; j + 1 > 0; j--) {
-                    // Main nuc first since we are iterating in reverse direction
+                    // Main nuc first since iterating in reverse
                     if (sequence[i][j].first != '-' && sequence[i][j].first != 'x') {
                         seqString += panmanUtils::getComplementCharacter(sequence[i][j].first);
                     } else if (aligned && sequence[i][j].first != 'x') {
                         seqString += '-';
                     }
 
-                    // Gap nucs
                     for (size_t k = sequence[i][j].second.size() - 1; k + 1 > 0; k--) {
                         if (sequence[i][j].second[k] != '-') {
                             seqString += panmanUtils::getComplementCharacter(sequence[i][j].second[k]);
@@ -280,18 +270,15 @@ uint32_t LiteTree::getBlockEndScalar(const uint32_t blockId) const {
 }
 
 void LiteTree::initialize(::LiteTree::Reader liteTreeReader) {
-    // initialize blockScalarRanges
     auto blockScalarRangesReader = liteTreeReader.getBlockRanges();
     blockScalarRanges.resize(blockScalarRangesReader.size());
     for (size_t i = 0; i < blockScalarRangesReader.size(); i++) {
         blockScalarRanges[i] = {blockScalarRangesReader[i].getRangeBeg(), blockScalarRangesReader[i].getRangeEnd()};
     }
 
-    // initialize allLiteNodes
     auto liteNodesReader = liteTreeReader.getLiteNodes();
     size_t numNodes = liteNodesReader.size();
 
-    // Pre-allocate dfsIndexToNode vector
     dfsIndexToNode.resize(numNodes, nullptr);
 
     for (size_t i = 0; i < numNodes; i++) {
@@ -301,7 +288,6 @@ void LiteTree::initialize(::LiteTree::Reader liteTreeReader) {
         nodeToDfsIndex.emplace(nodeIdentifier, i);
         auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new LiteNode(nodeIdentifier, nullptr, {}));
 
-        // Store pointer in dfsIndexToNode for index-based access
         it->second->nodeIndex = i;
         dfsIndexToNode[i] = it->second;
 
