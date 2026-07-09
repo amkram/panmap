@@ -1309,6 +1309,12 @@ void placeLite(PlacementResult& result,
                             const std::string& seq = allReadSequences[i];
                             const std::string& qual = allReadQualities[i];
 
+                            // Primer-trim: exclude seeds whose k-mer start falls in the
+                            // trimmed flanks (no-op when trimStart/trimEnd == 0).
+                            const int seqLen = static_cast<int>(seq.size());
+                            const int validStart = params.trimStart;
+                            const int validEnd = seqLen - params.trimEnd - params.k;
+
                             const auto& syncmers =
                                 seeding::rollingSyncmers(seq, params.k, params.s, params.open, params.t, false);
 
@@ -1317,6 +1323,12 @@ void placeLite(PlacementResult& result,
                             // For l=1, just use syncmer hashes with quality filtering
                             if (params.l == 1) {
                                 for (const auto& [seedHash, isReverse, isSyncmer, startPos] : syncmers) {
+                                    // Primer-trim filter
+                                    if (static_cast<int>(startPos) < validStart ||
+                                        static_cast<int>(startPos) > validEnd) {
+                                        ++filtered;
+                                        continue;
+                                    }
                                     // Quality filter
                                     double avgQual = avgPhredQuality(qual, startPos, params.k);
                                     if (avgQual < static_cast<double>(params.minSeedQuality)) {
@@ -1334,7 +1346,10 @@ void placeLite(PlacementResult& result,
                             for (size_t j = 0; j < syncmers.size(); ++j) {
                                 int64_t startPos = std::get<3>(syncmers[j]);
                                 double avgQual = avgPhredQuality(qual, startPos, params.k);
-                                syncmerPassesQuality[j] = (avgQual >= static_cast<double>(params.minSeedQuality));
+                                const bool inRange = static_cast<int>(startPos) >= validStart &&
+                                                     static_cast<int>(startPos) <= validEnd;
+                                syncmerPassesQuality[j] =
+                                    inRange && (avgQual >= static_cast<double>(params.minSeedQuality));
                             }
 
                             // Build k-minimizers, skipping any window with low-quality syncmers
@@ -1514,24 +1529,40 @@ void placeLite(PlacementResult& result,
 
                             if (syncmers.size() < params.l) continue;
 
+                            // Primer-trim: keep only syncmers whose k-mer start is within
+                            // [validStart, validEnd]. Trimming removes contiguous end syncmers,
+                            // so the in-range set is the sub-range [loIdx, hiIdx). No-op when
+                            // trimStart/trimEnd == 0.
+                            const int seqLen = static_cast<int>(seq.size());
+                            const int validStart = params.trimStart;
+                            const int validEnd = seqLen - params.trimEnd - params.k;
+
                             // Special case for l=1: just use syncmer hashes directly
                             if (params.l == 1) {
                                 for (const auto& syncmer : syncmers) {
-                                    size_t seedHash = std::get<0>(syncmer);
-                                    localMap[seedHash] += multiplicity;
+                                    const int sp = static_cast<int>(std::get<3>(syncmer));
+                                    if (sp < validStart || sp > validEnd) continue;
+                                    localMap[std::get<0>(syncmer)] += multiplicity;
                                 }
                                 continue;
                             }
 
+                            size_t loIdx = 0, hiIdx = syncmers.size();
+                            while (loIdx < hiIdx && static_cast<int>(std::get<3>(syncmers[loIdx])) < validStart)
+                                ++loIdx;
+                            while (hiIdx > loIdx && static_cast<int>(std::get<3>(syncmers[hiIdx - 1])) > validEnd)
+                                --hiIdx;
+                            if (hiIdx - loIdx < static_cast<size_t>(params.l)) continue;
+
                             size_t forwardRolledHash = 0;
                             size_t reverseRolledHash = 0;
 
-                            // First k-min-mer
-                            for (size_t j = 0; j < params.l; ++j) {
+                            // First k-min-mer (over syncmers[loIdx .. loIdx + l))
+                            for (size_t j = 0; j < static_cast<size_t>(params.l); ++j) {
                                 forwardRolledHash =
-                                    seeding::rol(forwardRolledHash, params.k) ^ std::get<0>(syncmers[j]);
-                                reverseRolledHash =
-                                    seeding::rol(reverseRolledHash, params.k) ^ std::get<0>(syncmers[params.l - j - 1]);
+                                    seeding::rol(forwardRolledHash, params.k) ^ std::get<0>(syncmers[loIdx + j]);
+                                reverseRolledHash = seeding::rol(reverseRolledHash, params.k) ^
+                                                    std::get<0>(syncmers[loIdx + params.l - j - 1]);
                             }
 
                             if (forwardRolledHash != reverseRolledHash) {
@@ -1539,8 +1570,8 @@ void placeLite(PlacementResult& result,
                                 localMap[minHash] += multiplicity;
                             }
 
-                            // Rest of k-min-mers
-                            for (size_t j = 1; j < syncmers.size() - params.l + 1; ++j) {
+                            // Rest of k-min-mers over the in-range sub-range
+                            for (size_t j = loIdx + 1; j < hiIdx - params.l + 1; ++j) {
                                 const size_t& prevSyncmerHash = std::get<0>(syncmers[j - 1]);
                                 const size_t& nextSyncmerHash = std::get<0>(syncmers[j + params.l - 1]);
 
