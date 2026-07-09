@@ -291,29 +291,38 @@ void invertGapMap(std::map<T, T>& gapMap,
     } else {
         // start inside of a range
         auto curIt = leftIt;
-        blockRuns.emplace_back(true, std::make_pair(static_cast<int64_t>(start), static_cast<int64_t>(curIt->second)));
-        curIt = std::next(curIt);
-        while (true) {
-            if (curIt == gapMap.end()) {
-                blockRuns.emplace_back(false,
-                                       std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(end)));
-                break;
-            } else if (end < curIt->first) {
-                blockRuns.emplace_back(false,
-                                       std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(end)));
-                break;
-            } else if (end > curIt->second) {
-                blockRuns.emplace_back(
-                    false, std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(curIt->first) - 1));
-                blockRuns.emplace_back(
-                    true, std::make_pair(static_cast<int64_t>(curIt->first), static_cast<int64_t>(curIt->second)));
-                curIt = std::next(curIt);
-            } else {
-                blockRuns.emplace_back(
-                    false, std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(curIt->first) - 1));
-                blockRuns.emplace_back(true,
-                                       std::make_pair(static_cast<int64_t>(curIt->first), static_cast<int64_t>(end)));
-                break;
+        if (static_cast<int64_t>(end) <= static_cast<int64_t>(curIt->second)) {
+            // [start, end] lies entirely within one gap run; reversing an all-gap span
+            // is a no-op. Emit a single gap run to `end` and stop -- without this clamp
+            // the walk below appended a run to the gap's end plus a negative-length run,
+            // corrupting the gap map (e.g. inverting [10,20] inside {0:30} dropped [21,30]).
+            blockRuns.emplace_back(true,
+                                   std::make_pair(static_cast<int64_t>(start), static_cast<int64_t>(end)));
+        } else {
+            blockRuns.emplace_back(true, std::make_pair(static_cast<int64_t>(start), static_cast<int64_t>(curIt->second)));
+            curIt = std::next(curIt);
+            while (true) {
+                if (curIt == gapMap.end()) {
+                    blockRuns.emplace_back(false,
+                                           std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(end)));
+                    break;
+                } else if (end < curIt->first) {
+                    blockRuns.emplace_back(false,
+                                           std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(end)));
+                    break;
+                } else if (end > curIt->second) {
+                    blockRuns.emplace_back(
+                        false, std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(curIt->first) - 1));
+                    blockRuns.emplace_back(
+                        true, std::make_pair(static_cast<int64_t>(curIt->first), static_cast<int64_t>(curIt->second)));
+                    curIt = std::next(curIt);
+                } else {
+                    blockRuns.emplace_back(
+                        false, std::make_pair(blockRuns.back().second.second + 1, static_cast<int64_t>(curIt->first) - 1));
+                    blockRuns.emplace_back(true,
+                                           std::make_pair(static_cast<int64_t>(curIt->first), static_cast<int64_t>(end)));
+                    break;
+                }
             }
         }
     }
