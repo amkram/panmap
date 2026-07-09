@@ -42,7 +42,6 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
 
     const std::vector<char>& blockExists = blockSequences.blockExists;
     const std::vector<char>& blockStrand = blockSequences.blockStrand;
-    const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
     // Schwartzian transform: compute scalar coords once, sort by them
     if (localMutationRanges.size() > 1) {
@@ -1383,7 +1382,6 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
     int64_t numBranches = 0;
 
     panmapUtils::BlockSequences blockSequences(T);
-    auto& sequence = blockSequences.sequence;
 
     // Simple DFS: apply block+nuc mutations, count substitutions, recurse, undo
     std::function<void(panmanUtils::Node*)> dfs = [&](panmanUtils::Node* node) {
@@ -1409,7 +1407,7 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
 
                 for (int i = 0; i < length; i++) {
                     panmapUtils::Coordinate pos(nucMutation, i);
-                    if (pos.nucPosition >= sequence[pos.primaryBlockId].size()) continue;
+                    if (pos.nucPosition >= blockSequences.blockLength(pos.primaryBlockId)) continue;
 
                     char oldNuc = blockSequences.getSequenceBase(pos);
                     int newNucCode = (nucMutation.nucs >> (4 * (5 - i))) & 0xF;

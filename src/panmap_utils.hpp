@@ -264,7 +264,13 @@ struct NewSyncmerRange {
 };
 
 struct BlockSequences {
-    std::vector<std::vector<std::pair<char, std::vector<char>>>> sequence;
+    // Flat layout (equivalent to the old vector<vector<pair<char, vector<char>>>> sequence):
+    //   mainSeq[b][p]   consensus nucleotide at position p of block b
+    //   gapSeq[b]       block b's gap ("insertion") chars, concatenated by position (CSR values)
+    //   gapStart[b][p]  offset of position p's gaps in gapSeq[b]; size mainSeq[b].size()+1 (CSR prefix sums)
+    std::vector<std::vector<char>> mainSeq;
+    std::vector<std::vector<char>> gapSeq;
+    std::vector<std::vector<uint32_t>> gapStart;
     std::vector<char> blockExists;
     std::vector<char> blockStrand;
     uint64_t totalLength;
@@ -272,7 +278,7 @@ struct BlockSequences {
     BlockSequences() {}
 
     BlockSequences(panmanUtils::Tree* tree) {
-        sequence.resize(tree->blocks.size() + 1);
+        mainSeq.resize(tree->blocks.size() + 1);
         blockExists.resize(tree->blocks.size() + 1, false);
         blockStrand.resize(tree->blocks.size() + 1, true);
         totalLength = 0;
@@ -295,8 +301,7 @@ struct BlockSequences {
                         endFlag = true;
                         break;
                     }
-                    const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
-                    sequence[primaryBlockId].push_back({nucleotide, {}});
+                    mainSeq[primaryBlockId].push_back(panmanUtils::getNucleotideFromCode(nucCode));
                     totalLength++;
                 }
 
@@ -305,27 +310,48 @@ struct BlockSequences {
                 }
             }
             // End character to incorporate for gaps at the end
-            sequence[primaryBlockId].push_back({'x', {}});
+            mainSeq[primaryBlockId].push_back('x');
         }
 
-        sequence.resize(maxBlockId + 1);
+        mainSeq.resize(maxBlockId + 1);
         blockExists.resize(maxBlockId + 1);
         blockStrand.resize(maxBlockId + 1);
 
+        // Build the per-position gap CSR: counts -> prefix sums -> '-'-filled gap chars.
+        gapStart.resize(mainSeq.size());
+        gapSeq.resize(mainSeq.size());
+        for (size_t b = 0; b < mainSeq.size(); b++) {
+            gapStart[b].assign(mainSeq[b].size() + 1, 0);
+        }
         for (size_t i = 0; i < tree->gaps.size(); i++) {
             const auto& curGap = tree->gaps[i];
             int32_t primaryBId = (curGap.primaryBlockId);
-            int32_t secondaryBId = (curGap.secondaryBlockId);
             for (size_t j = 0; j < curGap.nucPosition.size(); j++) {
                 int len = curGap.nucGapLength[j];
                 int pos = curGap.nucPosition[j];
-                sequence[primaryBId][pos].second.resize(len, '-');
+                gapStart[primaryBId][pos + 1] = len;   // count at pos (last wins, as the old resize did)
                 totalLength += len;
             }
         }
+        for (size_t b = 0; b < mainSeq.size(); b++) {
+            for (size_t p = 1; p < gapStart[b].size(); p++) {
+                gapStart[b][p] += gapStart[b][p - 1];
+            }
+            gapSeq[b].assign(gapStart[b].back(), '-');
+        }
     }
 
-    int numBlocks() const { return sequence.size(); }
+    int numBlocks() const { return mainSeq.size(); }
+
+    size_t blockLength(int blockId) const { return mainSeq[blockId].size(); }
+
+    uint32_t gapLength(int blockId, int pos) const { return gapStart[blockId][pos + 1] - gapStart[blockId][pos]; }
+
+    char mainBase(int blockId, int pos) const { return mainSeq[blockId][pos]; }
+
+    char gapBase(int blockId, int pos, int gapPos) const {
+        return gapSeq[blockId][gapStart[blockId][pos] + gapPos];
+    }
 
     const bool getBlockStrand(int blockId) const { return blockStrand[blockId]; }
 
@@ -333,52 +359,56 @@ struct BlockSequences {
 
     char getSequenceBase(const Coordinate& coord) const {
         if (coord.nucGapPosition != -1) {
-            return sequence[coord.primaryBlockId][coord.nucPosition].second[coord.nucGapPosition];
+            return gapSeq[coord.primaryBlockId][gapStart[coord.primaryBlockId][coord.nucPosition] +
+                                                coord.nucGapPosition];
         } else {
-            return sequence[coord.primaryBlockId][coord.nucPosition].first;
+            return mainSeq[coord.primaryBlockId][coord.nucPosition];
         }
     }
 
     void setSequenceBase(const Coordinate& coord, char newNuc) {
         if (coord.nucGapPosition != -1) {
-            sequence[coord.primaryBlockId][coord.nucPosition].second[coord.nucGapPosition] = newNuc;
+            gapSeq[coord.primaryBlockId][gapStart[coord.primaryBlockId][coord.nucPosition] + coord.nucGapPosition] =
+                newNuc;
         } else {
-            sequence[coord.primaryBlockId][coord.nucPosition].first = newNuc;
+            mainSeq[coord.primaryBlockId][coord.nucPosition] = newNuc;
         }
     }
 
     std::string getSequenceStringByBlockId(int blockId, bool aligned) const {
         std::string seq;
-        const auto& curBlock = sequence[blockId];
-        for (size_t i = 0; i < curBlock.size(); i++) {
+        size_t n = mainSeq[blockId].size();
+        for (size_t i = 0; i < n; i++) {
+            uint32_t gBeg = gapStart[blockId][i], gEnd = gapStart[blockId][i + 1];
+            char mainc = mainSeq[blockId][i];
             if (blockStrand[blockId]) {
                 // Gap nucs
-                for (size_t j = 0; j < curBlock[i].second.size(); j++) {
-                    if (curBlock[i].second[j] != '-') {
-                        seq += curBlock[i].second[j];
+                for (uint32_t j = gBeg; j < gEnd; j++) {
+                    if (gapSeq[blockId][j] != '-') {
+                        seq += gapSeq[blockId][j];
                     } else if (aligned) {
                         seq += '-';
                     }
                 }
 
                 // Main nuc
-                if (curBlock[i].first != '-' && curBlock[i].first != 'x') {
-                    seq += curBlock[i].first;
-                } else if (aligned && curBlock[i].first != 'x') {
+                if (mainc != '-' && mainc != 'x') {
+                    seq += mainc;
+                } else if (aligned && mainc != 'x') {
                     seq += '-';
                 }
             } else {
                 // Main nuc first
-                if (curBlock[i].first != '-' && curBlock[i].first != 'x') {
-                    seq += panmanUtils::getComplementCharacter(curBlock[i].first);
-                } else if (aligned && curBlock[i].first != 'x') {
+                if (mainc != '-' && mainc != 'x') {
+                    seq += panmanUtils::getComplementCharacter(mainc);
+                } else if (aligned && mainc != 'x') {
                     seq += '-';
                 }
 
                 // Gap nucs in reverse
-                for (size_t j = curBlock[i].second.size() - 1; j + 1 > 0; j--) {
-                    if (curBlock[i].second[j] != '-') {
-                        seq += panmanUtils::getComplementCharacter(curBlock[i].second[j]);
+                for (uint32_t j = gEnd; j-- > gBeg;) {
+                    if (gapSeq[blockId][j] != '-') {
+                        seq += panmanUtils::getComplementCharacter(gapSeq[blockId][j]);
                     } else if (aligned) {
                         seq += '-';
                     }
@@ -427,23 +457,25 @@ struct GlobalCoords {
     int64_t lastScalarCoord;
 
     GlobalCoords(const BlockSequences& blockSequences) {
-        const auto& sequence = blockSequences.sequence;
         scalarToCoord.reserve(blockSequences.totalLength);
         int64_t curScalarCoord = 0;
-        globalCoords.resize(sequence.size());
-        for (size_t i = 0; i < sequence.size(); i++) {
-            globalCoords[i].resize(sequence[i].size());
-            for (size_t j = 0; j < sequence[i].size(); j++) {
+        int nb = blockSequences.numBlocks();
+        globalCoords.resize(nb);
+        for (int i = 0; i < nb; i++) {
+            size_t blen = blockSequences.blockLength(i);
+            globalCoords[i].resize(blen);
+            for (size_t j = 0; j < blen; j++) {
                 // process gap nucs first
-                globalCoords[i][j].second.resize(sequence[i][j].second.size());
-                for (size_t k = 0; k < sequence[i][j].second.size(); k++) {
+                uint32_t gaps = blockSequences.gapLength(i, j);
+                globalCoords[i][j].second.resize(gaps);
+                for (uint32_t k = 0; k < gaps; k++) {
                     globalCoords[i][j].second[k] = curScalarCoord;
                     scalarToCoord.emplace_back(j, k, i, -1);
                     curScalarCoord++;
                 }
 
                 // process main nuc
-                if (sequence[i][j].first == 'x') {
+                if (blockSequences.mainBase(i, j) == 'x') {
                     // skip if main nuc is x
                     globalCoords[i][j].first = -1;
                 } else {
@@ -456,20 +488,19 @@ struct GlobalCoords {
 
         lastScalarCoord = curScalarCoord - 1;
 
-        const auto& lastBlock = sequence.back();
-        if (lastBlock.back().second.empty()) {
+        size_t lastBlen = blockSequences.blockLength(nb - 1);
+        if (blockSequences.gapLength(nb - 1, lastBlen - 1) == 0) {
             // last block's last nuc gap is empty, take the second to last main nuc
-            lastTupleCoord = std::make_tuple(sequence.size() - 1, lastBlock.size() - 2, -1);
-            lastCoord = Coordinate(lastBlock.size() - 2, -1, sequence.size() - 1, -1);
+            lastTupleCoord = std::make_tuple(nb - 1, lastBlen - 2, -1);
+            lastCoord = Coordinate(lastBlen - 2, -1, nb - 1, -1);
         } else {
             // last block's last nuc gap is not empty, take the last nuc gap
-            lastTupleCoord =
-                std::make_tuple(sequence.size() - 1, lastBlock.size() - 1, lastBlock.back().second.size() - 1);
-            lastCoord = Coordinate(lastBlock.size() - 1, lastBlock.back().second.size() - 1, sequence.size() - 1, -1);
+            uint32_t lastGaps = blockSequences.gapLength(nb - 1, lastBlen - 1);
+            lastTupleCoord = std::make_tuple(nb - 1, lastBlen - 1, lastGaps - 1);
+            lastCoord = Coordinate(lastBlen - 1, lastGaps - 1, nb - 1, -1);
         }
 
-        const auto& firstBlock = sequence[0];
-        if (firstBlock[0].second.empty()) {
+        if (blockSequences.gapLength(0, 0) == 0) {
             // first block's first nuc gap is empty, take the first main nuc
             firstTupleCoord = std::make_tuple(0, 0, -1);
             firstCoord = Coordinate(0, -1, 0, -1);
@@ -479,8 +510,8 @@ struct GlobalCoords {
             firstCoord = Coordinate(0, 0, 0, -1);
         }
 
-        blockEdgeCoords.resize(sequence.size());
-        for (size_t i = 0; i < sequence.size(); i++) {
+        blockEdgeCoords.resize(nb);
+        for (int i = 0; i < nb; i++) {
             blockEdgeCoords[i].start = getBlockStartCoord(i);
             blockEdgeCoords[i].end = getBlockEndCoord(i);
             blockEdgeCoords[i].startScalar = getBlockStartScalar(i);
@@ -855,7 +886,6 @@ inline void applyMutations(panmanUtils::Node* node,
                            bool imputeAmb = false) {
     std::vector<char>& blockExists = blockSequences.blockExists;
     std::vector<char>& blockStrand = blockSequences.blockStrand;
-    std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence = blockSequences.sequence;
 
     // process block mutations
     for (const auto& blockMutation : node->blockMutation) {
@@ -907,8 +937,8 @@ inline void applyMutations(panmanUtils::Node* node,
 
         for (int i = 0; i < length; i++) {
             Coordinate pos = Coordinate(nucMutation, i);
-            if ((pos.nucPosition == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) ||
-                (pos.nucPosition >= sequence[pos.primaryBlockId].size())) {
+            if ((pos.nucPosition == blockSequences.blockLength(pos.primaryBlockId) - 1 && pos.nucGapPosition == -1) ||
+                (pos.nucPosition >= blockSequences.blockLength(pos.primaryBlockId))) {
                 continue;
             }
             lastOffset = i;
