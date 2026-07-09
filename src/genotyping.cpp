@@ -140,18 +140,15 @@ void genotyping::buildMutationMatricesHelper(mutationMatrices& mutMat,
             currentBaseCounts[3]++;
     }
 
-    // If this is not the root, compare with parent
     if (node != tree->root && node->parent) {
         std::string parentSeq = tree->getStringFromReference(node->parent->identifier, false, true);
 
-        // Simple sequence alignment and mutation counting
-        // In a real implementation, this would need proper sequence alignment
+        // Naive positional comparison, not a real sequence alignment.
         size_t i = 0, j = 0;
         while (i < parentSeq.length() && j < nodeSeq.length()) {
             char p = parentSeq[i];
             char n = nodeSeq[j];
 
-            // Skip non-ACGT characters
             if ((p != 'A' && p != 'C' && p != 'G' && p != 'T' && p != 'a' && p != 'c' && p != 'g' && p != 't')) {
                 i++;
                 continue;
@@ -167,7 +164,6 @@ void genotyping::buildMutationMatricesHelper(mutationMatrices& mutMat,
             int pIdx = (p == 'A') ? 0 : ((p == 'C') ? 1 : ((p == 'G') ? 2 : 3));
             int nIdx = (n == 'A') ? 0 : ((n == 'C') ? 1 : ((n == 'G') ? 2 : 3));
 
-            // Count substitutions
             if (p != n) {
                 subCount[pIdx][nIdx]++;
                 totalBaseCounts[pIdx]++;
@@ -177,13 +173,11 @@ void genotyping::buildMutationMatricesHelper(mutationMatrices& mutMat,
             j++;
         }
 
-        // Count insertions
         if (nodeSeq.length() > parentSeq.length()) {
             int64_t insSize = nodeSeq.length() - parentSeq.length();
             insCount[insSize]++;
         }
 
-        // Count deletions
         if (parentSeq.length() > nodeSeq.length()) {
             int64_t delSize = parentSeq.length() - nodeSeq.length();
             delCount[delSize]++;
@@ -281,7 +275,6 @@ static void applyMutations(panmanUtils::Tree* tree,
         bool oldExists = blockExists[blockId];
         bool oldStrand = blockStrand[blockId];
         if (isInsertion) {
-            // insertion
             blockExists[blockId] = true;
             blockStrand[blockId] = !isInversion;
             if (!blockStrand[blockId]) {
@@ -291,7 +284,6 @@ static void applyMutations(panmanUtils::Tree* tree,
                 }
             }
         } else if (isInversion) {
-            // simple inversion
             blockStrand[blockId] = !blockStrand[blockId];
             if (!blockStrand[blockId]) {
                 invertedBlocks.insert(blockId);
@@ -308,7 +300,6 @@ static void applyMutations(panmanUtils::Tree* tree,
             clearBlockBaseCounts(
                 blockId, oldBlockStrand[blockId], curBaseCounts, parentBaseCountsBacktrack, globalCoords, sequence);
         } else {
-            // deletion
             blockExists[blockId] = false;
             blockStrand[blockId] = true;
             if (!oldStrand) {
@@ -339,7 +330,7 @@ static void applyMutations(panmanUtils::Tree* tree,
         const auto& [coord, originalNuc, newNuc] = nucMutation;
         int blockId = coord.primaryBlockId;
         if (oldBlockExists[blockId] && blockExists[blockId] && oldBlockStrand[blockId] == blockStrand[blockId]) {
-            // on to on -> collect gap runs and nuc runs
+            // Block present before and after: collect gap and nuc runs.
             char parChar = originalNuc == 'x' ? '-' : originalNuc;
             char curChar = newNuc == 'x' ? '-' : newNuc;
 
@@ -365,7 +356,6 @@ static void applyMutations(panmanUtils::Tree* tree,
             }
 
             if (parChar != '-' && curChar == '-') {
-                // nuc to gap
                 if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true &&
                     gapRunUpdates.back().second.second + 1 == scalar) {
                     ++(gapRunUpdates.back().second.second);
@@ -373,7 +363,6 @@ static void applyMutations(panmanUtils::Tree* tree,
                     gapRunUpdates.emplace_back(true, std::make_pair(scalar, scalar));
                 }
             } else if (parChar == '-' && curChar != '-') {
-                // gap to nuc
                 if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false &&
                     gapRunUpdates.back().second.second + 1 == scalar) {
                     ++(gapRunUpdates.back().second.second);

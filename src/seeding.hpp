@@ -1,9 +1,8 @@
 #pragma once
 
-// Include SIMD headers in global namespace
 #include <cstdint>
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-#include <immintrin.h>  // For SIMD intrinsics (x86 only)
+#include <immintrin.h>  // x86-only SIMD intrinsics
 #endif
 
 #include <algorithm>
@@ -70,15 +69,15 @@ struct uniqueKminmer_t {
     }
 };
 
-// A syncmer seed, defined within a single sequence
+// A syncmer seed within a single sequence
 struct seed_t {
-    size_t hash;    // Hash of the k-mer
-    int64_t pos;    // Position in sequence (keep as pos, not startPos)
-    int32_t idx;    // Index in vector (used during indexing)
-    bool reversed;  // Orientation flag
-    uint32_t rpos;  // Position on reference (used during alignment)
+    size_t hash;
+    int64_t pos;    // Position in sequence
+    int32_t idx;    // Index in vector, set during indexing
+    bool reversed;
+    uint32_t rpos;  // Position on reference, set during alignment
 
-    int64_t endPos;  // End position with gaps
+    int64_t endPos;  // End position, counting gaps
 
     bool operator<(const seed_t& rhs) const { return pos < rhs.pos; }
 
@@ -144,9 +143,9 @@ void seedsFromFastq(const int32_t& k,
 
 std::string reverseComplement(std::string dna_sequence);
 
-// Lightweight FASTQ reader: reads sequences, qualities, and names without computing seeds.
-// For paired-end (fastqPath2 non-empty): RC's R2 sequences, interleaves pairs
-// (R1_0, R2_0, R1_1, R2_1, ...). Properly closes file handles.
+// Reads sequences, qualities, and names without computing seeds.
+// For paired-end (fastqPath2 non-empty): RC's R2 sequences and interleaves pairs
+// (R1_0, R2_0, R1_1, R2_1, ...).
 void readFastqPaired(std::vector<std::string>& readSequences,
                      std::vector<std::string>& readQuals,
                      std::vector<std::string>& readNames,
@@ -154,7 +153,6 @@ void readFastqPaired(std::vector<std::string>& readSequences,
                      const std::string& fastqPath2);
 
 // Homopolymer compression: collapse consecutive identical bases (e.g., AAACGG -> ACG)
-// Simple version: returns compressed sequence only
 std::string hpcCompress(const std::string& seq);
 
 // HPC with position mapping: returns (compressed_seq, mapping) where

@@ -5,16 +5,14 @@ The default mode. Places reads from one sample onto the pangenome tree, aligns t
 ## Basic usage
 
 ```bash
-# Run full pipeline (default: through consensus)
+# Full pipeline (default: through consensus)
 panmap ref.panman reads_R1.fq reads_R2.fq -t 8 -o sample
 
-# Stop at an earlier stage
+# Stop early
 panmap ref.panman reads_R1.fq reads_R2.fq --stop genotype -t 8 -o sample
 ```
 
 ## Pipeline stages
-
-By default, panmap runs through **consensus**. Use `--stop` to stop at an earlier stage.
 
 | Stage | `--stop` value | Output | Description |
 |-------|---------------|--------|-------------|
@@ -62,7 +60,7 @@ The seed index is built once next to the PanMAN (`sars_20000_twilight_dipper.pan
 
 ### 4. Reuse the index
 
-The index is cached next to the PanMAN and reused across samples with no flag needed. Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location:
+Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location:
 
 ```bash
 panmap examples/data/sars_20000_twilight_dipper.panman \

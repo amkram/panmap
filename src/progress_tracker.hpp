@@ -8,7 +8,6 @@
 #include "logging.hpp"
 
 // Aggregates per-thread progress into a single progress bar.
-// Public API matches the previous per-thread tracker so callers don't change.
 class ProgressTracker {
    public:
     ProgressTracker(size_t numThreads, const std::vector<uint64_t>& totalNodesPerThread)
@@ -31,7 +30,7 @@ class ProgressTracker {
         publish();
     }
 
-    // Replace the bar with a final action line.
+    // Flush final progress, then clear the bar.
     void finalDisplay() {
         if (!bar_) return;
         uint64_t totalProgress = 0;

@@ -1,6 +1,5 @@
 # Panmap
 
-
 [![CI](https://github.com/amkram/panmap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/amkram/panmap/actions/workflows/ci.yml)
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/panmap?label=bioconda)](https://anaconda.org/bioconda/panmap)
 [![Conda downloads](https://img.shields.io/conda/dn/bioconda/panmap?label=conda%20downloads)](https://anaconda.org/bioconda/panmap)
@@ -47,7 +46,7 @@ build/bin/panmap -h
 
 ## System requirements
 
-Any modern Linux/macOS machine with an x86-64 CPU or Apple Silicon and ≥8 GB RAM. 
+Any modern Linux/macOS machine with an x86-64 CPU or Apple Silicon and ≥8 GB RAM.
 
 Developed and benchmarked on a Linux server (dual Intel Xeon Gold 6338, 128 threads, Ubuntu 22.04 LTS), and also tested on macOS 14.3 (MacBook Air, Apple M3, 8 cores, 16 GB RAM, arm64).
 
@@ -83,7 +82,6 @@ By default, panmap runs the full pipeline (`index → place → align → genoty
 
 
 ## Metagenomic mode (`--meta`)
-
 
 **Estimate haplotype abundances**:
 

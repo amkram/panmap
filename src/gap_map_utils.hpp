@@ -24,7 +24,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
     bool leftItExists = leftIt != gapMap.end();
 
     if (toGap) {
-        // add gap range
         if (gapMap.empty()) {
             gapMap[start] = end;
             backtrack.emplace_back(true, std::make_pair(start, end));
@@ -48,7 +47,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
                     gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
                 }
             } else {
-                // insert new range
                 auto tmpIt = gapMap.emplace(start, end);
                 curIt = tmpIt.first;
                 backtrack.emplace_back(true, std::make_pair(curIt->first, curIt->second));
@@ -97,7 +95,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             }
         }
     } else {
-        // remove gap range
         if (gapMap.empty() || (!leftItExists && end < rightIt->first) || (!rightItExists && start > leftIt->second)) {
             return;
         }
@@ -227,7 +224,7 @@ void updateGapMapStep(std::map<T, T>& gapMap,
     }
 }
 
-// Convenience overload that takes update as a pair (for genotyping.cpp compatibility)
+// Overload taking the update as a pair (used by genotyping.cpp).
 template <typename T>
 void updateGapMapStep(std::map<T, T>& gapMap,
                       const std::pair<bool, std::pair<T, T>>& update,
