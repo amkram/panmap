@@ -2586,8 +2586,11 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
         tbb::parallel_for(size_t(0), chunks.size(), [&](size_t i) {
             const ChunkInfo& chunk = chunks[i];
 
-            // Clone state from template (after root was processed)
-            BuildState chunkState(templateState);
+            // A lone chunk has no concurrent readers, so mutate templateState in place
+            // (it is unused afterwards); concurrent chunks each need their own clone.
+            std::unique_ptr<BuildState> chunkStateClone;
+            if (chunks.size() > 1) chunkStateClone = std::make_unique<BuildState>(templateState);
+            BuildState& chunkState = chunkStateClone ? *chunkStateClone : templateState;
             chunkState.nodeChanges = sharedNodeChanges;  // Write to shared storage
             // Genome metrics are already shared via templateState copy
 
