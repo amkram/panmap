@@ -433,7 +433,6 @@ void genMut(const std::string& curNode,
     });
 
     vros << "##fileformat=VCFv4.3\n"
-         //  << "##contig=<ID=" + curNode + ">\n"
          << "##contig=<ID=ref>\n"
          << "##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>\n";
     vros << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + fastaOut.stem().string() + "\n";
@@ -445,7 +444,6 @@ void genMut(const std::string& curNode,
         switch (var) {
             case 1: {
                 vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
-                // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                 char ref = seq[pos];
                 char mut = subNuc(ref, mutMat, gen);
                 nseq[pos + offset] = mut;
@@ -454,7 +452,6 @@ void genMut(const std::string& curNode,
             }
             case 2: {
                 vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
-                // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                 char ref = seq[pos];
                 std::string inss;
                 for (size_t j = 0; j < get<2>(muts[i]); j++) {
@@ -468,7 +465,6 @@ void genMut(const std::string& curNode,
             }
             case 4: {
                 vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
-                // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                 std::string ref = seq.substr(pos, get<2>(muts[i]) + 1);
                 char del = seq[pos];
                 nseq =
@@ -522,7 +518,6 @@ void genMutSNP(const std::string& curNode,
     std::ofstream vros(vcfOut.string(), std::ofstream::trunc);
 
     vros << "##fileformat=VCFv4.3\n"
-         //  << "##contig=<ID=" + curNode + ">\n"
          << "##contig=<ID=ref>\n"
          << "##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>\n";
     vros << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + fastaOut.stem().string() + "\n";

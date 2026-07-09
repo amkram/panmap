@@ -67,7 +67,7 @@ panmap ref.panman reads.fq --meta -t 8 -o sample
 
 ## Citing panmap
 
-If you use panmap in your work, please cite the preprint:
+If you use panmap, please cite the preprint:
 
 > panmap: pangenome-based sequence placement, alignment, and genotyping.
 > *bioRxiv* [10.64898/2026.03.29.711974](https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1).

@@ -12,7 +12,7 @@ GroundTruthMetrics GroundTruthMetrics::compute(const SeedCountMap& nodeGenome,
         if (genomeCount <= 0) continue;  // only seeds present in this node's genome
         const double logGenome = std::log1p(static_cast<double>(genomeCount));
 
-        // Genome-only metric (placement.cpp:215) — accumulates over ALL present seeds.
+        // Genome-only metric (placement.cpp:215); accumulates over ALL present seeds.
         m.genomeMagnitudeSquared += logGenome * logGenome;
         m.genomeUniqueSeedCount++;
 

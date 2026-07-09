@@ -108,7 +108,7 @@ drive $PANMAP "$TMPDIR/rsv_4K.panman" "$TESTDATA/MZ515733.1.fastq" \
 check "vcf exists" test -f "$TMPDIR/full_fq.vcf"
 check "bam exists" test -f "$TMPDIR/full_fq.bam"
 
-# Test 8: Metagenomic abundance (--meta auto-builds the .midx index) — exercises the EM path
+# Test 8: Metagenomic abundance (--meta auto-builds the .midx index); exercises the EM path
 echo "[8] Metagenomic abundance"
 drive $PANMAP "$TMPDIR/rsv_4K.panman" --meta --stop index -t 2
 check "mgsr index created" test -s "$TMPDIR/rsv_4K.panman.midx"
@@ -134,7 +134,7 @@ import sys
 def rd(p): return "".join(l.strip() for l in open(p) if not l.startswith(">")).upper()
 sys.exit(0 if rd(sys.argv[1]) == rd(sys.argv[2]) else 1)' "$TMPDIR/cons.consensus.fa" "$TMPDIR/cons.ref.fa"
 
-# Test 10: Variant-calling correctness — inject known SNPs, assert they are called
+# Test 10: Variant-calling correctness: inject known SNPs, assert they are called
 echo "[10] Variant calling correctness - known SNPs"
 python3 - "$TESTDATA/MZ515733.1.fa" "$TMPDIR/snp_reads.fastq" "$TMPDIR/truth.txt" <<'PY'
 import sys
@@ -186,7 +186,7 @@ check "placed to MZ515733.1" grep -q "MZ515733.1" "$TMPDIR/pe.placement.tsv"
 check "bam created" test -f "$TMPDIR/pe.bam"
 check "vcf created" test -f "$TMPDIR/pe.vcf"
 
-# Test 12: Metagenomic mixture — 70/30 two-haplotype recovery (exercises the EM)
+# Test 12: Metagenomic mixture: 70/30 two-haplotype recovery (exercises the EM)
 echo "[12] Metagenomic mixture - 70/30 recovery"
 python3 - "$TESTDATA/MZ515733.1.fa" "$TESTDATA/rsv_4K.panman.random.node_1330.fa" "$TMPDIR/mix.fastq" <<'PY'
 import sys

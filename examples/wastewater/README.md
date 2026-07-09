@@ -6,7 +6,7 @@ as shown in the manuscript
 
 For this, you need to have installed minimap2, samtools, ivar, and pangolin.
 
-First step is to fetch some reads and preprocess them:
+First, fetch reads and preprocess them:
 
 ```bash
 mkdir example_run && cd example_run
@@ -28,7 +28,7 @@ Then build an index and run panmap:
 
 Panmap outputs an abundance file `SRR19707934.mgsr.abundance.out` containing the estimated abundances of nodes.
 
-To get the lineage proportions, we can retrieve the sequences from the PanMAN and use pangolin to identify their lineages:
+To get lineage proportions, retrieve the sequences from the PanMAN and use pangolin to identify their lineages:
 
 ```bash
 ../build/bin/panmap ../examples/data/sars_20000_twilight_dipper.panman --dump-sequences "$(cut -f1 SRR19707934.mgsr.abundance.out | tr ',' '\n' | grep '\S' | tr '\n' ' ' | sed 's/ $//g')" --output SRR19707934

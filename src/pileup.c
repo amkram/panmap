@@ -138,10 +138,8 @@ int our_pileup_seq(kstring_t* mplp_string,
                     if (mod[j].modified_base < 0) {
                         // ChEBI
                         ksprintf(mplp_string, "%c(%d)%s", "+-"[mod[j].strand], -mod[j].modified_base, qual);
-                        //-mod[j].modified_base, qual);
                     } else {
                         ksprintf(mplp_string, "%c%c%s", "+-"[mod[j].strand], mod[j].modified_base, qual);
-                        // mod[j].modified_base, qual);
                     }
                 }
                 kputc(']', mplp_string);
@@ -150,7 +148,6 @@ int our_pileup_seq(kstring_t* mplp_string,
     } else {
         kputc(p->is_refskip ? (bam_is_rev(p->b) ? '<' : '>') : ((bam_is_rev(p->b) && rev_del) ? '#' : '*'),
               mplp_string);
-        // rev_del) ? '#' : '*'), fp);
     }
     int del_len = -p->indel;
     if (p->indel > 0) {
@@ -173,8 +170,6 @@ int our_pileup_seq(kstring_t* mplp_string,
                     else if (ks->s[j] == ']')
                         in_mod = 0;
                     kputc(ks->s[j] != '*' ? (in_mod ? ks->s[j] : tolower(ks->s[j])) : pad, mplp_string);
-                    //? (in_mod ? ks->s[j] : tolower(ks->s[j]))
-                    //: pad, fp);
                 }
             } else {
                 int in_mod = 0;
@@ -270,7 +265,7 @@ int our_mplp_func(void* data, bam1_t* b) {
             for (i = 0; i < b->core.l_qseq; ++i) qual[i] = qual[i] > 31 ? qual[i] - 31 : 0;
         }
 
-        if (b->core.tid >= 0) {  // changed this line
+        if (b->core.tid >= 0) {
             has_ref = our_mplp_get_ref(ma, b->core.tid, &ref, &ref_len);
             if (has_ref && ref_len <= b->core.pos) {  // exclude reads outside of the reference sequence
                 fprintf(stderr,

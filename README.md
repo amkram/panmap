@@ -96,8 +96,8 @@ panmap --meta [options] <pangenome.panman> <reads...>
 ```bash
 mkdir -p examples/output
 panmap --meta -t 4 --em-delta-threshold 0.00001 -o examples/output/example \
-       examples/data/sars_20000_twilight_dipper.panman
-       examples/data/sars20000_5hap_*.fastq.gz \       
+       examples/data/sars_20000_twilight_dipper.panman \
+       examples/data/sars20000_5hap_*.fastq.gz
 ```
 
 Writes `examples/output/example.mgsr.abundance.out` (haplotype abundance per sample). These are simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples see the [full documentation](https://amkram.github.io/panmap/) or [examples/wastewater](examples/wastewater).
@@ -119,9 +119,9 @@ panmap examples/data/v_mtdna.panman examples/data/subsampled.fastq.gz \
 
 Writes three files (prefix `examples/output/subsampled`):
 
-- `.mgsr.assignedReads.fastq` — the reads that were assigned
-- `.mgsr.assignedReads.out` — per node: number of reads assigned and their indices into the fastq
-- `.mgsr.assignedReadsLCANode.out` — per LCA node: number of reads assigned and their indices; a read's LCA node is the LCA of all nodes it was assigned to
+- `.mgsr.assignedReads.fastq`: the reads that were assigned
+- `.mgsr.assignedReads.out`: per node, number of reads assigned and their indices into the fastq
+- `.mgsr.assignedReadsLCANode.out`: per LCA node, number of reads assigned and their indices; a read's LCA node is the LCA of all nodes it was assigned to
 
 ## Verify
 

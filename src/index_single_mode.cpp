@@ -1195,7 +1195,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 void index_single_mode::IndexBuilder::buildIndex() {
     panmapUtils::BlockSequences blockSequences(T);
     panmapUtils::GlobalCoords globalCoords(blockSequences);
-    // Note: refOnSyncmers and refOnKminmers are now sparse maps, no resize needed
+    // refOnSyncmers and refOnKminmers are sparse maps, no resize needed
 
     std::vector<char> blockExistsDelayed = blockSequences.blockExists;
     std::vector<char> blockStrandDelayed = blockSequences.blockStrand;
