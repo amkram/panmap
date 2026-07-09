@@ -14,8 +14,7 @@
 #include <string>
 #include <vector>
 
-// OPTIMIZATION: Identity hash for seed hashes (they're already well-distributed)
-// This avoids double-hashing and improves cache performance
+// Identity hash for seed hashes (already well-distributed): avoids double-hashing.
 struct IdentityHash {
     constexpr std::size_t operator()(uint64_t key) const noexcept { return static_cast<std::size_t>(key); }
 };
@@ -31,9 +30,9 @@ struct TraversalParams {
     int s = 8;                        // syncmer parameter s
     int t = 0;                        // t-syncmer parameter
     int l = 3;                        // k-minimizer window size (1 = use raw syncmers)
-    bool open = false;                // Whether to use open syncmers
-    bool verify_scores = false;       // Whether to recompute scores from scratch for verification
-    bool store_diagnostics = false;   // Store metric components on nodes for diagnostic output
+    bool open = false;                // use open syncmers
+    bool verify_scores = false;       // recompute scores from scratch for verification
+    bool store_diagnostics = false;   // store metric components on nodes for diagnostic output
     double seedMaskFraction = 0.001;  // Mask top N fraction of seeds by frequency (0 = disabled, 0.001 = top 0.1%)
     int minSeedQuality = 0;           // Min avg Phred quality for seed region (0 = disabled)
     bool dedupReads = false;          // Deduplicate reads before placement (count each unique sequence once)
@@ -45,10 +44,7 @@ struct TraversalParams {
         -1;            // Min read count for a seed; -1 = auto (2 if est. coverage > 3x, else 1), 1 = all seeds, 2 = filter singletons
     bool hpc = false;  // Homopolymer-compressed seeds (from index)
 
-    // ========================================
-    // Alignment-based refinement parameters
-    // After k-mer scoring, optionally refine top candidates by full alignment
-    // ========================================
+    // Alignment-based refinement: after k-mer scoring, optionally refine top candidates by full alignment
     bool refineEnabled = false;    // Enable alignment-based refinement
     double refineTopPct = 0.01;    // Top X% of nodes to consider (default 1%)
     int refineMaxTopN = 150;       // Max nodes to align against (caps the %)
@@ -60,7 +56,6 @@ struct TraversalParams {
 // Track global state during placement
 struct PlacementGlobalState {
     // Seed hash frequency map from reads (computed once, used for all nodes)
-    // OPTIMIZATION: Use IdentityHash since seed hashes are already well-distributed
     absl::flat_hash_map<size_t, int64_t, IdentityHash> seedFreqInReads;
 
     // Log-scaled read counts: log(1 + readCount) for each seed
@@ -80,21 +75,20 @@ struct PlacementGlobalState {
     double weightedContainmentDenominator = 0.0;  // Σ(1/g_i) for all seeds in reads
     double logContainmentDenominator = 0.0;       // Σ log(1+r_i) for all seeds in reads
 
-    int kmerSize = 31;  // Set from params
+    int kmerSize = 31;
 
     // MGSR index data (deserialized once upfront)
     std::vector<panmapUtils::LiteNode*> liteNodes;  // For node ID lookups
 
-    // Root node pointer for traversal
     panmapUtils::LiteNode* root = nullptr;
 
-    // Optional: Full tree for verification mode (nullptr if not using verification)
+    // Full tree for verification mode (nullptr if unused)
     panmanUtils::Tree* fullTree = nullptr;
 
     // Leave-one-out validation: node index to skip during scoring (UINT32_MAX = none)
     uint32_t skipNodeIndex = UINT32_MAX;
 
-    // Restrict scoring to leaf nodes only (nodes with no children)
+    // Restrict scoring to leaf nodes only
     bool forceLeaf = false;
 };
 
@@ -176,8 +170,7 @@ struct PlacementResult {
     uint32_t bestLogContainmentNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedLogContainmentNodeIndices;
 
-    // Per-metric alignment-based refinement results
-    // Each seed metric's top candidates are refined independently by full alignment
+    // Per-metric alignment-based refinement: each metric's top candidates refined independently by full alignment
     struct RefinedResult {
         double score = 0.0;
         uint32_t nodeIndex = UINT32_MAX;
@@ -189,12 +182,11 @@ struct PlacementResult {
     RefinedResult refinedContainment;
     RefinedResult refinedWeightedContainment;
     RefinedResult refinedLogContainment;
-    bool refinementWasRun = false;  // True if refinement was executed
+    bool refinementWasRun = false;
 
-    // Performance metrics
     int64_t totalReadsProcessed = 0;
 
-    // Update methods (take nodeIndex, resolve to string at end)
+    // Take nodeIndex, resolve to string at end
     void updateLogRawScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
     void updateLogCosineScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
     void updateContainmentScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
@@ -211,9 +203,7 @@ struct PlacementResult {
     std::string bestWeightedContainmentNodeId;
     std::string bestLogContainmentNodeId;
 
-    // ==========================================================================
-    // Alignment data (minimal storage - paths only, data extracted on demand)
-    // ==========================================================================
+    // Alignment data: paths only, data extracted on demand.
 
     // FASTQ file paths (for re-reading during alignment)
     std::string reads1Path;

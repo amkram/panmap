@@ -7,8 +7,7 @@
 
 namespace gap_map {
 
-// Templated gap map operations - works with both int64_t and uint64_t
-// T = coordinate type (int64_t or uint64_t)
+// Templated gap map operations. T = coordinate type (int64_t or uint64_t).
 
 template <typename T>
 void updateGapMapStep(std::map<T, T>& gapMap,
@@ -25,7 +24,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
     bool leftItExists = leftIt != gapMap.end();
 
     if (toGap) {
-        // add gap range
         if (gapMap.empty()) {
             gapMap[start] = end;
             backtrack.emplace_back(true, std::make_pair(start, end));
@@ -49,7 +47,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
                     gapMapUpdates.emplace_back(false, std::make_pair(curIt->first, curIt->second));
                 }
             } else {
-                // insert new range
                 auto tmpIt = gapMap.emplace(start, end);
                 curIt = tmpIt.first;
                 backtrack.emplace_back(true, std::make_pair(curIt->first, curIt->second));
@@ -98,7 +95,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             }
         }
     } else {
-        // remove gap range
         if (gapMap.empty() || (!leftItExists && end < rightIt->first) || (!rightItExists && start > leftIt->second)) {
             return;
         }
@@ -226,17 +222,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             }
         }
     }
-}
-
-// Convenience overload that takes update as a pair (for genotyping.cpp compatibility)
-template <typename T>
-void updateGapMapStep(std::map<T, T>& gapMap,
-                      const std::pair<bool, std::pair<T, T>>& update,
-                      std::vector<std::pair<bool, std::pair<T, T>>>& backtrack,
-                      std::vector<std::pair<bool, std::pair<T, T>>>& gapMapUpdates,
-                      bool recordGapMapUpdates = true) {
-    updateGapMapStep(
-        gapMap, update.second.first, update.second.second, update.first, backtrack, gapMapUpdates, recordGapMapUpdates);
 }
 
 template <typename T>

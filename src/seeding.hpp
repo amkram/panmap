@@ -1,12 +1,10 @@
 #pragma once
 
-// Include SIMD headers in global namespace
 #include <cstdint>
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-#include <immintrin.h>  // For SIMD intrinsics (x86 only)
+#include <immintrin.h>  // x86-only SIMD intrinsics
 #endif
 
-// Other includes
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -71,19 +69,16 @@ struct uniqueKminmer_t {
     }
 };
 
-// A syncmer seed, defined within a single sequence
+// A syncmer seed within a single sequence
 struct seed_t {
-    // Core properties
-    size_t hash;    // Hash of the k-mer
-    int64_t pos;    // Position in sequence (keep as pos, not startPos)
-    int32_t idx;    // Index in vector (used during indexing)
-    bool reversed;  // Orientation flag
-    uint32_t rpos;  // Position on reference (used during alignment)
+    size_t hash;
+    int64_t pos;    // Position in sequence
+    int32_t idx;    // Index in vector, set during indexing
+    bool reversed;
+    uint32_t rpos;  // Position on reference, set during alignment
 
-    // Add the end position field
-    int64_t endPos;  // End position with gaps
+    int64_t endPos;  // End position, counting gaps
 
-    // Comparison operators
     bool operator<(const seed_t& rhs) const { return pos < rhs.pos; }
 
     bool operator==(const seed_t& rhs) const { return pos == rhs.pos; }
@@ -132,25 +127,11 @@ std::pair<size_t, size_t> hashSeq(const std::string& s);
 std::vector<std::tuple<size_t, bool, bool, int64_t>>
 rollingSyncmers(std::string_view seq, int k, int s, bool open, int t = 0, bool returnAll = true);
 
-void seedsFromFastq(const int32_t& k,
-                    const int32_t& s,
-                    const int32_t& t,
-                    const bool& open,
-                    const int32_t& l,
-                    absl::flat_hash_map<size_t, std::pair<size_t, size_t>>& readSeedCounts,
-                    std::vector<std::string>& readSequences,
-                    std::vector<std::string>& readQuals,
-                    std::vector<std::string>& readNames,
-                    std::vector<std::vector<seed_t>>& readSeeds,
-                    std::vector<std::vector<std::string>>& readSeedSeqs,
-                    const std::string& fastqPath1,
-                    const std::string& fastqPath2);
-
 std::string reverseComplement(std::string dna_sequence);
 
-// Lightweight FASTQ reader: reads sequences, qualities, and names without computing seeds.
-// For paired-end (fastqPath2 non-empty): RC's R2 sequences, interleaves pairs
-// (R1_0, R2_0, R1_1, R2_1, ...). Properly closes file handles.
+// Reads sequences, qualities, and names without computing seeds.
+// For paired-end (fastqPath2 non-empty): RC's R2 sequences and interleaves pairs
+// (R1_0, R2_0, R1_1, R2_1, ...).
 void readFastqPaired(std::vector<std::string>& readSequences,
                      std::vector<std::string>& readQuals,
                      std::vector<std::string>& readNames,
@@ -158,7 +139,6 @@ void readFastqPaired(std::vector<std::string>& readSequences,
                      const std::string& fastqPath2);
 
 // Homopolymer compression: collapse consecutive identical bases (e.g., AAACGG -> ACG)
-// Simple version: returns compressed sequence only
 std::string hpcCompress(const std::string& seq);
 
 // HPC with position mapping: returns (compressed_seq, mapping) where
@@ -171,20 +151,17 @@ namespace std {
 template <>
 struct hash<seeding::uniqueKminmer_t> {
     size_t operator()(const seeding::uniqueKminmer_t& kminmer) const {
-        // Combine hashes of all member variables, including the new 'startPos'.
-        size_t h1 = std::hash<uint64_t>{}(kminmer.startPos);  // Hash for startPos
+        size_t h1 = std::hash<uint64_t>{}(kminmer.startPos);
         size_t h2 = std::hash<uint64_t>{}(kminmer.endPos);
         size_t h3 = std::hash<size_t>{}(kminmer.hash);
         size_t h4 = std::hash<bool>{}(kminmer.isReverse);
 
-        // A common pattern for combining hashes.
-        // Ensure all member hashes are combined.
         static constexpr size_t HASH_MIX = 0x9e3779b9;
         size_t seed = 0;
         seed ^= h1 + HASH_MIX + (seed << 6) + (seed >> 2);
         seed ^= h2 + HASH_MIX + (seed << 6) + (seed >> 2);
         seed ^= h3 + HASH_MIX + (seed << 6) + (seed >> 2);
-        seed ^= h4 + HASH_MIX + (seed << 6) + (seed >> 2);  // Include h4
+        seed ^= h4 + HASH_MIX + (seed << 6) + (seed >> 2);
         return seed;
     }
 };

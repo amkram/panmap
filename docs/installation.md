@@ -63,6 +63,22 @@ Cap'n Proto, htslib, Protobuf, Abseil, TBB, and zlib, and passes the
 environment's include and library paths to the bundled aligners. No extra flags
 or environment variables are needed. The binary is at `build/bin/panmap`.
 
+### Faster builds
+
+Install `ccache` and `ninja` for faster rebuilds:
+
+```bash
+conda install -c conda-forge ccache ninja   # or: brew install ccache ninja
+```
+
+`ccache` is picked up automatically; unchanged sources are served from cache.
+The bundled presets wire up Ninja plus ccache:
+
+```bash
+cmake --preset dev && cmake --build --preset dev     # Release + tests
+cmake --preset debug && cmake --build --preset debug # -O0, fastest compile
+```
+
 ### Without conda (system packages)
 
 Install the dependencies below, then build. Cap'n Proto, htslib, and the other

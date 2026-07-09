@@ -30,7 +30,6 @@ This produces `sample.bam`, `sample.vcf`, and `sample.consensus.fa`.
 Estimate which lineages are present in a mixed sample:
 
 ```bash
-# The metagenomic index (.midx) is built automatically on first run
 panmap ref.panman reads.fq --meta -t 8 -o sample
 ```
 
@@ -39,7 +38,7 @@ Output: `sample.mgsr.abundance.out`
 ## Partial pipelines
 
 ```bash
-# Place reads (default; the index is built automatically if absent)
+# Place reads (default)
 panmap ref.panman reads.fq -o sample
 
 # Place and align, skip genotyping

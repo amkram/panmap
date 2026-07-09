@@ -18,17 +18,16 @@
 
 namespace index_single_mode {
 
-// Type alias for ordered set - btree_set has better cache locality than std::set
+// btree_set has better cache locality than std::set
 using SyncmerSet = absl::btree_set<uint64_t>;
 
-// Sparse map types for memory-efficient storage
-// Instead of vector<optional<T>> sized to genome length, store only actual values
+// Sparse: store only actual values, not a vector<optional<T>> sized to genome length
 using SyncmerMap = absl::flat_hash_map<uint64_t, seeding::rsyncmer_t>;
 using KminmerMap = absl::flat_hash_map<uint64_t, uint64_t>;
 
 struct NodeSeedDelta {
-    std::vector<uint64_t> addedHashes;                             // Seeds added at this node
-    std::vector<uint64_t> deletedHashes;                           // Seeds deleted at this node
+    std::vector<uint64_t> addedHashes;
+    std::vector<uint64_t> deletedHashes;
     std::vector<std::pair<uint64_t, uint64_t>> substitutedHashes;  // <oldHash, newHash>
 
     void clear() {
@@ -40,39 +39,32 @@ struct NodeSeedDelta {
     bool empty() const { return addedHashes.empty() && deletedHashes.empty() && substitutedHashes.empty(); }
 };
 
-// Memory-optimized: uses sparse maps instead of dense vectors
 struct BuildState {
-    // Block sequence state (mutated during traversal)
     panmapUtils::BlockSequences blockSequences;
     std::vector<char> blockExistsDelayed;
     std::vector<char> blockStrandDelayed;
 
-    // Gap and inversion tracking
     std::map<uint64_t, uint64_t> gapMap;
     std::unordered_set<uint64_t> invertedBlocks;
 
-    // Genome extent tracking: first and last non-gap scalar positions
-    // Seeds in flank regions (before firstNonGapScalar or after lastNonGapScalar)
-    // should NOT be deleted when they become gaps - they're missing data, not true gaps
-    // Default: permissive (all positions inside extent) - only restricts when extentGuard is on
+    // first/last non-gap scalar positions. Seeds in flank regions (before
+    // firstNonGapScalar or after lastNonGapScalar) are missing data, not true gaps,
+    // so must NOT be deleted when they become gaps. Permissive by default; only
+    // restricted when extentGuard is on.
     uint64_t firstNonGapScalar = 0;
     uint64_t lastNonGapScalar = UINT64_MAX;
 
-    // Syncmer state - SPARSE: only stores positions with actual syncmers
-    // Memory: O(num_syncmers) instead of O(genome_length)
-    SyncmerMap refOnSyncmers;     // position -> rsyncmer_t (sparse)
+    // Sparse: O(num_syncmers) memory, not O(genome_length)
+    SyncmerMap refOnSyncmers;     // position -> rsyncmer_t
     SyncmerSet refOnSyncmersMap;  // btree_set of positions for ordered iteration
     std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
 
-    // K-minmer state - SPARSE: only stores positions with actual kminmers
-    KminmerMap refOnKminmers;  // position -> kminmer hash (sparse)
+    KminmerMap refOnKminmers;  // position -> kminmer hash
 
-    // Running seed hash counts for computing node changes on-the-fly
-    // Each chunk maintains its own copy; modified during DFS traversal
+    // Running seed hash counts for node changes. Each chunk keeps its own copy.
     std::unordered_map<uint64_t, int64_t> runningCounts;
 
-    // Shared storage for final node changes - indexed by dfsIndex (thread-safe writes)
-    // Each node writes to its own slot, so no synchronization needed
+    // Shared, indexed by dfsIndex. Each node writes its own slot, so no locking needed.
     std::shared_ptr<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>> nodeChanges;
 
     BuildState() : nodeChanges(std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>()) {}
@@ -80,7 +72,7 @@ struct BuildState {
     BuildState(BuildState&&) = default;
     BuildState& operator=(BuildState&&) = default;
 
-    // But copies runningCounts since each chunk needs its own copy
+    // Copy gives each chunk its own runningCounts
     BuildState(const BuildState& other) = default;
     BuildState& operator=(const BuildState&) = default;
 };
@@ -129,21 +121,19 @@ int open_file(const std::string& path);
 
 class IndexBuilder {
    public:
-    // capnp object
     ::capnp::MallocMessageBuilder outMessage;
     LiteIndex::Builder indexBuilder;
 
-    // tree pointer
     panmanUtils::Tree* T;
 
-    // syncmer and k-min-mer objects (legacy - used by sequential path)
+    // Legacy: used by the sequential path
     std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
-    SyncmerMap refOnSyncmers;     // SPARSE: position -> rsyncmer_t
+    SyncmerMap refOnSyncmers;     // position -> rsyncmer_t
     SyncmerSet refOnSyncmersMap;  // btree_set for ordered iteration
 
     // Use concurrent_vector for thread-safe growth without invalidating references
     tbb::concurrent_vector<seeding::uniqueKminmer_t> uniqueKminmers;
-    KminmerMap refOnKminmers;  // SPARSE: position -> kminmer hash
+    KminmerMap refOnKminmers;  // position -> kminmer hash
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;
 
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
@@ -151,20 +141,18 @@ class IndexBuilder {
     // For tracking seed counts per node (needed for LiteIndex format)
     std::vector<std::unordered_map<uint64_t, int64_t>> nodeSeedCounts;
 
-    // Thread-safe containers for parallel building
     tbb::spin_mutex uniqueKminmersMutex_;
     tbb::spin_mutex nodeToDfsIndexMutex_;
     std::atomic<uint64_t> processedNodes_{0};
 
-    // Memory management for parallel cloning
-    std::atomic<int> activeClones_{0};  // Track number of active state clones
-    int maxConcurrentClones_{0};        // Maximum allowed concurrent clones (set based on memory)
+    std::atomic<int> activeClones_{0};
+    int maxConcurrentClones_{0};  // set based on memory
 
     // Instrumentation stats for parallel builds
-    std::atomic<uint64_t> totalClonesCreated_{0};   // Cumulative clones created
-    std::atomic<uint64_t> parallelForkPoints_{0};   // Times we forked into parallel tasks
-    std::atomic<uint64_t> sequentialFallbacks_{0};  // Times we fell back to sequential (clone limit)
-    std::atomic<int> peakActiveClones_{0};          // Peak concurrent clones
+    std::atomic<uint64_t> totalClonesCreated_{0};
+    std::atomic<uint64_t> parallelForkPoints_{0};
+    std::atomic<uint64_t> sequentialFallbacks_{0};
+    std::atomic<int> peakActiveClones_{0};
     mutable std::chrono::steady_clock::time_point lastProgressLog_{};
     std::chrono::steady_clock::time_point buildStartTime_{};  // For nodes/sec calculation
     std::unique_ptr<output::ProgressBar> buildProgressBar_;
@@ -172,7 +160,6 @@ class IndexBuilder {
     // Pre-computed subtree sizes for DFS index assignment
     std::unordered_map<std::string, uint64_t> subtreeSizes_;
 
-    // Thread-safe empty nodes tracking
     tbb::spin_mutex emptyNodesMutex_;
 
     IndexBuilder(panmanUtils::Tree* T,
@@ -213,7 +200,7 @@ class IndexBuilder {
 
     void writeIndex(const std::string& path, int numThreads = 0, int zstdLevel = 7);
 
-    // Getters for parameters (for testing)
+    // Parameter getters (for testing)
     int getK() const { return k_; }
 
     int getS() const { return s_; }
@@ -236,10 +223,9 @@ class IndexBuilder {
 
     bool getExtentGuard() const { return extentGuard_; }
 
-    // Compute subtree size for a node (recursive)
     uint64_t computeSubtreeSize(panmanUtils::Node* node);
 
-    // Sequential DFS helper (original)
+    // Sequential DFS helper
     void buildIndexHelper(panmanUtils::Node* node,
                           std::unordered_set<std::string_view>& emptyNodes,
                           panmapUtils::BlockSequences& blockSequences,

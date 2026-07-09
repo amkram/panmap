@@ -48,13 +48,13 @@ class LiteNode {
     LiteNode* parent = nullptr;
     std::vector<LiteNode*> children;
 
-    // Node index in DFS order (used for efficient lookups)
+    // Node index in DFS order
     uint32_t nodeIndex = 0;
 
     // Seed changes from parent to this node (hash, parentCount, childCount)
     std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges;
 
-    // Placement scores (populated during placement)
+    // Placement scores, populated during placement
     float logRawScore = 0.0f;
     float logCosineScore = 0.0f;
     float containmentScore = 0.0f;
@@ -69,13 +69,13 @@ class LiteTree {
     std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
-    // Index-based lookup (dfsIndex -> LiteNode*)
+    // dfsIndex -> LiteNode*
     std::vector<LiteNode*> dfsIndexToNode;
 
-    // Storage for all seed changes (flat array, nodes reference spans into this)
+    // Flat storage; nodes hold spans into this
     std::vector<std::tuple<uint64_t, int64_t, int64_t>> allSeedChanges;
 
-    // True once seed changes have been loaded from the index (skip re-loading in batch mode)
+    // Skip re-loading seed changes in batch mode
     bool seedChangesLoaded = false;
 
     ~LiteTree() {
@@ -89,7 +89,6 @@ class LiteTree {
     uint32_t getBlockStartScalar(const uint32_t blockId) const;
     uint32_t getBlockEndScalar(const uint32_t blockId) const;
 
-    // Resolve node index to node ID string
     std::string resolveNodeId(uint32_t nodeIndex) const {
         if (nodeIndex < dfsIndexToNode.size() && dfsIndexToNode[nodeIndex]) {
             return dfsIndexToNode[nodeIndex]->identifier;
@@ -106,14 +105,12 @@ struct Coordinate {
 
     Coordinate() {}
 
-    // Create a Coordinate by position
     Coordinate(int nucPosition, int nucGapPosition, int primaryBlockId) {
         this->nucPosition = nucPosition;
         this->nucGapPosition = nucGapPosition;
         this->primaryBlockId = primaryBlockId;
     }
 
-    // Create a Coordinate with an offset
     Coordinate(const panmanUtils::NucMut& nm, int offset) {
         nucPosition = nm.nucPosition;
         nucGapPosition = nm.nucGapPosition;
@@ -121,7 +118,6 @@ struct Coordinate {
         moveForward(offset);
     }
 
-    // Create a Coordinate copying a NucMut
     Coordinate(const panmanUtils::NucMut& nm) : Coordinate(nm, 0) {}
 
     friend std::ostream& operator<<(std::ostream& os, const Coordinate& coord) {
@@ -129,7 +125,6 @@ struct Coordinate {
         return os;
     }
 
-    // Get base corresponding to this Coordinate's position within a sequence_t
     char getSequenceBase(
         const std::vector<std::pair<std::vector<std::pair<char, std::vector<char>>>,
                                     std::vector<std::vector<std::pair<char, std::vector<char>>>>>>& seq) const {
@@ -156,7 +151,6 @@ struct Coordinate {
         }
     }
 
-    // Set base corresponding to this Coordinate's position within a sequence_t
     void setSequenceBase(std::vector<std::pair<std::vector<std::pair<char, std::vector<char>>>,
                                                std::vector<std::vector<std::pair<char, std::vector<char>>>>>>& seq,
                          char newNuc) const {
@@ -183,7 +177,6 @@ struct Coordinate {
         }
     }
 
-    // Move "offset" steps forward
     void moveForward(int offset) {
         if (nucGapPosition == -1) {
             nucPosition += offset;
@@ -485,7 +478,6 @@ struct GlobalCoords {
             firstTupleCoord = std::make_tuple(0, 0, -1);
             firstCoord = Coordinate(0, -1, 0);
         } else {
-            // first block's first nuc gap is not empty, take the first gap nuc
             firstTupleCoord = std::make_tuple(0, 0, 0);
             firstCoord = Coordinate(0, 0, 0);
         }
@@ -614,19 +606,16 @@ struct GlobalCoords {
         }
 
         if (coord == getBlockEndTuple(blockId)) {
-            // go to the next block
             coord = getBlockStartTuple(blockId + 1);
             return;
         }
 
-        // not end of block
         if (nucGapPos == -1) {
             // cur coord is a main nuc, step right to the next main nuc
             if (nGap(blockId, nucPos + 1) == 0) {
                 // next main nuc has no gap nucs -> return the main nuc
                 coord = std::make_tuple(blockId, nucPos + 1, -1);
             } else {
-                // next main nuc has gap nucs -> return the first gap nuc
                 coord = std::make_tuple(blockId, nucPos + 1, 0);
             }
 
@@ -636,7 +625,6 @@ struct GlobalCoords {
                 // cur gap nuc is the last gap nuc -> return the main nuc
                 coord = std::make_tuple(blockId, nucPos, -1);
             } else {
-                // cur gap nuc is not the last gap nuc -> return the next gap nuc
                 coord = std::make_tuple(blockId, nucPos, nucGapPos + 1);
             }
         }
@@ -650,12 +638,10 @@ struct GlobalCoords {
         }
 
         if (coord == getBlockStartTuple(blockId)) {
-            // go to the previous block
             coord = getBlockEndTuple(blockId - 1);
             return;
         }
 
-        // not start of block
         if (nucGapPos == -1) {
             // cur coord is a main nuc
             if (nGap(blockId, nucPos) == 0) {
@@ -666,12 +652,9 @@ struct GlobalCoords {
                 coord = std::make_tuple(blockId, nucPos, nGap(blockId, nucPos) - 1);
             }
         } else {
-            // cur coord is at a gap nuc
             if (nucGapPos == 0) {
-                // cur gap coord is the first gap nuc, return the previous main nuc
                 coord = std::make_tuple(blockId, nucPos - 1, -1);
             } else {
-                // cur gap coord is not the first gap nuc, return the previous gap nuc
                 coord = std::make_tuple(blockId, nucPos, nucGapPos - 1);
             }
         }
@@ -684,14 +667,11 @@ struct GlobalCoords {
         }
 
         if (coord == blockEdgeCoords[coord.primaryBlockId].end) {
-            // go to the next block
             coord = blockEdgeCoords[coord.primaryBlockId + 1].start;
             return;
         }
 
-        // not end of block
         if (coord.nucGapPosition == -1) {
-            // cur coord is a main nuc, step right to the next main nuc
             coord.nucPosition++;
             if (nGap(coord.primaryBlockId, coord.nucPosition) != 0) {
                 // next main nuc has gap nucs -> step to the first gap nuc
@@ -703,7 +683,6 @@ struct GlobalCoords {
                 // cur gap nuc is the last gap nuc -> step to the main nuc
                 coord.nucGapPosition = -1;
             } else {
-                // cur gap nuc is not the last gap nuc -> step to the next gap nuc
                 coord.nucGapPosition++;
             }
         }
@@ -716,12 +695,10 @@ struct GlobalCoords {
         }
 
         if (coord == blockEdgeCoords[coord.primaryBlockId].start) {
-            // go to the previous block
             coord = blockEdgeCoords[coord.primaryBlockId - 1].end;
             return;
         }
 
-        // not start of block
         if (coord.nucGapPosition == -1) {
             // cur coord is a main nuc
             if (nGap(coord.primaryBlockId, coord.nucPosition) == 0) {
@@ -732,13 +709,10 @@ struct GlobalCoords {
                 coord.nucGapPosition = nGap(coord.primaryBlockId, coord.nucPosition) - 1;
             }
         } else {
-            // cur coord is at a gap nuc
             if (coord.nucGapPosition == 0) {
-                // cur gap coord is the first gap nuc, return the previous main nuc
                 coord.nucPosition--;
                 coord.nucGapPosition = -1;
             } else {
-                // cur gap coord is not the first gap nuc, return the previous gap nuc
                 coord.nucGapPosition--;
             }
         }
@@ -829,8 +803,7 @@ inline bool isCanonical(char nuc) {
     return (nuc == 'A' || nuc == 'T' || nuc == 'C' || nuc == 'G');
 }
 
-// Returns true if the mutation is from a canonical base to an ambiguous IUPAC code
-// (excluding gap '-' and sentinel 'x')
+// True if oldNuc is canonical and newNuc is an ambiguous IUPAC code (not gap '-' or sentinel 'x').
 inline bool canonicalToAmb(char oldNuc, char newNuc) {
     return (newNuc != '-' && newNuc != 'x' && isCanonical(oldNuc) && !isCanonical(newNuc));
 }
@@ -854,7 +827,6 @@ inline void applyMutations(panmanUtils::Node* node,
     std::vector<char>& blockExists = blockSequences.blockExists;
     std::vector<char>& blockStrand = blockSequences.blockStrand;
 
-    // process block mutations
     for (const auto& blockMutation : node->blockMutation) {
         const int32_t blockId = blockMutation.primaryBlockId;
         const bool isInsertion = blockMutation.blockMutInfo;
@@ -896,7 +868,6 @@ inline void applyMutations(panmanUtils::Node* node,
         }
     }
 
-    // process nuc mutations
     for (const auto& nucMutation : node->nucMutation) {
         int length = nucMutation.mutInfo >> 4;
         int blockId;
@@ -916,9 +887,7 @@ inline void applyMutations(panmanUtils::Node* node,
 
             if (oldNuc == newNuc) continue;
 
-            // Imputation: when enabled, skip mutations where a canonical base
-            // becomes an ambiguous IUPAC code (not gap/sentinel).
-            // This effectively inherits the parent's base for syncmer computation.
+            // Skip canonical->ambiguous mutations so syncmers inherit the parent's base.
             if (imputeAmb && canonicalToAmb(oldNuc, newNuc)) continue;
 
             blockSequences.setSequenceBase(pos, newNuc);
@@ -1004,9 +973,8 @@ inline void updateGapMap(std::map<uint64_t, uint64_t>& gapMap,
     }
 }
 
-// Returns (firstNonGapScalar, lastNonGapScalar) - the bounds of actual sequence data
-// flankSize: number of non-gap bases to skip at each end (default 0)
-// If genome is all gaps or too short, returns (UINT64_MAX, 0)
+// Returns (firstNonGapScalar, lastNonGapScalar). flankSize non-gap bases are skipped at
+// each end. Returns (UINT64_MAX, 0) if the genome is all gaps or too short.
 
 inline std::pair<uint64_t, uint64_t>
 computeExtentFromGapMap(const std::map<uint64_t, uint64_t>& gapMap, uint64_t lastScalarCoord, uint64_t flankSize = 0) {

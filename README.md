@@ -1,6 +1,5 @@
 # Panmap
 
-
 [![CI](https://github.com/amkram/panmap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/amkram/panmap/actions/workflows/ci.yml)
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/panmap?label=bioconda)](https://anaconda.org/bioconda/panmap)
 [![Conda downloads](https://img.shields.io/conda/dn/bioconda/panmap?label=conda%20downloads)](https://anaconda.org/bioconda/panmap)
@@ -47,7 +46,7 @@ build/bin/panmap -h
 
 ## System requirements
 
-Any modern Linux/macOS machine with an x86-64 CPU or Apple Silicon and ≥8 GB RAM. 
+Any modern Linux/macOS machine with an x86-64 CPU or Apple Silicon and ≥8 GB RAM.
 
 Developed and benchmarked on a Linux server (dual Intel Xeon Gold 6338, 128 threads, Ubuntu 22.04 LTS), and also tested on macOS 14.3 (MacBook Air, Apple M3, 8 cores, 16 GB RAM, arm64).
 
@@ -84,7 +83,6 @@ By default, panmap runs the full pipeline (`index → place → align → genoty
 
 ## Metagenomic mode (`--meta`)
 
-
 **Estimate haplotype abundances**:
 
 ```bash
@@ -96,8 +94,8 @@ panmap --meta [options] <pangenome.panman> <reads...>
 ```bash
 mkdir -p examples/output
 panmap --meta -t 4 --em-delta-threshold 0.00001 -o examples/output/example \
-       examples/data/sars_20000_twilight_dipper.panman
-       examples/data/sars20000_5hap_*.fastq.gz \       
+       examples/data/sars_20000_twilight_dipper.panman \
+       examples/data/sars20000_5hap_*.fastq.gz
 ```
 
 Writes `examples/output/example.mgsr.abundance.out` (haplotype abundance per sample). These are simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples see the [full documentation](https://amkram.github.io/panmap/) or [examples/wastewater](examples/wastewater).
@@ -119,9 +117,9 @@ panmap examples/data/v_mtdna.panman examples/data/subsampled.fastq.gz \
 
 Writes three files (prefix `examples/output/subsampled`):
 
-- `.mgsr.assignedReads.fastq` — the reads that were assigned
-- `.mgsr.assignedReads.out` — per node: number of reads assigned and their indices into the fastq
-- `.mgsr.assignedReadsLCANode.out` — per LCA node: number of reads assigned and their indices; a read's LCA node is the LCA of all nodes it was assigned to
+- `.mgsr.assignedReads.fastq`: the reads that were assigned
+- `.mgsr.assignedReads.out`: per node, number of reads assigned and their indices into the fastq
+- `.mgsr.assignedReadsLCANode.out`: per LCA node, number of reads assigned and their indices; a read's LCA node is the LCA of all nodes it was assigned to
 
 ## Verify
 

@@ -171,8 +171,6 @@ struct Config {
     // Batch mode
     std::string batchFile;  // Path to batch file listing samples (one per line: reads1 [reads2])
 
-    // Leave-one-out validation mode
-
     // Diagnostic options
     std::string dumpAllScores;  // Dump all node scores to this file
 
@@ -320,10 +318,6 @@ std::unique_ptr<panmanUtils::TreeGroup> loadPanMAN(const std::string& path) {
     return std::make_unique<panmanUtils::TreeGroup>(stream);
 }
 
-/**
- * Get ungapped genome length for a node (count non-gap characters).
- */
-
 std::string sanitizeFilename(const std::string& s) {
     std::string result = s;
     for (char& c : result) {
@@ -344,8 +338,6 @@ void saveNodeSequence(panmanUtils::Tree* T, const std::string& nodeId, const std
     }
     logging::msg("Saved {} ({} bp) to {}", nodeId, seq.size(), path);
 }
-
-/* INDEXING */
 
 bool buildMgsrIndex(const Config& cfg) {
     if (fs::exists(cfg.index) && !cfg.forceReindex) {
@@ -391,8 +383,6 @@ bool buildIndex(const Config& cfg) {
     output::done("index", cfg.index, fmt::format("{} nodes", output::fmt_count(tg->trees[0].allNodes.size())), ms);
     return true;
 }
-
-// Compute tree distance between two nodes (number of edges)
 
 void writeOCRanks(const std::string& outputFile,
                   const std::vector<std::pair<std::string, double>>& overlapCoefficients) {
@@ -686,7 +676,6 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           << batch->readProcessingTime << " seconds (read processing) | " << batch->scoringTime
                           << " seconds (scoring) | " << batch->assigningTime << " seconds (assigning) | "
                           << batch->postProcessingTime << " seconds (post-processing)\n";
-                // collect results ...
                 delete batch;
             }));
 
@@ -771,7 +760,6 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
 
     assignedReadsLCANodeOut.close();
 
-    // Calculate breadth from assigned reads
     if (breadthRatio) {
         std::cout << "Calculating breadth ratio from assigned reads..." << std::endl;
         FILE* fpAssigned = fopen(std::string(prefix + ".mgsr.assignedReads.fastq").c_str(), "r");
@@ -991,8 +979,6 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
 }
 
 bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
-    auto start_time_deconvolution = std::chrono::high_resolution_clock::now();
-
     auto start_time_initializeQueryData = std::chrono::high_resolution_clock::now();
     threadsManager.initializeQueryData(cfg.reads1, cfg.reads2, cfg.ampliconDepth, cfg.dust, cfg.maskReadEnds);
     auto end_time_initializeQueryData = std::chrono::high_resolution_clock::now();
@@ -1002,7 +988,6 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
                     << static_cast<double>(duration_initializeQueryData.count()) / 1000.0 << "s\n"
                     << std::endl;
 
-    // compute overlap coefficients
     {
         bool lowMemory = false;
         mgsr::mgsrPlacer placer(&T, threadsManager, lowMemory, 0);
@@ -1051,7 +1036,7 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
         return true;
     }
 
-    T.seedInfos.clear();  // no longer needed. clear memory to prep for EM.
+    T.seedInfos.clear();  // free memory before EM
     mgsr::squareEM squareEM(threadsManager,
                             T,
                             cfg.output,
@@ -1136,7 +1121,6 @@ bool runMetagenomic(const Config& cfg) {
             std::cerr << "Error: Reads1 file is required when not using batch mode" << std::endl;
             return false;
         } else {
-            // check if batch files path exists
             std::vector<BatchEntry> dummyBatchEntries;
             if (!readBatchFiles(cfg.batchFile, dummyBatchEntries)) {
                 std::cerr << "Error: Failed to read batch files" << std::endl;
@@ -1200,7 +1184,6 @@ bool runMetagenomic(const Config& cfg) {
     LiteIndex::Reader indexReader = baseReader->getRoot<LiteIndex>();
 
     bool lowMemory = false;
-    // initialize tree
     mgsr::MgsrLiteTree T;
     T.initialize(indexReader,
                  cfg.taxonomicMetadata,
@@ -1219,7 +1202,6 @@ bool runMetagenomic(const Config& cfg) {
         return false;
     }
 
-    // initialize threads manager
     mgsr::ThreadsManager threadsManager(&T,
                                         cfg.output,
                                         cfg.threads,
@@ -1231,17 +1213,16 @@ bool runMetagenomic(const Config& cfg) {
                                         lowMemory);
     threadsManager.initializeMGSRIndex(T.k, T.s, T.t, T.l, T.openSyncmer);
 
-    // filterAndAssign
     if (cfg.filterAndAssign) {
         if (!runFilterAndAssign(T, threadsManager, cfg)) {
             return false;
         }
-        return true;  // great success!
+        return true;
     } else {
         if (!runDeconvolution(T, threadsManager, cfg)) {
             return false;
         }
-        return true;  // great success!
+        return true;
     }
 
     return true;
@@ -1407,7 +1388,6 @@ int runBatchPlacement(const Config& cfg) {
                     continue;
                 }
 
-                bool sampleOk = true;
                 if (cfg.stopAfter >= PipelineStage::Align) {
                     Config sampleCfg = cfg;
                     sampleCfg.output = s.prefix;
@@ -1487,7 +1467,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
             fullTreePtr = &tg->trees[0];
             logging::debug("Loaded full tree for refinement ({} nodes)", fullTreePtr->allNodes.size());
         } else {
-            logging::warn("Failed to load full tree for refinement - disabling refinement");
+            logging::warn("Failed to load full tree for refinement, disabling refinement");
             refineEnabled = false;
         }
     }
@@ -1525,7 +1505,6 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                    result.bestLogCosineScore,
                    result.bestContainmentScore);
 
-    // Dump all scores to file if requested
     if (!cfg.dumpAllScores.empty()) {
         std::ofstream outFile(cfg.dumpAllScores);
         if (outFile) {
@@ -1536,7 +1515,6 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
                     allScores.push_back({node->logRawScore, id});
                 }
             }
-            // Sort by logRaw descending
             std::sort(allScores.begin(), allScores.end(), std::greater<>());
             for (auto& [score, id] : allScores) {
                 auto* node = tree.allLiteNodes[id];
@@ -1572,23 +1550,21 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
     std::string nodeId = placement.bestLogContainmentNodeId;
 
     if (nodeId.empty()) {
-        logging::err("No best node ID from placement - cannot align");
+        logging::err("No best node ID from placement, cannot align");
         return 1;
     }
 
     std::string bestMatchSequence = panmapUtils::getStringFromReference(T, nodeId, false);
 
     if (bestMatchSequence.empty()) {
-        logging::err("Empty sequence for node '{}' - cannot align", nodeId);
+        logging::err("Empty sequence for node '{}', cannot align", nodeId);
         return 1;
     }
 
-    // Output file paths
     std::string refFileName = cfg.output + ".ref.fa";
     std::string samFileName = cfg.output + ".sam";
     std::string bamFileName = cfg.output + ".bam";
 
-    // Write reference fasta
     {
         std::ofstream outFile(refFileName);
         if (!outFile) {
@@ -1609,13 +1585,13 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    // Opt 1: Lightweight FASTQ reader (no seed computation)
+    // Lightweight FASTQ reader (no seed computation)
     std::vector<std::string> readSequences, readQuals, readNames;
     seeding::readFastqPaired(readSequences, readQuals, readNames, cfg.reads1, cfg.reads2);
 
     logging::debug("Loaded {} reads", readSequences.size());
 
-    // Opts 2+3: Parallel alignment with direct BAM construction
+    // Parallel alignment with direct BAM construction
     bool pairedEndReads = !cfg.reads2.empty();
     alignAndWriteBam(
         readSequences, readQuals, readNames, bestMatchSequence, bamFileName, pairedEndReads, cfg.threads, nodeId);
@@ -1650,7 +1626,6 @@ int runGenotyping(const Config& cfg) {
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    // Create mpileup and VCF
     createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq, refName);
     createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred);
 
@@ -1738,8 +1713,6 @@ void printUsage() {
 
 int main(int argc, char** argv) {
     Config cfg;
-
-    // Define options - organized into visible (common) and advanced groups
 
     // === Common options (shown in --help) ===
     po::options_description visible("Options");
@@ -1904,20 +1877,17 @@ int main(int argc, char** argv) {
     po::positional_options_description pos;
     pos.add("panman", 1).add("reads", -1);
 
-    // Combine option groups
     po::options_description all;  // For parsing
     all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer).add(positional);
 
     po::options_description visible_all;  // For --help-all
     visible_all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer);
 
-    // Parse
     po::variables_map vm;
     try {
         po::store(po::command_line_parser(argc, argv).options(all).positional(pos).run(), vm);
         po::notify(vm);
     } catch (const po::error& e) {
-        // Check for NO_COLOR env var
         const char* noColorEnv = std::getenv("NO_COLOR");
         bool plainMode = vm.count("no-color") > 0 || (noColorEnv && noColorEnv[0] != '\0');
         output::init(false, false, plainMode);
@@ -1935,7 +1905,6 @@ int main(int argc, char** argv) {
     // Initialize output early for help/version formatting
     output::init(cfg.quiet, cfg.verbose, cfg.plain);
 
-    // Handle help/version
     if (vm.count("help") || argc == 1) {
         printUsage();
         std::cout << visible << "\n";
@@ -1953,7 +1922,6 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // Validate required args
     if (cfg.panman.empty()) {
         output::error("PanMAN file required");
         return 1;
@@ -1984,7 +1952,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Parse stop stage
     std::string stopStr = vm["stop"].as<std::string>();
     if (stopStr == "index")
         cfg.stopAfter = PipelineStage::Index;
@@ -2003,13 +1970,12 @@ int main(int argc, char** argv) {
 
     // Default --force-leaf on whenever the pipeline runs past placement
     // (unless user explicitly set it). Only --stop place allows placement
-    // on internal nodes. Note: bool_switch always has a default, so
-    // vm.count() is always 1 here; use defaulted() to detect an explicit flag.
+    // on internal nodes. bool_switch always has a default, so vm.count() is
+    // always 1 here; use defaulted() to detect an explicit flag.
     if (vm["force-leaf"].defaulted() && cfg.stopAfter > PipelineStage::Place) {
         cfg.forceLeaf = true;
     }
 
-    // Set defaults
     // The index path is always derived from the panman (placement -> .idx, metagenomic
     // -> .midx); -o does not affect it. Pass --index to load a specific pre-built index.
     if (cfg.index.empty()) {
@@ -2048,21 +2014,11 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Install signal handlers for graceful interruption
     signals::install_handlers();
 
-    // Initialize threading
     tbb::global_control tbb_ctl(tbb::global_control::max_allowed_parallelism, cfg.threads);
 
-    // ========================================================================
-    // Print Configuration Summary
-    // ========================================================================
-
     if (cfg.dumpNodeId.empty()) output::banner(VERSION);
-
-    // ========================================================================
-    // Run Pipeline
-    // ========================================================================
 
     try {
         // Utility: dump specific node sequence
@@ -2215,7 +2171,6 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        // Stage 1: Index
         if (!buildIndex(cfg)) return 1;
         if (signals::check_interrupted()) return 130;  // Standard exit code for SIGINT
 
@@ -2271,7 +2226,6 @@ int main(int argc, char** argv) {
         if (signals::check_interrupted()) return 130;
         if (cfg.stopAfter == PipelineStage::Genotype) return finishWithSummary();
 
-        // Stage 5: Consensus
         if (runConsensus(cfg) != 0) {
             output::fail("build", "consensus generation failed");
             return 1;
