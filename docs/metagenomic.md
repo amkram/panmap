@@ -54,7 +54,7 @@ panmap ../examples/data/sars_20000_twilight_dipper.panman \
   --output SRR19707934 -t 8
 ```
 
-Output: `SRR19707934.mgsr.abundance.out` -- estimated node abundances.
+Output: `SRR19707934.mgsr.abundance.out`, estimated node abundances.
 
 ### 3. Identify lineages
 

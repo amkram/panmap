@@ -1,7 +1,6 @@
-// Conversion/alignment-IO tests: exercise the real alignAndWriteBam (minimap2 +
-// direct bam1_t construction) and verify the output BAM structurally by reading it
-// back with htslib. The full align->bam->vcf->consensus path is covered by the e2e
-// test; the stale samtools-generated conversion_test_data goldens are not revived.
+// Conversion/alignment-IO tests: run the real alignAndWriteBam and verify the output
+// BAM structurally by reading it back with htslib. The full align->bam->vcf->consensus
+// path is covered by the e2e test.
 #include <boost/test/unit_test.hpp>
 
 #include "conversion.hpp"
@@ -33,7 +32,6 @@ BOOST_AUTO_TEST_CASE(align_and_write_bam_structure) {
     std::string reference = ts::readFasta(ts::dataPath("MZ515733.1.fa"));
     BOOST_REQUIRE(!reference.empty());
 
-    // Real reads for the same genome.
     std::vector<std::string> readSequences, readQuals, readNames;
     seeding::readFastqPaired(readSequences, readQuals, readNames, ts::dataPath("MZ515733.1.fastq"), "");
     BOOST_REQUIRE(!readSequences.empty());
@@ -50,7 +48,6 @@ BOOST_AUTO_TEST_CASE(align_and_write_bam_structure) {
     BOOST_REQUIRE(std::filesystem::exists(bamPath));
     BOOST_REQUIRE(std::filesystem::file_size(bamPath) > 0);
 
-    // Read the BAM back with htslib and assert structure.
     samFile* in = sam_open(bamPath.c_str(), "r");
     BOOST_REQUIRE(in != nullptr);
     sam_hdr_t* hdr = sam_hdr_read(in);
@@ -78,7 +75,7 @@ BOOST_AUTO_TEST_CASE(align_and_write_bam_structure) {
     BOOST_TEST(total > 0);
     // Reads come from this genome, so the large majority must map.
     BOOST_TEST(mapped > total / 2);
-    // Output is coordinate-sorted (mapped records appear in non-decreasing position).
+    // Coordinate-sorted: mapped records appear in non-decreasing position.
     BOOST_TEST(sortedByPos);
 
     std::error_code ec;

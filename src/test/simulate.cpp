@@ -81,7 +81,6 @@ int main(int argc, char* argv[]) {
         }
         po::notify(vm);
 
-        // input variables
         std::string panmatPath = vm["panmat"].as<std::string>();
         std::string mut_spec = vm["mut_spec"].as<std::string>();
         std::string mut_spec_type = vm["mut_spec_type"].as<std::string>();
@@ -96,7 +95,6 @@ int main(int argc, char* argv[]) {
         int cpus = vm["cpus"].as<int>();
         bool no_reads = vm["no-reads"].as<bool>();
 
-        // Check mut_spec - only load if a file was specified
         genotyping::mutationMatrices mutMat = genotyping::mutationMatrices();
         if (!mut_spec.empty()) {
             if (fs::exists(mut_spec)) {
@@ -112,7 +110,6 @@ int main(int argc, char* argv[]) {
             scaleMutationMatrices(mutMat, mutation_rate);
         }
 
-        // Check out_dir input
         if (!fs::is_directory(fs::path(out_dir))) {
             throw std::invalid_argument("--out_dir input is not a valid directory: " + out_dir);
         }
@@ -131,7 +128,6 @@ int main(int argc, char* argv[]) {
                 << "Random seed: " << seedstr << "\n"
                 << "No reads: " << no_reads << "\n";
 
-        // Check multitoken inputs
         std::pair<int, int> indel_len;
         std::vector<double> mutnum_double;
         if (!vm.count("indel_len")) {
@@ -159,20 +155,15 @@ int main(int argc, char* argv[]) {
             throw std::invalid_argument("--mut_spec_type only supports snp");
         }
 
-        // check model input
         const std::vector<std::string> acceptedModels = {"NextSeq", "NovaSeq", "HiSeq", "MiSeq"};
         if (std::find(acceptedModels.begin(), acceptedModels.end(), model) == acceptedModels.end()) {
             throw std::invalid_argument("Unknown --model input, please double check");
         }
 
-        // read treeeee
-        // If the data structure loaded into memory is a PanMAT, it is pointed to by T
-        panmanUtils::Tree* T = nullptr;
-        // If the data structure loaded into memory is a PanMAN, it is pointed to by TG
-        panmanUtils::TreeGroup* TG = nullptr;
+        panmanUtils::Tree* T = nullptr;       // set if the file loads as a PanMAT
+        panmanUtils::TreeGroup* TG = nullptr;  // set if the file loads as a PanMAN
 
         try {
-            // Try to load PanMAN file directly into memory
             std::ifstream inputFile(panmatPath);
             boost::iostreams::filtering_streambuf<boost::iostreams::input> inPMATBuffer;
             inPMATBuffer.push(boost::iostreams::lzma_decompressor());
@@ -202,11 +193,9 @@ int main(int argc, char* argv[]) {
             T = &(TG->trees[0]);
         }
 
-        // check node
         if (refNode != "RANDOM" && T->allNodes.find(refNode) == T->allNodes.end()) {
             throw std::invalid_argument("Couldn't find --ref node on tree");
         }
-        // GO time
         unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
         if (seedstr != "RANDOM") {
             try {
@@ -433,7 +422,6 @@ void genMut(const std::string& curNode,
     });
 
     vros << "##fileformat=VCFv4.3\n"
-         //  << "##contig=<ID=" + curNode + ">\n"
          << "##contig=<ID=ref>\n"
          << "##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>\n";
     vros << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + fastaOut.stem().string() + "\n";
@@ -445,7 +433,6 @@ void genMut(const std::string& curNode,
         switch (var) {
             case 1: {
                 vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
-                // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                 char ref = seq[pos];
                 char mut = subNuc(ref, mutMat, gen);
                 nseq[pos + offset] = mut;
@@ -454,7 +441,6 @@ void genMut(const std::string& curNode,
             }
             case 2: {
                 vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
-                // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                 char ref = seq[pos];
                 std::string inss;
                 for (size_t j = 0; j < get<2>(muts[i]); j++) {
@@ -468,7 +454,6 @@ void genMut(const std::string& curNode,
             }
             case 4: {
                 vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
-                // vros << curNode << "\t" << std::to_string(pos + 1) + "\t.\t";
                 std::string ref = seq.substr(pos, get<2>(muts[i]) + 1);
                 char del = seq[pos];
                 nseq =
@@ -522,7 +507,6 @@ void genMutSNP(const std::string& curNode,
     std::ofstream vros(vcfOut.string(), std::ofstream::trunc);
 
     vros << "##fileformat=VCFv4.3\n"
-         //  << "##contig=<ID=" + curNode + ">\n"
          << "##contig=<ID=ref>\n"
          << "##FORMAT=<ID=GT,Number=1,Type=String,Description=Genotype>\n";
     vros << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + fastaOut.stem().string() + "\n";
@@ -620,12 +604,10 @@ void sim(panmanUtils::Tree* T,
         std::replace(curNode.begin(), curNode.end(), ' ', '_');
         std::cout << "curNodeID: " << curNodeID << std::endl;
         std::cout << "Making reference fasta for " << curNode << std::endl;
-        // Make reference fasta
         makeFasta(curNode,
                   T->getStringFromReference(curNodeID, false),
                   (outRefFastaObj / fs::path(curNode + ".fa")).string());
 
-        // Make variant fasta and vairant vcf
         fs::path fastaOut;
         fs::path vcfOut;
         if (refNode == "RANDOM") {
@@ -659,7 +641,6 @@ void sim(panmanUtils::Tree* T,
                    seed);
         }
 
-        // Make reads using InSilicoSeq
         if (!no_reads) {
             simReads(fastaOut, outReadsObj, model, n_reads, cpus, seed);
         }

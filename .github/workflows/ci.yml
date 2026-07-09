@@ -32,6 +32,10 @@ jobs:
         with:
           environment-file: environment.yml
           cache-environment: true
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache
+          max-size: 500M
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
       - name: Build
@@ -53,6 +57,10 @@ jobs:
         with:
           environment-file: environment.yml
           cache-environment: true
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache
+          max-size: 500M
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
       - name: Build

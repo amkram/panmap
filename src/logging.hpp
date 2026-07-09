@@ -159,7 +159,6 @@ inline void warn(const std::string& msg) {
     std::cerr << style::yellow() << "warn" << style::reset() << style::dim() << ": " << style::reset() << msg << "\n";
 }
 
-// Verbose-only chatter
 template <typename... Args>
 inline void info(fmt::format_string<Args...> fmt, Args&&... args) {
     if (!config().verbose) return;
@@ -182,10 +181,8 @@ inline void debug(const std::string& msg) {
     std::cerr << style::dim() << msg << style::reset() << "\n";
 }
 
-// Buffered single-line stream rendered in dim/gray, so routine log lines recede
-// and the styled stage lines stand out. `detail()` is visible by default (unless
-// --quiet); `trace()` is shown only under --verbose. Existing call sites convert
-// by swapping the stream object only: `output::detail() << "x " << n << "\n";`.
+// Buffered single-line stream rendered dim so routine log lines recede and styled
+// stage lines stand out. detail() is visible unless --quiet; trace() only under --verbose.
 class LineBuf {
    public:
     explicit LineBuf(bool enabled) : enabled_(enabled) {}
@@ -230,7 +227,7 @@ inline LineBuf trace() {
     return LineBuf(config().verbose && !config().quiet);
 }
 
-// One-line tool+version banner. No subtitle in default mode.
+// One-line tool+version banner.
 inline void banner(const std::string& version, const std::string& /*subtitle*/ = "") {
     if (config().quiet) return;
     std::cerr << style::bold() << "panmap" << style::reset() << style::dim() << " " << version << style::reset()
@@ -239,12 +236,9 @@ inline void banner(const std::string& version, const std::string& /*subtitle*/ =
 
 // Stage line columns:
 //   "  ICN  LABEL.  SUBJECT.................  STAT.........    TIME"
-//
-// Subject and stat are left-padded to a min width so columns align across
-// stages; time is right-padded so right edges line up. Values longer than
-// the min just push the next column over (no truncation). All input strings
-// must be plain text (no ANSI codes), or width math will be wrong — embed
-// styling outside via the helpers below.
+// Subject/stat are left-padded to a min width so columns align across stages;
+// time is right-padded so right edges line up. Input strings must be plain text
+// (no ANSI codes) or the width math breaks; apply styling via the helpers below.
 constexpr int kLabelWidth = 6;
 constexpr int kSubjectWidth = 22;
 constexpr int kStatWidth = 14;
@@ -252,10 +246,6 @@ constexpr int kTimeWidth = 6;
 
 inline std::string status_ok() {
     return fmt::format("{}{}{}", style::green(), box::check(), style::reset());
-}
-
-inline std::string status_fail() {
-    return fmt::format("{}{}{}", style::red(), box::cross(), style::reset());
 }
 
 inline std::string pad_right(const std::string& s, int w) {
@@ -268,8 +258,8 @@ inline std::string pad_left(const std::string& s, int w) {
     return std::string(w - s.size(), ' ') + s;
 }
 
-// Truncate to w display columns, keeping the tail (the most informative end of a
-// file path) behind a leading ellipsis. Assumes ASCII content (paths, counts).
+// Truncate to w columns, keeping the tail (informative end of a path) behind a
+// leading ellipsis. Assumes ASCII content.
 inline std::string truncate_tail(const std::string& s, int w) {
     if (w <= 0) return "";
     if ((int)s.size() <= w) return s;
@@ -279,7 +269,6 @@ inline std::string truncate_tail(const std::string& s, int w) {
     return std::string(ell) + s.substr(s.size() - (w - ellCols));
 }
 
-// Format an integer with thousands separators (commas) for terminal display.
 inline std::string fmt_count(uint64_t n) {
     std::string s = std::to_string(n);
     int insert = (int)s.size() - 3;
@@ -327,7 +316,7 @@ inline void fail(const std::string& label, const std::string& subject, const std
     write_status_line(box::cross(), style::red(), label, subject, stat, -1);
 }
 
-// Legacy 1- and 2-arg done() are now debug-only (kept for old callsites)
+// Legacy 1/2-arg done(): debug-only, kept for old callsites.
 inline void done(const std::string& what) {
     if (!config().verbose) return;
     std::cerr << style::dim() << "  " << status_ok() << " " << what << style::reset() << "\n";
@@ -345,7 +334,7 @@ inline void summary(int64_t /*total_ms*/) {
     std::cerr << "\n";
 }
 
-// --- Legacy stage/step/done helpers (now debug-only) ---
+// Legacy stage/step helpers, debug-only.
 inline void stage(const std::string& name) {
     if (!config().verbose) return;
     std::cerr << style::dim() << box::arrow() << " " << name << style::reset() << "\n";
@@ -362,7 +351,7 @@ inline void step(const std::string& msg) {
     std::cerr << style::dim() << "  " << msg << style::reset() << "\n";
 }
 
-// --- Indeterminate progress message (one-line, overwritten) ---
+// Indeterminate progress message (one line, overwritten in place).
 inline void progress(const std::string& msg) {
     if (config().quiet || !config().isTTY || config().plain) return;
     std::cerr << "\r\033[K" << style::dim() << "  " << msg << style::reset() << std::flush;
@@ -372,20 +361,9 @@ inline void progress_clear() {
     if (config().isTTY && !config().plain) std::cerr << "\r\033[K" << std::flush;
 }
 
-inline void progress_pct(const std::string& task, size_t current, size_t total, int64_t elapsed_ms = -1) {
-    if (config().quiet || !config().isTTY || config().plain) return;
-    int pct = total > 0 ? static_cast<int>((current * 100) / total) : 0;
-    std::cerr << "\r\033[K" << style::dim() << "  " << task << " " << pct << "%";
-    if (elapsed_ms >= 0) std::cerr << " (" << format_duration(elapsed_ms) << ")";
-    std::cerr << style::reset() << std::flush;
-}
-
-// === Progress bar ===
-//
-// In-place line:
+// Progress bar. In-place line:
 //     <spinner> <label>  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━╸    42%  · 1.2s
-//
-// On completion, clear() leaves the line empty so caller can emit a done() line.
+// clear() leaves the line empty so the caller can emit a done() line.
 class ProgressBar {
    public:
     ProgressBar(std::string label, uint64_t total) : label_(std::move(label)), total_(total) {
@@ -500,11 +478,10 @@ inline bool check_interrupted(bool print_message = true) {
     return false;
 }
 
-// Async-signal-safe handler. Exits immediately on the first Ctrl-C/SIGTERM
-// rather than waiting for the inner work loop to poll a flag — long stages
-// (8M-node index, EM rounds) never poll, so the polite path looked stuck.
-// Output files are written all-at-once at stage end, so an interrupt
-// mid-stage simply leaves no partial artifact.
+// Async-signal-safe handler. Exits immediately on first Ctrl-C/SIGTERM rather than
+// polling a flag: long stages (8M-node index, EM rounds) never poll, so a polite
+// path looks stuck. Outputs are written all-at-once at stage end, so an interrupt
+// mid-stage leaves no partial artifact.
 inline void handler(int signum) {
     (void)signum;
     static const char msg[] = "\ninterrupted\n";
@@ -523,7 +500,7 @@ inline void install_handlers() {
 
 }  // namespace signals
 
-// Legacy logging namespace (default-visible info now requires --verbose)
+// Legacy logging namespace; info now requires --verbose.
 namespace logging {
 template <typename... Args>
 inline void debug(fmt::format_string<Args...> f, Args&&... a) {
