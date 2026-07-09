@@ -12,7 +12,7 @@
 #include "3rdparty/minimap2/minimap.h"
 #include "3rdparty/minimap2/mmpriv.h"
 
-// Types from mm_align.h — redeclared here to avoid include path issues
+// Types from mm_align.h, redeclared here to avoid include path issues
 // when this file is compiled as part of the bwa target (which doesn't have
 // minimap2/ on its include path, but mm_align.h includes <minimap2/mmpriv.h>).
 typedef struct {
@@ -79,7 +79,7 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
             // Replicate minimap2 sr preset scoring/index params exactly.
             // We DON'T set MM_F_SR because the fork's older align.c has a bug in
             // the ungapped sr alignment path (NULL r->p deref in mm_align1).
-            // Without MM_F_SR, minimap2 uses gapped alignment — same scoring params,
+            // Without MM_F_SR, minimap2 uses gapped alignment, same scoring params,
             // correct results, no crash.  We still set MM_F_FRAG_MODE + MM_F_HEAP_SORT
             // so mm_map_frag pairs reads correctly.
             // Index params (same as sr)
@@ -317,7 +317,6 @@ int64_t score_reads_vs_reference(
     mm_tbuf_destroy(tbuf);
     mm_idx_destroy(mi);
 
-    // Return negative total errors (higher = fewer errors = better)
     return -total_errors;
 }
 

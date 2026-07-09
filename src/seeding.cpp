@@ -266,8 +266,7 @@ void seedsFromFastq(const int32_t& k,
         for (const auto& [kmerHash, isReverse, isSyncmer, startPos] : rollingSyncmers(readSeq, k, s, open, t, false)) {
             if (!isSyncmer) continue;
             std::string kmer = readSeq.substr(startPos, k);
-            // Create seed with correct field order and add endPos
-            // Order: hash, pos, idx, reversed, rpos, endPos
+            // Field order: hash, pos, idx, reversed, rpos, endPos
             curReadSeeds.emplace_back(seed_t{
                 kmerHash,                               // hash
                 static_cast<int64_t>(startPos),         // pos

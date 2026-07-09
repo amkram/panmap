@@ -176,7 +176,7 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
     constexpr size_t PREFETCH_DISTANCE = 24;  // Increased to 24 for deeper pipeline (L3 latency ~40 cycles)
     constexpr size_t BATCH_SIZE = 64;         // Process in cache-line aligned batches
 
-    // OPTIMIZATION: Pre-fetch both seedChanges AND hash table buckets aggressively
+    // OPTIMIZATION: Pre-fetch both seedChanges and hash table buckets
     const size_t initialPrefetchCount = std::min(numChanges, PREFETCH_DISTANCE);
     for (size_t i = 0; i < initialPrefetchCount; ++i) {
         const auto& [seedHash, _, __] = seedChanges[i];
@@ -269,7 +269,7 @@ using ::panmanUtils::Tree;
 
 class PlacementResult;
 
-// Macro to generate score update functions - reduces repetitive code
+// Macro to generate score update functions
 // Each function: stores score on node, updates best score/index, tracks ties
 #define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices)   \
     void PlacementResult::FuncName(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) { \
@@ -409,8 +409,7 @@ std::vector<panmapUtils::LiteNode*> getNodesWithinRadius(panmapUtils::LiteNode* 
     return result;
 }
 
-// Get node sequence from full tree
-// Wrapper to access getStringFromReference on the full tree
+// Wrapper for getStringFromReference on the full tree
 std::string getNodeSequenceForRefinement(panmanUtils::Tree* T, const std::string& nodeId) {
     if (!T) return "";
     return T->getStringFromReference(nodeId, false, true);
@@ -703,7 +702,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
 
                     if (!node) continue;
 
-                    // Aggressive software prefetch for next 4 nodes
+                    // Software prefetch for next 4 nodes
                     constexpr size_t PREFETCH_DISTANCE = 4;
                     for (size_t j = 1; j <= PREFETCH_DISTANCE && i + j < r.end(); ++j) {
                         __builtin_prefetch(current_nodes[i + j], 0, 1);     // Prefetch node pointer
@@ -915,8 +914,6 @@ void placeLite(PlacementResult& result,
             throw std::runtime_error("Verification mode requires full Tree to be loaded");
         }
     }
-
-    // State initialization moved to after parameter setup
 
     auto time_hash_delta_start = std::chrono::high_resolution_clock::now();
     size_t totalHashDeltas = 0;
@@ -1306,10 +1303,7 @@ void placeLite(PlacementResult& result,
                     // absl::flat_hash_map maintains load factor ~0.875, so reserve 1.15x
                     state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
 
-                    // Parallel merge: each thread merges its own map into the final result
-                    // Use atomic operations or partitioned hash ranges
-                    // For simplicity, merge serially since it's fast (< 100ms typically)
-                    // The extraction phase is the real bottleneck, not the merge
+                    // Merge serially: fast (< 100ms typically); extraction is the bottleneck, not the merge
                     for (const auto& localMap : threadLocalMaps) {
                         for (const auto& [hash, count] : localMap) {
                             state.seedFreqInReads[hash] += count;

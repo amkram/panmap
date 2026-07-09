@@ -15,10 +15,8 @@
 
 namespace genotyping {
 
-// Ensure correct usage of std::getline
 void stringSplit(const std::string& str, char delimiter, std::vector<std::string>& out);
 
-// Ensure correct initialization of vectors and maps
 struct mutationMatrices {
     std::vector<std::vector<double>> submat;
     std::unordered_map<int64_t, double> insmat;
