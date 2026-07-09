@@ -446,6 +446,16 @@ struct BlockEdgeCoord {
     uint64_t endScalar;
 };
 
+// scalarToCoord holds one entry per scalar coordinate; its secondaryBlockId is
+// always -1, so a 12-byte packed record replaces the 16-byte Coordinate.
+struct ScalarCoord {
+    int32_t nucPosition;
+    int32_t nucGapPosition;
+    int32_t primaryBlockId;
+    ScalarCoord() {}
+    ScalarCoord(int np, int ngp, int pbi) : nucPosition(np), nucGapPosition(ngp), primaryBlockId(pbi) {}
+};
+
 struct GlobalCoords {
     // Flat CSR layout (was vector<vector<pair<int64_t, vector<int64_t>>>> globalCoords):
     //   mainScalar[b][p]  main scalar coord (-1 for the 'x' sentinel)
@@ -454,7 +464,7 @@ struct GlobalCoords {
     std::vector<std::vector<int64_t>> mainScalar;
     std::vector<std::vector<int64_t>> gapScalar;
     std::vector<std::vector<uint32_t>> gapStart;
-    std::vector<Coordinate> scalarToCoord;
+    std::vector<ScalarCoord> scalarToCoord;
     std::vector<BlockEdgeCoord> blockEdgeCoords;
     std::tuple<int64_t, int64_t, int64_t> firstTupleCoord;
     std::tuple<int64_t, int64_t, int64_t> lastTupleCoord;
@@ -484,7 +494,7 @@ struct GlobalCoords {
                 uint32_t gaps = blockSequences.gapLength(i, j);
                 for (uint32_t k = 0; k < gaps; k++) {
                     gapScalar[i][gapStart[i][j] + k] = curScalarCoord;
-                    scalarToCoord.emplace_back(j, k, i, -1);
+                    scalarToCoord.emplace_back(j, k, i);
                     curScalarCoord++;
                 }
 
@@ -494,7 +504,7 @@ struct GlobalCoords {
                     mainScalar[i][j] = -1;
                 } else {
                     mainScalar[i][j] = curScalarCoord;
-                    scalarToCoord.emplace_back(j, -1, i, -1);
+                    scalarToCoord.emplace_back(j, -1, i);
                     curScalarCoord++;
                 }
             }
@@ -632,12 +642,12 @@ struct GlobalCoords {
             output::error("In getCoordFromScalar(), scalar {} is out of range", scalar);
             exit(1);
         }
-        Coordinate forwardCoord = scalarToCoord[scalar];
-        if (blockStrand) {
-            return forwardCoord;
+        if (!blockStrand) {
+            int32_t b = scalarToCoord[scalar].primaryBlockId;
+            scalar = getBlockStartScalar(b) + getBlockEndScalar(b) - scalar;
         }
-        return scalarToCoord[getBlockStartScalar(forwardCoord.primaryBlockId) +
-                             getBlockEndScalar(forwardCoord.primaryBlockId) - scalar];
+        const ScalarCoord& sc = scalarToCoord[scalar];
+        return Coordinate(sc.nucPosition, sc.nucGapPosition, sc.primaryBlockId, -1);
     }
 
     uint32_t getBlockIdFromScalar(uint64_t scalar) const { return scalarToCoord[scalar].primaryBlockId; }
