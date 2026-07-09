@@ -1,5 +1,5 @@
 // Placement metric tests. The smoking-gun test asserts the live NodeMetrics getters
-// EQUAL the independent GroundTruthMetrics oracle (within float epsilon) — replacing
+// EQUAL the independent GroundTruthMetrics oracle (within float epsilon), replacing
 // the old suite's misleading score>0 assertions. Genome-equality is owned by
 // test_index; this file assumes it and focuses on the read-interaction metrics.
 #include <boost/test/unit_test.hpp>

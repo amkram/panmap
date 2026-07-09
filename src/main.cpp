@@ -171,8 +171,6 @@ struct Config {
     // Batch mode
     std::string batchFile;  // Path to batch file listing samples (one per line: reads1 [reads2])
 
-    // Leave-one-out validation mode
-
     // Diagnostic options
     std::string dumpAllScores;  // Dump all node scores to this file
 
@@ -320,10 +318,6 @@ std::unique_ptr<panmanUtils::TreeGroup> loadPanMAN(const std::string& path) {
     return std::make_unique<panmanUtils::TreeGroup>(stream);
 }
 
-/**
- * Get ungapped genome length for a node (count non-gap characters).
- */
-
 std::string sanitizeFilename(const std::string& s) {
     std::string result = s;
     for (char& c : result) {
@@ -391,8 +385,6 @@ bool buildIndex(const Config& cfg) {
     output::done("index", cfg.index, fmt::format("{} nodes", output::fmt_count(tg->trees[0].allNodes.size())), ms);
     return true;
 }
-
-// Compute tree distance between two nodes (number of edges)
 
 void writeOCRanks(const std::string& outputFile,
                   const std::vector<std::pair<std::string, double>>& overlapCoefficients) {
@@ -686,7 +678,6 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           << batch->readProcessingTime << " seconds (read processing) | " << batch->scoringTime
                           << " seconds (scoring) | " << batch->assigningTime << " seconds (assigning) | "
                           << batch->postProcessingTime << " seconds (post-processing)\n";
-                // collect results ...
                 delete batch;
             }));
 
@@ -1236,12 +1227,12 @@ bool runMetagenomic(const Config& cfg) {
         if (!runFilterAndAssign(T, threadsManager, cfg)) {
             return false;
         }
-        return true;  // great success!
+        return true;
     } else {
         if (!runDeconvolution(T, threadsManager, cfg)) {
             return false;
         }
-        return true;  // great success!
+        return true;
     }
 
     return true;
@@ -1487,7 +1478,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
             fullTreePtr = &tg->trees[0];
             logging::debug("Loaded full tree for refinement ({} nodes)", fullTreePtr->allNodes.size());
         } else {
-            logging::warn("Failed to load full tree for refinement - disabling refinement");
+            logging::warn("Failed to load full tree for refinement, disabling refinement");
             refineEnabled = false;
         }
     }
@@ -1572,14 +1563,14 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
     std::string nodeId = placement.bestLogContainmentNodeId;
 
     if (nodeId.empty()) {
-        logging::err("No best node ID from placement - cannot align");
+        logging::err("No best node ID from placement, cannot align");
         return 1;
     }
 
     std::string bestMatchSequence = panmapUtils::getStringFromReference(T, nodeId, false);
 
     if (bestMatchSequence.empty()) {
-        logging::err("Empty sequence for node '{}' - cannot align", nodeId);
+        logging::err("Empty sequence for node '{}', cannot align", nodeId);
         return 1;
     }
 
@@ -2003,8 +1994,8 @@ int main(int argc, char** argv) {
 
     // Default --force-leaf on whenever the pipeline runs past placement
     // (unless user explicitly set it). Only --stop place allows placement
-    // on internal nodes. Note: bool_switch always has a default, so
-    // vm.count() is always 1 here; use defaulted() to detect an explicit flag.
+    // on internal nodes. bool_switch always has a default, so vm.count() is
+    // always 1 here; use defaulted() to detect an explicit flag.
     if (vm["force-leaf"].defaulted() && cfg.stopAfter > PipelineStage::Place) {
         cfg.forceLeaf = true;
     }

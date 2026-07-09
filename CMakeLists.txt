@@ -45,7 +45,7 @@ option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013+)" OFF)
 # Default to system libraries when building inside an active conda env, so a plain
-# cmake in an activated env "just works"; otherwise build the bundled sources.
+# cmake in an activated env builds without extra flags; otherwise build the bundled sources.
 if(DEFINED ENV{CONDA_PREFIX})
     set(_use_system_libs_default ON)
 else()
@@ -88,14 +88,12 @@ if(USE_SYSTEM_LIBS OR APPLE)
 else()
     set(TBB_DIR ${CMAKE_CURRENT_BINARY_DIR}/oneTBB-2019_U9)
 
-    # Download and configure TBB
     FetchContent_Declare(
         tbb
         URL https://github.com/oneapi-src/oneTBB/archive/2019_U9.tar.gz
     )
     FetchContent_MakeAvailable(tbb)
 
-    # Build TBB from source
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so
         COMMAND ${CMAKE_COMMAND} -E env "CXXFLAGS=-Wno-changes-meaning" make -C ${tbb_SOURCE_DIR} -j compiler=gcc
@@ -106,9 +104,7 @@ else()
 
     add_custom_target(tbb_build DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so)
 
-    # Set up TBB library path
     set(TBB_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/lib/libtbb.so")
-    # Set up TBB include directories
     include_directories(${tbb_SOURCE_DIR}/include)
 endif()
 
@@ -207,7 +203,6 @@ set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/index_lite.capnp")
 set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(LITE_CAPNP_GEN_CPP "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.c++")
 set(LITE_CAPNP_GEN_H "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.h")
-# Custom command to generate CapnProto files
 file(MAKE_DIRECTORY ${LITE_CAPNP_GEN_DIR})
 add_custom_command(
     OUTPUT ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
@@ -223,11 +218,9 @@ add_custom_command(
     VERBATIM
 )
 
-# Set variables to point to the generated files
 set(LITE_CAPNP_SRCS ${LITE_CAPNP_GEN_CPP})
 set(LITE_CAPNP_HDRS ${LITE_CAPNP_GEN_H})
 
-# Create a target that depends on the generated files
 add_custom_target(index_capnp_generator ALL
     DEPENDS ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
 )
@@ -269,7 +262,7 @@ add_custom_command(
 endfunction()
 
 # ===== Setup for Panman =====
-# First, create the necessary config files for panman
+# Create config files for panman
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake)
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/TBBConfig.cmake "
 # TBB Config File

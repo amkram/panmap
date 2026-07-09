@@ -6,7 +6,6 @@
 #include <immintrin.h>  // For SIMD intrinsics (x86 only)
 #endif
 
-// Other includes
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -73,17 +72,14 @@ struct uniqueKminmer_t {
 
 // A syncmer seed, defined within a single sequence
 struct seed_t {
-    // Core properties
     size_t hash;    // Hash of the k-mer
     int64_t pos;    // Position in sequence (keep as pos, not startPos)
     int32_t idx;    // Index in vector (used during indexing)
     bool reversed;  // Orientation flag
     uint32_t rpos;  // Position on reference (used during alignment)
 
-    // Add the end position field
     int64_t endPos;  // End position with gaps
 
-    // Comparison operators
     bool operator<(const seed_t& rhs) const { return pos < rhs.pos; }
 
     bool operator==(const seed_t& rhs) const { return pos == rhs.pos; }
@@ -171,20 +167,17 @@ namespace std {
 template <>
 struct hash<seeding::uniqueKminmer_t> {
     size_t operator()(const seeding::uniqueKminmer_t& kminmer) const {
-        // Combine hashes of all member variables, including the new 'startPos'.
-        size_t h1 = std::hash<uint64_t>{}(kminmer.startPos);  // Hash for startPos
+        size_t h1 = std::hash<uint64_t>{}(kminmer.startPos);
         size_t h2 = std::hash<uint64_t>{}(kminmer.endPos);
         size_t h3 = std::hash<size_t>{}(kminmer.hash);
         size_t h4 = std::hash<bool>{}(kminmer.isReverse);
 
-        // A common pattern for combining hashes.
-        // Ensure all member hashes are combined.
         static constexpr size_t HASH_MIX = 0x9e3779b9;
         size_t seed = 0;
         seed ^= h1 + HASH_MIX + (seed << 6) + (seed >> 2);
         seed ^= h2 + HASH_MIX + (seed << 6) + (seed >> 2);
         seed ^= h3 + HASH_MIX + (seed << 6) + (seed >> 2);
-        seed ^= h4 + HASH_MIX + (seed << 6) + (seed >> 2);  // Include h4
+        seed ^= h4 + HASH_MIX + (seed << 6) + (seed >> 2);
         return seed;
     }
 };

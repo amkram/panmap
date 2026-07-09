@@ -27,21 +27,18 @@ bool compressToFile(const void* inputData,
 
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    // Open output file
     std::ofstream outFile(outputPath, std::ios::binary);
     if (!outFile) {
         logging::err("Failed to open output file: {}", outputPath);
         return false;
     }
 
-    // Create compression context with multi-threading
     ZSTD_CCtx* cctx = ZSTD_createCCtx();
     if (!cctx) {
         logging::err("Failed to create ZSTD compression context");
         return false;
     }
 
-    // Set compression parameters for parallel compression
     ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, compressionLevel);
     ZSTD_CCtx_setParameter(cctx, ZSTD_c_nbWorkers, numThreads);
     ZSTD_CCtx_setParameter(cctx, ZSTD_c_jobSize, frameSize);
@@ -50,7 +47,6 @@ bool compressToFile(const void* inputData,
     size_t const maxCompressedSize = ZSTD_compressBound(inputSize);
     std::vector<uint8_t> compressedData(maxCompressedSize);
 
-    // Compress with parallel frames
     size_t const compressedSize = ZSTD_compress2(cctx, compressedData.data(), maxCompressedSize, inputData, inputSize);
 
     ZSTD_freeCCtx(cctx);
@@ -60,7 +56,6 @@ bool compressToFile(const void* inputData,
         return false;
     }
 
-    // Write to file
     outFile.write(reinterpret_cast<const char*>(compressedData.data()), compressedSize);
     if (!outFile) {
         logging::err("Failed to write compressed data to file: {}", outputPath);
@@ -93,7 +88,6 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
 
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    // Use mmap for input
     boost::iostreams::mapped_file_source mappedFile;
     try {
         mappedFile.open(inputPath);
@@ -110,7 +104,6 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
     const char* compressedData = mappedFile.data();
     size_t compressedSize = mappedFile.size();
 
-    // Get uncompressed size
     unsigned long long const decompressedSize = ZSTD_getFrameContentSize(compressedData, compressedSize);
 
     if (decompressedSize == ZSTD_CONTENTSIZE_ERROR) {
@@ -137,7 +130,6 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
     }
 
     if (numFrames > 1 && numThreads > 1) {
-        // Parallel decompression of multiple frames
         logging::debug("Detected {} ZSTD frames, decompressing in parallel", numFrames);
 
         std::vector<std::pair<size_t, size_t>> frameRanges;
@@ -159,7 +151,6 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
             outPos += frameDecompSize;
         }
 
-        // Decompress frames in parallel
         std::atomic<bool> error{false};
         tbb::parallel_for(size_t(0), frameRanges.size(), [&](size_t i) {
             if (error.load()) return;
@@ -190,7 +181,6 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
         }
 
     } else {
-        // Single-threaded decompression
         logging::debug("Using single-threaded decompression");
 
         ZSTD_DCtx* dctx = ZSTD_createDCtx();
