@@ -3,9 +3,6 @@
 /**
  * @file seed_helpers.hpp
  * @brief Seed extraction and small FASTA/read helpers shared by all tests.
- *
- * Absorbs the inline rollingSyncmers extraction loops that were copy-pasted across
- * the old correctness_tests.cpp.
  */
 
 #include "metrics_oracle.hpp"  // indexUtils::SeedCountMap

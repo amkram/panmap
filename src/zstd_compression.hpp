@@ -8,15 +8,9 @@
 namespace panmap_zstd {
 
 /**
- * @brief Compress data to file with parallel ZSTD compression
- *
- * @param inputData Raw data
- * @param inputSize Size of input data
- * @param outputPath Output file path
- * @param compressionLevel ZSTD compression level (1-22, default 3 for speed)
- * @param numThreads Number of compression threads (0 = auto-detect)
- * @param frameSize Size of each seekable frame in bytes (default 4MB for good parallelism)
- * @return true on success
+ * Compress inputData to outputPath with parallel ZSTD.
+ * compressionLevel: 1-22. numThreads: 0 = auto-detect. frameSize: seekable
+ * frame size in bytes. Returns true on success.
  */
 [[nodiscard]] bool compressToFile(const void* inputData,
                                   size_t inputSize,
@@ -27,12 +21,8 @@ namespace panmap_zstd {
 );
 
 /**
- * @brief Decompress ZSTD file with parallel decompression
- *
- * @param inputPath Input file path
- * @param outputData Output buffer (will be resized)
- * @param numThreads Number of decompression threads (0 = auto-detect)
- * @return true on success
+ * Decompress inputPath into outputData (resized to fit) with parallel ZSTD.
+ * numThreads: 0 = auto-detect. Returns true on success.
  */
 [[nodiscard]] bool
 decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outputData, int numThreads = 0);

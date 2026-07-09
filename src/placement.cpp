@@ -64,7 +64,6 @@ constexpr size_t computeHomopolymerHash(char base, int k) {
         rHash ^= seeding::rol(compVal, k - i - 1);
     }
 
-    // Return canonical (minimum) hash
     return std::min(fHash, rHash);
 }
 
@@ -170,13 +169,12 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
                                                  const placement::PlacementGlobalState& state) {
     const size_t numChanges = seedChanges.size();
 
-    // Early exit for empty changes
     if (numChanges == 0) [[unlikely]]
         return;
-    constexpr size_t PREFETCH_DISTANCE = 24;  // Increased to 24 for deeper pipeline (L3 latency ~40 cycles)
-    constexpr size_t BATCH_SIZE = 64;         // Process in cache-line aligned batches
+    constexpr size_t PREFETCH_DISTANCE = 24;  // deeper pipeline (L3 latency ~40 cycles)
+    constexpr size_t BATCH_SIZE = 64;         // cache-line aligned batches
 
-    // OPTIMIZATION: Pre-fetch both seedChanges AND hash table buckets aggressively
+    // Prefetch both seedChanges and hash table buckets
     const size_t initialPrefetchCount = std::min(numChanges, PREFETCH_DISTANCE);
     for (size_t i = 0; i < initialPrefetchCount; ++i) {
         const auto& [seedHash, _, __] = seedChanges[i];
@@ -206,9 +204,7 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
             const double logChild = (childCount > 0) ? std::log1p(static_cast<double>(childCount)) : 0.0;
             const double logParent = (parentCount > 0) ? std::log1p(static_cast<double>(parentCount)) : 0.0;
 
-            // ========================================
-            // GENOME-ONLY METRICS (computed for ALL seed changes, even if not in reads)
-            // ========================================
+            // Genome-only metrics: computed for ALL seed changes, even if not in reads.
 
             // Genome magnitude squared delta: log(1+child)² - log(1+parent)²
             // Use log-scale to match the log-scaled read vector for proper cosine similarity
@@ -245,9 +241,8 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
             // Both vectors in log-space for proper cosine similarity
             childMetrics.logCosineNumerator += logReadCount * (logChild - logParent);
 
-            // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome
-            // Unlike regular containment which uses binary presence, this weights
-            // each seed by 1/(node's genome count), rewarding genomes where matching
+            // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome.
+            // Weights each seed by 1/(node's genome count), rewarding genomes where matching
             // seeds are rare/unique. Delta: 1/childCount - 1/parentCount for seeds in reads.
             {
                 const double oldWcContrib = (parentCount > 0) ? (1.0 / parentCount) : 0.0;
@@ -269,8 +264,7 @@ using ::panmanUtils::Tree;
 
 class PlacementResult;
 
-// Macro to generate score update functions - reduces repetitive code
-// Each function: stores score on node, updates best score/index, tracks ties
+// Generates a score update function: stores score on node, updates best score/index, tracks ties.
 #define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices)   \
     void PlacementResult::FuncName(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) { \
         if (node) {                                                                                 \
@@ -292,7 +286,6 @@ class PlacementResult;
         }                                                                                           \
     }
 
-// Generate score update functions
 DEFINE_UPDATE_SCORE_FUNC(updateLogRawScore, logRawScore, bestLogRawScore, bestLogRawNodeIndex, tiedLogRawNodeIndices)
 DEFINE_UPDATE_SCORE_FUNC(
     updateLogCosineScore, logCosineScore, bestLogCosineScore, bestLogCosineNodeIndex, tiedLogCosineNodeIndices)
@@ -317,7 +310,6 @@ DEFINE_UPDATE_SCORE_FUNC(updateLogContainmentScore,
 // Helper to deduplicate a tied-indices vector and pick the lowest index as best
 static void finalizeTiedIndices(std::vector<uint32_t>& tied, uint32_t& bestIndex) {
     if (tied.empty()) return;
-    // Sort and deduplicate
     std::sort(tied.begin(), tied.end());
     tied.erase(std::unique(tied.begin(), tied.end()), tied.end());
     // Deterministic tie-breaking: lowest node index wins (DFS order is stable)
@@ -327,7 +319,6 @@ static void finalizeTiedIndices(std::vector<uint32_t>& tied, uint32_t& bestIndex
 void PlacementResult::resolveNodeIds(panmapUtils::LiteTree* liteTree) {
     if (!liteTree) return;
 
-    // Deterministic tie-breaking before resolution
     finalizeTiedIndices(tiedLogRawNodeIndices, bestLogRawNodeIndex);
     finalizeTiedIndices(tiedLogCosineNodeIndices, bestLogCosineNodeIndex);
     finalizeTiedIndices(tiedContainmentNodeIndices, bestContainmentNodeIndex);
@@ -349,7 +340,6 @@ void PlacementResult::resolveNodeIds(panmapUtils::LiteTree* liteTree) {
     if (bestLogContainmentNodeIndex != UINT32_MAX) {
         bestLogContainmentNodeId = liteTree->resolveNodeId(bestLogContainmentNodeIndex);
     }
-    // Resolve per-metric refined node IDs
     auto resolveRefined = [&](RefinedResult& r) {
         if (r.nodeIndex != UINT32_MAX) {
             r.nodeId = liteTree->resolveNodeId(r.nodeIndex);
@@ -362,10 +352,7 @@ void PlacementResult::resolveNodeIds(panmapUtils::LiteTree* liteTree) {
     resolveRefined(refinedLogContainment);
 }
 
-// After k-mer scoring, refine top candidates by full minimap2 alignment
-
-// Get all nodes within phylogenetic distance `radius` of a given node
-// Uses BFS traversal following parent/child edges
+// Get all nodes within phylogenetic distance `radius` of a given node, via BFS over parent/child edges.
 std::vector<panmapUtils::LiteNode*> getNodesWithinRadius(panmapUtils::LiteNode* startNode, int radius, int maxNodes) {
     if (!startNode || radius <= 0 || maxNodes <= 0) {
         return {};
@@ -388,16 +375,13 @@ std::vector<panmapUtils::LiteNode*> getNodesWithinRadius(panmapUtils::LiteNode* 
             result.push_back(node);
         }
 
-        // Stop expanding if we've reached max radius
         if (dist >= radius) continue;
 
-        // Add parent (if exists and not visited)
         if (node->parent && !visited.count(node->parent)) {
             visited.insert(node->parent);
             bfsQueue.push({node->parent, dist + 1});
         }
 
-        // Add children
         for (auto* child : node->children) {
             if (child && !visited.count(child)) {
                 visited.insert(child);
@@ -409,8 +393,7 @@ std::vector<panmapUtils::LiteNode*> getNodesWithinRadius(panmapUtils::LiteNode* 
     return result;
 }
 
-// Get node sequence from full tree
-// Wrapper to access getStringFromReference on the full tree
+// Wrapper for getStringFromReference on the full tree
 std::string getNodeSequenceForRefinement(panmanUtils::Tree* T, const std::string& nodeId) {
     if (!T) return "";
     return T->getStringFromReference(nodeId, false, true);
@@ -428,13 +411,11 @@ int64_t scoreNodeByAlignment(panmanUtils::Tree* fullTree,
         return 0;
     }
 
-    // Get genome sequence for this node
     std::string genomeSeq = getNodeSequenceForRefinement(fullTree, nodeId);
     if (genomeSeq.empty()) {
         return 0;
     }
 
-    // Prepare read data for alignment
     int n_reads = static_cast<int>(readSequences.size());
     std::vector<const char*> readPtrs(n_reads);
     std::vector<int> readLens(n_reads);
@@ -444,16 +425,14 @@ int64_t scoreNodeByAlignment(panmanUtils::Tree* fullTree,
         readLens[i] = static_cast<int>(readSequences[i].size());
     }
 
-    // Call minimap2 scoring function with paired-end awareness
     int64_t score =
         score_reads_vs_reference(genomeSeq.c_str(), n_reads, readPtrs.data(), readLens.data(), kmerSize, pairedEnd);
 
     return score;
 }
 
-// Main refinement function: per-metric candidate selection, shared alignment scoring
-// Each seed metric independently nominates its top candidates + neighbors.
-// All unique candidates are aligned once, then each metric picks its best.
+// Per-metric candidate selection with shared alignment scoring: each metric nominates its top
+// candidates + neighbors; all unique candidates are aligned once, then each metric picks its best.
 void refineTopCandidates(panmapUtils::LiteTree* liteTree,
                          panmanUtils::Tree* fullTree,
                          const std::vector<std::string>& readSequences,
@@ -467,8 +446,7 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
 
     auto time_refine_start = std::chrono::high_resolution_clock::now();
 
-    // Step 1: For each metric, collect its own top candidate set
-    // Returns the set of candidate node indices for one metric
+    // Step 1: for each metric, collect its own top candidate set
     auto getTopForMetric = [&](auto scoreGetter, const char* metricName) -> absl::flat_hash_set<uint32_t> {
         absl::flat_hash_set<uint32_t> metricCandidates;
         std::vector<std::pair<double, uint32_t>> scoredNodes;
@@ -517,7 +495,6 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
     // Step 2: Expand each metric's candidates with neighbors, build union for alignment
     absl::flat_hash_set<uint32_t> allCandidates;  // Union for alignment scoring
 
-    // For each metric, expand candidates with neighbors and track membership
     struct MetricCandidateSet {
         absl::flat_hash_set<uint32_t> expanded;  // candidates + their neighbors
     };
@@ -559,7 +536,6 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
     // Step 3: Align reads to ALL unique candidates once (shared work)
     absl::flat_hash_map<uint32_t, int64_t> alignmentScoreMap;  // nodeIndex -> score
 
-    // Log seed winners
     logging::info("Refinement seed winners: LogRaw={} LogCosine={} Contain={} WContain={} LogContain={}",
                   result.bestLogRawNodeIndex,
                   result.bestLogCosineNodeIndex,
@@ -610,7 +586,6 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
     auto [wcScore, wcIdx] = findBestForMetric(wContainExpanded, [](auto* n) { return n->weightedContainmentScore; });
     auto [lgcScore, lgcIdx] = findBestForMetric(logContainExpanded, [](auto* n) { return n->logContainmentScore; });
 
-    // Store results
     if (lrIdx != UINT32_MAX) {
         result.refinedLogRaw = {static_cast<double>(lrScore), lrIdx, ""};
     }
@@ -674,16 +649,13 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
         }
     };
 
-    // Use enumerable_thread_specific to manage thread-local storage automatically
     tbb::enumerable_thread_specific<ThreadLocalData> thread_data;
 
-    // Get thread count for optimal grain size
     const size_t numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
 
     while (!current_nodes.empty()) {
         size_t num_nodes = current_nodes.size();
 
-        // Adaptive grain size based on level size and thread count
         // Larger chunks = less overhead, but need enough chunks for load balancing
         size_t grain_size = std::max(size_t(1), num_nodes / (numThreads * 8));
 
@@ -703,13 +675,13 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
 
                     if (!node) continue;
 
-                    // Aggressive software prefetch for next 4 nodes
+                    // Software prefetch for next 4 nodes
                     constexpr size_t PREFETCH_DISTANCE = 4;
                     for (size_t j = 1; j <= PREFETCH_DISTANCE && i + j < r.end(); ++j) {
-                        __builtin_prefetch(current_nodes[i + j], 0, 1);     // Prefetch node pointer
-                        __builtin_prefetch(&current_metrics[i + j], 0, 1);  // Prefetch metrics
+                        __builtin_prefetch(current_nodes[i + j], 0, 1);
+                        __builtin_prefetch(&current_metrics[i + j], 0, 1);
                         if (current_nodes[i + j]) {
-                            __builtin_prefetch(&current_nodes[i + j]->seedChanges, 0, 1);  // Prefetch seed changes
+                            __builtin_prefetch(&current_nodes[i + j]->seedChanges, 0, 1);
                         }
                     }
 
@@ -736,7 +708,6 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
                     // Skip scoring for excluded nodes (leave-one-out) and internal nodes (force-leaf)
                     bool isLeaf = node->children.empty();
                     if (nodeIndex != state.skipNodeIndex && (!state.forceLeaf || isLeaf)) {
-                        // Compute scores
                         double logRawScore = nodeMetrics.getLogRawScore(state.logReadMagnitude);
                         double logCosineScore = nodeMetrics.getLogCosineScore(state.logReadMagnitude);
                         double containmentScore = nodeMetrics.getContainmentScore(state.readUniqueSeedCount);
@@ -754,7 +725,6 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
                     }
 
                     if (!node->children.empty()) {
-                        // Batch append to thread-local storage
                         tls.next_nodes.insert(tls.next_nodes.end(), node->children.begin(), node->children.end());
                         tls.next_metrics.insert(tls.next_metrics.end(), node->children.size(), nodeMetrics);
                         if (params.verify_scores) {
@@ -782,7 +752,6 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
 
         if (active_tls.empty()) break;
 
-        // Calculate offsets for parallel merge
         std::vector<size_t> offsets(active_tls.size() + 1, 0);
         for (size_t i = 0; i < active_tls.size(); ++i) {
             offsets[i + 1] = offsets[i] + active_tls[i]->next_nodes.size();
@@ -814,9 +783,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
         });
     }
 
-    // ========================================
-    // MERGE PHASE: Combine thread-local results into global result
-    // ========================================
+    // Merge phase: combine thread-local results into global result.
     logging::debug("Merging {} thread-local results...", thread_data.size());
     auto merge_start = std::chrono::high_resolution_clock::now();
 
@@ -916,9 +883,6 @@ void placeLite(PlacementResult& result,
         }
     }
 
-    // State initialization moved to after parameter setup
-
-    auto time_hash_delta_start = std::chrono::high_resolution_clock::now();
     size_t totalHashDeltas = 0;
 
     auto indexRoot = liteIndex.getRoot<LiteIndex>();
@@ -926,8 +890,7 @@ void placeLite(PlacementResult& result,
     if (!liteTree->seedChangesLoaded) {
         logging::debug("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
 
-        // OPTIMIZATION: Process nodes in DFS order with direct vector indexing for O(1) access
-        // This eliminates hash map lookup overhead in the hot path
+        // Process nodes in DFS order with direct vector indexing: O(1) access, no hash-map lookup in hot path.
         const size_t numNodes = liteTree->allLiteNodes.size();
 
         // Parallel Pass 1: Count seed changes per node to calculate offsets
@@ -954,7 +917,6 @@ void placeLite(PlacementResult& result,
             }
             totalHashDeltas = nodeOffsets[numNodes];
 
-            // Allocate backing storage once
             liteTree->allSeedChanges.resize(totalHashDeltas);
 
             // Parallel Pass 2: Populate data and assign spans
@@ -967,7 +929,6 @@ void placeLite(PlacementResult& result,
             size_t numSegs = hashesReader.size();
             logging::debug("Struct-of-arrays format: {} hashes in {} segments", totalHashDeltas, numSegs);
 
-            // Phase 2a
             constexpr size_t GRAIN_SIZE = 262144;  // 256K items per chunk
             constexpr size_t CAPNP_SPLIT = 500'000'000;
             for (uint32_t seg = 0; seg < numSegs; seg++) {
@@ -1012,9 +973,6 @@ void placeLite(PlacementResult& result,
         logging::info("Seed changes already loaded, skipping index deserialization");
     }
 
-    auto time_hash_delta_end = std::chrono::high_resolution_clock::now();
-
-    // Set traversal parameters
     TraversalParams params = callerParams;
     // Override k/s/t/l/open/hpc from the index (authoritative source)
     params.k = indexRoot.getK();
@@ -1039,13 +997,12 @@ void placeLite(PlacementResult& result,
     std::vector<std::string> allReadSequences;
     std::vector<std::string> allReadQualities;  // Quality strings (only populated if params.minSeedQuality > 0)
 
-    // Initialize placement global state
     PlacementGlobalState state;
     state.kmerSize = indexRoot.getK();
-    state.fullTree = fullTree;  // Store full tree pointer for verification mode
+    state.fullTree = fullTree;
     state.liteNodes = liteTree->dfsIndexToNode;
-    state.skipNodeIndex = skipNodeIndex;  // Set skip node for leave-one-out validation
-    state.forceLeaf = params.forceLeaf;   // Restrict scoring to leaf nodes only
+    state.skipNodeIndex = skipNodeIndex;  // skip node for leave-one-out validation
+    state.forceLeaf = params.forceLeaf;
     if (params.forceLeaf) {
         logging::info("Force-leaf mode: only leaf nodes will be considered for placement");
     }
@@ -1196,7 +1153,6 @@ void placeLite(PlacementResult& result,
                     std::chrono::duration_cast<std::chrono::milliseconds>(time_dedup_end - time_dedup_start);
                 logging::info("Read deduplication: {}ms", duration_dedup.count());
 
-                // Estimate unique count (typically 50-90% unique for paired-end reads)
                 std::vector<std::pair<std::string, std::vector<size_t>>> dupReadsIndex;
 
                 if (!sortedReads.empty()) {
@@ -1246,9 +1202,8 @@ void placeLite(PlacementResult& result,
                     size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
                     std::vector<absl::flat_hash_map<size_t, int64_t>> threadLocalMaps(num_cpus);
 
-                    // Pre-allocate capacity based on empirical analysis to eliminate malloc overhead
-                    // Profiler shows 14% time in malloc (7.2% consolidate + 6.9% perturb)
-                    // Formula: estimate seeds/read * reads/thread * load_factor_headroom
+                    // Pre-allocate capacity to eliminate malloc overhead (~14% of time in malloc).
+                    // Formula: seeds/read * reads/thread * load_factor_headroom.
                     const size_t avg_seeds_per_read = 50;  // Conservative estimate for syncmers
                     const size_t reads_per_thread = (dupReadsIndex.size() + num_cpus - 1) / num_cpus;
                     const size_t estimated_seeds = avg_seeds_per_read * reads_per_thread;
@@ -1264,11 +1219,9 @@ void placeLite(PlacementResult& result,
                                           size_t threadId = tbb::this_task_arena::current_thread_index();
                                           auto& localMap = threadLocalMaps[threadId];
 
-                                          // Process reads in this thread's range
                                           for (size_t i = range.begin(); i < range.end(); ++i) {
                                               const auto& [seq, duplicates] = dupReadsIndex[i];
-                                              // If dedupReads is true, count each unique sequence once
-                                              // Otherwise, use the actual multiplicity (number of duplicate reads)
+                                              // dedupReads: count each unique sequence once; else use actual multiplicity
                                               const int64_t multiplicity =
                                                   params.dedupReads ? 1 : static_cast<int64_t>(duplicates.size());
 
@@ -1302,14 +1255,10 @@ void placeLite(PlacementResult& result,
                         exact_total_seeds += localMap.size();
                     }
 
-                    // Reserve with headroom for hash table load factor
                     // absl::flat_hash_map maintains load factor ~0.875, so reserve 1.15x
                     state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
 
-                    // Parallel merge: each thread merges its own map into the final result
-                    // Use atomic operations or partitioned hash ranges
-                    // For simplicity, merge serially since it's fast (< 100ms typically)
-                    // The extraction phase is the real bottleneck, not the merge
+                    // Merge serially: fast (< 100ms typically); extraction is the bottleneck, not the merge
                     for (const auto& localMap : threadLocalMaps) {
                         for (const auto& [hash, count] : localMap) {
                             state.seedFreqInReads[hash] += count;
@@ -1325,7 +1274,7 @@ void placeLite(PlacementResult& result,
                               state.seedFreqInReads.size(),
                               allReadSequences.size(),
                               dupReadsIndex.size());
-            }  // end of else block for non-quality-filtered path
+            }
 
         } else {
             // l > 0: Use k-minimizers (consecutive syncmers combined)
@@ -1541,7 +1490,6 @@ void placeLite(PlacementResult& result,
                 size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
                 std::vector<absl::flat_hash_map<size_t, int64_t>> threadLocalMaps(num_cpus);
 
-                // Estimate capacity
                 const size_t avg_kminmers_per_read = 15;
                 const size_t reads_per_thread = (dupReadsIndex.size() + num_cpus - 1) / num_cpus;
                 const size_t estimated_kminmers = avg_kminmers_per_read * reads_per_thread;
@@ -1612,7 +1560,6 @@ void placeLite(PlacementResult& result,
                         }
                     });
 
-                // Merge results
                 size_t exact_total_seeds = 0;
                 for (const auto& localMap : threadLocalMaps) {
                     exact_total_seeds += localMap.size();
@@ -1632,7 +1579,7 @@ void placeLite(PlacementResult& result,
                 logging::debug("Extracted {} unique k-minimizers from {} reads",
                                state.seedFreqInReads.size(),
                                allReadSequences.size());
-            }  // end of else block for non-quality-filtered path (l > 0)
+            }
         }
     }
     auto time_read_processing_end = std::chrono::high_resolution_clock::now();
@@ -1640,17 +1587,10 @@ void placeLite(PlacementResult& result,
         std::chrono::duration_cast<std::chrono::milliseconds>(time_read_processing_end - time_read_processing_start);
     logging::debug("Total read processing: {}ms", duration_read_processing.count());
 
-    // ==========================================================================
-    // Seed frequency analysis and masking
-    // Identifies and optionally removes over-represented seeds (primer/adapter artifacts)
-    // ==========================================================================
+    // Seed frequency analysis and masking: optionally remove over-represented seeds (primer/adapter artifacts).
     if (!allReadSequences.empty()) {
         const size_t totalReads = allReadSequences.size();
         size_t uniqueSeeds = state.seedFreqInReads.size();
-
-        // Build hash-to-sequence map ONLY in debug mode (very slow for large datasets)
-        // Skip for normal runs - the seed_freq.tsv will just show hashes without sequences
-        // This is O(reads * seeds) and can take minutes for 1x coverage data
 
         // Remove homopolymer seeds (all same base - uninformative)
         auto homoHashes = getHomopolymerHashes(params.k);
@@ -1682,7 +1622,6 @@ void placeLite(PlacementResult& result,
             if (frac > 0.01) above1pct++;
         }
 
-        // Log seed frequency analysis
         logging::debug("=== Seed Frequency Analysis ===");
         logging::debug("  Total reads: {}, Unique seeds: {}", totalReads, uniqueSeeds);
         logging::debug("  Max seed frequency: {:.2f}%", maxFreq * 100.0);
@@ -1747,9 +1686,8 @@ void placeLite(PlacementResult& result,
         }
         logging::debug("===============================");
 
-        // Dump seed frequencies to TSV file for analysis (only in debug mode - slow for large datasets)
-        // Format: hash, sequence, count, fraction, masked (0/1)
-        // If hashToSequence is populated, include the k-mer sequence
+        // Dump seed frequencies to TSV. Format: hash, [sequence,] count, fraction, masked (0/1).
+        // Sequence column included only when hashToSequence is populated.
         if (!outputPath.empty() && params.store_diagnostics) {
             std::string seedFreqPath = outputPath + ".seed_freq.tsv";
             std::ofstream seedFreqFile(seedFreqPath);
@@ -1804,7 +1742,6 @@ void placeLite(PlacementResult& result,
                 continue;
             }
 
-            // Pre-compute log(1 + readCount) for each seed
             const double readCountD = static_cast<double>(readCount);
             double logCount = std::log1p(readCountD);
             state.logReadCounts[seedHash] = logCount;
@@ -1878,12 +1815,9 @@ void placeLite(PlacementResult& result,
         // Lazy ID resolution: Only deserialize winning node IDs (eliminates ~1800ms overhead!)
         result.resolveNodeIds(liteTree);
 
-        // =======================================================================
-        // ALIGNMENT-BASED REFINEMENT (optional)
-        // After k-mer scoring, refine top candidates by full minimap2 alignment
-        // =======================================================================
+        // Optional alignment-based refinement: refine top candidates by full minimap2 alignment.
         if (params.refineEnabled && state.fullTree != nullptr) {
-            TraversalParams refineParams = params;  // Copy params for refinement
+            TraversalParams refineParams = params;
             bool pairedEnd = !reads2.empty();
             refineTopCandidates(liteTree, state.fullTree, allReadSequences, result, refineParams, pairedEnd);
 
@@ -1904,10 +1838,8 @@ void placeLite(PlacementResult& result,
 
     result.totalReadsProcessed = allReadSequences.size();
 
-    // ==========================================================================
-    // Store minimal alignment data (paths + seed frequencies only)
-    // Full read data will be re-extracted during alignment to save memory
-    // ==========================================================================
+    // Store minimal alignment data (paths + seed frequencies only); full read data is
+    // re-extracted during alignment to save memory.
     {
         result.reads1Path = reads1;
         result.reads2Path = reads2;
@@ -1917,7 +1849,6 @@ void placeLite(PlacementResult& result,
         result.t = params.t;
         result.open = params.open;
 
-        // Store read statistics for diagnostic output
         result.readUniqueSeedCount = state.readUniqueSeedCount;
         result.totalReadSeedFrequency = state.totalReadSeedFrequency;
         result.readMagnitude = state.logReadMagnitude;

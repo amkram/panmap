@@ -24,7 +24,6 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-#include <boost/icl/interval_set.hpp>
 
 using namespace genotyping;
 
@@ -140,18 +139,15 @@ void genotyping::buildMutationMatricesHelper(mutationMatrices& mutMat,
             currentBaseCounts[3]++;
     }
 
-    // If this is not the root, compare with parent
     if (node != tree->root && node->parent) {
         std::string parentSeq = tree->getStringFromReference(node->parent->identifier, false, true);
 
-        // Simple sequence alignment and mutation counting
-        // In a real implementation, this would need proper sequence alignment
+        // Naive positional comparison, not a real sequence alignment.
         size_t i = 0, j = 0;
         while (i < parentSeq.length() && j < nodeSeq.length()) {
             char p = parentSeq[i];
             char n = nodeSeq[j];
 
-            // Skip non-ACGT characters
             if ((p != 'A' && p != 'C' && p != 'G' && p != 'T' && p != 'a' && p != 'c' && p != 'g' && p != 't')) {
                 i++;
                 continue;
@@ -167,7 +163,6 @@ void genotyping::buildMutationMatricesHelper(mutationMatrices& mutMat,
             int pIdx = (p == 'A') ? 0 : ((p == 'C') ? 1 : ((p == 'G') ? 2 : 3));
             int nIdx = (n == 'A') ? 0 : ((n == 'C') ? 1 : ((n == 'G') ? 2 : 3));
 
-            // Count substitutions
             if (p != n) {
                 subCount[pIdx][nIdx]++;
                 totalBaseCounts[pIdx]++;
@@ -177,13 +172,11 @@ void genotyping::buildMutationMatricesHelper(mutationMatrices& mutMat,
             j++;
         }
 
-        // Count insertions
         if (nodeSeq.length() > parentSeq.length()) {
             int64_t insSize = nodeSeq.length() - parentSeq.length();
             insCount[insSize]++;
         }
 
-        // Count deletions
         if (parentSeq.length() > nodeSeq.length()) {
             int64_t delSize = parentSeq.length() - nodeSeq.length();
             delCount[delSize]++;
@@ -210,283 +203,6 @@ static constexpr int getIndexFromNucleotide(char nuc) {
         case '*': return 4;
         default: return 5;
     }
-}
-
-static char getNucFromTuple(const std::tuple<int64_t, int64_t, int64_t>& tupleCoord,
-                            const panmapUtils::BlockSequences& sequence) {
-    const auto& [blockId, nucPos, nucGapPos] = tupleCoord;
-    if (nucGapPos == -1) {
-        return sequence.mainBase(blockId, nucPos);
-    }
-    return sequence.gapBase(blockId, nucPos, nucGapPos);
-}
-
-void clearBlockBaseCounts(int32_t blockId,
-                          bool blockStrand,
-                          std::vector<int64_t>& curBaseCounts,
-                          std::vector<int64_t>& parentBaseCountsBacktrack,
-                          const panmapUtils::GlobalCoords& globalCoords,
-                          const panmapUtils::BlockSequences& sequence) {
-    std::tuple<int64_t, int64_t, int64_t> coord = globalCoords.getBlockStartTuple(blockId);
-    std::tuple<int64_t, int64_t, int64_t> end = globalCoords.getBlockEndTuple(blockId);
-
-    while (true) {
-        char c = getNucFromTuple(coord, sequence);
-        if (!blockStrand) {
-            c = panmanUtils::getComplementCharacter(c);
-        }
-
-        if (getIndexFromNucleotide(c) <= 3) {
-            --curBaseCounts[getIndexFromNucleotide(c)];
-            ++parentBaseCountsBacktrack[getIndexFromNucleotide(c)];
-        }
-
-        if (coord == end) {
-            break;
-        }
-
-        globalCoords.stepRightCoordinate(coord);
-        if (coord == std::make_tuple(-1, -1, -1)) {
-            logging::err("stepRight returned -1, -1, -1");
-            std::exit(1);
-        }
-    }
-}
-
-static void applyMutations(panmanUtils::Tree* tree,
-                           panmanUtils::Node* node,
-                           panmapUtils::BlockSequences& blockSequences,
-                           std::vector<char>& oldBlockExists,
-                           std::vector<char>& oldBlockStrand,
-                           std::vector<std::tuple<uint32_t, bool, bool, bool, bool>>& blockMutationRecord,
-                           std::vector<std::tuple<panmapUtils::Coordinate, char, char>>& nucMutationRecord,
-                           std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunUpdates,
-                           std::vector<std::pair<bool, std::pair<int64_t, int64_t>>>& gapRunBacktracks,
-                           std::unordered_set<int64_t>& invertedBlocks,
-                           std::vector<std::pair<int64_t, bool>>& invertedBlocksBacktracks,
-                           std::vector<int64_t>& curBaseCounts,
-                           std::vector<int64_t>& parentBaseCountsBacktrack,
-                           std::vector<std::vector<int64_t>>& subCount,
-                           bool& isMutatedNuc,
-                           const panmapUtils::GlobalCoords& globalCoords,
-                           const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
-    std::vector<char>& blockExists = blockSequences.blockExists;
-    std::vector<char>& blockStrand = blockSequences.blockStrand;
-
-    const panmapUtils::BlockSequences& sequence = blockSequences;
-    for (const auto& blockMutation : node->blockMutation) {
-        const int32_t& blockId = blockMutation.primaryBlockId;
-        const bool& isInsertion = blockMutation.blockMutInfo;
-        const bool& isInversion = blockMutation.inversion;
-        bool oldExists = blockExists[blockId];
-        bool oldStrand = blockStrand[blockId];
-        if (isInsertion) {
-            // insertion
-            blockExists[blockId] = true;
-            blockStrand[blockId] = !isInversion;
-            if (!blockStrand[blockId]) {
-                invertedBlocks.insert(blockId);
-                if (oldStrand) {
-                    invertedBlocksBacktracks.emplace_back(blockId, true);
-                }
-            }
-        } else if (isInversion) {
-            // simple inversion
-            blockStrand[blockId] = !blockStrand[blockId];
-            if (!blockStrand[blockId]) {
-                invertedBlocks.insert(blockId);
-                if (oldStrand) {
-                    invertedBlocksBacktracks.emplace_back(blockId, true);
-                }
-            } else {
-                invertedBlocks.erase(blockId);
-                if (!oldStrand) {
-                    invertedBlocksBacktracks.emplace_back(blockId, false);
-                }
-            }
-            std::vector<int64_t> oldCurBaseCounts = curBaseCounts;
-            clearBlockBaseCounts(
-                blockId, oldBlockStrand[blockId], curBaseCounts, parentBaseCountsBacktrack, globalCoords, sequence);
-        } else {
-            // deletion
-            blockExists[blockId] = false;
-            blockStrand[blockId] = true;
-            if (!oldStrand) {
-                invertedBlocks.erase(blockId);
-                invertedBlocksBacktracks.emplace_back(blockId, false);
-            }
-            std::vector<int64_t> oldCurBaseCounts = curBaseCounts;
-            clearBlockBaseCounts(
-                blockId, oldBlockStrand[blockId], curBaseCounts, parentBaseCountsBacktrack, globalCoords, sequence);
-        }
-        blockMutationRecord.emplace_back(
-            std::make_tuple(blockId, oldExists, oldStrand, blockExists[blockId], blockStrand[blockId]));
-    }
-
-    for (const auto& nucMutation : node->nucMutation) {
-        int length = nucMutation.mutInfo >> 4;
-        for (int i = 0; i < length; i++) {
-            panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
-            char originalNuc = blockSequences.getSequenceBase(pos);
-            int newNucCode = (nucMutation.nucs >> (4 * (5 - i))) & 0xF;
-            char newNuc = panmanUtils::getNucleotideFromCode(newNucCode);
-            blockSequences.setSequenceBase(pos, newNuc);
-            nucMutationRecord.emplace_back(std::make_tuple(pos, originalNuc, newNuc));
-        }
-    }
-
-    for (auto& nucMutation : nucMutationRecord) {
-        const auto& [coord, originalNuc, newNuc] = nucMutation;
-        int blockId = coord.primaryBlockId;
-        if (oldBlockExists[blockId] && blockExists[blockId] && oldBlockStrand[blockId] == blockStrand[blockId]) {
-            // on to on -> collect gap runs and nuc runs
-            char parChar = originalNuc == 'x' ? '-' : originalNuc;
-            char curChar = newNuc == 'x' ? '-' : newNuc;
-
-            int64_t scalar = globalCoords.getScalarFromCoord(coord);
-            if (!blockStrand[blockId]) {
-                scalar = blockRanges[blockId].first + blockRanges[blockId].second - scalar;
-            }
-
-            if (!oldBlockStrand[blockId]) parChar = panmanUtils::getComplementCharacter(parChar);
-            if (!blockStrand[blockId]) curChar = panmanUtils::getComplementCharacter(curChar);
-
-            if (getIndexFromNucleotide(parChar) <= 3) {
-                --curBaseCounts[getIndexFromNucleotide(parChar)];
-                ++parentBaseCountsBacktrack[getIndexFromNucleotide(parChar)];
-            }
-            if (getIndexFromNucleotide(curChar) <= 3) {
-                ++curBaseCounts[getIndexFromNucleotide(curChar)];
-                --parentBaseCountsBacktrack[getIndexFromNucleotide(curChar)];
-            }
-            if (getIndexFromNucleotide(parChar) <= 3 && getIndexFromNucleotide(curChar) <= 3) {
-                isMutatedNuc = true;
-                ++subCount[getIndexFromNucleotide(parChar)][getIndexFromNucleotide(curChar)];
-            }
-
-            if (parChar != '-' && curChar == '-') {
-                // nuc to gap
-                if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true &&
-                    gapRunUpdates.back().second.second + 1 == scalar) {
-                    ++(gapRunUpdates.back().second.second);
-                } else {
-                    gapRunUpdates.emplace_back(true, std::make_pair(scalar, scalar));
-                }
-            } else if (parChar == '-' && curChar != '-') {
-                // gap to nuc
-                if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false &&
-                    gapRunUpdates.back().second.second + 1 == scalar) {
-                    ++(gapRunUpdates.back().second.second);
-                } else {
-                    gapRunUpdates.emplace_back(false, std::make_pair(scalar, scalar));
-                }
-            }
-        }
-    }
-}
-
-static std::vector<std::pair<int64_t, int64_t>> invertRanges(const std::vector<std::pair<int64_t, int64_t>>& nucRanges,
-                                                             const std::pair<int64_t, int64_t>& invertRange) {
-    std::vector<std::pair<int64_t, int64_t>> invertedRanges;
-
-    auto [start, end] = invertRange;
-
-    for (auto it = nucRanges.rbegin(); it != nucRanges.rend(); ++it) {
-        const auto& [curStart, curEnd] = *it;
-        invertedRanges.emplace_back(start + end - curEnd, start + end - curStart);
-    }
-
-    return invertedRanges;
-}
-
-static boost::icl::interval_set<int64_t>
-gapMapToNucRunSet(const std::map<int64_t, int64_t>& gapMap,
-                  const std::vector<std::pair<int64_t, int64_t>>& blockRanges) {
-    boost::icl::interval_set<int64_t> curNucRunSet;
-    int64_t start = -1;
-    for (const auto& [curStart, curEnd] : gapMap) {
-        if (start == -1) {
-            if (curStart != 0) {
-                curNucRunSet.add(boost::icl::interval<int64_t>::closed(0, curStart - 1));
-            }
-        } else {
-            curNucRunSet.add(boost::icl::interval<int64_t>::closed(start, curStart - 1));
-        }
-        start = curEnd + 1;
-    }
-    if (start <= blockRanges.back().second) {
-        curNucRunSet.add(boost::icl::interval<int64_t>::closed(start, blockRanges.back().second));
-    }
-    return curNucRunSet;
-}
-
-void undoMutations(panmapUtils::BlockSequences& blockSequences,
-                   std::vector<char>& oldBlockExists,
-                   std::vector<char>& oldBlockStrand,
-                   std::unordered_set<int64_t>& invertedBlocks,
-                   const std::vector<std::tuple<uint32_t, bool, bool, bool, bool>>& blockMutationRecord,
-                   const std::vector<std::tuple<panmapUtils::Coordinate, char, char>>& nucMutationRecord,
-                   const std::vector<std::pair<int64_t, bool>>& invertedBlocksBacktracks) {
-    std::vector<char>& blockExists = blockSequences.blockExists;
-    std::vector<char>& blockStrand = blockSequences.blockStrand;
-
-    for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
-        blockExists[blockId] = oldExists;
-        blockStrand[blockId] = oldStrand;
-        oldBlockExists[blockId] = oldExists;
-        oldBlockStrand[blockId] = oldStrand;
-    }
-
-    for (const auto& [coord, oldNuc, newNuc] : nucMutationRecord) {
-        blockSequences.setSequenceBase(coord, oldNuc);
-    }
-
-    for (const auto& [blockId, erase] : invertedBlocksBacktracks) {
-        if (erase) {
-            invertedBlocks.erase(blockId);
-        } else {
-            invertedBlocks.insert(blockId);
-        }
-    }
-}
-
-inline std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector<std::vector<double>>& phredMatrix) {
-    std::vector<std::vector<double>> prob_matrix = phredMatrix;
-    for (int i = 0; i < prob_matrix.size(); i++) {
-        for (int j = 0; j < prob_matrix[i].size(); j++) {
-            prob_matrix[i][j] = pow(10, -prob_matrix[i][j] / 10);
-        }
-    }
-    return prob_matrix;
-}
-
-inline std::vector<std::vector<double>> probMatrix2PhredMatrix(const std::vector<std::vector<double>>& probMatrix) {
-    std::vector<std::vector<double>> phred_matrix = probMatrix;
-    for (int i = 0; i < phred_matrix.size(); i++) {
-        for (int j = 0; j < phred_matrix[i].size(); j++) {
-            phred_matrix[i][j] = -10 * log10(phred_matrix[i][j]);
-        }
-    }
-    return phred_matrix;
-}
-
-inline double getAverageMutationRate(const std::vector<std::vector<double>>& matrix) {
-    if (matrix.empty() || matrix.size() != matrix[0].size())
-        throw std::invalid_argument("Matrix must be square and non-empty.");
-
-    double sum = 0.0;
-    size_t count = 0;
-    for (size_t i = 0; i < matrix.size(); ++i) {
-        for (size_t j = 0; j < matrix.size(); ++j) {
-            if (i != j) {
-                sum += matrix[i][j];
-                ++count;
-            }
-        }
-    }
-
-    if (count == 0) throw std::runtime_error("No off-diagonal elements to calculate average.");
-    return sum / count;
 }
 
 std::vector<char> parse_alts(const std::string& alts_str) {
