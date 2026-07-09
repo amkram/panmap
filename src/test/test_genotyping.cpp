@@ -1,9 +1,6 @@
-// Genotyping unit tests: mutation-matrix (.mm) parsing.
-//
-// NOTE: the orphaned src/test/data/genotype_test_data/*.mm fixtures were in an OLD
-// format (plain numbers on the indel lines); the current parser (genotyping.cpp:63-92)
-// requires "size:prob" pairs. Rather than commit stale fixtures, these tests write a
-// valid .mm in the CURRENT format inline and assert the real parser's behavior.
+// Genotyping unit tests: mutation-matrix (.mm) parsing. Tests write a valid .mm inline
+// in the current "size:prob" indel format (genotyping.cpp:63-92) and assert the real
+// parser's behavior.
 #include <boost/test/unit_test.hpp>
 
 #include "genotyping.hpp"

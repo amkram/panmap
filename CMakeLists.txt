@@ -2,10 +2,9 @@ cmake_minimum_required(VERSION 3.14)
 
 project(panmap VERSION 0.1.2)
 
-# Use ccache as a compiler launcher when it is installed. This is a large win on
-# incremental and CI rebuilds: unchanged translation units (notably mgsr.cpp,
-# ~25s at -O3) are served from cache instead of recompiled. No-op if ccache is
-# absent, and overridable with -DCMAKE_CXX_COMPILER_LAUNCHER=.
+# Use ccache as compiler launcher when installed: unchanged translation units
+# (notably mgsr.cpp, ~25s at -O3) are served from cache. No-op if ccache is
+# absent; override with -DCMAKE_CXX_COMPILER_LAUNCHER=.
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
     message(STATUS "ccache found: ${CCACHE_PROGRAM} (used as compiler launcher)")
@@ -39,13 +38,12 @@ if(APPLE)
 endif()
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
-# Project options
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
 option(OPTION_BUILD_SIMULATE "Build simulate." ON)
 option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013+)" OFF)
-# Default to system libraries when building inside an active conda env, so a plain
-# cmake in an activated env builds without extra flags; otherwise build the bundled sources.
+# Default to system libs inside an active conda env so a plain cmake there builds
+# without extra flags; otherwise build the bundled sources.
 if(DEFINED ENV{CONDA_PREFIX})
     set(_use_system_libs_default ON)
 else()
@@ -53,30 +51,26 @@ else()
 endif()
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" ${_use_system_libs_default})
 
-# Point the build at an active conda env ONLY when actually using its libraries.
-# Injecting the env's include/lib dirs unconditionally leaks its headers (e.g. an
-# incompatible protobuf) into a bundled (USE_SYSTEM_LIBS=OFF) build and breaks it.
+# Point the build at an active conda env ONLY when using its libraries. Injecting
+# its include/lib dirs unconditionally leaks headers (e.g. an incompatible protobuf)
+# into a bundled (USE_SYSTEM_LIBS=OFF) build and breaks it.
 if(USE_SYSTEM_LIBS AND DEFINED ENV{CONDA_PREFIX})
     list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
     include_directories(SYSTEM "$ENV{CONDA_PREFIX}/include")
     link_directories("$ENV{CONDA_PREFIX}/lib")
 endif()
 
-# Set consistent compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 
 include(FetchContent)
 include(ExternalProject)
 include(GNUInstallDirs)
 
-# Optimize FetchContent behavior
 set(FETCHCONTENT_QUIET OFF)
 set(POSITION_INDEPENDENT_CODE ON)
 set(ABSL_PROPAGATE_CXX_STD ON)
-# Cache third-party builds to speed up subsequent builds
 set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/external_cache" CACHE PATH "Cache external dependencies")
 
-# Add the custom cmake directories to the module path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # TBB: use the system library under USE_SYSTEM_LIBS (conda) or on macOS
@@ -108,7 +102,6 @@ else()
     include_directories(${tbb_SOURCE_DIR}/include)
 endif()
 
-# jsoncpp: system (conda) under USE_SYSTEM_LIBS, else build from source
 if(USE_SYSTEM_LIBS)
     find_package(jsoncpp REQUIRED)  # provides imported target jsoncpp_lib
 else()
@@ -122,7 +115,6 @@ else()
     FetchContent_MakeAvailable(jsoncpp)
 endif()
 
-# spdlog: system (conda) under USE_SYSTEM_LIBS, else build from source
 if(USE_SYSTEM_LIBS)
     find_package(spdlog REQUIRED)
 else()
@@ -134,19 +126,17 @@ else()
     FetchContent_MakeAvailable(spdlog)
 endif()
 
-# Abseil (flat_hash_map): system under USE_SYSTEM_LIBS or macOS, else from source
 if(USE_SYSTEM_LIBS OR APPLE)
     find_package(absl REQUIRED)
 else()
     FetchContent_Declare(
         absl
         GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-        GIT_TAG 20230802.1 # Use a specific tag for stability
+        GIT_TAG 20230802.1
     )
     FetchContent_MakeAvailable(absl)
 endif()
 
-# Find Protobuf
 find_package(Protobuf REQUIRED)
 if(NOT Protobuf_FOUND)
     message(FATAL_ERROR "Protobuf not found")
@@ -154,8 +144,8 @@ endif()
 # Use find_library to get a concrete path (avoids IMPORTED target scope issues)
 set(PROTOBUF_LIB_PATH ${PROTOBUF_LIBRARY})
 
-# Include TBB and jsoncpp headers (only when built from source;
-# system/imported targets carry their own usage-requirement includes)
+# TBB and jsoncpp headers only when built from source; imported targets
+# carry their own usage-requirement includes.
 if(NOT USE_SYSTEM_LIBS AND NOT APPLE)
     include_directories(${tbb_SOURCE_DIR}/include)
 endif()
@@ -164,8 +154,7 @@ if(NOT USE_SYSTEM_LIBS)
 endif()
 include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
-# Cap'n Proto: system (conda) under USE_SYSTEM_LIBS, else build from bundled source.
-# Both paths define the same vars/target (CAPNP_LIBRARY, KJ_LIBRARY, CAPNP_EXECUTABLE,
+# Both branches define the same vars/target (CAPNP_LIBRARY, KJ_LIBRARY, CAPNP_EXECUTABLE,
 # CAPNPC_CXX_EXECUTABLE, CAPNP_SCHEMA_DIR, and a 'capnp_tools' target) consumed below.
 if(USE_SYSTEM_LIBS)
     find_library(CAPNP_LIBRARY NAMES capnp REQUIRED)
@@ -198,7 +187,7 @@ else()
     include_directories(${CAPNP_INSTALL_DIR}/include)
 endif()
 
-# Add index_lite.capnp generation (the only capnp schema used)
+# index_lite.capnp is the only capnp schema used.
 set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/index_lite.capnp")
 set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(LITE_CAPNP_GEN_CPP "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.c++")
@@ -225,7 +214,7 @@ add_custom_target(index_capnp_generator ALL
     DEPENDS ${LITE_CAPNP_GEN_CPP} ${LITE_CAPNP_GEN_H}
 )
 
-# Create a simplified version of the capnp_generate_cpp macro
+# Simplified reimplementation of capnp_generate_cpp.
 function(capnp_generate_cpp SOURCES HEADERS)
   if(NOT ARGN)
     message(SEND_ERROR "capnp_generate_cpp: missing schema files")
@@ -261,8 +250,7 @@ add_custom_command(
   set(${HEADERS} ${output_headers} PARENT_SCOPE)
 endfunction()
 
-# ===== Setup for Panman =====
-# Create config files for panman
+# ===== Panman =====
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cmake)
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cmake/TBBConfig.cmake "
 # TBB Config File
@@ -304,7 +292,7 @@ function(tbb_build)
 endfunction()
 ")
 
-# Create a dummy JsonCpp library
+# Dummy JsonCpp library
 add_library(jsoncpp INTERFACE)
 
 # panman is built from source either way (no conda package).
@@ -315,8 +303,8 @@ else()
 endif()
 
 if(PANMAN_SOURCE_DIR OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/panman")
-    # Source pre-placed (e.g. the conda recipe's second source tarball) or
-    # user-provided via -DPANMAN_SOURCE_DIR; no network fetch.
+    # Source pre-placed (e.g. conda recipe's second tarball) or provided via
+    # -DPANMAN_SOURCE_DIR; no network fetch.
     if(NOT PANMAN_SOURCE_DIR)
         set(PANMAN_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/panman")
     endif()
@@ -326,7 +314,6 @@ if(PANMAN_SOURCE_DIR OR EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/panman")
     execute_process(COMMAND sed -i.bak "s/PROJECT_VERSION/\"1.0\"/g" "${panman_SOURCE_DIR}/src/panmanUtils.cpp")
     execute_process(COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_panman.sh "${panman_SOURCE_DIR}" ${PANMAN_TBB_COMPAT})
 else()
-    # Fetch the panman source code (clone only, disable update)
 FetchContent_Declare(
     panman
     GIT_REPOSITORY https://github.com/TurakhiaLab/panman
@@ -344,8 +331,7 @@ FetchContent_Declare(
     endif()
 endif()
     
-    # Generate version.hpp file for panman
-    file(WRITE "${panman_SOURCE_DIR}/src/version.hpp" 
+    file(WRITE "${panman_SOURCE_DIR}/src/version.hpp"
         "#ifndef VERSION_HPP\n"
         "#define VERSION_HPP\n"
         "\n"
@@ -355,12 +341,10 @@ endif()
         "#endif // VERSION_HPP\n"
     )
     
-    # Create a patch file for panman's CMakeLists.txt
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "")
     file(READ "${panman_SOURCE_DIR}/CMakeLists.txt" PANMAN_CMAKE_CONTENT)
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "${PANMAN_CMAKE_CONTENT}")
-    
-    # Modify the panman CMakeLists.txt
+
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt" [=[
 cmake_minimum_required (VERSION 3.8)
 project(panmanUtils)
@@ -472,19 +456,17 @@ install(TARGETS panmanUtils panman_lib
 )
 ]=])
 
-    # Add the subdirectory to the build
     add_subdirectory(${panman_SOURCE_DIR} ${panman_BINARY_DIR})
-    
-    # Add an explicit dependency to ensure the CapnProto tools are built first
+
+    # Ensure the CapnProto tools build first.
     add_dependencies(generate_panman_capnp_extern capnp_tools)
-    
-    # Set up the include paths
+
     target_include_directories(panmanUtils PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}/include
         ${Boost_INCLUDE_DIRS}
     )
-    
-    # Create a dummy library to link against for our main project
+
+    # Dummy interface library our main project links against.
     add_library(panman INTERFACE)
     target_include_directories(panman INTERFACE
         ${panman_SOURCE_DIR}/src
@@ -494,19 +476,16 @@ install(TARGETS panmanUtils panman_lib
     message(STATUS "Panman source directory: ${panman_SOURCE_DIR}")
     message(STATUS "Panman binary directory: ${panman_BINARY_DIR}")
 
-# Add dependency on panman_lib in _deps/panman-build/
 add_dependencies(panman panman_lib)
 
-# Define the Minimap2 build target
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
     set(MINIMAP2_MAKE_ARGS "arm_neon=1" "aarch64=1")
 else()
     set(MINIMAP2_MAKE_ARGS "")
 endif()
-# Minimap2 uses its own Makefile, so it does not inherit CMake's include/lib
-# dirs. Under USE_SYSTEM_LIBS (conda) zlib lives only in the env, so point the
-# sub-make's compiler at it via CPATH/LIBRARY_PATH (gcc/clang honor these). No-op
-# otherwise: system/apt zlib is already on the default search path.
+# Minimap2 uses its own Makefile, so it does not inherit CMake's include/lib dirs.
+# Under USE_SYSTEM_LIBS (conda) zlib lives only in the env, so point the sub-make's
+# compiler at it via CPATH/LIBRARY_PATH (gcc/clang honor these). No-op otherwise.
 if(USE_SYSTEM_LIBS AND DEFINED ENV{CONDA_PREFIX})
     set(_mm2_env "CPATH=$ENV{CONDA_PREFIX}/include:$ENV{CPATH}"
                  "LIBRARY_PATH=$ENV{CONDA_PREFIX}/lib:$ENV{LIBRARY_PATH}")
@@ -524,14 +503,12 @@ add_custom_command(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Create a minimap2 target that depends on the library build
-add_custom_target(minimap2_target 
+add_custom_target(minimap2_target
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
     COMMENT "Building minimap2 library from src/3rdparty/minimap2"
 )
 
-# htslib: system (conda) under USE_SYSTEM_LIBS, else build from bundled source.
-# Both paths define the imported target `htslib`, a no-op-able `htslib_ext`
+# Both branches define the imported target `htslib`, a no-op-able `htslib_ext`
 # dependency, and HTSLIB_INCLUDE_DIR (consumed below).
 if(USE_SYSTEM_LIBS)
     find_library(HTS_LIBRARY NAMES hts REQUIRED)
@@ -544,7 +521,6 @@ if(USE_SYSTEM_LIBS)
     add_custom_target(htslib_ext)  # no-op so 'DEPENDS/add_dependencies ... htslib_ext' resolves
     set(HTSLIB_INCLUDE_DIR "${HTS_INCLUDE_DIR}")
 else()
-    # Build htslib using ExternalProject
     set(HTSLIB_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/htslib_install)
     ExternalProject_Add(htslib_ext
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20
@@ -552,7 +528,7 @@ else()
         BUILD_COMMAND make -j lib-static
         INSTALL_COMMAND make install
         BUILD_IN_SOURCE 1 # htslib needs to be built in source
-        UPDATE_COMMAND "" # Don't try to update the source
+        UPDATE_COMMAND ""
     )
     add_library(htslib STATIC IMPORTED GLOBAL)
     set_target_properties(htslib PROPERTIES
@@ -563,7 +539,6 @@ else()
 endif()
 
 
-# Define BWA sources
 set(BWA_SOURCES
     src/3rdparty/bwa/bamlite.c
     src/3rdparty/bwa/bntseq.c
@@ -602,17 +577,12 @@ set(BWA_SOURCES
     src/mm_align.c
 )
 
-# Aggregate all the dependencies into a single target
 add_custom_target(build-deps DEPENDS
     htslib_ext
     minimap2_target
     capnp_tools
     tbb_build
 )
-
-# Create imported targets for the dependencies
-# kj and capnp_tools are already provided by FetchContent_MakeAvailable(capnp_tools)
-# There's no need to create imported targets for them
 
 add_library(minimap2 STATIC IMPORTED)
 set_target_properties(minimap2 PROPERTIES IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a")
@@ -633,9 +603,8 @@ endif()
 target_compile_options(bcftools PRIVATE -fPIC)
 
 # Product sources minus main.cpp, compiled once into an OBJECT library (panmap_lib)
-# so that BOTH `panmap` and the test binary (panmap_tests) link the exact same
-# objects. This is the single owner of the source list -- no target re-lists these
-# files by hand. (Note: panmap_lib is distinct from panman_lib, the PanMAN submodule.)
+# so `panmap` and the test binary link the exact same objects. Single owner of the
+# source list; no target re-lists these files. (Distinct from panman_lib, the PanMAN submodule.)
 set(PANMAP_LIB_SOURCES
     src/conversion.cpp
     src/panmap_utils.cpp
@@ -650,18 +619,15 @@ set(PANMAP_LIB_SOURCES
     ${LITE_CAPNP_SRCS}
 )
 
-# Find required packages before using them
 find_package(Boost COMPONENTS program_options iostreams filesystem date_time REQUIRED)
 find_package(ZLIB REQUIRED)
 
-# zstd: system (conda) under USE_SYSTEM_LIBS, else build static from source.
-# Consumers link the target name `libzstd_static`, preserved in both paths.
+# Consumers link the target name `libzstd_static`, preserved in both branches.
 if(USE_SYSTEM_LIBS)
     find_library(ZSTD_LIBRARY NAMES zstd REQUIRED)
     add_library(libzstd_static INTERFACE IMPORTED)
     set_target_properties(libzstd_static PROPERTIES INTERFACE_LINK_LIBRARIES "${ZSTD_LIBRARY}")
 else()
-    # Use FetchContent to get latest zstd with all modern features
     FetchContent_Declare(
         zstd
         GIT_REPOSITORY https://github.com/facebook/zstd.git
@@ -683,15 +649,14 @@ endif()
 add_library(panmap_lib OBJECT ${PANMAP_LIB_SOURCES})
 add_dependencies(panmap_lib panman_lib minimap2_target build-deps index_capnp_generator tbb_build)
 
-# panmap links panmap_lib (an OBJECT library): this pulls in its object files AND
-# its PUBLIC usage requirements (include dirs, compile options, link libraries),
-# so main.cpp compiles in the identical environment. See target_link_libraries below.
+# panmap links panmap_lib (OBJECT library): pulls in its objects AND its PUBLIC usage
+# requirements (include dirs, compile options, link libraries), so main.cpp compiles
+# in the identical environment. See target_link_libraries below.
 add_executable(panmap src/main.cpp)
 add_dependencies(panmap panmap_lib build-deps index_capnp_generator tbb_build)
-# Place the binary in build/bin (matches the docs and the simulate/test targets)
+# build/bin matches the docs and the simulate/test targets.
 set_target_properties(panmap PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# Build simulate tool if enabled
 if(OPTION_BUILD_SIMULATE)
     add_executable(simulate 
         src/test/simulate.cpp
@@ -730,7 +695,6 @@ if(OPTION_BUILD_SIMULATE)
         m
     )
     
-    # Set output directory to build/bin
     set_target_properties(simulate PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
@@ -742,8 +706,8 @@ if(OPTION_BUILD_TESTS)
     enable_testing()
 
     # Shared test-support library: the ONE place tests build/load indices, extract
-    # seeds, walk paths, and compute the ground-truth metric oracle. It only needs
-    # headers at compile time; symbols resolve when panmap_tests links panmap_lib.
+    # seeds, walk paths, and compute the ground-truth metric oracle. Needs only headers
+    # at compile time; symbols resolve when panmap_tests links panmap_lib.
     add_library(testsupport STATIC
         src/test/helpers/metrics_oracle.cpp
         src/test/helpers/seed_helpers.cpp
@@ -800,17 +764,15 @@ add_test(NAME e2e
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# Include directories live on panmap_lib as PUBLIC usage requirements so that both
-# the object library's own sources and consumers (panmap, panmap_tests) inherit them.
-# (The capnp generated source is already part of PANMAP_LIB_SOURCES.)
+# Include dirs live on panmap_lib as PUBLIC usage requirements so the object library's
+# own sources and consumers (panmap, panmap_tests) inherit them.
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/src)
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include)
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty)
 target_include_directories(panmap_lib PUBLIC ${HTSLIB_INCLUDE_DIR})
 
-# libdeflate: system (conda) under USE_SYSTEM_LIBS, else build from source.
-# Consumers link the target name `libdeflate_shared`, preserved in both paths.
+# Consumers link the target name `libdeflate_shared`, preserved in both branches.
 if(USE_SYSTEM_LIBS)
     find_library(DEFLATE_LIBRARY NAMES deflate REQUIRED)
     add_library(libdeflate_shared INTERFACE IMPORTED)
@@ -850,11 +812,10 @@ target_link_libraries(panmap_lib PUBLIC
     pthread
 )
 
-# panmap is just main.cpp + panmap_lib (objects + transitive usage requirements).
 target_link_libraries(panmap PRIVATE panmap_lib)
 
-# Set compiler options based on build type. Applied to panmap_lib PUBLIC so the
-# object library's sources compile with these flags AND consumers inherit them.
+# Compiler options by build type, on panmap_lib PUBLIC so its sources compile with
+# them AND consumers inherit them.
 if(OPTION_DEBUG)
     target_compile_options(panmap_lib PUBLIC -g -O0 -ggdb)
 elseif(OPTION_PORTABLE)
@@ -878,8 +839,8 @@ else()
     )
 endif()
 
-# Unit testing data (only needed when building tests; lets a tests-off
-# build, e.g. conda, skip src/test/data entirely so it can be export-ignored)
+# Test data, only when building tests; lets a tests-off build (e.g. conda) skip
+# src/test/data entirely so it can be export-ignored.
 if(OPTION_BUILD_TESTS)
     configure_file(src/test/data/test.aligned.fa test.aligned.fa COPYONLY)
     configure_file(src/test/data/test.nwk test.nwk COPYONLY)
@@ -890,7 +851,6 @@ endif()
 
 install(TARGETS panmap RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-# Create a compile_commands.json symlink for clangd
 add_custom_command(
     TARGET panmap POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E create_symlink
@@ -899,7 +859,6 @@ add_custom_command(
     COMMENT "Creating compile_commands.json symlink for clangd"
 )
 
-# Print build configuration summary
 message(STATUS "")
 message(STATUS "Build Configuration Summary:")
 message(STATUS "----------------------------")

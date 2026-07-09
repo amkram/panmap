@@ -117,3 +117,6 @@ output/
 ~$*
 /info/
 CMakeUserPresets.json
+
+# stray downloaded PDFs at repo root
+/*.pdf
