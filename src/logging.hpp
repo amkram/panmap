@@ -248,10 +248,6 @@ inline std::string status_ok() {
     return fmt::format("{}{}{}", style::green(), box::check(), style::reset());
 }
 
-inline std::string status_fail() {
-    return fmt::format("{}{}{}", style::red(), box::cross(), style::reset());
-}
-
 inline std::string pad_right(const std::string& s, int w) {
     if ((int)s.size() >= w) return s;
     return s + std::string(w - s.size(), ' ');
@@ -363,14 +359,6 @@ inline void progress(const std::string& msg) {
 
 inline void progress_clear() {
     if (config().isTTY && !config().plain) std::cerr << "\r\033[K" << std::flush;
-}
-
-inline void progress_pct(const std::string& task, size_t current, size_t total, int64_t elapsed_ms = -1) {
-    if (config().quiet || !config().isTTY || config().plain) return;
-    int pct = total > 0 ? static_cast<int>((current * 100) / total) : 0;
-    std::cerr << "\r\033[K" << style::dim() << "  " << task << " " << pct << "%";
-    if (elapsed_ms >= 0) std::cerr << " (" << format_duration(elapsed_ms) << ")";
-    std::cerr << style::reset() << std::flush;
 }
 
 // Progress bar. In-place line:

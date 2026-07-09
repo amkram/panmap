@@ -14,7 +14,6 @@ GroundTruthMetrics GroundTruthMetrics::compute(const SeedCountMap& nodeGenome,
 
         // Genome-only metric (placement.cpp:215); accumulates over ALL present seeds.
         m.genomeMagnitudeSquared += logGenome * logGenome;
-        m.genomeUniqueSeedCount++;
 
         // Read-interaction metrics only for seeds also present in the (filtered) reads.
         auto it = state.logReadCounts.find(hash);

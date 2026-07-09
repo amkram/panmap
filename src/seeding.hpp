@@ -127,20 +127,6 @@ std::pair<size_t, size_t> hashSeq(const std::string& s);
 std::vector<std::tuple<size_t, bool, bool, int64_t>>
 rollingSyncmers(std::string_view seq, int k, int s, bool open, int t = 0, bool returnAll = true);
 
-void seedsFromFastq(const int32_t& k,
-                    const int32_t& s,
-                    const int32_t& t,
-                    const bool& open,
-                    const int32_t& l,
-                    absl::flat_hash_map<size_t, std::pair<size_t, size_t>>& readSeedCounts,
-                    std::vector<std::string>& readSequences,
-                    std::vector<std::string>& readQuals,
-                    std::vector<std::string>& readNames,
-                    std::vector<std::vector<seed_t>>& readSeeds,
-                    std::vector<std::vector<std::string>>& readSeedSeqs,
-                    const std::string& fastqPath1,
-                    const std::string& fastqPath2);
-
 std::string reverseComplement(std::string dna_sequence);
 
 // Reads sequences, qualities, and names without computing seeds.

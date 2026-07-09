@@ -883,7 +883,6 @@ void placeLite(PlacementResult& result,
         }
     }
 
-    auto time_hash_delta_start = std::chrono::high_resolution_clock::now();
     size_t totalHashDeltas = 0;
 
     auto indexRoot = liteIndex.getRoot<LiteIndex>();
@@ -973,8 +972,6 @@ void placeLite(PlacementResult& result,
     } else {
         logging::info("Seed changes already loaded, skipping index deserialization");
     }
-
-    auto time_hash_delta_end = std::chrono::high_resolution_clock::now();
 
     TraversalParams params = callerParams;
     // Override k/s/t/l/open/hpc from the index (authoritative source)
