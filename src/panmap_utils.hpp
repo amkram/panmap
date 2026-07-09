@@ -308,7 +308,6 @@ struct BlockSequences {
         for (size_t i = 0; i < tree->gaps.size(); i++) {
             const auto& curGap = tree->gaps[i];
             int32_t primaryBId = (curGap.primaryBlockId);
-            int32_t secondaryBId = (curGap.secondaryBlockId);
             for (size_t j = 0; j < curGap.nucPosition.size(); j++) {
                 int len = curGap.nucGapLength[j];
                 int pos = curGap.nucPosition[j];

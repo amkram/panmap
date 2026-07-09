@@ -224,17 +224,6 @@ void updateGapMapStep(std::map<T, T>& gapMap,
     }
 }
 
-// Overload taking the update as a pair (used by genotyping.cpp).
-template <typename T>
-void updateGapMapStep(std::map<T, T>& gapMap,
-                      const std::pair<bool, std::pair<T, T>>& update,
-                      std::vector<std::pair<bool, std::pair<T, T>>>& backtrack,
-                      std::vector<std::pair<bool, std::pair<T, T>>>& gapMapUpdates,
-                      bool recordGapMapUpdates = true) {
-    updateGapMapStep(
-        gapMap, update.second.first, update.second.second, update.first, backtrack, gapMapUpdates, recordGapMapUpdates);
-}
-
 template <typename T>
 void invertGapMap(std::map<T, T>& gapMap,
                   const std::pair<T, T>& invertRange,
