@@ -1220,8 +1220,8 @@ void index_single_mode::IndexBuilder::buildIndex() {
     size_t numNodes = T->allNodes.size();
 
     capnp::List<BlockRange>::Builder blockRangesBuilder =
-        liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
-    for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
+        liteTreeBuilder.initBlockRanges(globalCoords.numBlocks());
+    for (size_t i = 0; i < globalCoords.numBlocks(); i++) {
         blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
         blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
     }
@@ -2679,8 +2679,8 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
 
     capnp::List<BlockRange>::Builder blockRangesBuilder =
-        liteTreeBuilder.initBlockRanges(globalCoords.globalCoords.size());
-    for (size_t i = 0; i < globalCoords.globalCoords.size(); i++) {
+        liteTreeBuilder.initBlockRanges(globalCoords.numBlocks());
+    for (size_t i = 0; i < globalCoords.numBlocks(); i++) {
         blockRangesBuilder[i].setRangeBeg(globalCoords.getBlockStartScalar(i));
         blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
     }
