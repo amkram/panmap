@@ -215,8 +215,18 @@ void bwa_align_reads_direct(const char* reference,
         bwa_worker_func(&workers[0]);
     } else {
         pthread_t* threads = (pthread_t*)malloc(n_threads * sizeof(pthread_t));
-        for (int t = 0; t < n_threads; t++) pthread_create(&threads[t], NULL, bwa_worker_func, &workers[t]);
-        for (int t = 0; t < n_threads; t++) pthread_join(threads[t], NULL);
+        char* created = (char*)calloc(n_threads, 1);
+        for (int t = 0; t < n_threads; t++) {
+            // On spawn failure run the chunk synchronously so no reads are dropped,
+            // and don't join an uninitialized thread id.
+            if (pthread_create(&threads[t], NULL, bwa_worker_func, &workers[t]) == 0)
+                created[t] = 1;
+            else
+                bwa_worker_func(&workers[t]);
+        }
+        for (int t = 0; t < n_threads; t++)
+            if (created[t]) pthread_join(threads[t], NULL);
+        free(created);
         free(threads);
     }
 

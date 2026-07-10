@@ -262,13 +262,13 @@ using ::panmanUtils::Node;
 using ::panmanUtils::Tree;
 
 
-// Generates a score update function: stores score on node, updates best score/index, tracks ties.
-#define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices)   \
-    void PlacementResult::FuncName(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node) { \
-        if (node) {                                                                                 \
-            node->nodeScoreField = static_cast<float>(score);                                       \
-        }                                                                                           \
-        double tolerance = std::max(bestScore * 0.0001, 1e-9);                                      \
+// Generates a score update function: updates best score/index and tracks ties.
+// Per-node scores are stored separately in PlacementResult::nodeScores (see the
+// BFS scoring block), not on the shared LiteNode, so concurrent batch placements
+// don't race.
+#define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices) \
+    void PlacementResult::FuncName(uint32_t nodeIndex, double score) {                            \
+        double tolerance = std::max(bestScore * 0.0001, 1e-9);                                    \
         if (score > bestScore + tolerance) {                                                        \
             bestScore = score;                                                                      \
             bestNodeIndex = nodeIndex;                                                              \
@@ -471,11 +471,16 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
         return metricCandidates;
     };
 
-    auto logRawCands = getTopForMetric([](auto* n) { return n->logRawScore; }, "LogRaw");
-    auto logCosineCands = getTopForMetric([](auto* n) { return n->logCosineScore; }, "LogCosine");
-    auto containCands = getTopForMetric([](auto* n) { return n->containmentScore; }, "Containment");
-    auto wContainCands = getTopForMetric([](auto* n) { return n->weightedContainmentScore; }, "WeightedContainment");
-    auto logContainCands = getTopForMetric([](auto* n) { return n->logContainmentScore; }, "LogContainment");
+    // Read per-node seed scores from the per-call store (metric order:
+    // 0=logRaw, 1=logCosine, 2=containment, 3=weightedContainment, 4=logContainment).
+    auto nodeScore = [&](panmapUtils::LiteNode* n, int metric) -> float {
+        return n && n->nodeIndex < result.nodeScores.size() ? result.nodeScores[n->nodeIndex][metric] : 0.0f;
+    };
+    auto logRawCands = getTopForMetric([&](auto* n) { return nodeScore(n, 0); }, "LogRaw");
+    auto logCosineCands = getTopForMetric([&](auto* n) { return nodeScore(n, 1); }, "LogCosine");
+    auto containCands = getTopForMetric([&](auto* n) { return nodeScore(n, 2); }, "Containment");
+    auto wContainCands = getTopForMetric([&](auto* n) { return nodeScore(n, 3); }, "WeightedContainment");
+    auto logContainCands = getTopForMetric([&](auto* n) { return nodeScore(n, 4); }, "LogContainment");
 
     // Always include the unrefined best node for each metric in its candidate set.
     // At high coverage, seed scores saturate and the correct node may fall outside
@@ -576,11 +581,11 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
         return {bestScore, bestIdx};
     };
 
-    auto [lrScore, lrIdx] = findBestForMetric(logRawExpanded, [](auto* n) { return n->logRawScore; });
-    auto [lcScore, lcIdx] = findBestForMetric(logCosineExpanded, [](auto* n) { return n->logCosineScore; });
-    auto [cScore, cIdx] = findBestForMetric(containExpanded, [](auto* n) { return n->containmentScore; });
-    auto [wcScore, wcIdx] = findBestForMetric(wContainExpanded, [](auto* n) { return n->weightedContainmentScore; });
-    auto [lgcScore, lgcIdx] = findBestForMetric(logContainExpanded, [](auto* n) { return n->logContainmentScore; });
+    auto [lrScore, lrIdx] = findBestForMetric(logRawExpanded, [&](auto* n) { return nodeScore(n, 0); });
+    auto [lcScore, lcIdx] = findBestForMetric(logCosineExpanded, [&](auto* n) { return nodeScore(n, 1); });
+    auto [cScore, cIdx] = findBestForMetric(containExpanded, [&](auto* n) { return nodeScore(n, 2); });
+    auto [wcScore, wcIdx] = findBestForMetric(wContainExpanded, [&](auto* n) { return nodeScore(n, 3); });
+    auto [lgcScore, lgcIdx] = findBestForMetric(logContainExpanded, [&](auto* n) { return nodeScore(n, 4); });
 
     if (lrIdx != UINT32_MAX) {
         result.refinedLogRaw = {static_cast<double>(lrScore), lrIdx, ""};
@@ -712,12 +717,23 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
                         double logContainmentScore =
                             nodeMetrics.getLogContainmentScore(state.logContainmentDenominator);
 
-                        // Update thread-local results (no locks)
-                        tls.local_result.updateLogRawScore(nodeIndex, logRawScore, node);
-                        tls.local_result.updateLogCosineScore(nodeIndex, logCosineScore, node);
-                        tls.local_result.updateContainmentScore(nodeIndex, containmentScore, node);
-                        tls.local_result.updateWeightedContainmentScore(nodeIndex, weightedContainmentScore, node);
-                        tls.local_result.updateLogContainmentScore(nodeIndex, logContainmentScore, node);
+                        // Update thread-local best/tie tracking (no locks).
+                        tls.local_result.updateLogRawScore(nodeIndex, logRawScore);
+                        tls.local_result.updateLogCosineScore(nodeIndex, logCosineScore);
+                        tls.local_result.updateContainmentScore(nodeIndex, containmentScore);
+                        tls.local_result.updateWeightedContainmentScore(nodeIndex, weightedContainmentScore);
+                        tls.local_result.updateLogContainmentScore(nodeIndex, logContainmentScore);
+
+                        // Per-node scores for refinement candidate selection. Written to the
+                        // shared per-call result (not the tree) so concurrent batch placements
+                        // don't race; each node index is written by exactly one thread.
+                        if (nodeIndex < result.nodeScores.size()) {
+                            result.nodeScores[nodeIndex] = {static_cast<float>(logRawScore),
+                                                            static_cast<float>(logCosineScore),
+                                                            static_cast<float>(containmentScore),
+                                                            static_cast<float>(weightedContainmentScore),
+                                                            static_cast<float>(logContainmentScore)};
+                        }
                     }
 
                     if (!node->children.empty()) {
@@ -1807,6 +1823,13 @@ void placeLite(PlacementResult& result,
         root_level_metrics.push_back(rootMetrics);
         if (params.verify_scores) {
             root_level_seed_counts.emplace_back();
+        }
+
+        // Refinement (and --dump-all-scores) read per-node seed scores back;
+        // allocate the per-call store (indexed by node DFS index) so the BFS can
+        // fill it without touching the shared tree. Skipped when nothing reads it.
+        if (params.refineEnabled || params.store_diagnostics) {
+            result.nodeScores.assign(liteTree->dfsIndexToNode.size(), {});
         }
 
         std::atomic<size_t> nodesProcessed(0);

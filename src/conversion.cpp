@@ -74,13 +74,13 @@ static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv,
     }
 }
 
-void createMplpBcf(const std::string& prefix,
-                   const std::string& refFileName,
-                   const std::string& bestMatchSequence,
-                   const std::string& bamFileName,
-                   std::string& mpileupFileName,
-                   bool baq,
-                   const std::string& refName) {
+int createMplpBcf(const std::string& prefix,
+                  const std::string& refFileName,
+                  const std::string& bestMatchSequence,
+                  const std::string& bamFileName,
+                  std::string& mpileupFileName,
+                  bool baq,
+                  const std::string& refName) {
     std::string outRefFileName = "";
     if (refFileName.size() == 0) {
         outRefFileName = prefix + ".tmp.reference.fa";
@@ -116,14 +116,15 @@ void createMplpBcf(const std::string& prefix,
     }
     if (rc != 0) {
         output::error("bcftools mpileup failed (exit code {}) for {}", rc, bamFileName);
-        std::exit(1);
+        return 1;
     }
+    return 0;
 }
 
-void createVcfWithMutationMatrices(std::string& prefix,
-                                   std::string& mpileupFileName,
-                                   std::string& vcfFileName,
-                                   const std::vector<std::vector<double>>& substMatrixPhred) {
+int createVcfWithMutationMatrices(std::string& prefix,
+                                  std::string& mpileupFileName,
+                                  std::string& vcfFileName,
+                                  const std::vector<std::vector<double>>& substMatrixPhred) {
     if (mpileupFileName.size() == 0) {
         mpileupFileName = prefix + ".mpileup";
     }
@@ -136,7 +137,7 @@ void createVcfWithMutationMatrices(std::string& prefix,
         int rc = run_bcftools_in_fork(main_vcfcall, 10, const_cast<char**>(call_args));
         if (rc != 0) {
             output::error("bcftools call failed (exit code {})", rc);
-            std::exit(1);
+            return 1;
         }
     }
 
@@ -166,6 +167,7 @@ void createVcfWithMutationMatrices(std::string& prefix,
     }
     rawVcfIn.close();
     std::remove(rawVcfFile.c_str());
+    return 0;
 }
 
 int createConsensus(const std::string& vcfFileName,
@@ -364,14 +366,14 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
     return b;
 }
 
-void alignAndWriteBam(std::vector<std::string>& readSequences,
-                      std::vector<std::string>& readQuals,
-                      std::vector<std::string>& readNames,
-                      std::string& reference,
-                      const std::string& bamFileName,
-                      bool pairedEndReads,
-                      int n_threads,
-                      bool useBwa,
+int alignAndWriteBam(std::vector<std::string>& readSequences,
+                     std::vector<std::string>& readQuals,
+                     std::vector<std::string>& readNames,
+                     std::string& reference,
+                     const std::string& bamFileName,
+                     bool pairedEndReads,
+                     int n_threads,
+                     bool useBwa,
                       const std::string& refName) {
     int n_reads = static_cast<int>(readSequences.size());
 
@@ -473,20 +475,29 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
 
     std::sort(bam_entries.begin(), bam_entries.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 
+    int rc = 0;
     if (!bamFileName.empty()) {
         htsFile* bam_file = hts_open(bamFileName.c_str(), "wb");
         if (bam_file) {
-            sam_hdr_write(bam_file, header);
+            if (sam_hdr_write(bam_file, header) < 0) rc = 1;
             for (auto& [pos, rec] : bam_entries) {
-                bam_write1(bam_file->fp.bgzf, rec);
+                if (bam_write1(bam_file->fp.bgzf, rec) < 0) {
+                    rc = 1;
+                    break;
+                }
             }
-            hts_close(bam_file);
-            logging::info("Wrote bam files to {}", bamFileName);
-            if (sam_index_build(bamFileName.c_str(), 0) != 0) {
-                logging::warn("Failed to index BAM file: {}", bamFileName);
+            if (hts_close(bam_file) < 0) rc = 1;  // flushes buffered records; a full disk surfaces here
+            if (rc != 0) {
+                logging::err("Failed to write BAM file: {}", bamFileName);
+            } else {
+                logging::info("Wrote bam files to {}", bamFileName);
+                if (sam_index_build(bamFileName.c_str(), 0) != 0) {
+                    logging::warn("Failed to index BAM file: {}", bamFileName);
+                }
             }
         } else {
             logging::err("Failed to open output BAM file: {}", bamFileName);
+            rc = 1;
         }
     }
 
@@ -498,4 +509,5 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
         free(results[k].r1.cigar);
         free(results[k].r2.cigar);
     }
+    return rc;
 }
