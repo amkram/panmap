@@ -173,7 +173,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     {
         std::vector<Change> ch = {{H1, 0, 2}, {H2, 0, 2}};
         placement::NodeMetrics m;
-        placement::NodeMetrics::computeChildMetrics(m, ch, state);
+        computeChildMetricsFor(m, ch, state);
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), inv_sqrt2, 1e-3);
         BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), 1.0, 1e-3);
         BOOST_CHECK_CLOSE(m.getContainmentScore(state.readUniqueSeedCount), 1.0, 1e-3);
@@ -192,7 +192,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     {
         std::vector<Change> ch = {{H1, 0, 2}};
         placement::NodeMetrics m;
-        placement::NodeMetrics::computeChildMetrics(m, ch, state);
+        computeChildMetricsFor(m, ch, state);
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), 0.5 * inv_sqrt2, 1e-3);
         BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), inv_sqrt2, 1e-3);
         BOOST_CHECK_CLOSE(m.getContainmentScore(state.readUniqueSeedCount), 0.5, 1e-3);
