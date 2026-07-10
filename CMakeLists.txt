@@ -614,6 +614,7 @@ set(PANMAP_LIB_SOURCES
     src/seeding.cpp
     src/mgsr.cpp
     src/mm_align.c
+    src/bwa_align.c
     src/pileup.c
     src/zstd_compression.cpp
     ${LITE_CAPNP_SRCS}
@@ -658,11 +659,12 @@ add_dependencies(panmap panmap_lib build-deps index_capnp_generator tbb_build)
 set_target_properties(panmap PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(OPTION_BUILD_SIMULATE)
-    add_executable(simulate 
+    add_executable(simulate
         src/test/simulate.cpp
         src/genotyping.cpp
         src/conversion.cpp
         src/mm_align.c
+        src/bwa_align.c
         src/pileup.c
     )
     
@@ -682,6 +684,7 @@ if(OPTION_BUILD_SIMULATE)
     target_link_libraries(simulate PRIVATE
         panman_lib
         minimap2
+        bwa
         bcftools
         htslib
         libdeflate_shared
