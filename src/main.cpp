@@ -2091,6 +2091,10 @@ int main(int argc, char** argv) {
         // Utility: dump specific node sequence
         if (!cfg.dumpNodeId.empty()) {
             auto tg = loadPanMAN(cfg.panman);
+            if (!tg || tg->trees.empty()) {
+                output::error("PanMAN {} contains no trees", cfg.panman);
+                return 1;
+            }
             // Use -o output path if specified, otherwise default to panman path
             std::string outPath =
                 cfg.output.empty() ? cfg.panman + "." + sanitizeFilename(cfg.dumpNodeId) + ".fa" : cfg.output;
@@ -2101,6 +2105,10 @@ int main(int argc, char** argv) {
 
         if (cfg.dumpRandomNodeIDs > 0) {
           auto tg = loadPanMAN(cfg.panman);
+          if (!tg || tg->trees.empty()) {
+            output::error("PanMAN {} contains no trees", cfg.panman);
+            return 1;
+          }
           panmanUtils::Tree* T = &tg->trees[0];
 
           std::mt19937 rng;
@@ -2133,6 +2141,10 @@ int main(int argc, char** argv) {
 
         if (cfg.dumpSequences.size() > 0) {
           auto tg = loadPanMAN(cfg.panman);
+          if (!tg || tg->trees.empty()) {
+            output::error("PanMAN {} contains no trees", cfg.panman);
+            return 1;
+          }
           panmanUtils::Tree* T = &tg->trees[0];
 
           std::mt19937 rng;
