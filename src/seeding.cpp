@@ -268,16 +268,8 @@ std::string reverseComplement(std::string dna_sequence) {
 }
 
 std::string hpcCompress(const std::string& seq) {
-    if (seq.empty()) return seq;
-    std::string result;
-    result.reserve(seq.size());
-    result.push_back(seq[0]);
-    for (size_t i = 1; i < seq.size(); ++i) {
-        if (std::toupper(seq[i]) != std::toupper(seq[i - 1])) {
-            result.push_back(seq[i]);
-        }
-    }
-    return result;
+    // Same homopolymer-collapse rule as hpcCompressWithMapping, without the position map.
+    return hpcCompressWithMapping(seq).first;
 }
 
 std::pair<std::string, std::vector<size_t>> hpcCompressWithMapping(const std::string& seq) {
