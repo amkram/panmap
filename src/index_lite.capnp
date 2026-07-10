@@ -45,7 +45,7 @@ struct LiteIndex {
   seedChangeHashes @6 :List(List(UInt64));
   seedChangeParentCounts @7 :List(List(Int16));
   seedChangeChildCounts @8 :List(List(Int16));
-  nodeChangeOffsets @9 :List(UInt32);  # Size = numNodes + 1
+  nodeChangeOffsets @9 :List(UInt64);  # Size = numNodes + 1
 
 
   # Homopolymer compression mode: if true, seeds were extracted from HPC sequences
@@ -63,4 +63,8 @@ struct LiteIndex {
 
   # 4x4 nucleotide substitution rate matrix (A=0,C=1,G=2,T=3), row-major
   substitutionMatrix @16 :List(Float64);
+
+  # On-disk format version (see panmapUtils::INDEX_FORMAT_VERSION). Absent (=0) in
+  # pre-versioning indexes so the reader can reject them with a rebuild message.
+  formatVersion @17 :UInt16;
 }

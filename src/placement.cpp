@@ -891,6 +891,17 @@ void placeLite(PlacementResult& result,
 
     auto indexRoot = liteIndex.getRoot<LiteIndex>();
 
+    // Reject a stale index before reading any width-sensitive field (the
+    // nodeChangeOffsets element width changed with the format), so an old .idx
+    // fails with a clear rebuild message instead of a cryptic capnp error.
+    if (indexRoot.getFormatVersion() != panmapUtils::INDEX_FORMAT_VERSION) {
+        throw std::runtime_error(fmt::format(
+            "Index format version {} is incompatible with this panmap (expects {}). "
+            "Rebuild the index (delete the .idx and rerun).",
+            indexRoot.getFormatVersion(),
+            panmapUtils::INDEX_FORMAT_VERSION));
+    }
+
     if (!liteTree->seedChangesLoaded) {
         logging::debug("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
 

@@ -30,7 +30,7 @@ class IndexData {
     std::vector<uint64_t> hashes;
     std::vector<int64_t> parentCounts;
     std::vector<int64_t> childCounts;
-    std::vector<uint32_t> offsets;  // size == numNodes + 1
+    std::vector<uint64_t> offsets;  // size == numNodes + 1
 
     size_t numNodesPlusOne() const { return offsets.size(); }
 
@@ -42,7 +42,7 @@ class IndexData {
 
     int64_t childCountAt(size_t i) const { return childCounts[i]; }
 
-    uint32_t nodeChangeOffset(size_t node) const { return offsets[node]; }
+    uint64_t nodeChangeOffset(size_t node) const { return offsets[node]; }
 };
 
 // Decompress + parse an existing .idx, returning an owned IndexData.
