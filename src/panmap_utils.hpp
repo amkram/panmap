@@ -224,7 +224,7 @@ struct BlockSequences {
                     break;
                 }
             }
-            // End character to incorporate for gaps at the end
+            // end sentinel to anchor trailing gaps
             mainSeq[primaryBlockId].push_back('x');
         }
 
@@ -342,7 +342,6 @@ struct GlobalCoords {
 
                 // process main nuc
                 if (blockSequences.mainBase(i, j) == 'x') {
-                    // skip if main nuc is x
                     mainScalar[i][j] = -1;
                 } else {
                     mainScalar[i][j] = curScalarCoord;

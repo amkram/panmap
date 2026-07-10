@@ -92,7 +92,7 @@ struct PlacementGlobalState {
     bool forceLeaf = false;
 };
 
-// Delta-based metrics computation (efficient forward-only traversal)
+// Delta-based metrics (forward-only traversal)
 struct NodeMetrics {
     // Read-genome interaction metrics (computed incrementally)
     double logRawNumerator = 0.0;               // Σ(log(1+readCount) / genomeCount) for LogRAW metric

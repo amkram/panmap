@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 
-// Simple alignment scoring for refinement (no pre-computed seeds needed)
+// Alignment scoring for refinement (no pre-computed seeds needed)
 // Returns negative total edit distance (higher = fewer errors = better)
 // When paired_end is true, reads are interleaved (R1_0, R2_0, R1_1, R2_1, ...)
 // and n_reads must be even. Pairs are mapped together via mm_map_frag.

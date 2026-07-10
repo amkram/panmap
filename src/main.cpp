@@ -114,7 +114,7 @@ struct Config {
     int s = 8;                    // syncmer s
     int l = 3;                    // l-mer size
     int t = 0;                    // syncmer offset
-    bool openSyncmer = false;     // Open syncmer
+    bool openSyncmer = false;
     int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
     double seedMaskFraction = 0;  // Fraction of most-frequent seeds to mask (0 disables masking)
     int minSeedQuality = 0;       // Min avg Phred quality for seed region (0=disabled)
@@ -555,17 +555,22 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                                                while ((l1 = kseq_read(seq1)) >= 0 && (l2 = kseq_read(seq2)) >= 0) {
                                                    batch->sequences.emplace_back(seq1->seq.s);
                                                    batch->names.emplace_back(seq1->name.s);
-                                                   batch->quals.emplace_back(seq1->qual.s);
+                                                   // Quality may be empty for FASTA reads (qual.s is NULL)
+                                                   batch->quals.emplace_back(seq1->qual.l > 0 ? seq1->qual.s
+                                                                                              : std::string(seq1->seq.l, 'I'));
                                                    batch->sequences.emplace_back(seq2->seq.s);
                                                    batch->names.emplace_back(seq2->name.s);
-                                                   batch->quals.emplace_back(seq2->qual.s);
+                                                   batch->quals.emplace_back(seq2->qual.l > 0 ? seq2->qual.s
+                                                                                              : std::string(seq2->seq.l, 'I'));
                                                    if (batch->sequences.size() >= batchSize) break;
                                                }
                                            } else {
                                                while ((l1 = kseq_read(seq1)) >= 0) {
                                                    batch->sequences.emplace_back(seq1->seq.s);
                                                    batch->names.emplace_back(seq1->name.s);
-                                                   batch->quals.emplace_back(seq1->qual.s);
+                                                   // Quality may be empty for FASTA reads (qual.s is NULL)
+                                                   batch->quals.emplace_back(seq1->qual.l > 0 ? seq1->qual.s
+                                                                                              : std::string(seq1->seq.l, 'I'));
                                                    if (batch->sequences.size() >= batchSize) break;
                                                }
                                            }
@@ -1105,7 +1110,7 @@ bool runMetagenomic(const Config& cfg) {
     output::trace() << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads
                     << std::endl;
 
-    // Checking IO (the MGSR index is auto-built/validated before we get here).
+    // MGSR index is auto-built/validated before we get here.
     if (cfg.index.empty() || !fs::exists(cfg.index)) {
         std::cerr << "Error: index file " << cfg.index << " does not exist" << std::endl;
         return false;
@@ -1727,7 +1732,7 @@ void printUsage() {
 int main(int argc, char** argv) {
     Config cfg;
 
-    // === Common options (shown in --help) ===
+    // Common options (shown in --help)
     po::options_description visible("Options");
     visible.add_options()("help,h", "Show help (--help-all for more)")("help-all", "Show all options")(
         "version,V", "Show version")("output,o", po::value<std::string>(&cfg.output), "Output prefix")(

@@ -37,7 +37,7 @@ jobs:
           key: ${{ runner.os }}-ccache
           max-size: 500M
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON -DOPTION_PORTABLE=ON
       - name: Build
         run: cmake --build build -j"$(nproc)"
       - name: Test
@@ -62,7 +62,7 @@ jobs:
           key: ${{ runner.os }}-ccache
           max-size: 500M
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON -DOPTION_PORTABLE=ON
       - name: Build
         run: cmake --build build -j"$(sysctl -n hw.ncpu)"
       - name: Test

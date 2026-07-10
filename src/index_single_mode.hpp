@@ -138,7 +138,7 @@ class IndexBuilder {
 
     std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
-    // For tracking seed counts per node (needed for LiteIndex format)
+    // Seed counts per node (needed for LiteIndex format)
     std::vector<std::unordered_map<uint64_t, int64_t>> nodeSeedCounts;
 
     tbb::spin_mutex uniqueKminmersMutex_;
