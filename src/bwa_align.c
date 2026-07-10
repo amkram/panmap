@@ -52,6 +52,12 @@ static int bwa_align_one(const bwaidx_t* idx, const mem_opt_t* opt, const char* 
         seq[i] = c < 4 ? c : nst_nt4_table[c];  // ASCII -> 2-bit
     }
 
+    // Known, benign data race: mem_align1 -> mem_mark_primary_se calls lrand48()
+    // (a non-thread-safe libc PRNG on shared global state) to break ties among
+    // equal-scoring primary hits. Concurrent workers racing it only perturbs which
+    // of several equally-good alignments is picked as primary; it does not crash.
+    // A real fix would need a per-thread RNG inside vendored bwa or serializing the
+    // alignment, both worse than the nondeterminism, so it is left as-is.
     mem_alnreg_v ar = mem_align1(opt, idx->bwt, idx->bns, idx->pac, len, (char*)seq);
 
     // Highest-scoring primary region (secondary < 0).
