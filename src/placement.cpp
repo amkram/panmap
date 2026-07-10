@@ -1021,13 +1021,28 @@ void placeLite(PlacementResult& result,
             }
         }
 
-        // Apply homopolymer compression to reads if the index was built with HPC
+        // Apply homopolymer compression to reads if the index was built with HPC.
+        // When quality filtering is active, compress each quality string in lockstep
+        // (keep the first base's quality per run) so per-seed quality lookups stay
+        // aligned with the compressed sequence coordinates.
         if (params.hpc && !allReadSequences.empty()) {
             logging::info("HPC mode: compressing read sequences");
+            const bool compressQual = params.minSeedQuality > 0 && !allReadQualities.empty();
             tbb::parallel_for(tbb::blocked_range<size_t>(0, allReadSequences.size()),
                               [&](const tbb::blocked_range<size_t>& range) {
                                   for (size_t i = range.begin(); i < range.end(); ++i) {
-                                      allReadSequences[i] = seeding::hpcCompress(allReadSequences[i]);
+                                      if (compressQual && i < allReadQualities.size() &&
+                                          allReadQualities[i].size() == allReadSequences[i].size()) {
+                                          auto [compressed, mapping] =
+                                              seeding::hpcCompressWithMapping(allReadSequences[i]);
+                                          std::string cq;
+                                          cq.reserve(mapping.size());
+                                          for (size_t m : mapping) cq.push_back(allReadQualities[i][m]);
+                                          allReadSequences[i] = std::move(compressed);
+                                          allReadQualities[i] = std::move(cq);
+                                      } else {
+                                          allReadSequences[i] = seeding::hpcCompress(allReadSequences[i]);
+                                      }
                                   }
                               });
         }

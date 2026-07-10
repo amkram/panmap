@@ -923,10 +923,12 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 
     for (size_t i = 0; i < newKminmerRanges.size(); i++) {
         auto beg = *newKminmerRanges[i].first;
-        auto end = *newKminmerRanges[i].second;
-        if (newKminmerRanges[i].second != refOnSyncmersMap.end() && beg > end) {
-            output::error("beg ({}) > end ({}) in node {}", beg, end, node->identifier);
-            std::exit(1);
+        if (newKminmerRanges[i].second != refOnSyncmersMap.end()) {
+            auto end = *newKminmerRanges[i].second;   // only deref when not end()
+            if (beg > end) {
+                output::error("beg ({}) > end ({}) in node {}", beg, end, node->identifier);
+                std::exit(1);
+            }
         }
         if (i != 0 && *newKminmerRanges[i - 1].second > beg) {
             output::error("newKminmerRanges[{}].second ({}) > newKminmerRanges[{}].first ({}) in node {}",
@@ -1841,10 +1843,12 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
 
     for (size_t i = 0; i < newKminmerRanges.size(); i++) {
         auto beg = *newKminmerRanges[i].first;
-        auto end = *newKminmerRanges[i].second;
-        if (newKminmerRanges[i].second != state.refOnSyncmersMap.end() && beg > end) {
-            output::error("beg ({}) > end ({}) in node {}", beg, end, node->identifier);
-            std::exit(1);
+        if (newKminmerRanges[i].second != state.refOnSyncmersMap.end()) {
+            auto end = *newKminmerRanges[i].second;   // only deref when not end()
+            if (beg > end) {
+                output::error("beg ({}) > end ({}) in node {}", beg, end, node->identifier);
+                std::exit(1);
+            }
         }
         if (i != 0 && *newKminmerRanges[i - 1].second > beg) {
             output::error("newKminmerRanges[{}].second > newKminmerRanges[{}].first", i - 1, i);

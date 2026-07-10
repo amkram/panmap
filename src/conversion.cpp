@@ -3,6 +3,7 @@
 #include "logging.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <unistd.h>
@@ -95,11 +96,12 @@ void createMplpBcf(const std::string& prefix,
         mpileupFileName = prefix + ".mpileup";
     }
 
+    int rc = 0;
     {
         if (baq) {
             const char* mpileup_args[] = {
                 "mpileup", "-Ou", "-f", outRefFileName.c_str(), "-o", mpileupFileName.c_str(), bamFileName.c_str()};
-            run_bcftools_in_fork(main_mpileup, 7, const_cast<char**>(mpileup_args));
+            rc = run_bcftools_in_fork(main_mpileup, 7, const_cast<char**>(mpileup_args));
         } else {
             const char* mpileup_args[] = {"mpileup",
                                           "-Ou",
@@ -109,8 +111,12 @@ void createMplpBcf(const std::string& prefix,
                                           "-o",
                                           mpileupFileName.c_str(),
                                           bamFileName.c_str()};
-            run_bcftools_in_fork(main_mpileup, 8, const_cast<char**>(mpileup_args));
+            rc = run_bcftools_in_fork(main_mpileup, 8, const_cast<char**>(mpileup_args));
         }
+    }
+    if (rc != 0) {
+        output::error("bcftools mpileup failed (exit code {}) for {}", rc, bamFileName);
+        std::exit(1);
     }
 }
 
@@ -127,7 +133,11 @@ void createVcfWithMutationMatrices(std::string& prefix,
     {
         const char* call_args[] = {
             "call", "--ploidy", "1", "-c", "-A", "-O", "v", "-o", rawVcfFile.c_str(), mpileupFileName.c_str()};
-        run_bcftools_in_fork(main_vcfcall, 10, const_cast<char**>(call_args));
+        int rc = run_bcftools_in_fork(main_vcfcall, 10, const_cast<char**>(call_args));
+        if (rc != 0) {
+            output::error("bcftools call failed (exit code {})", rc);
+            std::exit(1);
+        }
     }
 
     std::ifstream rawVcfIn(rawVcfFile);
