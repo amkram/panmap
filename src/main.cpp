@@ -1521,10 +1521,11 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     if (!cfg.dumpAllScores.empty()) {
         std::ofstream outFile(cfg.dumpAllScores);
         if (outFile) {
-            outFile << "node\tlogRaw\tlogCosine\tcontainment\n";
+            outFile << "node\tlogRaw\tlogCosine\tcontainment\tlogContainment\n";
             std::vector<std::pair<double, std::string>> allScores;
             for (auto& [id, node] : tree.allLiteNodes) {
-                if (node->logRawScore > 0 || node->logCosineScore > 0 || node->containmentScore > 0) {
+                if (node->logRawScore > 0 || node->logCosineScore > 0 ||
+                    node->containmentScore > 0 || node->logContainmentScore > 0) {
                     allScores.push_back({node->logRawScore, id});
                 }
             }
@@ -1532,7 +1533,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
             for (auto& [score, id] : allScores) {
                 auto* node = tree.allLiteNodes[id];
                 outFile << id << "\t" << node->logRawScore << "\t" << node->logCosineScore << "\t"
-                        << node->containmentScore << "\n";
+                        << node->containmentScore << "\t" << node->logContainmentScore << "\n";
             }
             logging::msg("Dumped {} node scores to {}", allScores.size(), cfg.dumpAllScores);
         } else {
