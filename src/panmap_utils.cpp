@@ -55,39 +55,14 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
         blockLengths[blockId] = 0;
         maxBlockId = std::max(maxBlockId, blockId);
         if (blockSequence[blockId]) {
-            for (size_t i = 0; i < tree->blocks[blockId].consensusSeq.size(); i++) {
-                bool endFlag = false;
-                for (size_t j = 0; j < 8; j++) {
-                    const int nucCode = (((tree->blocks[blockId].consensusSeq[i]) >> (4 * (7 - j))) & 15);
-                    if (nucCode == 0) {
-                        endFlag = true;
-                        break;
-                    }
-                    const char nucleotide = panmanUtils::getNucleotideFromCode(nucCode);
-                    sequence[blockId].push_back({nucleotide, {}});
-                }
-                if (endFlag) {
-                    break;
-                }
-            }
+            forEachConsensusNuc(tree->blocks[blockId].consensusSeq, [&](int nucCode) {
+                sequence[blockId].push_back({panmanUtils::getNucleotideFromCode(nucCode), {}});
+            });
 
             sequence[blockId].push_back({'x', {}});
         } else {
             int len = 0;
-            for (size_t i = 0; i < tree->blocks[blockId].consensusSeq.size(); i++) {
-                bool endFlag = false;
-                for (size_t j = 0; j < 8; j++) {
-                    const int nucCode = (((tree->blocks[blockId].consensusSeq[i]) >> (4 * (7 - j))) & 15);
-                    if (nucCode == 0) {
-                        endFlag = true;
-                        break;
-                    }
-                    len++;
-                }
-                if (endFlag) {
-                    break;
-                }
-            }
+            forEachConsensusNuc(tree->blocks[blockId].consensusSeq, [&](int) { len++; });
             blockLengths[blockId] += len;
         }
     }

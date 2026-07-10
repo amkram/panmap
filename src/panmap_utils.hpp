@@ -178,6 +178,19 @@ struct NewSyncmerRange {
     std::vector<uint64_t> seedsToDelete;
 };
 
+// Decode a block's 8-nibble-packed consensusSeq, invoking emit(nucCode) for each nucleotide
+// (codes 1..15) until the first zero nibble, which terminates the block.
+template <class Seq, class F>
+inline void forEachConsensusNuc(const Seq& consensusSeq, F&& emit) {
+    for (size_t i = 0; i < consensusSeq.size(); i++) {
+        for (size_t j = 0; j < 8; j++) {
+            const int nucCode = ((consensusSeq[i] >> (4 * (7 - j))) & 15);
+            if (nucCode == 0) return;
+            emit(nucCode);
+        }
+    }
+}
+
 struct BlockSequences {
     // Flat layout (equivalent to the old vector<vector<pair<char, vector<char>>>> sequence):
     //   mainSeq[b][p]   consensus nucleotide at position p of block b
@@ -208,22 +221,10 @@ struct BlockSequences {
                 std::exit(1);
             }
             maxBlockId = std::max(maxBlockId, primaryBlockId);
-            for (size_t j = 0; j < curBlock.consensusSeq.size(); j++) {
-                bool endFlag = false;
-                for (size_t k = 0; k < 8; k++) {
-                    const int nucCode = (((curBlock.consensusSeq[j]) >> (4 * (7 - k))) & 15);
-                    if (nucCode == 0) {
-                        endFlag = true;
-                        break;
-                    }
-                    mainSeq[primaryBlockId].push_back(panmanUtils::getNucleotideFromCode(nucCode));
-                    totalLength++;
-                }
-
-                if (endFlag) {
-                    break;
-                }
-            }
+            forEachConsensusNuc(curBlock.consensusSeq, [&](int nucCode) {
+                mainSeq[primaryBlockId].push_back(panmanUtils::getNucleotideFromCode(nucCode));
+                totalLength++;
+            });
             // end sentinel to anchor trailing gaps
             mainSeq[primaryBlockId].push_back('x');
         }
