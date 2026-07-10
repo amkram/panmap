@@ -1,11 +1,11 @@
 # Panmap
 
-[![CI](https://github.com/amkram/panmap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/amkram/panmap/actions/workflows/ci.yml)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-10.64898%2F2026.03.29.711974-b31b1b)](https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1)
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/panmap?label=bioconda)](https://anaconda.org/bioconda/panmap)
 [![Conda downloads](https://img.shields.io/conda/dn/bioconda/panmap?label=conda%20downloads)](https://anaconda.org/bioconda/panmap)
 [![biocontainer](https://img.shields.io/badge/biocontainer-quay.io-blue)](https://quay.io/repository/biocontainers/panmap?tab=tags)
+[![CI](https://github.com/amkram/panmap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/amkram/panmap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/amkram/panmap)](LICENSE)
-[![bioRxiv](https://img.shields.io/badge/bioRxiv-10.64898%2F2026.03.29.711974-b31b1b)](https://www.biorxiv.org/content/10.64898/2026.03.29.711974v1)
 
 Pangenome-based sequence placement, alignment, and genotyping.
 
