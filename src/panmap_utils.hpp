@@ -53,13 +53,6 @@ class LiteNode {
 
     // Seed changes from parent to this node (hash, parentCount, childCount)
     std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges;
-
-    // Placement scores, populated during placement
-    float logRawScore = 0.0f;
-    float logCosineScore = 0.0f;
-    float containmentScore = 0.0f;
-    float weightedContainmentScore = 0.0f;
-    float logContainmentScore = 0.0f;
 };
 
 class LiteTree {

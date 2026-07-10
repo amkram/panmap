@@ -373,8 +373,16 @@ bool buildIndex(const Config& cfg) {
         return false;
     }
 
-    index_single_mode::IndexBuilder builder(
-        &tg->trees[0], cfg.k, cfg.s, 0, cfg.l, false, cfg.flankMaskBp, cfg.hpc, cfg.impute, cfg.extentGuard);
+    index_single_mode::IndexBuilder builder(&tg->trees[0],
+                                            cfg.k,
+                                            cfg.s,
+                                            cfg.t,
+                                            cfg.l,
+                                            cfg.openSyncmer,
+                                            cfg.flankMaskBp,
+                                            cfg.hpc,
+                                            cfg.impute,
+                                            cfg.extentGuard);
     builder.buildIndexParallel(cfg.threads);
     builder.computeSubstitutionSpectrum();
     builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel);
@@ -1480,7 +1488,8 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     placement::PlacementResult result;
     std::string outPath = cfg.output + ".placement.tsv";
 
-    bool storeDiagnostics = false;
+    // --dump-all-scores needs the per-node seed scores retained after placement.
+    bool storeDiagnostics = !cfg.dumpAllScores.empty();
 
     // Load full tree if refinement is enabled (needed for genome sequences)
     std::unique_ptr<panmanUtils::TreeGroup> tg;
@@ -1522,18 +1531,21 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
         std::ofstream outFile(cfg.dumpAllScores);
         if (outFile) {
             outFile << "node\tlogRaw\tlogCosine\tcontainment\tlogContainment\n";
+            // Scores live in the per-call result (metric order 0=logRaw, 1=logCosine,
+            // 2=containment, 3=weightedContainment, 4=logContainment), indexed by node DFS index.
             std::vector<std::pair<double, std::string>> allScores;
             for (auto& [id, node] : tree.allLiteNodes) {
-                if (node->logRawScore > 0 || node->logCosineScore > 0 ||
-                    node->containmentScore > 0 || node->logContainmentScore > 0) {
-                    allScores.push_back({node->logRawScore, id});
+                if (!node || node->nodeIndex >= result.nodeScores.size()) continue;
+                const auto& s = result.nodeScores[node->nodeIndex];
+                if (s[0] > 0 || s[1] > 0 || s[2] > 0 || s[4] > 0) {
+                    allScores.push_back({s[0], id});
                 }
             }
             std::sort(allScores.begin(), allScores.end(), std::greater<>());
             for (auto& [score, id] : allScores) {
                 auto* node = tree.allLiteNodes[id];
-                outFile << id << "\t" << node->logRawScore << "\t" << node->logCosineScore << "\t"
-                        << node->containmentScore << "\t" << node->logContainmentScore << "\n";
+                const auto& s = result.nodeScores[node->nodeIndex];
+                outFile << id << "\t" << s[0] << "\t" << s[1] << "\t" << s[2] << "\t" << s[4] << "\n";
             }
             logging::msg("Dumped {} node scores to {}", allScores.size(), cfg.dumpAllScores);
         } else {
@@ -1607,15 +1619,18 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
 
     // Parallel alignment with direct BAM construction
     bool pairedEndReads = !cfg.reads2.empty();
-    alignAndWriteBam(readSequences,
-                     readQuals,
-                     readNames,
-                     bestMatchSequence,
-                     bamFileName,
-                     pairedEndReads,
-                     cfg.threads,
-                     cfg.aligner == "bwa",
-                     nodeId);
+    if (alignAndWriteBam(readSequences,
+                         readQuals,
+                         readNames,
+                         bestMatchSequence,
+                         bamFileName,
+                         pairedEndReads,
+                         cfg.threads,
+                         cfg.aligner == "bwa",
+                         nodeId) != 0) {
+        logging::err("Alignment/BAM write failed for {}", bamFileName);
+        return 1;
+    }
 
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
@@ -1647,8 +1662,12 @@ int runGenotyping(const Config& cfg) {
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq, refName);
-    createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred);
+    if (createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq, refName) != 0) {
+        return 1;
+    }
+    if (createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred) != 0) {
+        return 1;
+    }
 
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
@@ -2002,6 +2021,17 @@ int main(int argc, char** argv) {
 
     if (cfg.aligner != "minimap2" && cfg.aligner != "bwa") {
         output::error("Invalid aligner '{}' (expected minimap2 or bwa)", cfg.aligner);
+        return 1;
+    }
+
+    // Syncmer parameters must satisfy 0 < s <= k and 0 <= offset <= k-s; otherwise
+    // the s-mer window / offset index the rolling-syncmer deque out of bounds.
+    if (cfg.s <= 0 || cfg.s > cfg.k) {
+        output::error("Invalid syncmer s={} (must be in 1..k, k={})", cfg.s, cfg.k);
+        return 1;
+    }
+    if (cfg.t < 0 || cfg.t > cfg.k - cfg.s) {
+        output::error("Invalid syncmer offset={} (must be in 0..k-s = 0..{})", cfg.t, cfg.k - cfg.s);
         return 1;
     }
 

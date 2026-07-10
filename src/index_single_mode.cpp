@@ -361,8 +361,12 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                     recomputeBlock = false;
                     recomputeInProgress = false;
                     if (curCoordGapMapIt != gapMap.end()) {
+                        // At begin() there is no previous run, so the lower bound
+                        // (prev->second < curCoordScalar) is vacuously satisfied;
+                        // guard the std::prev to avoid dereferencing before begin().
                         while (curCoordGapMapIt != gapMap.end() &&
-                               !((std::prev(curCoordGapMapIt)->second < curCoordScalar) &&
+                               !((curCoordGapMapIt == gapMap.begin() ||
+                                  std::prev(curCoordGapMapIt)->second < curCoordScalar) &&
                                  (curCoordScalar < curCoordGapMapIt->first))) {
                             ++curCoordGapMapIt;
                         }
@@ -1374,9 +1378,13 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
         for (const auto& blockMut : node->blockMutation) {
             uint32_t blockId = blockMut.primaryBlockId;
             bool oldExists = blockSequences.blockExists[blockId];
-            bool isInsertion = blockMut.blockMutInfo;
             blockUndoRecord.emplace_back(blockId, oldExists);
-            blockSequences.blockExists[blockId] = isInsertion;
+            // blockMutInfo=false marks BOTH deletions and strand inversions; only a
+            // deletion (non-inversion) removes the block. An inverted block still
+            // exists, so its substitutions must keep being counted.
+            if (!blockMut.inversion) {
+                blockSequences.blockExists[blockId] = blockMut.blockMutInfo;
+            }
         }
 
         if (node != T->root) {

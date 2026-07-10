@@ -429,6 +429,7 @@ int our_mpileup(mplp_conf_t* conf, sam_hdr_t* sam_header, kstring_t* mplp_string
                                            conf->no_del,
                                            conf->no_ends) < 0) {
                             ret = 1;
+                            ks_free(&ks);  // fail path skips the normal ks_free below
                             goto fail;
                         }
                     }

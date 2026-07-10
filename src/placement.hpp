@@ -7,6 +7,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -170,6 +171,12 @@ struct PlacementResult {
     uint32_t bestLogContainmentNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedLogContainmentNodeIndices;
 
+    // Per-call, per-node seed scores indexed by node DFS index (only populated
+    // when refinement is enabled, which is the sole reader). Kept here rather than
+    // on the shared LiteNode so concurrent batch placements don't race. Metric
+    // order: {logRaw, logCosine, containment, weightedContainment, logContainment}.
+    std::vector<std::array<float, 5>> nodeScores;
+
     // Per-metric alignment-based refinement: each metric's top candidates refined independently by full alignment
     struct RefinedResult {
         double score = 0.0;
@@ -187,11 +194,11 @@ struct PlacementResult {
     int64_t totalReadsProcessed = 0;
 
     // Take nodeIndex, resolve to string at end
-    void updateLogRawScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
-    void updateLogCosineScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
-    void updateContainmentScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
-    void updateWeightedContainmentScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
-    void updateLogContainmentScore(uint32_t nodeIndex, double score, panmapUtils::LiteNode* node = nullptr);
+    void updateLogRawScore(uint32_t nodeIndex, double score);
+    void updateLogCosineScore(uint32_t nodeIndex, double score);
+    void updateContainmentScore(uint32_t nodeIndex, double score);
+    void updateWeightedContainmentScore(uint32_t nodeIndex, double score);
+    void updateLogContainmentScore(uint32_t nodeIndex, double score);
 
     // Lazy resolution: convert winning node indices to string IDs (called ONCE at end)
     void resolveNodeIds(panmapUtils::LiteTree* liteTree);
