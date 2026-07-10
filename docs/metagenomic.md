@@ -85,13 +85,13 @@ these parameters on first run):
 ```bash
 mkdir example_run && cd example_run
 
-panmap ../examples/data/v_mtdna.panman \
+panmap ../data/vertebrate_mtdna/v_mtdna.panman \
   ../examples/data/subsampled.fastq.gz \
   --meta \
   -k 15 -s 8 -l 1 \
   --filter-and-assign \
   --discard 0.6 --dust 5 \
-  --taxonomic-metadata ../examples/data/v_mtdna.meta.tsv \
+  --taxonomic-metadata ../data/vertebrate_mtdna/v_mtdna.meta.tsv \
   -t 4 --breadth-ratio \
   --output subsampled
 ```
@@ -103,12 +103,15 @@ panmap ../examples/data/v_mtdna.panman \
 | `.mgsr.assignedReads.fastq` | Assigned reads |
 | `.mgsr.assignedReads.out` | Read count and indices per node |
 | `.mgsr.assignedReadsLCANode.out` | Read count and indices for the LCA of each read's assigned nodes |
+| `.mgsr.breadths.out` | Per-node observed vs. expected breadth; written only with `--breadth-ratio` |
 
 ---
 
 ## Metagenomic options reference
 
 ### Indexing
+
+`--index`, `--index-out`, and `--reindex` apply to both modes; `--index-packed`, `--read-packed`, and `--no-progress` require `--meta`. Under `--meta` the index is the `.midx` MGSR index (a single-sample `.idx` index is rejected); its path is derived from the panman (or `--index-out`) and is not affected by `-o`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -120,6 +123,8 @@ panmap ../examples/data/v_mtdna.panman \
 | `--no-progress` | Disable progress bars | off |
 
 ### EM algorithm
+
+These options require `--meta`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -136,6 +141,8 @@ panmap ../examples/data/v_mtdna.panman \
 | `--em-leaves-only` | Only run EM on leaf (sample) nodes | off |
 
 ### Filter and assign
+
+These options require `--meta`, except `--batch`, which works in both modes.
 
 | Option | Description | Default |
 |--------|-------------|---------|

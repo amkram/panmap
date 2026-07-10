@@ -17,11 +17,10 @@ python3 ../scripts/trim_and_stack_amplicon.py stack SRR19707934.sorted.bam ../ex
 samtools fastq --no-sc SRR19707934.trimmed.sorted.bam > SRR19707934.trimmed.fastq
 ```
 
-Build an index and run panmap:
+Run panmap in metagenomic mode. It derives and caches the metagenomic index (`sars_20000_twilight_dipper.panman.midx`) next to the PanMAN on first run, so there is no separate build step:
 
 ```bash
-../build/bin/panmap ../examples/data/sars_20000_twilight_dipper.panman --index-mgsr sars_20000_twilight_dipper.idx 
-../build/bin/panmap  ../examples/data/sars_20000_twilight_dipper.panman  SRR19707934.trimmed.fastq --meta --index sars_20000_twilight_dipper.idx --amplicon-depth SRR19707934.amplicon_stacks.tsv --mask-reads-relative-frequency 0.01 em-delta-threshold  0.00001 --output SRR19707934 --threads 8
+../build/bin/panmap ../examples/data/sars_20000_twilight_dipper.panman SRR19707934.trimmed.fastq --meta --amplicon-depth SRR19707934.amplicon_stacks.tsv --mask-reads-relative-frequency 0.01 --em-delta-threshold 0.00001 --output SRR19707934 --threads 8
 ```
 
 Panmap writes per-node abundance estimates to `SRR19707934.mgsr.abundance.out`.
@@ -30,6 +29,6 @@ For lineage proportions, retrieve the sequences from the PanMAN and identify the
 
 ```bash
 ../build/bin/panmap ../examples/data/sars_20000_twilight_dipper.panman --dump-sequences "$(cut -f1 SRR19707934.mgsr.abundance.out | tr ',' '\n' | grep '\S' | tr '\n' ' ' | sed 's/ $//g')" --output SRR19707934
-pangolin pangolin SRR19707934.dump-sequences.fa --outfile SRR19707934.pangolin.csv
+pangolin SRR19707934.dump-sequences.fa --outfile SRR19707934.pangolin.csv
 python3 ../scripts/assign_lineage.py SRR19707934.mgsr.abundance.out SRR19707934.pangolin.csv > SRR19707934.mgsr.lineage.abundance.out
 ```

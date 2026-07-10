@@ -50,6 +50,18 @@ void align_reads_direct(const char* reference,
                         bool pairedEndReads,
                         int n_threads);
 
+// bwa-mem backend (bwa_align.c); same contract as align_reads_direct. Selected
+// by --aligner bwa. Builds a temporary bwa index for the single reference.
+void bwa_align_reads_direct(const char* reference,
+                            int n_reads,
+                            const char** reads,
+                            const char** quality,
+                            const char** read_names,
+                            const int* r_lens,
+                            align_pair_result_t* results,
+                            bool pairedEndReads,
+                            int n_threads);
+
 #ifdef __cplusplus
 }
 #endif

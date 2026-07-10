@@ -4,80 +4,89 @@
 panmap <panman> [reads1.fq] [reads2.fq] [options]
 ```
 
-Use `--help` for common options or `--help-all` for the full list. This page
-mirrors `panmap --help-all` for version 0.1.2.
+`--help` shows the common (all-modes) and single-sample options; `--help-all`
+adds index & seeding, metagenomic, and developer options. This page mirrors
+`panmap --help-all` for version 0.1.2. Options are grouped by mode: all modes,
+index & seeding (both modes), single-sample (default mode; ignored with
+`--meta`), and metagenomic (require `--meta`).
 
-## General
+A plain single-sample run executes the full `index -> place -> align ->
+genotype -> consensus` pipeline; panmap derives and caches the index from the
+panman automatically, so `-i/--index` is only needed to point at an index in a
+non-default location.
+
+## Options (all modes)
+
+Shown in `--help`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-h, --help` | Show common options | -- |
+| `-h, --help` | Show common + single-sample options | -- |
 | `--help-all` | Show all options | -- |
 | `-V, --version` | Show version | -- |
 | `-o, --output` | Output file prefix | derived from reads filename |
 | `-t, --threads` | Number of threads | `1` |
-| `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` |
 | `--meta` | Enable metagenomic mode | off |
-| `-a, --aligner` | `minimap2` or `bwa` | `minimap2` |
 | `-v, --verbose` | Verbose output | off |
 | `-q, --quiet` | Errors only | off |
 | `--no-color` | Disable colored output | off |
+| `--batch` | Batch file, one sample per line: `reads1 [reads2] [output_prefix]` (works in both modes) | -- |
 
-## Index
+## Index & seeding (both modes)
+
+The index is built (or reused) the same way for single-sample and `--meta`
+runs. Its path derives from the panman (`<panman>.idx`, `.midx` under `--meta`),
+independent of `-o`; `--meta` rejects a `.idx` index.
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-i, --index` | Load a pre-built index from this path | auto-built at `<panman>.idx` (`.midx` under `--meta`) |
 | `--index-out` | Write the built index to this path | next to the panman |
 | `-f, --reindex` | Force rebuild index | off |
-| `--index-packed` | Build packed Cap'n Proto message | off |
-| `--read-packed` | Read packed Cap'n Proto message | off |
-| `--zstd-level` | ZSTD compression level for index (1-22) | `7` |
-
-## Seed parameters
-
-| Option | Description | Default |
-|--------|-------------|---------|
 | `-k, --kmer` | Syncmer k-mer length | `19` |
 | `-s, --syncmer` | Syncmer s parameter | `8` |
-| `-l, --lmer` | Syncmers per seed | `3` |
 | `--offset` | Syncmer offset | `0` |
+| `-l, --lmer` | Syncmers per seed | `3` |
 | `--open-syncmer` | Use open syncmers | off |
 | `--hpc` | Homopolymer-compressed seeds | off |
 | `--flank-mask` | Mask bp at ends of genomes | `250` |
 | `--seed-mask-fraction` | Mask top seed fraction | `0` |
-| `--min-seed-quality` | Minimum Phred score for seed region | `0` |
-| `--min-read-support` | Minimum reads for a seed (2 = filter singletons) | `1` |
 | `--extent-guard` | Guard seed deletions at genome extent boundaries | off |
+| `--impute` | Impute N's from parent (skip `_->N` mutations in indexing and output) | off |
+| `--zstd-level` | ZSTD compression level for index (1-22) | `7` |
 
-## Read processing
+## Single-sample options (default mode; ignored with `--meta`)
+
+The `place -> align -> genotype -> consensus` pipeline. Ignored under `--meta`,
+which runs its own read-assignment/abundance flow instead.
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` |
+| `-a, --aligner` | Aligner: `minimap2` or `bwa` (bwa-mem backend) | `minimap2` |
+| `--dedup` | Deduplicate reads | off |
 | `--trim-start` | Trim bases from read start | `0` |
 | `--trim-end` | Trim bases from read end | `0` |
-| `--dedup` | Deduplicate reads | off |
-
-## Placement
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--force-leaf` | Restrict placement to leaf nodes (auto-enabled unless `--stop place`) | off |
+| `--min-seed-quality` | Minimum Phred score for seed region | `0` |
+| `--min-read-support` | Min reads for a seed; `-1`=auto (filter singletons only when est. coverage >3x), `1`=keep all, `2`=filter singletons | `-1` |
+| `--force-leaf` | Restrict placement to leaf nodes only (default unless `--stop place`) | off |
+| `--no-mutation-spectrum` | Disable mutation-spectrum filtering in VCF genotyping | off |
+| `--baq` | Enable Base Alignment Quality in mpileup | off |
 | `--refine` | Alignment-based refinement of top candidates | off |
 | `--refine-top-pct` | Top fraction of nodes to refine | `0.01` |
 | `--refine-max-top-n` | Max nodes to align against | `150` |
 | `--refine-neighbor-radius` | Expand to neighbors within N branches | `2` |
 | `--refine-max-neighbor-n` | Max additional nodes from neighbor expansion | `150` |
 
-## Genotyping
+## Metagenomic options (require `--meta`)
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--impute` | Impute N's from parent (skip `_->N` mutations) | off |
-| `--no-mutation-spectrum` | Disable mutation-spectrum filtering in VCF | off |
-| `--baq` | Enable Base Alignment Quality in mpileup | off |
+| `--index-packed` | Build packed Cap'n Proto message | off |
+| `--read-packed` | Read packed Cap'n Proto message | off |
+| `--no-progress` | Disable progress bars | off |
 
-## Metagenomic: EM algorithm
+## Metagenomic: EM (require `--meta`)
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -92,9 +101,8 @@ mirrors `panmap --help-all` for version 0.1.2.
 | `--em-maximum-rounds` | Maximum EM rounds | `5` |
 | `--em-maximum-iterations` | Maximum EM iterations per round | `1000` |
 | `--em-leaves-only` | Only run EM on leaf (sample) nodes | off |
-| `--no-progress` | Disable progress bars | off |
 
-## Metagenomic: filter and assign
+## Metagenomic: filter and assign (require `--meta`)
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -110,12 +118,6 @@ mirrors `panmap --help-all` for version 0.1.2.
 | `--breadth-ratio` | Compute observed/expected breadth ratio | off |
 | `--pseudochain` | Use pseudo-chains for read scoring | off |
 | `--batch-size` | Batch size for filtering and assigning | `1000000` |
-
-## Batch mode
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--batch` | File listing samples, one per line: `reads1 [reads2] [output_prefix]` (works in normal and `--meta` modes) | -- |
 
 ## Developer
 

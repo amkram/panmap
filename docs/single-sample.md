@@ -41,10 +41,12 @@ ls examples/data/sars_20000_twilight_dipper.panman
 
 ### 2. Run the full pipeline
 
+Runs index -> place -> align -> genotype -> consensus by default, and auto-builds/reuses the index next to the PanMAN.
+
 ```bash
 panmap examples/data/sars_20000_twilight_dipper.panman \
   reads_R1.fq.gz reads_R2.fq.gz \
-  --stop genotype -t 8 -o my_sample
+  -t 8 -o my_sample
 ```
 
 ### 3. Output files
@@ -60,35 +62,37 @@ The seed index is built once next to the PanMAN (`sars_20000_twilight_dipper.pan
 
 ### 4. Reuse the index
 
-Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location:
+The cached index is reused automatically for later samples: just run panmap again. Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location.
 
 ```bash
 panmap examples/data/sars_20000_twilight_dipper.panman \
   sample2_R1.fq.gz sample2_R2.fq.gz \
-  --stop consensus -t 8 -o sample2
+  -t 8 -o sample2
 ```
 
 ## Common options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `-o, --output` | Output file prefix | derived from reads filename |
-| `-t, --threads` | Number of threads | `1` |
-| `-a, --aligner` | `minimap2` or `bwa` | `minimap2` |
-| `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` |
-| `--force-leaf` | Restrict placement to leaf nodes | off (auto-enabled unless `--stop place`) |
-| `--refine` | Alignment-based refinement of top candidates | off |
+Mode column: `all` = applies to single-sample and `--meta`; `single` = single-sample only, ignored with `--meta`.
 
-## Choosing an aligner
+| Option | Description | Default | Mode |
+|--------|-------------|---------|------|
+| `-o, --output` | Output file prefix | derived from reads filename | all |
+| `-t, --threads` | Number of threads | `1` | all |
+| `-a, --aligner` | `minimap2` or `bwa` (bwa-mem backend) | `minimap2` | single |
+| `--stop` | Stop after: `index`, `place`, `align`, `genotype`, `consensus` | `consensus` | single |
+| `--force-leaf` | Restrict placement to leaf nodes | off (auto-enabled unless `--stop place`) | single |
+| `--refine` | Alignment-based refinement of top candidates | off | single |
+
+## Choosing an aligner (single-sample only, ignored with `--meta`)
 
 - **minimap2** (default): fast, good for most cases
-- **bwa**: higher sensitivity, may be preferable for short reads
+- **bwa** (`-a bwa`): bwa-mem backend; higher sensitivity, may be preferable for very short or ancient reads
 
 ```bash
 panmap ref.panman reads.fq -a bwa -o sample
 ```
 
-## Refining placement
+## Refining placement (single-sample only, ignored with `--meta`)
 
 `--refine` uses alignment scores to re-rank placement candidates. Slower but can improve accuracy when seed-based placement is ambiguous.
 
@@ -107,30 +111,33 @@ Refinement parameters:
 
 ## Advanced options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `-i, --index` | Path to pre-built index file | derived from output/panman |
-| `-f, --reindex` | Force rebuild index | off |
-| `--dedup` | Deduplicate reads | off |
-| `--impute` | Impute N's from parent (skip _->N mutations) | off |
-| `--no-mutation-spectrum` | Disable mutation spectrum filtering in VCF genotyping | off |
-| `--baq` | Enable Base Alignment Quality in mpileup | off |
-| `--batch` | Batch file listing samples (one per line: `reads1 [reads2] [output_prefix]`) | -- |
+| Option | Description | Default | Mode |
+|--------|-------------|---------|------|
+| `-i, --index` | Load a pre-built index from this path | derived from the panman (or `--index-out`); never from `-o` | all |
+| `--index-out` | Write the built index to this path | next to the panman | all |
+| `-f, --reindex` | Force rebuild index | off | all |
+| `--dedup` | Deduplicate reads | off | single |
+| `--impute` | Impute N's from parent (skip _->N mutations) | off | all |
+| `--no-mutation-spectrum` | Disable mutation spectrum filtering in VCF genotyping | off | single |
+| `--baq` | Enable Base Alignment Quality in mpileup | off | single |
+| `--batch` | Batch file listing samples (one per line: `reads1 [reads2] [output_prefix]`) | -- | all |
 
-## Seed parameters
+## Seed and read parameters
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `-k, --kmer` | Syncmer k-mer length | `19` |
-| `-s, --syncmer` | Syncmer s parameter | `8` |
-| `-l, --lmer` | Syncmers per seed | `3` |
-| `--offset` | Syncmer offset | `0` |
-| `--open-syncmer` | Use open syncmers | off |
-| `--hpc` | Homopolymer-compressed seeds | off |
-| `--flank-mask` | Mask bp at ends of genomes | `250` |
-| `--seed-mask-fraction` | Mask top seed fraction | `0` |
-| `--min-seed-quality` | Minimum Phred score for seed region | `0` |
-| `--min-read-support` | Minimum reads for a seed (2 = filter singletons) | `1` |
-| `--trim-start` | Trim bases from read start | `0` |
-| `--trim-end` | Trim bases from read end | `0` |
-| `--extent-guard` | Guard seed deletions at genome extent boundaries | off |
+Index and seeding options (`Mode = all`) shape the index and apply to both single-sample and `--meta` runs. Read-level options (`Mode = single`) are single-sample only and ignored with `--meta`.
+
+| Option | Description | Default | Mode |
+|--------|-------------|---------|------|
+| `-k, --kmer` | Syncmer k-mer length | `19` | all |
+| `-s, --syncmer` | Syncmer s parameter | `8` | all |
+| `-l, --lmer` | Syncmers per seed | `3` | all |
+| `--offset` | Syncmer offset | `0` | all |
+| `--open-syncmer` | Use open syncmers | off | all |
+| `--hpc` | Homopolymer-compressed seeds | off | all |
+| `--flank-mask` | Mask bp at ends of genomes | `250` | all |
+| `--seed-mask-fraction` | Mask top seed fraction | `0` | all |
+| `--extent-guard` | Guard seed deletions at genome extent boundaries | off | all |
+| `--min-seed-quality` | Minimum Phred score for seed region | `0` | single |
+| `--min-read-support` | Min reads for a seed; `-1`=auto (filter singletons when est. coverage >3x), `1`=keep all, `2`=filter singletons | `-1` (auto) | single |
+| `--trim-start` | Trim bases from read start | `0` | single |
+| `--trim-end` | Trim bases from read end | `0` | single |

@@ -88,7 +88,7 @@ short:
 | Dependency | Ubuntu / Debian package |
 |------------|-------------------------|
 | CMake ≥ 3.14 | `cmake` |
-| C++17 compiler | `g++` or `clang++` |
+| C++20 compiler | `g++` or `clang++` |
 | Protobuf | `protobuf-compiler`, `libprotobuf-dev` |
 | Boost | `libboost-program-options-dev`, `libboost-iostreams-dev`, `libboost-filesystem-dev`, `libboost-system-dev`, `libboost-date-time-dev` |
 | zlib | `zlib1g-dev` |

@@ -37,13 +37,18 @@ Output: `sample.mgsr.abundance.out`
 
 ## Partial pipelines
 
-```bash
-# Place reads (default)
-panmap ref.panman reads.fq -o sample
+A plain run executes the full pipeline (place -> align -> genotype -> consensus)
+and writes `.bam`, `.vcf`, and `.consensus.fa`. Use `--stop` to end earlier:
 
-# Place and align, skip genotyping
+```bash
+# Stop at placement (writes .placement.tsv only)
+panmap ref.panman reads.fq --stop place -o sample
+
+# Place and align, skip genotyping and consensus
 panmap ref.panman reads.fq --stop align -o sample
 ```
+
+The `--stop` place/align/genotype/consensus stages are single-sample. With `--meta`, only `--stop index` applies (build the `.midx` and stop); the later stages don't run.
 
 ## Managing indexes
 

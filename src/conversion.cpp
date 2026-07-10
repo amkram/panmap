@@ -371,6 +371,7 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
                       const std::string& bamFileName,
                       bool pairedEndReads,
                       int n_threads,
+                      bool useBwa,
                       const std::string& refName) {
     int n_reads = static_cast<int>(readSequences.size());
 
@@ -388,15 +389,16 @@ void alignAndWriteBam(std::vector<std::string>& readSequences,
     int n_results = pairedEndReads ? n_reads / 2 : n_reads;
     std::vector<align_pair_result_t> results(n_results);
 
-    align_reads_direct(reference.c_str(),
-                       n_reads,
-                       read_ptrs.data(),
-                       qual_ptrs.data(),
-                       name_ptrs.data(),
-                       r_lens.data(),
-                       results.data(),
-                       pairedEndReads,
-                       n_threads);
+    auto aligner_fn = useBwa ? bwa_align_reads_direct : align_reads_direct;
+    aligner_fn(reference.c_str(),
+               n_reads,
+               read_ptrs.data(),
+               qual_ptrs.data(),
+               name_ptrs.data(),
+               r_lens.data(),
+               results.data(),
+               pairedEndReads,
+               n_threads);
 
     std::string samHeaderStr =
         "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:" + refName + "\tLN:" + std::to_string(reference.length());

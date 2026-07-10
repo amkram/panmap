@@ -1607,8 +1607,15 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
 
     // Parallel alignment with direct BAM construction
     bool pairedEndReads = !cfg.reads2.empty();
-    alignAndWriteBam(
-        readSequences, readQuals, readNames, bestMatchSequence, bamFileName, pairedEndReads, cfg.threads, nodeId);
+    alignAndWriteBam(readSequences,
+                     readQuals,
+                     readNames,
+                     bestMatchSequence,
+                     bamFileName,
+                     pairedEndReads,
+                     cfg.threads,
+                     cfg.aligner == "bwa",
+                     nodeId);
 
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
@@ -1733,43 +1740,55 @@ int main(int argc, char** argv) {
     visible.add_options()("help,h", "Show help (--help-all for more)")("help-all", "Show all options")(
         "version,V", "Show version")("output,o", po::value<std::string>(&cfg.output), "Output prefix")(
         "threads,t", po::value<int>(&cfg.threads)->default_value(1), "Threads")(
-        "stop",
-        po::value<std::string>()->default_value("consensus"),
-        "Stop after: index|place|align|genotype|consensus")(
         "meta", po::bool_switch(&cfg.metagenomic), "Metagenomic mode (for more options, see --help-all)")(
-        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")(
         "verbose,v", po::bool_switch(&cfg.verbose), "Verbose output")(
-        "quiet,q", po::bool_switch(&cfg.quiet), "Quiet output")("no-color", po::bool_switch(&cfg.plain), "No colors");
+        "quiet,q", po::bool_switch(&cfg.quiet), "Quiet output")("no-color", po::bool_switch(&cfg.plain), "No colors")(
+        "batch",
+        po::value<std::string>(&cfg.batchFile),
+        "Batch file: one sample per line (reads1 [reads2] [output_prefix]); works in both modes");
 
-    po::options_description advanced("Advanced");
-    advanced.add_options()("index,i", po::value<std::string>(&cfg.index), "Load a pre-built index from this path")(
+    // Options that shape the index and seeds. The index is built (or reused) the
+    // same way for single-sample and --meta runs, so these apply to both modes.
+    po::options_description indexOpts("Index & seeding options (both modes)");
+    indexOpts.add_options()("index,i", po::value<std::string>(&cfg.index), "Load a pre-built index from this path")(
         "index-out",
         po::value<std::string>(&cfg.indexOut),
         "Write the built index to this path (default: next to the panman)")(
         "reindex,f", po::bool_switch(&cfg.forceReindex), "Force rebuild index")(
-        "dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")(
-        "impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")(
-        "no-mutation-spectrum",
-        po::bool_switch(&cfg.noMutationSpectrum),
-        "Disable mutation spectrum filtering in VCF genotyping")(
-        "baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")(
         "kmer,k", po::value<int>(&cfg.k)->default_value(19), "Syncmer k")(
         "syncmer,s", po::value<int>(&cfg.s)->default_value(8), "Syncmer s")(
         "offset", po::value<int>(&cfg.t)->default_value(0), "Syncmer offset")(
         "lmer,l", po::value<int>(&cfg.l)->default_value(3), "Syncmers per seed")(
         "open-syncmer", po::bool_switch(&cfg.openSyncmer), "Open syncmer")(
+        "hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")(
         "flank-mask", po::value<int>(&cfg.flankMaskBp)->default_value(250), "Mask bp at ends")(
         "seed-mask-fraction", po::value<double>(&cfg.seedMaskFraction)->default_value(0), "Mask top seed fraction")(
-        "min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0), "Min seed quality")(
+        "extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")(
+        "impute", po::bool_switch(&cfg.impute), "Impute N's from parent (skip _->N mutations in indexing and output)")(
+        "zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7), "ZSTD compression level for index (1-22)");
+
+    // The place -> align -> genotype -> consensus pipeline. These are ignored in
+    // --meta mode, which runs its own read-assignment/abundance flow instead.
+    po::options_description singleSample("Single-sample options (default mode; ignored with --meta)");
+    singleSample.add_options()(
+        "stop",
+        po::value<std::string>()->default_value("consensus"),
+        "Stop after: index|place|align|genotype|consensus")(
+        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")(
+        "dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")(
         "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")(
         "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")(
+        "min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0), "Min seed quality")(
         "min-read-support",
         po::value<int>(&cfg.minReadSupport)->default_value(-1),
-        "Min reads for a seed; -1=auto (filter singletons only when est. coverage >3x), 1=keep all, 2=filter singletons")("hpc", po::bool_switch(&cfg.hpc), "Homopolymer-compressed seeds")(
-        "extent-guard", po::bool_switch(&cfg.extentGuard), "Guard seed deletions at genome extent boundaries")(
+        "Min reads for a seed; -1=auto (filter singletons only when est. coverage >3x), 1=keep all, 2=filter singletons")(
         "force-leaf",
         po::bool_switch(&cfg.forceLeaf),
         "Restrict placement to leaf nodes only (default unless --stop place)")(
+        "no-mutation-spectrum",
+        po::bool_switch(&cfg.noMutationSpectrum),
+        "Disable mutation spectrum filtering in VCF genotyping")(
+        "baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")(
         "refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")(
         "refine-top-pct",
         po::value<double>(&cfg.refineTopPct)->default_value(0.01),
@@ -1779,13 +1798,9 @@ int main(int argc, char** argv) {
         po::value<int>(&cfg.refineNeighborRadius)->default_value(2),
         "Expand to neighbors within N branches")("refine-max-neighbor-n",
                                                  po::value<int>(&cfg.refineMaxNeighborN)->default_value(150),
-                                                 "Max additional nodes from neighbor expansion")(
-        "zstd-level", po::value<int>(&cfg.zstdLevel)->default_value(7), "ZSTD compression level for index (1-22)")(
-        "batch",
-        po::value<std::string>(&cfg.batchFile),
-        "Batch file listing samples (one per line: reads1 [reads2] [output_prefix]); works in normal and --meta modes");
+                                                 "Max additional nodes from neighbor expansion");
 
-    po::options_description metagenomic("Metagenomic");
+    po::options_description metagenomic("Metagenomic options (require --meta)");
     metagenomic.add_options()(
         "index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")(
         "read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")(
@@ -1892,10 +1907,10 @@ int main(int argc, char** argv) {
     pos.add("panman", 1).add("reads", -1);
 
     po::options_description all;  // For parsing
-    all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer).add(positional);
+    all.add(visible).add(indexOpts).add(singleSample).add(metagenomic).add(em).add(filterAndAssign).add(developer).add(positional);
 
     po::options_description visible_all;  // For --help-all
-    visible_all.add(visible).add(advanced).add(metagenomic).add(em).add(filterAndAssign).add(developer);
+    visible_all.add(visible).add(indexOpts).add(singleSample).add(metagenomic).add(em).add(filterAndAssign).add(developer);
 
     po::variables_map vm;
     try {
@@ -1921,7 +1936,10 @@ int main(int argc, char** argv) {
 
     if (vm.count("help") || argc == 1) {
         printUsage();
-        std::cout << visible << "\n";
+        // Default help shows common + single-sample (the default mode) options;
+        // --help-all adds index/seeding, metagenomic, and developer options.
+        std::cout << visible << "\n" << singleSample << "\n";
+        std::cout << "Run --help-all for index/seeding, metagenomic, and developer options.\n";
         return 0;
     }
 
@@ -1979,6 +1997,11 @@ int main(int argc, char** argv) {
         cfg.stopAfter = PipelineStage::Consensus;
     else {
         output::error("Invalid stage '{}'", stopStr);
+        return 1;
+    }
+
+    if (cfg.aligner != "minimap2" && cfg.aligner != "bwa") {
+        output::error("Invalid aligner '{}' (expected minimap2 or bwa)", cfg.aligner);
         return 1;
     }
 

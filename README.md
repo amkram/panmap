@@ -25,8 +25,8 @@ panmap -h
 With Docker (pulled from registry):
 
 ```bash
-docker pull quay.io/biocontainers/panmap:0.1.1--0
-docker run --rm panmap panmap -h
+docker pull quay.io/biocontainers/panmap:0.1.2--0
+docker run --rm quay.io/biocontainers/panmap:0.1.2--0 panmap -h
 ```
 
 Or build locally with Docker (~6 min):
@@ -78,7 +78,7 @@ Outputs (prefix defaults to the reads filename, `isolate_R1`):
 | `.consensus.fa` | sample consensus |
 
 
-By default, panmap runs the full pipeline (`index → place → align → genotype → consensus`). Use `--stop <stage>` to run fewer stages.
+By default, panmap runs the full pipeline (`index → place → align → genotype → consensus`). Use `--stop <stage>` to run fewer stages (single-sample only; ignored with `--meta`).
 
 
 ## Metagenomic mode (`--meta`)
@@ -109,17 +109,18 @@ panmap --meta --filter-and-assign [options] <pangenome.panman> <reads...>
 **Example** (~2.5 min):
 
 ```bash
-cp data/vertebrate_mtdna/v_mtdna.panman examples/data/
-panmap examples/data/v_mtdna.panman examples/data/subsampled.fastq.gz \
+mkdir -p examples/output
+panmap data/vertebrate_mtdna/v_mtdna.panman examples/data/subsampled.fastq.gz \
        --meta --filter-and-assign -k 15 -s 8 -l 1 --discard 0.6 --dust 5 \
-       --breadth-ratio -t 4 --taxonomic-metadata examples/data/v_mtdna.meta.tsv -o examples/output/subsampled
+       --breadth-ratio -t 4 --taxonomic-metadata data/vertebrate_mtdna/v_mtdna.meta.tsv -o examples/output/subsampled
 ```
 
-Writes three files (prefix `examples/output/subsampled`):
+Writes (prefix `examples/output/subsampled`):
 
 - `.mgsr.assignedReads.fastq`: the reads that were assigned
 - `.mgsr.assignedReads.out`: per node, number of reads assigned and their indices into the fastq
 - `.mgsr.assignedReadsLCANode.out`: per LCA node, number of reads assigned and their indices; a read's LCA node is the LCA of all nodes it was assigned to
+- `.mgsr.breadths.out`: observed/expected breadth ratio per node (from `--breadth-ratio`)
 
 ## Verify
 
