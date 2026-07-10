@@ -130,6 +130,53 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     }
 }
 
+// Multi-seed cases with fully hand-derived expected scores (independent of the oracle,
+// which only re-implements the same formulas): accumulation over two seeds, and partial
+// containment where a read seed is absent from the node genome. makeState builds the same
+// denominators the getters divide by.
+BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
+    const uint64_t H1 = 0x1111, H2 = 0x2222;
+    const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+
+    // Reads: both seeds at count 3 (log(1+3)=log4); root genome: both at count 2.
+    indexUtils::SeedCountMap readSeeds{{H1, 3}, {H2, 3}};
+    indexUtils::SeedCountMap rootGenome{{H1, 2}, {H2, 2}};
+    auto state = makeState(readSeeds, rootGenome);
+
+    // (a) Node genome contains BOTH seeds at count 2 (symmetric r=3,g=2 twice):
+    //     logRaw = (log4/2 + log4/2) / (log4·sqrt2) = 1/sqrt2; the other four scores = 1.
+    {
+        std::vector<Change> ch = {{H1, 0, 2}, {H2, 0, 2}};
+        placement::NodeMetrics m;
+        placement::NodeMetrics::computeChildMetrics(m, ch, state);
+        BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), inv_sqrt2, 1e-3);
+        BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), 1.0, 1e-3);
+        BOOST_CHECK_CLOSE(m.getContainmentScore(state.readUniqueSeedCount), 1.0, 1e-3);
+        BOOST_CHECK_CLOSE(m.getWeightedContainmentScore(state.weightedContainmentDenominator), 1.0, 1e-3);
+        BOOST_CHECK_CLOSE(m.getLogContainmentScore(state.logContainmentDenominator), 1.0, 1e-3);
+        BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 2u);
+        // The oracle must agree on the same state (consistency cross-check).
+        auto oracle = indexUtils::GroundTruthMetrics::compute({{H1, 2}, {H2, 2}}, state);
+        BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), oracle.logRawScore(state), 1e-3);
+    }
+
+    // (b) Node genome contains only H1 (partial): H2 is a read seed missing from the
+    //     genome, so |reads∩genome|/|reads| = 1/2 and every read-interaction score halves:
+    //     logRaw = (log4/2)/(log4·sqrt2) = 1/(2·sqrt2); logCosine = log4·log3 /
+    //     (log4·sqrt2·log3) = 1/sqrt2; containment/weighted/logContainment = 1/2.
+    {
+        std::vector<Change> ch = {{H1, 0, 2}};
+        placement::NodeMetrics m;
+        placement::NodeMetrics::computeChildMetrics(m, ch, state);
+        BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), 0.5 * inv_sqrt2, 1e-3);
+        BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), inv_sqrt2, 1e-3);
+        BOOST_CHECK_CLOSE(m.getContainmentScore(state.readUniqueSeedCount), 0.5, 1e-3);
+        BOOST_CHECK_CLOSE(m.getWeightedContainmentScore(state.weightedContainmentDenominator), 0.5, 1e-3);
+        BOOST_CHECK_CLOSE(m.getLogContainmentScore(state.logContainmentDenominator), 0.5, 1e-3);
+        BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 1u);
+    }
+}
+
 // THE smoking-gun test: for nodes along the path to a known leaf, the five live
 // getters must equal the oracle computed from the reconstructed genome + same state.
 BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
@@ -159,7 +206,7 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
 
     // Check several nodes along the path (root, midpoint, leaf).
     std::vector<size_t> checkpoints = {1, fullPath.size() / 2, fullPath.size()};
-    int comparisons = 0;
+    int comparisons = 0, nonTrivial = 0;
     for (size_t prefixLen : checkpoints) {
         std::vector<panmapUtils::LiteNode*> prefix(fullPath.begin(), fullPath.begin() + prefixLen);
         auto live = accumulateAlongPath(d, prefix, state);
@@ -170,11 +217,15 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
         BOOST_CHECK_CLOSE(live.genomeMagnitudeSquared, oracle.genomeMagnitudeSquared, 1e-3);
         BOOST_CHECK_EQUAL(live.presenceIntersectionCount, oracle.presenceIntersectionCount);
 
-        auto closeOrZero = [](double a, double b) {
-            if (std::abs(b) < 1e-12)
+        // A ~0 oracle value only pins live ~0 too; count the nonzero comparisons so an
+        // all-zero degenerate run (no read/genome overlap) can't pass this silently.
+        auto closeOrZero = [&](double a, double b) {
+            if (std::abs(b) < 1e-12) {
                 BOOST_CHECK_SMALL(a, 1e-9);
-            else
+            } else {
                 BOOST_CHECK_CLOSE(a, b, 1e-3);
+                nonTrivial++;
+            }
         };
         closeOrZero(live.getLogRawScore(state.logReadMagnitude), oracle.logRawScore(state));
         closeOrZero(live.getLogCosineScore(state.logReadMagnitude), oracle.logCosineScore(state));
@@ -182,9 +233,78 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
         closeOrZero(live.getWeightedContainmentScore(state.weightedContainmentDenominator),
                     oracle.weightedContainmentScore(state));
         closeOrZero(live.getLogContainmentScore(state.logContainmentDenominator), oracle.logContainmentScore(state));
+
+        // At the leaf (full path) the reads came from this genome, so containment must be
+        // substantial -- a concrete nonzero anchor, not merely live == oracle.
+        if (prefixLen == fullPath.size()) {
+            BOOST_TEST(oracle.containmentScore(state) > 0.5);
+            BOOST_TEST(live.getContainmentScore(state.readUniqueSeedCount) > 0.5);
+        }
         comparisons++;
     }
     BOOST_TEST(comparisons == 3);
+    // The smoking-gun must have compared real nonzero scores, not only ~0 values.
+    BOOST_TEST(nonTrivial >= 5);
+}
+
+// Production read-seed state construction: the min-read-support filter and the score
+// denominators (logReadMagnitude / logContainmentDenominator / readUniqueSeedCount), which
+// the getters divide by. Exercised directly with hand-built seed frequencies and expected
+// values derived by hand -- this is the piece the smoking-gun test's makeState only mimics.
+BOOST_AUTO_TEST_CASE(read_seed_state_and_min_support) {
+    // resolveMinReadSupport auto-mode (configured = -1).
+    {  // High coverage: three seeds seen in >=2 reads, mean count 4 > 3 -> require >=2.
+        placement::PlacementGlobalState st;
+        st.seedFreqInReads[0xA1] = 5;
+        st.seedFreqInReads[0xB2] = 4;
+        st.seedFreqInReads[0xC3] = 3;
+        BOOST_TEST(placement::resolveMinReadSupport(st.seedFreqInReads, -1) == 2);
+    }
+    {  // Low coverage: one multi-read seed (count 2), mean 2 <= 3 -> keep all (1).
+        placement::PlacementGlobalState st;
+        st.seedFreqInReads[0xA1] = 2;
+        st.seedFreqInReads[0xB2] = 1;
+        st.seedFreqInReads[0xC3] = 1;
+        BOOST_TEST(placement::resolveMinReadSupport(st.seedFreqInReads, -1) == 1);
+    }
+    {  // No multi-read seeds -> estCov 0 -> keep all (1).
+        placement::PlacementGlobalState st;
+        st.seedFreqInReads[0xA1] = 1;
+        BOOST_TEST(placement::resolveMinReadSupport(st.seedFreqInReads, -1) == 1);
+    }
+    {  // An explicit value is used verbatim (no auto).
+        placement::PlacementGlobalState st;
+        st.seedFreqInReads[0xA1] = 5;
+        BOOST_TEST(placement::resolveMinReadSupport(st.seedFreqInReads, 7) == 7);
+    }
+
+    // computeReadSeedMagnitudes with minSupport=2 drops the singleton and builds the
+    // denominators over the surviving seeds only. Hand-derived from a:5, b:3, c:1.
+    {
+        placement::PlacementGlobalState st;
+        st.seedFreqInReads[0xA1] = 5;
+        st.seedFreqInReads[0xB2] = 3;
+        st.seedFreqInReads[0xC3] = 1;
+
+        const size_t filtered = placement::computeReadSeedMagnitudes(st, 2);
+        const double la = std::log1p(5.0), lb = std::log1p(3.0);
+
+        BOOST_TEST(filtered == 1u);                  // c (count 1 < 2) dropped
+        BOOST_TEST(st.readUniqueSeedCount == 2u);    // a, b kept
+        BOOST_TEST(st.totalReadSeedFrequency == 9);  // 5+3+1, counted before the filter
+        BOOST_TEST(st.logReadCounts.size() == 2u);
+        BOOST_TEST(st.logReadCounts.count(0xC3) == 0u);
+        BOOST_CHECK_CLOSE(st.logReadCounts.at(0xA1), la, 1e-9);
+        BOOST_CHECK_CLOSE(st.logReadCounts.at(0xB2), lb, 1e-9);
+        BOOST_CHECK_CLOSE(st.logContainmentDenominator, la + lb, 1e-9);
+        BOOST_CHECK_CLOSE(st.logReadMagnitude, std::sqrt(la * la + lb * lb), 1e-9);
+
+        // minSupport=1 keeps every seed.
+        placement::PlacementGlobalState all;
+        all.seedFreqInReads = st.seedFreqInReads;
+        BOOST_TEST(placement::computeReadSeedMagnitudes(all, 1) == 0u);
+        BOOST_TEST(all.readUniqueSeedCount == 3u);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
