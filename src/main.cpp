@@ -555,17 +555,22 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                                                while ((l1 = kseq_read(seq1)) >= 0 && (l2 = kseq_read(seq2)) >= 0) {
                                                    batch->sequences.emplace_back(seq1->seq.s);
                                                    batch->names.emplace_back(seq1->name.s);
-                                                   batch->quals.emplace_back(seq1->qual.s);
+                                                   // Quality may be empty for FASTA reads (qual.s is NULL)
+                                                   batch->quals.emplace_back(seq1->qual.l > 0 ? seq1->qual.s
+                                                                                              : std::string(seq1->seq.l, 'I'));
                                                    batch->sequences.emplace_back(seq2->seq.s);
                                                    batch->names.emplace_back(seq2->name.s);
-                                                   batch->quals.emplace_back(seq2->qual.s);
+                                                   batch->quals.emplace_back(seq2->qual.l > 0 ? seq2->qual.s
+                                                                                              : std::string(seq2->seq.l, 'I'));
                                                    if (batch->sequences.size() >= batchSize) break;
                                                }
                                            } else {
                                                while ((l1 = kseq_read(seq1)) >= 0) {
                                                    batch->sequences.emplace_back(seq1->seq.s);
                                                    batch->names.emplace_back(seq1->name.s);
-                                                   batch->quals.emplace_back(seq1->qual.s);
+                                                   // Quality may be empty for FASTA reads (qual.s is NULL)
+                                                   batch->quals.emplace_back(seq1->qual.l > 0 ? seq1->qual.s
+                                                                                              : std::string(seq1->seq.l, 'I'));
                                                    if (batch->sequences.size() >= batchSize) break;
                                                }
                                            }
