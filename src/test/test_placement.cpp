@@ -1,7 +1,5 @@
-// Placement metric tests. The smoking-gun test asserts the live NodeMetrics getters
-// EQUAL the independent GroundTruthMetrics oracle (within float epsilon), replacing
-// the old suite's misleading score>0 assertions. Genome-equality is owned by
-// test_index; this file assumes it and focuses on the read-interaction metrics.
+// Placement metric tests. The live NodeMetrics getters must equal the independent
+// GroundTruthMetrics oracle within float epsilon. Genome equality is covered in test_index.
 #include <boost/test/unit_test.hpp>
 
 #include "placement.hpp"
@@ -22,8 +20,8 @@ const std::string kTruthNode = "MZ515733.1";
 using Change = std::tuple<uint64_t, int64_t, int64_t>;  // (hash, parentCount, childCount)
 
 // Build a PlacementGlobalState from a read seed set, computing the same denominators
-// the live getters and the oracle both divide by. Both sides use THIS state, so the
-// comparison isolates the numerator logic (computeChildMetrics vs oracle::compute).
+// the live getters and the oracle both divide by. Sharing this state isolates the
+// numerator logic: computeChildMetrics vs oracle::compute.
 placement::PlacementGlobalState makeState(const indexUtils::SeedCountMap& readSeeds,
                                           const indexUtils::SeedCountMap& rootGenome) {
     placement::PlacementGlobalState state;
@@ -49,7 +47,7 @@ placement::PlacementGlobalState makeState(const indexUtils::SeedCountMap& readSe
 }
 
 // Adapt hand-built seed changes to the zero-copy SoA API: build a single-segment
-// LiteTree view over the changes and call the real computeChildMetrics.
+// LiteTree view over the changes and call computeChildMetrics.
 void computeChildMetricsFor(placement::NodeMetrics& m,
                             const std::vector<Change>& changes,
                             placement::PlacementGlobalState& state) {
@@ -93,11 +91,10 @@ placement::NodeMetrics accumulateAlongPath(const ts::IndexData& d,
 
 BOOST_AUTO_TEST_SUITE(placement_tests)
 
-// Hand-built seed-change spans exercised directly through the real computeChildMetrics,
-// checked against the oracle. Pins the corners where delta bugs hide.
+// Hand-built seed-change spans run through computeChildMetrics, checked against the oracle.
 BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     const uint64_t H = 0xAAAA;  // a read seed
-    const uint64_t X = 0xBBBB;  // NOT a read seed
+    const uint64_t X = 0xBBBB;  // not a read seed
 
     placement::PlacementGlobalState state;
     state.logReadCounts[H] = std::log1p(3.0);  // read count 3
@@ -155,10 +152,9 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     }
 }
 
-// Multi-seed cases with fully hand-derived expected scores (independent of the oracle,
-// which only re-implements the same formulas): accumulation over two seeds, and partial
-// containment where a read seed is absent from the node genome. makeState builds the same
-// denominators the getters divide by.
+// Multi-seed cases with hand-derived expected scores, independent of the oracle:
+// accumulation over two seeds, and partial containment where a read seed is absent
+// from the node genome.
 BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     const uint64_t H1 = 0x1111, H2 = 0x2222;
     const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
@@ -168,7 +164,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     indexUtils::SeedCountMap rootGenome{{H1, 2}, {H2, 2}};
     auto state = makeState(readSeeds, rootGenome);
 
-    // (a) Node genome contains BOTH seeds at count 2 (symmetric r=3,g=2 twice):
+    // (a) Node genome contains both seeds at count 2 (symmetric r=3,g=2 twice):
     //     logRaw = (log4/2 + log4/2) / (log4·sqrt2) = 1/sqrt2; the other four scores = 1.
     {
         std::vector<Change> ch = {{H1, 0, 2}, {H2, 0, 2}};
@@ -180,7 +176,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
         BOOST_CHECK_CLOSE(m.getWeightedContainmentScore(state.weightedContainmentDenominator), 1.0, 1e-3);
         BOOST_CHECK_CLOSE(m.getLogContainmentScore(state.logContainmentDenominator), 1.0, 1e-3);
         BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 2u);
-        // The oracle must agree on the same state (consistency cross-check).
+        // The oracle must agree on the same state.
         auto oracle = indexUtils::GroundTruthMetrics::compute({{H1, 2}, {H2, 2}}, state);
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), oracle.logRawScore(state), 1e-3);
     }
@@ -202,8 +198,8 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     }
 }
 
-// THE smoking-gun test: for nodes along the path to a known leaf, the five live
-// getters must equal the oracle computed from the reconstructed genome + same state.
+// For nodes along the path to a known leaf, the five live getters must equal the oracle
+// computed from the reconstructed genome and the same state.
 BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
     ts::RSVPanmanFixture fix;
     ts::TestIndex idx(fix.tree(), K, S, 0, L);
@@ -238,12 +234,12 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
         auto genome = ts::reconstructGenomeSeeds(prefix, d);
         auto oracle = indexUtils::GroundTruthMetrics::compute(genome, state);
 
-        // Genome-only sanity: oracle and live agree on the genome magnitude too.
+        // Genome-only: oracle and live agree on the genome magnitude.
         BOOST_CHECK_CLOSE(live.genomeMagnitudeSquared, oracle.genomeMagnitudeSquared, 1e-3);
         BOOST_CHECK_EQUAL(live.presenceIntersectionCount, oracle.presenceIntersectionCount);
 
-        // A ~0 oracle value only pins live ~0 too; count the nonzero comparisons so an
-        // all-zero degenerate run (no read/genome overlap) can't pass this silently.
+        // A ~0 oracle value only pins live ~0; count the nonzero comparisons so an
+        // all-zero degenerate run (no read/genome overlap) can't pass with trivial checks.
         auto closeOrZero = [&](double a, double b) {
             if (std::abs(b) < 1e-12) {
                 BOOST_CHECK_SMALL(a, 1e-9);
@@ -260,7 +256,7 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
         closeOrZero(live.getLogContainmentScore(state.logContainmentDenominator), oracle.logContainmentScore(state));
 
         // At the leaf (full path) the reads came from this genome, so containment must be
-        // substantial -- a concrete nonzero anchor, not merely live == oracle.
+        // substantial, not merely live == oracle.
         if (prefixLen == fullPath.size()) {
             BOOST_TEST(oracle.containmentScore(state) > 0.5);
             BOOST_TEST(live.getContainmentScore(state.readUniqueSeedCount) > 0.5);
@@ -268,14 +264,14 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
         comparisons++;
     }
     BOOST_TEST(comparisons == 3);
-    // The smoking-gun must have compared real nonzero scores, not only ~0 values.
+    // At least five comparisons must be against nonzero oracle values, not only ~0.
     BOOST_TEST(nonTrivial >= 5);
 }
 
-// Production read-seed state construction: the min-read-support filter and the score
-// denominators (logReadMagnitude / logContainmentDenominator / readUniqueSeedCount), which
-// the getters divide by. Exercised directly with hand-built seed frequencies and expected
-// values derived by hand -- this is the piece the smoking-gun test's makeState only mimics.
+// Read-seed state construction: the min-read-support filter and the score denominators
+// (logReadMagnitude / logContainmentDenominator / readUniqueSeedCount) the getters divide
+// by, driven with hand-built seed frequencies and hand-derived expected values. makeState
+// only mimics this path.
 BOOST_AUTO_TEST_CASE(read_seed_state_and_min_support) {
     // resolveMinReadSupport auto-mode (configured = -1).
     {  // High coverage: three seeds seen in >=2 reads, mean count 4 > 3 -> require >=2.

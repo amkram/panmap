@@ -49,7 +49,7 @@ struct BuildState {
 
     // first/last non-gap scalar positions. Seeds in flank regions (before
     // firstNonGapScalar or after lastNonGapScalar) are missing data, not true gaps,
-    // so must NOT be deleted when they become gaps. Permissive by default; only
+    // so must not be deleted when they become gaps. Permissive by default; only
     // restricted when extentGuard is on.
     uint64_t firstNonGapScalar = 0;
     uint64_t lastNonGapScalar = UINT64_MAX;
@@ -126,12 +126,12 @@ class IndexBuilder {
 
     panmanUtils::Tree* T;
 
-    // Legacy: used by the sequential path
+    // Used by the sequential path
     std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
     SyncmerMap refOnSyncmers;     // position -> rsyncmer_t
     SyncmerSet refOnSyncmersMap;  // btree_set for ordered iteration
 
-    // Use concurrent_vector for thread-safe growth without invalidating references
+    // concurrent_vector: thread-safe growth without invalidating references
     tbb::concurrent_vector<seeding::uniqueKminmer_t> uniqueKminmers;
     KminmerMap refOnKminmers;  // position -> kminmer hash
     std::unordered_map<seeding::uniqueKminmer_t, uint64_t> kminmerToUniqueIndex;

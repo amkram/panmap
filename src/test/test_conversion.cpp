@@ -1,6 +1,5 @@
-// Conversion/alignment-IO tests: run the real alignAndWriteBam and verify the output
-// BAM structurally by reading it back with htslib. The full align->bam->vcf->consensus
-// path is covered by the e2e test.
+// Runs alignAndWriteBam and verifies the output BAM structure by reading it back
+// with htslib. The full align->bam->vcf->consensus path is covered by the e2e test.
 #include <boost/test/unit_test.hpp>
 
 #include "conversion.hpp"

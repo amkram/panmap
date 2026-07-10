@@ -1,6 +1,4 @@
-// Genotyping unit tests: mutation-matrix (.mm) parsing. Tests write a valid .mm inline
-// in the current "size:prob" indel format (genotyping.cpp:63-92) and assert the real
-// parser's behavior.
+// Mutation-matrix (.mm) parsing tests. size:prob indel format: genotyping.cpp:63-92.
 #include <boost/test/unit_test.hpp>
 
 #include "genotyping.hpp"
@@ -67,7 +65,7 @@ BOOST_AUTO_TEST_CASE(mm_parse_valid) {
     BOOST_TEST(mm.insmat.at(3) == 0.50);
     BOOST_TEST(mm.delmat.at(2) == 0.45);
 
-    // maxInsLogProb is the largest insertion log-prob seen.
+    // maxInsLogProb is the largest insertion log-prob.
     BOOST_TEST(mm.maxInsLogProb == 0.50);
     BOOST_TEST(mm.maxDelLogProb == 0.45);
 }

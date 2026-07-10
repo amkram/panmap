@@ -98,14 +98,14 @@ struct PlacementGlobalState {
 
 // Resolve the effective minimum read-count support for a seed. configuredMinSupport < 0
 // means "auto": 2 when estimated coverage (mean read count over seeds seen in >=2 reads)
-// exceeds 3x, else 1. Logs the auto decision. Exposed here for unit testing.
+// exceeds 3x, else 1. Logs the auto decision.
 int64_t resolveMinReadSupport(const absl::flat_hash_map<size_t, int64_t, IdentityHash>& seedFreqInReads,
                               int configuredMinSupport);
 
 // Fill the read-derived scoring fields of `state` from state.seedFreqInReads, keeping only
 // seeds with read count >= minSupport: logReadCounts, totalReadSeedFrequency,
 // readUniqueSeedCount, logReadMagnitude, logContainmentDenominator. Returns the number of
-// seeds the filter dropped. Exposed here for unit testing.
+// seeds the filter dropped.
 size_t computeReadSeedMagnitudes(PlacementGlobalState& state, int64_t minSupport);
 
 // Delta-based metrics (forward-only traversal)
@@ -117,7 +117,7 @@ struct NodeMetrics {
     double weightedContainmentNumerator = 0.0;  // Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome
     double logContainmentNumerator = 0.0;       // Σ log(1+r_i) for seeds in reads ∩ genome
 
-    // PRE-INDEXED genome-only metrics (loaded from index, updated incrementally)
+    // Pre-indexed genome-only metrics (loaded from index, updated incrementally)
     double genomeMagnitudeSquared = 0.0;  // Σ(genomeCount²) for cosine denominator
     size_t genomeUniqueSeedCount = 0;     // Total unique seeds in genome
 
@@ -187,10 +187,10 @@ struct PlacementResult {
     uint32_t bestLogContainmentNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedLogContainmentNodeIndices;
 
-    // Per-call, per-node seed scores indexed by node DFS index (only populated
-    // when refinement is enabled, which is the sole reader). Kept here rather than
-    // on the shared LiteNode so concurrent batch placements don't race. Metric
-    // order: {logRaw, logCosine, containment, weightedContainment, logContainment}.
+    // Per-call, per-node seed scores indexed by node DFS index; only populated
+    // when refinement is enabled. Kept here rather than on the shared LiteNode so
+    // concurrent batch placements don't race. Metric order:
+    // {logRaw, logCosine, containment, weightedContainment, logContainment}.
     std::vector<std::array<float, 5>> nodeScores;
 
     // Per-metric alignment-based refinement: each metric's top candidates refined independently by full alignment
@@ -216,7 +216,7 @@ struct PlacementResult {
     void updateWeightedContainmentScore(uint32_t nodeIndex, double score);
     void updateLogContainmentScore(uint32_t nodeIndex, double score);
 
-    // Lazy resolution: convert winning node indices to string IDs (called ONCE at end)
+    // Lazy resolution: convert winning node indices to string IDs (called once at end)
     void resolveNodeIds(panmapUtils::LiteTree* liteTree);
 
     // Resolved string IDs (only populated after resolveNodeIds() is called)

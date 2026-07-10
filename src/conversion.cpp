@@ -26,14 +26,14 @@ static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv,
     // clones only the calling thread; if another worker holds a stdio/htslib lock
     // at fork time, the child can deadlock acquiring it (the owner doesn't exist in
     // the child). glibc/macOS already make malloc fork-safe via atfork handlers, so
-    // the remaining exposure is two bcftools children running concurrently — this
-    // lock removes that, allowing at most one bcftools fork in flight at a time.
+    // the remaining exposure is two bcftools children running concurrently. This
+    // lock allows at most one bcftools fork in flight at a time.
     static std::mutex forkMutex;
     std::lock_guard<std::mutex> forkLock(forkMutex);
 
     bool verbose = output::config().verbose;
     bool fullSilence = silenceStderr && !verbose;
-    bool filterNote = !silenceStderr && !verbose;  // keep meaningful chatter, drop "Note: ..." lines
+    bool filterNote = !silenceStderr && !verbose;  // keep stderr, drop "Note: ..." lines
 
     int pipeFds[2] = {-1, -1};
     if (filterNote && pipe(pipeFds) != 0) {

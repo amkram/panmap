@@ -210,7 +210,7 @@ inline void forEachConsensusNuc(const Seq& consensusSeq, F&& emit) {
 }
 
 struct BlockSequences {
-    // Flat layout (equivalent to the old vector<vector<pair<char, vector<char>>>> sequence):
+    // Flat layout:
     //   mainSeq[b][p]   consensus nucleotide at position p of block b
     //   gapSeq[b]       block b's gap ("insertion") chars, concatenated by position (CSR values)
     //   gapStart[b][p]  offset of position p's gaps in gapSeq[b]; size mainSeq[b].size()+1 (CSR prefix sums)
@@ -263,7 +263,7 @@ struct BlockSequences {
             for (size_t j = 0; j < curGap.nucPosition.size(); j++) {
                 int len = curGap.nucGapLength[j];
                 int pos = curGap.nucPosition[j];
-                gapStart[primaryBId][pos + 1] = len;   // count at pos (last wins, as the old resize did)
+                gapStart[primaryBId][pos + 1] = len;   // count at pos (last wins)
                 totalLength += len;
             }
         }
@@ -318,7 +318,7 @@ struct BlockEdgeCoord {
 };
 
 struct GlobalCoords {
-    // Flat CSR layout (was vector<vector<pair<int64_t, vector<int64_t>>>> globalCoords):
+    // Flat CSR layout:
     //   mainScalar[b][p]  main scalar coord (-1 for the 'x' sentinel)
     //   gapScalar[b]      gap scalar coords concatenated by position (CSR values)
     //   gapStart[b][p]    CSR offsets into gapScalar[b]; size mainScalar[b].size()+1
@@ -351,7 +351,6 @@ struct GlobalCoords {
             mainScalar[i].resize(blen);
             gapScalar[i].resize(gapStart[i].back());
             for (size_t j = 0; j < blen; j++) {
-                // process gap nucs first
                 uint32_t gaps = blockSequences.gapLength(i, j);
                 for (uint32_t k = 0; k < gaps; k++) {
                     gapScalar[i][gapStart[i][j] + k] = curScalarCoord;
@@ -359,7 +358,6 @@ struct GlobalCoords {
                     curScalarCoord++;
                 }
 
-                // process main nuc
                 if (blockSequences.mainBase(i, j) == 'x') {
                     mainScalar[i][j] = -1;
                 } else {

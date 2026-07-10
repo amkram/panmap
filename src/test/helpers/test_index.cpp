@@ -47,7 +47,7 @@ IndexData loadIndex(const std::string& path) {
     d.open = indexRoot.getOpen();
     d.hpc = indexRoot.getHpc();
 
-    // Flatten the (possibly segmented) seed-change struct-of-arrays into vectors.
+    // Flatten segmented seed-change struct-of-arrays into vectors.
     auto offsetsReader = indexRoot.getNodeChangeOffsets();
     d.offsets.resize(offsetsReader.size());
     for (size_t i = 0; i < offsetsReader.size(); ++i) d.offsets[i] = offsetsReader[i];

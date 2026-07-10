@@ -2,7 +2,7 @@
 
 /**
  * @file seed_helpers.hpp
- * @brief Seed extraction and small FASTA/read helpers shared by all tests.
+ * @brief Seed extraction and FASTA/read helpers shared by tests.
  */
 
 #include "metrics_oracle.hpp"  // indexUtils::SeedCountMap

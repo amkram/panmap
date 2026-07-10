@@ -51,7 +51,7 @@ BOOST_AUTO_TEST_CASE(zstd_roundtrip_identity) {
     }
 }
 
-// LiteTree structural invariants, validated on a real index built from rsv_4K.
+// LiteTree structural invariants, validated on an index built from rsv_4K.
 BOOST_AUTO_TEST_CASE(litetree_structure_invariants) {
     ts::RSVPanmanFixture fixture;
     ts::TestIndex idx(fixture.tree(), /*k=*/15, /*s=*/8, /*t=*/0, /*l=*/1);

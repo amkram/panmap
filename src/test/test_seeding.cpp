@@ -1,4 +1,4 @@
-// Unit tests for the seeding primitives (pure, deterministic functions).
+// Unit tests for the seeding primitives.
 #include <boost/test/unit_test.hpp>
 
 #include "seeding.hpp"
@@ -28,8 +28,8 @@ BOOST_AUTO_TEST_CASE(hashseq_determinism_and_canonical) {
         auto b = seeding::hashSeq(s);
         BOOST_TEST((a.first == b.first && a.second == b.second));
 
-        // Canonical (orientation-invariant) hash: min(fwd,rev) is the same for a
-        // sequence and its reverse complement.
+        // Canonical hash min(fwd,rev) matches for a sequence and its reverse
+        // complement (orientation-invariant).
         auto rc = seeding::hashSeq(seeding::reverseComplement(s));
         BOOST_TEST(std::min(a.first, a.second) == std::min(rc.first, rc.second));
     }
@@ -50,9 +50,9 @@ BOOST_AUTO_TEST_CASE(rollingsyncmers_contract) {
                 for (size_t i = 0; i < all.size(); ++i) {
                     BOOST_TEST(std::get<0>(all[i]) == std::get<0>(all2[i]));
                 }
-                // Positions in range; for real (non-sentinel) entries the stored
-                // hash is the canonical (orientation-invariant) k-mer hash.
-                // returnAll=true yields UINT64_MAX sentinels at non-syncmer positions.
+                // Positions in range. Non-sentinel entries store the canonical
+                // (orientation-invariant) k-mer hash; returnAll=true yields
+                // UINT64_MAX sentinels at non-syncmer positions.
                 for (const auto& [hash, isRev, isSync, pos] : all) {
                     BOOST_REQUIRE(pos >= 0);
                     BOOST_REQUIRE(static_cast<size_t>(pos) + k <= seq.size());
@@ -90,7 +90,6 @@ BOOST_AUTO_TEST_CASE(reversecomplement_and_comp) {
         std::string s = randomDna(gen, 30);
         BOOST_TEST(seeding::reverseComplement(seeding::reverseComplement(s)) == s);
     }
-    // Hand cases.
     BOOST_TEST(seeding::reverseComplement("ACGT") == "ACGT");  // palindrome
     BOOST_TEST(seeding::reverseComplement("AAAA") == "TTTT");
     BOOST_TEST(seeding::reverseComplement("GCGC") == "GCGC");  // palindrome

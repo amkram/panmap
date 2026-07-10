@@ -95,7 +95,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         auto rightGapMapIt =
             gapMap.lower_bound(globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]));
 
-        // expand to the left... if reach newSyncmerRanges.back(), merge
+        // expand left; if it reaches newSyncmerRanges.back(), merge
         bool reachedEnd = false;
         uint32_t offset = 0;
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
@@ -133,7 +133,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                 globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) <=
                     globalCoords.getScalarFromCoord(curSyncmerRange.endCoord,
                                                     blockStrand[curSyncmerRange.endCoord.primaryBlockId])) {
-                // reached current newSyncmerRange... merge
+                // reached current newSyncmerRange; merge
                 curBegCoord = curSyncmerRange.begCoord;
                 syncmerRangeBegCoord = curBegCoord;
                 newSyncmerRanges.pop_back();
@@ -151,10 +151,10 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
             }
         }
 
-        // expand to the right... if reach mergedLocalMutationRanges[localMutationRangeIndex + 1], merge
+        // expand right; if it reaches mergedLocalMutationRanges[localMutationRangeIndex + 1], merge
         offset = 0;
         if (rightGapMapIt == gapMap.begin()) {
-            // rightGapMapIt is already at begin, no action needed
+            // already at begin
         } else if (rightGapMapIt == gapMap.end()) {
             rightGapMapIt = std::prev(rightGapMapIt);
         } else if (rightGapMapIt->first != curEndScalar && curEndScalar <= std::prev(rightGapMapIt)->second) {
@@ -217,12 +217,12 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                     globalCoords.getScalarFromCoord(
                         mergedLocalMutationRanges[localMutationRangeIndex + 1].first,
                         blockStrand[mergedLocalMutationRanges[localMutationRangeIndex + 1].first.primaryBlockId])) {
-                // reached next mutation range... merge
+                // reached next mutation range; merge
                 curEndCoord = mergedLocalMutationRanges[localMutationRangeIndex + 1].second;
                 curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
                 rightGapMapIt = gapMap.lower_bound(curEndScalar);
                 if (rightGapMapIt == gapMap.begin()) {
-                    // rightGapMapIt is already at begin, no action needed
+                    // already at begin
                 } else if (rightGapMapIt == gapMap.end()) {
                     rightGapMapIt = std::prev(rightGapMapIt);
                 } else if (rightGapMapIt->first != curEndScalar && curEndScalar <= std::prev(rightGapMapIt)->second) {
@@ -303,7 +303,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         while (true) {
             const auto curBlockId = curCoord.primaryBlockId;
             if (curCoordGapMapIt == gapMap.end()) {
-                // do nothing... Current and all subsequent positions are non-gap
+                // current and all subsequent positions are non-gap
             } else if (recomputeBlock || (blockStrandDelayed[curBlockId] != blockStrand[curBlockId] &&
                                           blockExistsDelayed[curBlockId] && blockExists[curBlockId])) {
                 // need to recompute this whole block
@@ -339,7 +339,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                 localRangeCoordToGlobalScalarCoords.push_back(curCoordScalar);
                 localRangeCoordToBlockId.push_back(curCoord.primaryBlockId);
             } else if (refOnSyncmers.contains(curCoordScalar)) {
-                // Only delete seeds INSIDE the genome extent. Flank regions (before
+                // Only delete seeds inside the genome extent. Flank regions (before
                 // firstNonGapScalar or after lastNonGapScalar) are missing data, not true
                 // gaps; their seeds stay inherited from the parent.
                 if (curCoordScalar >= firstNonGapScalar && curCoordScalar <= lastNonGapScalar) {
@@ -772,7 +772,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         lastNonGapScalar = lng;
     }
 
-    // Compute hard mask boundaries (properly skipping non-gap bases, not scalar positions)
+    // Compute hard mask boundaries, skipping non-gap bases (not scalar positions)
     const int flankMaskBp = getFlankMaskBp();
     uint64_t hardMaskStart = firstNonGapScalar;
     uint64_t hardMaskEnd = lastNonGapScalar;
@@ -1071,7 +1071,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         }
     }
 
-    // No sorting needed - we're using hashes directly, not positions
+    // No sort needed: hashes are used directly, not positions.
 
     // Track seed hash counts for this node (LiteIndex format), starting from parent's counts.
     auto& curNodeCounts = nodeSeedCounts[dfsIndex];
@@ -1149,11 +1149,11 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 
     for (const auto& [pos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
         if (changeType == panmapUtils::seedChangeType::ADD) {
-            // Was added... need to delete
+            // added -> delete
             refOnSyncmers.erase(pos);
             refOnSyncmersMap.erase(pos);
         } else {
-            // was deleted or replaced... need to restore
+            // deleted or replaced -> restore
             refOnSyncmers[pos] = rsyncmer;
             refOnSyncmersMap.insert(pos);
         }
@@ -1161,7 +1161,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 
     for (const auto& [blockId, pos, changeType] : blockOnSyncmersChangeRecord) {
         if (changeType == panmapUtils::seedChangeType::ADD) {
-            // was added... need to delete
+            // added -> delete
             blockOnSyncmers[blockId].erase(pos);
             if (blockOnSyncmers[blockId].empty()) {
                 blockOnSyncmers.erase(blockId);
@@ -1647,7 +1647,6 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
         auto [newFirstNonGap, newLastNonGap] =
             panmapUtils::computeExtentFromGapMap(state.gapMap, globalCoords.lastScalarCoord, 0);
 
-        // Debug: log extent changes
         static bool debugFlankMasking = (std::getenv("DEBUG_FLANK_MASKING") != nullptr);
         if (debugFlankMasking) {
             if (state.firstNonGapScalar != newFirstNonGap || state.lastNonGapScalar != newLastNonGap) {
@@ -1666,7 +1665,7 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
     }
 
     // Compute hard mask boundaries relative to each genome's extent
-    // Seeds in hard-masked regions are completely ignored (no adds, no deletes)
+    // Seeds in hard-masked regions are ignored (no adds, no deletes)
     const int flankMaskBp = getFlankMaskBp();
 
     // Use computeExtentFromGapMap with flankSize to correctly skip non-gap bases
@@ -1679,7 +1678,6 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
         hardMaskEnd = hme;
     }
 
-    // Debug logging for specific nodes
     static bool debugMasking = (std::getenv("DEBUG_MASK") != nullptr);
     if (debugMasking && (node->identifier.find("node_9981") != std::string::npos ||
                          node->identifier.find("node_11963") != std::string::npos ||
@@ -1708,7 +1706,7 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
                                     state.firstNonGapScalar,
                                     state.lastNonGapScalar);
 
-    // Process syncmers. Hard mask: ignore all seeds in the first/last flankMaskBp positions.
+    // Hard mask: ignore seeds in the first/last flankMaskBp positions.
     for (const auto& syncmerRange : newSyncmerRanges) {
         const auto& [begCoord,
                      endCoord,
@@ -1748,7 +1746,7 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
                 auto curBlockId = effectiveBlockIds[startPos];
                 bool wasSeed = state.refOnSyncmers.contains(startPosGlobal);
 
-                // Hard-masked: skip ALL seed operations (adds and deletes)
+                // Hard-masked: skip all seed operations (adds and deletes)
                 bool isHardMasked = (startPosGlobal < hardMaskStart || startPosGlobal > hardMaskEnd);
                 if (isHardMasked) {
                     continue;
@@ -2001,10 +1999,9 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
         }
     }
 
-    // No sorting needed - we're using hashes directly, not positions
+    // No sorting needed: hashes are used directly, not positions
 
-    // Compute node changes directly from running counts (folds in what was once a
-    // separate post-traversal pass). Skip when just walking a path to set up state.
+    // Compute node changes directly from running counts. Skip when walking a path to set up state.
     if (!skipNodeChanges) {
         auto& changes = (*state.nodeChanges)[dfsIndex];
 
@@ -2019,7 +2016,7 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
             modifiedHashes.insert(newHash);
         }
 
-        // Record parent counts BEFORE applying changes
+        // Record parent counts before applying changes
         std::unordered_map<uint64_t, int64_t> parentCounts;
         parentCounts.reserve(modifiedHashes.size());
         for (uint64_t hash : modifiedHashes) {
@@ -2063,8 +2060,8 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
             }
         }
     } else {
-        // Even when skipping nodeChanges, we still need to update runningCounts
-        // for correct state during subtree traversal
+        // Even when skipping nodeChanges, runningCounts must be updated for correct
+        // state during subtree traversal
         for (uint64_t hash : addedSeedHashes) {
             state.runningCounts[hash]++;
             runningCountChanges.emplace_back(hash, +1);
@@ -2099,7 +2096,7 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
 
     // nodeToDfsIndex is pre-computed, no need to update here
 
-    // Only count nodes where we actually computed nodeChanges (not path-walk duplicates)
+    // Only count nodes where nodeChanges were computed (not path-walk duplicates)
     if (skipNodeChanges) return;
 
     uint64_t processed = ++processedNodes_;
@@ -2244,7 +2241,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
         collectDfsOrder(T->root, idx);
     }
 
-    // Divide into N chunks (excluding root which we process separately)
+    // Divide into N chunks (excluding root, processed separately)
     size_t numChunks = static_cast<size_t>(numThreads);
     size_t nodesPerChunk = (totalNodes - 1 + numChunks - 1) / numChunks;  // Ceiling division, -1 for root
 
@@ -2264,7 +2261,6 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
 
     output::debug("Partitioned into {} chunks of ~{} nodes each", chunks.size(), nodesPerChunk);
 
-    // Create template BuildState
     BuildState templateState;
     templateState.blockSequences = std::move(blockSequences);
     templateState.blockExistsDelayed = templateState.blockSequences.blockExists;
@@ -2300,29 +2296,29 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
             std::unique_ptr<BuildState> chunkStateClone;
             if (chunks.size() > 1) chunkStateClone = std::make_unique<BuildState>(templateState);
             BuildState& chunkState = chunkStateClone ? *chunkStateClone : templateState;
-            chunkState.nodeChanges = sharedNodeChanges;  // Write to shared storage
+            chunkState.nodeChanges = sharedNodeChanges;
             // Genome metrics are already shared via templateState copy
 
             totalClonesCreated_.fetch_add(1, std::memory_order_relaxed);
 
-            // We need to walk from root to our first node, then DFS through our range
-            // nodes 0..startDfs-1 are ancestors or earlier siblings we must walk through
-            // We do a DFS but only compute nodeChanges for nodes in our range [startDfs, endDfs)
+            // Walk from root to the range's first node, then DFS through the range.
+            // Nodes 0..startDfs-1 are ancestors or earlier siblings that must be walked.
+            // Compute nodeChanges only for nodes in [startDfs, endDfs).
 
             std::function<void(panmanUtils::Node*, uint64_t)> processDfsRange = [&](panmanUtils::Node* node,
                                                                                     uint64_t dfsIdx) {
                 bool inMyRange = (dfsIdx >= chunk.startDfs && dfsIdx < chunk.endDfs);
 
                 BacktrackInfo backtrack;
-                // Process this node - compute nodeChanges only if in our range
+                // Compute nodeChanges only if this node is in range
                 processNode(node, chunkState, globalCoords, chunkEmptyNodes[i], dfsIdx, &backtrack, !inMyRange);
 
-                // Recurse into children if any of them might be in our range
+                // Recurse into children whose subtree may overlap the range
                 if (!node->children.empty()) {
                     uint64_t childDfs = dfsIdx + 1;
                     for (auto* child : node->children) {
                         uint64_t childSubtreeEnd = childDfs + subtreeSizes_[child->identifier];
-                        // Only recurse if this subtree overlaps with our range
+                        // Only recurse if this subtree overlaps the range
                         if (childDfs < chunk.endDfs && childSubtreeEnd > chunk.startDfs) {
                             processDfsRange(child, childDfs);
                         }
@@ -2337,7 +2333,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
             uint64_t childDfs = 1;
             for (auto* child : T->root->children) {
                 uint64_t childSubtreeEnd = childDfs + subtreeSizes_[child->identifier];
-                // Only process this subtree if it overlaps with our range
+                // Only process this subtree if it overlaps the range
                 if (childDfs < chunk.endDfs && childSubtreeEnd > chunk.startDfs) {
                     processDfsRange(child, childDfs);
                 }
@@ -2371,7 +2367,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
                   dfsDurationMs,
                   chunks.size());
 
-    // nodeChanges were computed during processNode calls; use them for index building
+    // nodeChanges were computed during processNode calls
     size_t numNodes = T->allNodes.size();
 
     uint64_t totalChanges = 0;

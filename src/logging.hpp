@@ -165,8 +165,8 @@ inline void debug(const std::string& msg) {
     std::cerr << style::dim() << msg << style::reset() << "\n";
 }
 
-// Buffered single-line stream rendered dim so routine log lines recede and styled
-// stage lines stand out. detail() is visible unless --quiet; trace() only under --verbose.
+// Buffered single-line dim stream for routine log lines. detail() visible unless
+// --quiet; trace() only under --verbose.
 class LineBuf {
    public:
     explicit LineBuf(bool enabled) : enabled_(enabled) {}
@@ -270,9 +270,9 @@ inline void write_status_line(const std::string& icon,
                               const std::string& stat,
                               int64_t ms) {
     if (config().quiet) return;
-    // The subject column flexes to the terminal width so the stat/time columns
-    // stay aligned across rows; long subjects (paths) are tail-truncated. On a
-    // non-TTY (piped/log) keep the full subject and the original min width.
+    // Subject column flexes to terminal width so stat/time columns stay aligned
+    // across rows; long subjects (paths) are tail-truncated. Non-TTY (piped/log)
+    // keeps the full subject and the original min width.
     int subjectW;
     if (config().isTTY) {
         int iconW = config().plain ? static_cast<int>(icon.size()) : 1;
@@ -312,7 +312,7 @@ inline void done(const std::string& what, int64_t ms) {
               << style::reset() << "\n";
 }
 
-// Trailing blank line so the prompt has breathing room.
+// Trailing blank line before the shell prompt.
 inline void summary(int64_t /*total_ms*/) {
     if (config().quiet) return;
     std::cerr << "\n";

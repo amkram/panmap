@@ -390,7 +390,7 @@ class MgsrLiteTree {
     bool lowMemory;
     size_t numThreads;
 
-    // mutation structures...
+    // mutation structures
     std::unordered_set<size_t> refSeedHashSet;
     std::vector<seeding::uniqueKminmer_t> seedInfos;
 
@@ -514,9 +514,8 @@ class Read {
 
 struct RDGNode {
     size_t hash;
-    std::unordered_set<RDGNode*> neighbors;  // vector of pointers to neighbors
-    std::vector<uint32_t> readIndicesMid;    // vector of read indices whose mid seedmer start at this seedmer. will be
-                                             // seedmerList.size() / 2 + 1
+    std::unordered_set<RDGNode*> neighbors;
+    std::vector<uint32_t> readIndicesMid;  // read indices whose mid seedmer starts here (seedmerList.size() / 2 + 1)
     std::vector<uint32_t> readIndicesCovered;
 
     RDGNode(size_t h) : hash(h), neighbors{}, readIndicesMid{}, readIndicesCovered{} {}
@@ -565,15 +564,12 @@ void seedmersFromFastq(const std::string& readPath1,
 
 class mgsrIndexBuilder {
    public:
-    // capnp object
     ::capnp::MallocMessageBuilder outMessage;
     LiteIndex::Builder indexBuilder;
     capnp::List<NodeChanges>::Builder perNodeChanges;
 
-    // tree pointer
     panmanUtils::Tree* T;
 
-    // syncmer and k-min-mer objects
     std::unordered_map<uint32_t, std::unordered_set<uint64_t>> blockOnSyncmers;
     std::vector<std::optional<seeding::rsyncmer_t>> refOnSyncmers;
     std::set<uint64_t> refOnSyncmersMap;
@@ -672,7 +668,6 @@ class ThreadsManager {
     size_t numThreads;
     MgsrLiteTree* liteTree;
 
-    // Reads
     std::vector<mgsr::Read> reads;
     size_t numPassedReads;
     size_t numSingletonReads;
@@ -700,13 +695,13 @@ class ThreadsManager {
 
     std::vector<std::pair<size_t, size_t>> threadRanges;
 
-    // for identical parent-child pairs... will be moved from mgsrPlacer to here.
+    // for identical parent-child pairs
     std::unordered_map<std::string, std::vector<std::string>> identicalGroups;
     std::unordered_map<std::string, std::string> identicalNodeToGroup;
 
     std::unordered_set<MgsrLiteNode*> selectedNodes;
 
-    // for squareEM... will be moved from mgsrPlacer to here.
+    // for squareEM
     std::unordered_map<std::string, double> kminmerOverlapCoefficients;
     std::unordered_map<std::string, double> kminmerCoverage;
 
@@ -810,7 +805,6 @@ class ThreadsManager {
 
 class mgsrPlacer {
    public:
-    // tree pointer
     MgsrLiteTree* liteTree;
     ThreadsManager* threadsManager;
 
@@ -820,7 +814,7 @@ class mgsrPlacer {
     int l;
     bool openSyncmer;
 
-    // parameters from user input... preset for now
+    // user parameters; preset for now
     uint32_t maskReads;
     bool lowMemory;
     bool progressBar;
@@ -873,11 +867,9 @@ class mgsrPlacer {
     size_t numGroupsUpdate = 0;
     size_t numReadsUpdate = 0;
 
-    // for tracking progress
     ProgressTracker* progressTracker = nullptr;
     size_t threadId = 0;
 
-    // misc
     uint64_t curDfsIndex = 0;
     uint64_t readMinichainsInitialized = 0;
 
@@ -962,7 +954,6 @@ class mgsrPlacer {
     std::vector<std::pair<std::string, double>>
     computeOverlapCoefficients(const absl::flat_hash_set<size_t>& allSeedmerHashesSet);
 
-    // for tracking progress
     void setProgressTracker(ProgressTracker* tracker, size_t tid);
 
     // for updating reference seeds and gapMap
@@ -1107,7 +1098,7 @@ class squareEM {
     size_t numNodes;
     size_t curIteration = 0;
 
-    // Input parameters... hardcoded for now
+    // input parameters; hardcoded for now
     double eta;
     double maxChangeThreshold;
     uint32_t maximumIterations;

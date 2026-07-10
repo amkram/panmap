@@ -56,8 +56,8 @@ static int bwa_align_one(const bwaidx_t* idx, const mem_opt_t* opt, const char* 
     // (a non-thread-safe libc PRNG on shared global state) to break ties among
     // equal-scoring primary hits. Concurrent workers racing it only perturbs which
     // of several equally-good alignments is picked as primary; it does not crash.
-    // A real fix would need a per-thread RNG inside vendored bwa or serializing the
-    // alignment, both worse than the nondeterminism, so it is left as-is.
+    // A fix would need a per-thread RNG inside vendored bwa or serializing the
+    // alignment, both worse than the nondeterminism.
     mem_alnreg_v ar = mem_align1(opt, idx->bwt, idx->bns, idx->pac, len, (char*)seq);
 
     // Highest-scoring primary region (secondary < 0).
@@ -75,7 +75,7 @@ static int bwa_align_one(const bwaidx_t* idx, const mem_opt_t* opt, const char* 
         mem_aln_t a = mem_reg2aln(opt, idx->bns, idx->pac, len, (char*)seq, &ar.a[best]);
         // mem_reg2aln already appends soft-clips and gives a.pos as the 0-based
         // ref position of the first matched base (BAM-ready). Keep its full cigar
-        // and set qs/qe so the BAM builder adds no further clips; just remap ops.
+        // and set qs/qe so the BAM builder adds no further clips; remap ops.
         if (a.rid >= 0 && a.n_cigar > 0) {
             uint32_t* cig = (uint32_t*)malloc(a.n_cigar * sizeof(uint32_t));
             int64_t ref_span = 0;
@@ -129,9 +129,9 @@ static void* bwa_worker_func(void* arg) {
                 res->mapped = 1;
                 // Both mates mapped: flag as a proper pair. bcftools mpileup
                 // discards anomalous pairs by default, so without this the
-                // aligned reads never reach genotyping. (Mates are aligned
-                // independently, so we don't infer insert size/orientation;
-                // R2 is already reverse-complemented upstream.)
+                // aligned reads never reach genotyping. Mates are aligned
+                // independently, so insert size/orientation is not inferred;
+                // R2 is already reverse-complemented upstream.
                 res->r1.proper_frag = 1;
                 res->r2.proper_frag = 1;
             } else {

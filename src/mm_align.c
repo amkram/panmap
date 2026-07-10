@@ -41,7 +41,7 @@ static void free_regs(mm_reg1_t* reg, int n_reg);
 // After preset selection MM_F_CIGAR is always enabled.
 // mm_idx_str arg order: (w, k, is_hpc=0, bucket_bits, n, seqs, names)
 //
-// for_scoring: use sr scoring params but WITHOUT MM_F_SR/MM_F_FRAG_MODE, which
+// for_scoring: use sr scoring params but without MM_F_SR/MM_F_FRAG_MODE, which
 //   require paired-end context; mm_map() maps individual reads, so those flags
 //   would make all reads fail. Otherwise short reads use the full sr preset.
 static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
@@ -59,7 +59,7 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
 
     mm_verbose = 0;  // suppress warnings
 
-    // Initialize ALL options to minimap2 defaults before applying any preset. mm_set_opt
+    // Initialize all options to minimap2 defaults before applying any preset. mm_set_opt
     // with a named preset only sets a subset of fields; the map-ont/map-hifi branches
     // below do not otherwise initialize mopt, so occupancy fields (e.g. mid_occ_frac)
     // would be read from uninitialized stack memory. That garbage reaches
@@ -68,7 +68,7 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
 
     if (avg_len < 500) {
         if (for_scoring) {
-            // Replicate minimap2 sr preset scoring/index params exactly, but WITHOUT
+            // Replicate minimap2 sr preset scoring/index params exactly, but without
             // MM_F_SR: the fork's older align.c derefs NULL r->p in mm_align1 on the
             // ungapped sr path. Gapped alignment gives the same scoring and correct
             // results without crashing. MM_F_FRAG_MODE + MM_F_HEAP_SORT still let

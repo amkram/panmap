@@ -9,8 +9,8 @@
  *       placement::NodeMetrics::computeChildMetrics (placement.cpp:206-260);
  *   (b) denominators come from the live PlacementGlobalState, which already encodes
  *       the minReadSupport read filter and the root-derived inverse genome counts.
- * Reading the denominators from the running state (rather than recomputing them) is
- * what makes (live getter == oracle) within float epsilon a meaningful assertion.
+ * Denominators are read from state rather than recomputed, so (live getter == oracle)
+ * holds within float epsilon.
  *
  * Formulas (verbatim from placement.cpp computeChildMetrics):
  *   genomeMagnitudeSquared        = Σ_{seed∈genome}            log(1+gc)²            (placement.cpp:215)
@@ -44,15 +44,15 @@ struct GroundTruthMetrics {
 
     /**
      * @brief Compute numerators from a node's reconstructed genome seed set and the
-     *        LIVE placement state (which supplies the filtered read seeds).
+     *        live placement state, which supplies the filtered read seeds.
      *
      * @param nodeGenome  hash -> genome count for this node (from reconstructGenomeSeeds)
      * @param state       the running PlacementGlobalState (filtered reads + log counts)
      */
     static GroundTruthMetrics compute(const SeedCountMap& nodeGenome, const placement::PlacementGlobalState& state);
 
-    // The five scores, each dividing by the live denominator carried in state.
-    // These mirror placement::NodeMetrics::get*Score exactly.
+    // The five scores, each divided by the live denominator in state.
+    // Mirrors placement::NodeMetrics::get*Score.
     double logRawScore(const placement::PlacementGlobalState& state) const;
     double logCosineScore(const placement::PlacementGlobalState& state) const;
     double containmentScore(const placement::PlacementGlobalState& state) const;
