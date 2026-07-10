@@ -96,6 +96,18 @@ struct PlacementGlobalState {
     bool forceLeaf = false;
 };
 
+// Resolve the effective minimum read-count support for a seed. configuredMinSupport < 0
+// means "auto": 2 when estimated coverage (mean read count over seeds seen in >=2 reads)
+// exceeds 3x, else 1. Logs the auto decision. Exposed here for unit testing.
+int64_t resolveMinReadSupport(const absl::flat_hash_map<size_t, int64_t, IdentityHash>& seedFreqInReads,
+                              int configuredMinSupport);
+
+// Fill the read-derived scoring fields of `state` from state.seedFreqInReads, keeping only
+// seeds with read count >= minSupport: logReadCounts, totalReadSeedFrequency,
+// readUniqueSeedCount, logReadMagnitude, logContainmentDenominator. Returns the number of
+// seeds the filter dropped. Exposed here for unit testing.
+size_t computeReadSeedMagnitudes(PlacementGlobalState& state, int64_t minSupport);
+
 // Delta-based metrics (forward-only traversal)
 struct NodeMetrics {
     // Read-genome interaction metrics (computed incrementally)

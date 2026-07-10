@@ -866,6 +866,64 @@ static void mergeSeedMaps(const MapVec& maps, Dest& dest) {
         for (const auto& [hash, count] : localMap) dest[hash] += count;
 }
 
+int64_t resolveMinReadSupport(const absl::flat_hash_map<size_t, int64_t, IdentityHash>& seedFreqInReads,
+                              int configuredMinSupport) {
+    int64_t minSupport = configuredMinSupport;
+    if (minSupport < 0) {
+        // Auto: estimate coverage from the read-count distribution (no genome length
+        // needed). A seed seen in >=2 reads is almost always a genuine genomic k-mer
+        // (random errors rarely recur across reads), and its read count approximates
+        // local depth, so the mean over these seeds estimates coverage. Below ~3x most
+        // true seeds are singletons and must be kept (1); above it singletons are
+        // overwhelmingly errors, so require >=2.
+        uint64_t multiSeedFreqSum = 0;
+        uint64_t multiSeedCount = 0;
+        for (const auto& [seedHash, readCount] : seedFreqInReads) {
+            if (readCount >= 2) {
+                multiSeedFreqSum += static_cast<uint64_t>(readCount);
+                multiSeedCount++;
+            }
+        }
+        const double estCov =
+            (multiSeedCount > 0) ? static_cast<double>(multiSeedFreqSum) / static_cast<double>(multiSeedCount) : 0.0;
+        minSupport = (estCov > 3.0) ? 2 : 1;
+        logging::info("Auto min-read-support: est coverage ~{:.1f}x ({} multi-read seeds) -> min-read-support {}",
+                      estCov,
+                      multiSeedCount,
+                      minSupport);
+    }
+    return minSupport;
+}
+
+size_t computeReadSeedMagnitudes(PlacementGlobalState& state, int64_t minSupport) {
+    state.totalReadSeedFrequency = 0;
+    state.logReadCounts.clear();
+    state.logReadCounts.reserve(state.seedFreqInReads.size());
+
+    double logMagSquared = 0.0;
+    double logCountSum = 0.0;  // Σ log(1+r_i) for log containment denominator
+    size_t filteredSeedCount = 0;
+    size_t lowSupportSeeds = 0;
+
+    for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
+        state.totalReadSeedFrequency += readCount;
+        if (readCount < minSupport) {
+            lowSupportSeeds++;
+            continue;
+        }
+        const double logCount = std::log1p(static_cast<double>(readCount));
+        state.logReadCounts[seedHash] = logCount;
+        logMagSquared += logCount * logCount;
+        logCountSum += logCount;
+        filteredSeedCount++;
+    }
+
+    state.readUniqueSeedCount = filteredSeedCount;
+    state.logReadMagnitude = std::sqrt(logMagSquared);
+    state.logContainmentDenominator = logCountSum;
+    return lowSupportSeeds;
+}
+
 void placeLite(PlacementResult& result,
                panmapUtils::LiteTree* liteTree,
                ::capnp::MessageReader& liteIndex,
@@ -1720,72 +1778,15 @@ void placeLite(PlacementResult& result,
 
     auto time_magnitude_start = std::chrono::high_resolution_clock::now();
     {
-        // Compute log-scaled magnitudes for scoring
-        state.totalReadSeedFrequency = 0;
-
-        state.logReadCounts.reserve(state.seedFreqInReads.size());
-
-        double logMagSquared = 0.0;
-        double logCountSum = 0.0;  // Σ log(1+r_i) for log containment denominator
-        size_t filteredSeedCount = 0;
-        size_t lowSupportSeeds = 0;
-
-        // min-read-support < 0 means "auto": only filter singleton seeds when the
-        // estimated coverage is high enough that singletons are dominated by
-        // sequencing errors rather than genuine low-depth signal. Coverage is
-        // estimated from the read-count distribution itself (no genome length
-        // needed): a seed observed in >=2 reads is almost always a genuine genomic
-        // k-mer (random sequencing errors rarely recur across reads), and its read
-        // count approximates local depth, so the mean read count over these
-        // multiply-observed seeds estimates coverage. Below ~3x most true seeds are
-        // themselves singletons and must be kept (min-read-support 1); above it the
-        // singletons are overwhelmingly errors, so require >=2 reads.
-        int64_t minSupport = params.minReadSupport;
-        if (minSupport < 0) {
-            uint64_t multiSeedFreqSum = 0;
-            uint64_t multiSeedCount = 0;
-            for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-                if (readCount >= 2) {
-                    multiSeedFreqSum += static_cast<uint64_t>(readCount);
-                    multiSeedCount++;
-                }
-            }
-            const double estCov =
-                (multiSeedCount > 0) ? static_cast<double>(multiSeedFreqSum) / static_cast<double>(multiSeedCount)
-                                     : 0.0;
-            minSupport = (estCov > 3.0) ? 2 : 1;
-            logging::info("Auto min-read-support: est coverage ~{:.1f}x ({} multi-read seeds) -> min-read-support {}",
-                          estCov,
-                          multiSeedCount,
-                          minSupport);
-        }
-
-        for (const auto& [seedHash, readCount] : state.seedFreqInReads) {
-            state.totalReadSeedFrequency += readCount;
-
-            if (readCount < minSupport) {
-                lowSupportSeeds++;
-                continue;
-            }
-
-            const double readCountD = static_cast<double>(readCount);
-            double logCount = std::log1p(readCountD);
-            state.logReadCounts[seedHash] = logCount;
-            logMagSquared += logCount * logCount;
-            logCountSum += logCount;
-
-            filteredSeedCount++;
-        }
-
-        state.readUniqueSeedCount = filteredSeedCount;
-        state.logReadMagnitude = std::sqrt(logMagSquared);
-        state.logContainmentDenominator = logCountSum;
+        // Compute log-scaled magnitudes for scoring (drops seeds below min-read-support).
+        const int64_t minSupport = resolveMinReadSupport(state.seedFreqInReads, params.minReadSupport);
+        const size_t lowSupportSeeds = computeReadSeedMagnitudes(state, minSupport);
 
         if (lowSupportSeeds > 0) {
             logging::info("Filtered {} seeds with read count < {} (kept {} seeds)",
                           lowSupportSeeds,
                           minSupport,
-                          filteredSeedCount);
+                          state.readUniqueSeedCount);
         }
         logging::debug("Precomputed magnitude: log={:.6f}, total read seed frequency: {}, unique read seeds: {}",
                        state.logReadMagnitude,

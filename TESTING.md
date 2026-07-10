@@ -1,7 +1,9 @@
 # Testing
 
-Tests are off by default. Turn them on with `-DOPTION_BUILD_TESTS=ON`. There is one
-Boost.Test binary (`panmap_tests`) and one end-to-end script, both run under CTest.
+Tests are off by default. Turn them on with `-DOPTION_BUILD_TESTS=ON`. CTest runs three
+tests: the Boost.Test binary (`panmap_tests`, the `unit` test), the end-to-end script
+(`e2e`), and the README-demo regression check (`examples`, which diffs CLI output against
+`examples/expected/`).
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
@@ -34,4 +36,6 @@ src/test/
   e2e/run_e2e.sh        full CLI pipelines: index/place/genotype/consensus,
                         variant-call correctness, paired-end, --meta mixture
   data/                 fixtures
+examples/
+  check_examples.sh     the three README demos diffed against examples/expected/
 ```
