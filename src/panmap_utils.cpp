@@ -268,25 +268,24 @@ void LiteTree::initialize(::LiteTree::Reader liteTreeReader) {
     size_t numNodes = liteNodesReader.size();
 
     dfsIndexToNode.resize(numNodes, nullptr);
+    allLiteNodes.reserve(numNodes);  // avoid repeated rehashing over millions of inserts
 
     for (size_t i = 0; i < numNodes; i++) {
         const auto liteNodeReader = liteNodesReader[i];
         const auto& nodeIdentifier = liteNodeReader.getId();
-        const auto parentIndex = liteNodeReader.getParentIndex();
-        nodeToDfsIndex.emplace(nodeIdentifier, i);
         auto [it, inserted] = allLiteNodes.emplace(nodeIdentifier, new LiteNode(nodeIdentifier, nullptr, {}));
-
         it->second->nodeIndex = i;
         dfsIndexToNode[i] = it->second;
 
         if (i == 0) continue;
-        const auto parentNodeReader = liteNodesReader[parentIndex];
-        const auto& parentNodeId = parentNodeReader.getId();
-        it->second->parent = allLiteNodes[parentNodeId];
-        allLiteNodes[parentNodeId]->children.push_back(it->second);
+        // Parent link by index: capnp stores parentIndex and parents precede children
+        // in DFS order, so dfsIndexToNode[parentIndex] is already set -- no string lookup.
+        LiteNode* parent = dfsIndexToNode[liteNodeReader.getParentIndex()];
+        it->second->parent = parent;
+        parent->children.push_back(it->second);
     }
 
-    root = allLiteNodes[liteNodesReader[0].getId()];
+    root = numNodes > 0 ? dfsIndexToNode[0] : nullptr;
 }
 
 }  // namespace panmapUtils

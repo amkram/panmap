@@ -64,7 +64,6 @@ class LiteTree {
     LiteNode* root = nullptr;
     std::unordered_map<std::string, LiteNode*> allLiteNodes;
     std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
-    std::unordered_map<std::string, uint32_t> nodeToDfsIndex;
 
     // dfsIndex -> LiteNode*
     std::vector<LiteNode*> dfsIndexToNode;
