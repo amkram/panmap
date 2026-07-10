@@ -941,7 +941,7 @@ PanMAN so they can be shared across samples.</p>
 </tr>
 <tr>
 <td><code>weighted_containment</code></td>
-<td>Containment weighted by seed multiplicity</td>
+<td>Containment with each shared seed weighted by <code>1/(node genome count)</code>, up-weighting seeds that are rare across genomes</td>
 </tr>
 <tr>
 <td><code>log_containment</code></td>
@@ -1000,6 +1000,7 @@ variants to the reference. All are viewable in IGV, <code>samtools</code>, <code
 </tr>
 </tbody>
 </table>
+<p>Adding <code>--breadth-ratio</code> also writes <code>sample.mgsr.breadths.out</code> (per node: observed vs. expected seed breadth and depth).</p>
 <h2 id="indexes">Indexes<a class="headerlink" href="#indexes" title="Permanent link">&para;</a></h2>
 <p>Indexes are reused on later runs.</p>
 <table>

@@ -551,10 +551,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#choosing-an-aligner" class="md-nav__link">
+  <a href="#choosing-an-aligner-single-sample-only-ignored-with-meta" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Choosing an aligner
+        Choosing an aligner (single-sample only, ignored with --meta)
       
     </span>
   </a>
@@ -562,10 +562,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#refining-placement" class="md-nav__link">
+  <a href="#refining-placement-single-sample-only-ignored-with-meta" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Refining placement
+        Refining placement (single-sample only, ignored with --meta)
       
     </span>
   </a>
@@ -584,10 +584,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#seed-parameters" class="md-nav__link">
+  <a href="#seed-and-read-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Seed parameters
+        Seed and read parameters
       
     </span>
   </a>
@@ -902,10 +902,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#choosing-an-aligner" class="md-nav__link">
+  <a href="#choosing-an-aligner-single-sample-only-ignored-with-meta" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Choosing an aligner
+        Choosing an aligner (single-sample only, ignored with --meta)
       
     </span>
   </a>
@@ -913,10 +913,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#refining-placement" class="md-nav__link">
+  <a href="#refining-placement-single-sample-only-ignored-with-meta" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Refining placement
+        Refining placement (single-sample only, ignored with --meta)
       
     </span>
   </a>
@@ -935,10 +935,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#seed-parameters" class="md-nav__link">
+  <a href="#seed-and-read-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Seed parameters
+        Seed and read parameters
       
     </span>
   </a>
@@ -1035,9 +1035,10 @@ placement (the default run, <code>--stop align</code>, <code>--stop genotype</co
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ls<span class="w"> </span>examples/data/sars_20000_twilight_dipper.panman
 </code></pre></div>
 <h3 id="2-run-the-full-pipeline">2. Run the full pipeline<a class="headerlink" href="#2-run-the-full-pipeline" title="Permanent link">&para;</a></h3>
+<p>Runs index -&gt; place -&gt; align -&gt; genotype -&gt; consensus by default, and auto-builds/reuses the index next to the PanMAN.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>panmap<span class="w"> </span>examples/data/sars_20000_twilight_dipper.panman<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>reads_R1.fq.gz<span class="w"> </span>reads_R2.fq.gz<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--stop<span class="w"> </span>genotype<span class="w"> </span>-t<span class="w"> </span><span class="m">8</span><span class="w"> </span>-o<span class="w"> </span>my_sample
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-t<span class="w"> </span><span class="m">8</span><span class="w"> </span>-o<span class="w"> </span>my_sample
 </code></pre></div>
 <h3 id="3-output-files">3. Output files<a class="headerlink" href="#3-output-files" title="Permanent link">&para;</a></h3>
 <table>
@@ -1068,18 +1069,20 @@ placement (the default run, <code>--stop align</code>, <code>--stop genotype</co
 </table>
 <p>The seed index is built once next to the PanMAN (<code>sars_20000_twilight_dipper.panman.idx</code>) and reused automatically on later runs.</p>
 <h3 id="4-reuse-the-index">4. Reuse the index<a class="headerlink" href="#4-reuse-the-index" title="Permanent link">&para;</a></h3>
-<p>Use <code>--reindex</code> to force a rebuild, or <code>--index &lt;path&gt;</code> to load a pre-built index from another location:</p>
+<p>The cached index is reused automatically for later samples: just run panmap again. Use <code>--reindex</code> to force a rebuild, or <code>--index &lt;path&gt;</code> to load a pre-built index from another location.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>panmap<span class="w"> </span>examples/data/sars_20000_twilight_dipper.panman<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>sample2_R1.fq.gz<span class="w"> </span>sample2_R2.fq.gz<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--stop<span class="w"> </span>consensus<span class="w"> </span>-t<span class="w"> </span><span class="m">8</span><span class="w"> </span>-o<span class="w"> </span>sample2
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-t<span class="w"> </span><span class="m">8</span><span class="w"> </span>-o<span class="w"> </span>sample2
 </code></pre></div>
 <h2 id="common-options">Common options<a class="headerlink" href="#common-options" title="Permanent link">&para;</a></h2>
+<p>Mode column: <code>all</code> = applies to single-sample and <code>--meta</code>; <code>single</code> = single-sample only, ignored with <code>--meta</code>.</p>
 <table>
 <thead>
 <tr>
 <th>Option</th>
 <th>Description</th>
 <th>Default</th>
+<th>Mode</th>
 </tr>
 </thead>
 <tbody>
@@ -1087,42 +1090,48 @@ placement (the default run, <code>--stop align</code>, <code>--stop genotype</co
 <td><code>-o, --output</code></td>
 <td>Output file prefix</td>
 <td>derived from reads filename</td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>-t, --threads</code></td>
 <td>Number of threads</td>
 <td><code>1</code></td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>-a, --aligner</code></td>
-<td><code>minimap2</code> or <code>bwa</code></td>
+<td><code>minimap2</code> or <code>bwa</code> (bwa-mem backend)</td>
 <td><code>minimap2</code></td>
+<td>single</td>
 </tr>
 <tr>
 <td><code>--stop</code></td>
 <td>Stop after: <code>index</code>, <code>place</code>, <code>align</code>, <code>genotype</code>, <code>consensus</code></td>
 <td><code>consensus</code></td>
+<td>single</td>
 </tr>
 <tr>
 <td><code>--force-leaf</code></td>
 <td>Restrict placement to leaf nodes</td>
 <td>off (auto-enabled unless <code>--stop place</code>)</td>
+<td>single</td>
 </tr>
 <tr>
 <td><code>--refine</code></td>
 <td>Alignment-based refinement of top candidates</td>
 <td>off</td>
+<td>single</td>
 </tr>
 </tbody>
 </table>
-<h2 id="choosing-an-aligner">Choosing an aligner<a class="headerlink" href="#choosing-an-aligner" title="Permanent link">&para;</a></h2>
+<h2 id="choosing-an-aligner-single-sample-only-ignored-with-meta">Choosing an aligner (single-sample only, ignored with <code>--meta</code>)<a class="headerlink" href="#choosing-an-aligner-single-sample-only-ignored-with-meta" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>minimap2</strong> (default): fast, good for most cases</li>
-<li><strong>bwa</strong>: higher sensitivity, may be preferable for short reads</li>
+<li><strong>bwa</strong> (<code>-a bwa</code>): bwa-mem backend; higher sensitivity, may be preferable for very short or ancient reads</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>panmap<span class="w"> </span>ref.panman<span class="w"> </span>reads.fq<span class="w"> </span>-a<span class="w"> </span>bwa<span class="w"> </span>-o<span class="w"> </span>sample
 </code></pre></div>
-<h2 id="refining-placement">Refining placement<a class="headerlink" href="#refining-placement" title="Permanent link">&para;</a></h2>
+<h2 id="refining-placement-single-sample-only-ignored-with-meta">Refining placement (single-sample only, ignored with <code>--meta</code>)<a class="headerlink" href="#refining-placement-single-sample-only-ignored-with-meta" title="Permanent link">&para;</a></h2>
 <p><code>--refine</code> uses alignment scores to re-rank placement candidates. Slower but can improve accuracy when seed-based placement is ambiguous.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>panmap<span class="w"> </span>ref.panman<span class="w"> </span>reads.fq<span class="w"> </span>--refine<span class="w"> </span>-o<span class="w"> </span>sample
 </code></pre></div>
@@ -1165,53 +1174,69 @@ placement (the default run, <code>--stop align</code>, <code>--stop genotype</co
 <th>Option</th>
 <th>Description</th>
 <th>Default</th>
+<th>Mode</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>-i, --index</code></td>
-<td>Path to pre-built index file</td>
-<td>derived from output/panman</td>
+<td>Load a pre-built index from this path</td>
+<td>derived from the panman (or <code>--index-out</code>); never from <code>-o</code></td>
+<td>all</td>
+</tr>
+<tr>
+<td><code>--index-out</code></td>
+<td>Write the built index to this path</td>
+<td>next to the panman</td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>-f, --reindex</code></td>
 <td>Force rebuild index</td>
 <td>off</td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--dedup</code></td>
 <td>Deduplicate reads</td>
 <td>off</td>
+<td>single</td>
 </tr>
 <tr>
 <td><code>--impute</code></td>
 <td>Impute N's from parent (skip _-&gt;N mutations)</td>
 <td>off</td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--no-mutation-spectrum</code></td>
 <td>Disable mutation spectrum filtering in VCF genotyping</td>
 <td>off</td>
+<td>single</td>
 </tr>
 <tr>
 <td><code>--baq</code></td>
 <td>Enable Base Alignment Quality in mpileup</td>
 <td>off</td>
+<td>single</td>
 </tr>
 <tr>
 <td><code>--batch</code></td>
 <td>Batch file listing samples (one per line: <code>reads1 [reads2] [output_prefix]</code>)</td>
 <td>--</td>
+<td>all</td>
 </tr>
 </tbody>
 </table>
-<h2 id="seed-parameters">Seed parameters<a class="headerlink" href="#seed-parameters" title="Permanent link">&para;</a></h2>
+<h2 id="seed-and-read-parameters">Seed and read parameters<a class="headerlink" href="#seed-and-read-parameters" title="Permanent link">&para;</a></h2>
+<p>Index and seeding options (<code>Mode = all</code>) shape the index and apply to both single-sample and <code>--meta</code> runs. Read-level options (<code>Mode = single</code>) are single-sample only and ignored with <code>--meta</code>.</p>
 <table>
 <thead>
 <tr>
 <th>Option</th>
 <th>Description</th>
 <th>Default</th>
+<th>Mode</th>
 </tr>
 </thead>
 <tbody>
@@ -1219,66 +1244,79 @@ placement (the default run, <code>--stop align</code>, <code>--stop genotype</co
 <td><code>-k, --kmer</code></td>
 <td>Syncmer k-mer length</td>
 <td><code>19</code></td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>-s, --syncmer</code></td>
 <td>Syncmer s parameter</td>
 <td><code>8</code></td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>-l, --lmer</code></td>
 <td>Syncmers per seed</td>
 <td><code>3</code></td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--offset</code></td>
 <td>Syncmer offset</td>
 <td><code>0</code></td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--open-syncmer</code></td>
 <td>Use open syncmers</td>
 <td>off</td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--hpc</code></td>
 <td>Homopolymer-compressed seeds</td>
 <td>off</td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--flank-mask</code></td>
 <td>Mask bp at ends of genomes</td>
 <td><code>250</code></td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--seed-mask-fraction</code></td>
 <td>Mask top seed fraction</td>
 <td><code>0</code></td>
-</tr>
-<tr>
-<td><code>--min-seed-quality</code></td>
-<td>Minimum Phred score for seed region</td>
-<td><code>0</code></td>
-</tr>
-<tr>
-<td><code>--min-read-support</code></td>
-<td>Minimum reads for a seed (2 = filter singletons)</td>
-<td><code>1</code></td>
-</tr>
-<tr>
-<td><code>--trim-start</code></td>
-<td>Trim bases from read start</td>
-<td><code>0</code></td>
-</tr>
-<tr>
-<td><code>--trim-end</code></td>
-<td>Trim bases from read end</td>
-<td><code>0</code></td>
+<td>all</td>
 </tr>
 <tr>
 <td><code>--extent-guard</code></td>
 <td>Guard seed deletions at genome extent boundaries</td>
 <td>off</td>
+<td>all</td>
+</tr>
+<tr>
+<td><code>--min-seed-quality</code></td>
+<td>Minimum Phred score for seed region</td>
+<td><code>0</code></td>
+<td>single</td>
+</tr>
+<tr>
+<td><code>--min-read-support</code></td>
+<td>Min reads for a seed; <code>-1</code>=auto (filter singletons when est. coverage &gt;3x), <code>1</code>=keep all, <code>2</code>=filter singletons</td>
+<td><code>-1</code> (auto)</td>
+<td>single</td>
+</tr>
+<tr>
+<td><code>--trim-start</code></td>
+<td>Trim bases from read start</td>
+<td><code>0</code></td>
+<td>single</td>
+</tr>
+<tr>
+<td><code>--trim-end</code></td>
+<td>Trim bases from read end</td>
+<td><code>0</code></td>
+<td>single</td>
 </tr>
 </tbody>
 </table>

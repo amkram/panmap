@@ -866,12 +866,15 @@
 </code></pre></div>
 <p>Output: <code>sample.mgsr.abundance.out</code></p>
 <h2 id="partial-pipelines">Partial pipelines<a class="headerlink" href="#partial-pipelines" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Place reads (default)</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>panmap<span class="w"> </span>ref.panman<span class="w"> </span>reads.fq<span class="w"> </span>-o<span class="w"> </span>sample
+<p>A plain run executes the full pipeline (place -&gt; align -&gt; genotype -&gt; consensus)
+and writes <code>.bam</code>, <code>.vcf</code>, and <code>.consensus.fa</code>. Use <code>--stop</code> to end earlier:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Stop at placement (writes .placement.tsv only)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>panmap<span class="w"> </span>ref.panman<span class="w"> </span>reads.fq<span class="w"> </span>--stop<span class="w"> </span>place<span class="w"> </span>-o<span class="w"> </span>sample
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Place and align, skip genotyping</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Place and align, skip genotyping and consensus</span>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>panmap<span class="w"> </span>ref.panman<span class="w"> </span>reads.fq<span class="w"> </span>--stop<span class="w"> </span>align<span class="w"> </span>-o<span class="w"> </span>sample
 </code></pre></div>
+<p>The <code>--stop</code> place/align/genotype/consensus stages are single-sample. With <code>--meta</code>, only <code>--stop index</code> applies (build the <code>.midx</code> and stop); the later stages don't run.</p>
 <h2 id="managing-indexes">Managing indexes<a class="headerlink" href="#managing-indexes" title="Permanent link">&para;</a></h2>
 <p>panmap builds the index automatically on first run and reuses it after. The path is
 derived from the panman (not <code>-o</code>): a placement index at <code>&lt;panman&gt;.idx</code> and an MGSR
