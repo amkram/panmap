@@ -43,13 +43,12 @@ See `TESTING.md` for details.
 - Use `const` references for read-only parameters
 - Add `[[nodiscard]]` to functions returning error codes
 
-Formatting is checked in CI (the `format` job runs `clang-format --dry-run
---Werror` over first-party sources). Run `clang-format -i` on your changes
-before opening a PR.
+Formatting is not enforced in CI. Run `clang-format -i` over your changed
+`src/` files before opening a PR.
 
 ## Pull requests
 
 1. Create a feature branch from `main`
 2. Ensure `ctest --test-dir build --output-on-failure` passes (unit + e2e)
-3. Ensure the `format` check passes (`clang-format --dry-run --Werror`)
+3. Run `clang-format -i` over changed `src/` files
 4. Keep commits focused and messages concise

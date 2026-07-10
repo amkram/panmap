@@ -38,7 +38,7 @@ The metrics score how well the sample's seeds match each node's seed set:
 | `log_raw` | Log of the raw number of shared seeds |
 | `log_cosine` | Log cosine similarity of the seed-count vectors |
 | `containment` | Fraction of the sample's seeds contained in the node |
-| `weighted_containment` | Containment weighted by seed multiplicity |
+| `weighted_containment` | Containment with each shared seed weighted by `1/(node genome count)`, up-weighting seeds that are rare across genomes |
 | `log_containment` | Log-scaled containment (the default placement score) |
 
 The reference for alignment and genotyping is the node chosen by
@@ -74,6 +74,8 @@ Germany/IMS-10036-.../2021|OU071802.1|2021-02-03 0.15086
 | `sample.mgsr.assignedReads.fastq` | The reads that were assigned |
 | `sample.mgsr.assignedReads.out` | Per node: number of reads assigned and their indices into the FASTQ |
 | `sample.mgsr.assignedReadsLCANode.out` | Per LCA node: assigned-read counts and indices (a read's LCA node is the LCA of all nodes it was assigned to) |
+
+Adding `--breadth-ratio` also writes `sample.mgsr.breadths.out` (per node: observed vs. expected seed breadth and depth).
 
 ## Indexes
 
