@@ -62,7 +62,11 @@ jobs:
           key: ${{ runner.os }}-ccache
           max-size: 500M
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON -DOPTION_PORTABLE=ON
+        # macOS runners are arm64 (Apple Silicon); OPTION_PORTABLE's -march=x86-64-v3
+        # is x86-only. Homogeneous arm64 runners have no cross-CPU ccache-SIGILL issue,
+        # so keep -march=native (OPTION_PORTABLE off) here. Portability matters only for
+        # the heterogeneous x86 Linux runners.
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build -j"$(sysctl -n hw.ncpu)"
       - name: Test
