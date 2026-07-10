@@ -1239,6 +1239,25 @@ int runAlignment(const Config& cfg,
 int runGenotyping(const Config& cfg);
 int runConsensus(const Config& cfg);
 
+// Copy the traversal-controlling fields out of Config. refineEnabled is computed per-caller
+// (it can be disabled after the full tree loads), so it's passed in explicitly.
+static placement::TraversalParams makeTraversalParams(const Config& cfg, bool refineEnabled) {
+    placement::TraversalParams p;
+    p.seedMaskFraction = cfg.seedMaskFraction;
+    p.minSeedQuality = cfg.minSeedQuality;
+    p.dedupReads = cfg.dedupReads;
+    p.trimStart = cfg.trimStart;
+    p.trimEnd = cfg.trimEnd;
+    p.minReadSupport = cfg.minReadSupport;
+    p.refineEnabled = refineEnabled;
+    p.refineTopPct = cfg.refineTopPct;
+    p.refineMaxTopN = cfg.refineMaxTopN;
+    p.refineNeighborRadius = cfg.refineNeighborRadius;
+    p.refineMaxNeighborN = cfg.refineMaxNeighborN;
+    p.forceLeaf = cfg.forceLeaf;
+    return p;
+}
+
 int runBatchPlacement(const Config& cfg) {
     // Parse batch file (shared "reads1 [reads2] [output_prefix]" format with --meta)
     std::vector<BatchEntry> samples;
@@ -1279,19 +1298,7 @@ int runBatchPlacement(const Config& cfg) {
     int successCount = 0, failCount = 0;
     auto batchStart = std::chrono::high_resolution_clock::now();
 
-    placement::TraversalParams batchParams;
-    batchParams.seedMaskFraction = cfg.seedMaskFraction;
-    batchParams.minSeedQuality = cfg.minSeedQuality;
-    batchParams.dedupReads = cfg.dedupReads;
-    batchParams.trimStart = cfg.trimStart;
-    batchParams.trimEnd = cfg.trimEnd;
-    batchParams.minReadSupport = cfg.minReadSupport;
-    batchParams.refineEnabled = refineEnabled;
-    batchParams.refineTopPct = cfg.refineTopPct;
-    batchParams.refineMaxTopN = cfg.refineMaxTopN;
-    batchParams.refineNeighborRadius = cfg.refineNeighborRadius;
-    batchParams.refineMaxNeighborN = cfg.refineMaxNeighborN;
-    batchParams.forceLeaf = cfg.forceLeaf;
+    placement::TraversalParams batchParams = makeTraversalParams(cfg, refineEnabled);
 
     // Pre-load seed changes by running placement on the first sample.
     {
@@ -1491,20 +1498,8 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     }
 
     auto start = std::chrono::high_resolution_clock::now();
-    placement::TraversalParams params;
+    placement::TraversalParams params = makeTraversalParams(cfg, refineEnabled);
     params.store_diagnostics = storeDiagnostics;
-    params.seedMaskFraction = cfg.seedMaskFraction;
-    params.minSeedQuality = cfg.minSeedQuality;
-    params.dedupReads = cfg.dedupReads;
-    params.trimStart = cfg.trimStart;
-    params.trimEnd = cfg.trimEnd;
-    params.minReadSupport = cfg.minReadSupport;
-    params.refineEnabled = refineEnabled;
-    params.refineTopPct = cfg.refineTopPct;
-    params.refineMaxTopN = cfg.refineMaxTopN;
-    params.refineNeighborRadius = cfg.refineNeighborRadius;
-    params.refineMaxNeighborN = cfg.refineMaxNeighborN;
-    params.forceLeaf = cfg.forceLeaf;
     placement::placeLite(result, &tree, reader, cfg.reads1, cfg.reads2, outPath, params, fullTreePtr);
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
