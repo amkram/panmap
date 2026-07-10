@@ -125,55 +125,11 @@ struct Coordinate {
         return os;
     }
 
-    char getSequenceBase(
-        const std::vector<std::pair<std::vector<std::pair<char, std::vector<char>>>,
-                                    std::vector<std::vector<std::pair<char, std::vector<char>>>>>>& seq) const {
-        if (nucGapPosition != -1) {
-            return seq[primaryBlockId].first[nucPosition].second[nucGapPosition];
-        } else {
-            return seq[primaryBlockId].first[nucPosition].first;
-        }
-    }
-
-    char getSequenceBase(const std::vector<std::vector<std::pair<char, std::vector<char>>>>& sequence) const {
-        if (nucGapPosition != -1) {
-            return sequence[primaryBlockId][nucPosition].second[nucGapPosition];
-        } else {
-            return sequence[primaryBlockId][nucPosition].first;
-        }
-    }
-
-    char getSequenceBase(const std::vector<std::pair<char, std::vector<char>>>& blockSequence) const {
-        if (nucGapPosition != -1) {
-            return blockSequence[nucPosition].second[nucGapPosition];
-        } else {
-            return blockSequence[nucPosition].first;
-        }
-    }
-
-    void setSequenceBase(std::vector<std::pair<std::vector<std::pair<char, std::vector<char>>>,
-                                               std::vector<std::vector<std::pair<char, std::vector<char>>>>>>& seq,
-                         char newNuc) const {
-        if (nucGapPosition != -1) {
-            seq[primaryBlockId].first[nucPosition].second[nucGapPosition] = newNuc;
-        } else {
-            seq[primaryBlockId].first[nucPosition].first = newNuc;
-        }
-    }
-
     void setSequenceBase(std::vector<std::vector<std::pair<char, std::vector<char>>>>& seq, char newNuc) const {
         if (nucGapPosition != -1) {
             seq[primaryBlockId][nucPosition].second[nucGapPosition] = newNuc;
         } else {
             seq[primaryBlockId][nucPosition].first = newNuc;
-        }
-    }
-
-    void setSequenceBase(std::vector<std::pair<char, std::vector<char>>>& blockSequence, char newNuc) const {
-        if (nucGapPosition != -1) {
-            blockSequence[nucPosition].second[nucGapPosition] = newNuc;
-        } else {
-            blockSequence[nucPosition].first = newNuc;
         }
     }
 
@@ -333,69 +289,6 @@ struct BlockSequences {
             mainSeq[coord.primaryBlockId][coord.nucPosition] = newNuc;
         }
     }
-
-    std::string getSequenceStringByBlockId(int blockId, bool aligned) const {
-        std::string seq;
-        size_t n = mainSeq[blockId].size();
-        for (size_t i = 0; i < n; i++) {
-            uint32_t gBeg = gapStart[blockId][i], gEnd = gapStart[blockId][i + 1];
-            char mainc = mainSeq[blockId][i];
-            if (blockStrand[blockId]) {
-                // Gap nucs
-                for (uint32_t j = gBeg; j < gEnd; j++) {
-                    if (gapSeq[blockId][j] != '-') {
-                        seq += gapSeq[blockId][j];
-                    } else if (aligned) {
-                        seq += '-';
-                    }
-                }
-
-                // Main nuc
-                if (mainc != '-' && mainc != 'x') {
-                    seq += mainc;
-                } else if (aligned && mainc != 'x') {
-                    seq += '-';
-                }
-            } else {
-                // Main nuc first
-                if (mainc != '-' && mainc != 'x') {
-                    seq += panmanUtils::getComplementCharacter(mainc);
-                } else if (aligned && mainc != 'x') {
-                    seq += '-';
-                }
-
-                // Gap nucs in reverse
-                for (uint32_t j = gEnd; j-- > gBeg;) {
-                    if (gapSeq[blockId][j] != '-') {
-                        seq += panmanUtils::getComplementCharacter(gapSeq[blockId][j]);
-                    } else if (aligned) {
-                        seq += '-';
-                    }
-                }
-            }
-        }
-        return seq;
-    }
-
-    std::string getSequenceString(bool aligned) const {
-        std::string seq;
-        for (size_t i = 0; i < numBlocks(); i++) {
-            seq += getSequenceStringByBlockId(i, aligned);
-        }
-        return seq;
-    }
-
-    std::string getAlignedSequenceStringByBlockId(int blockId) const {
-        return getSequenceStringByBlockId(blockId, true);
-    }
-
-    std::string getUnalignedSequenceStringByBlockId(int blockId) const {
-        return getSequenceStringByBlockId(blockId, false);
-    }
-
-    std::string getAlignedSequenceString() const { return getSequenceString(true); }
-
-    std::string getUnalignedSequenceString() const { return getSequenceString(false); }
 };
 
 struct BlockEdgeCoord {

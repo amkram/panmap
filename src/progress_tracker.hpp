@@ -20,11 +20,6 @@ class ProgressTracker {
         bar_ = std::make_unique<output::ProgressBar>("place", total);
     }
 
-    void updateProgress(size_t threadId, uint64_t currentNode) {
-        threadProgress[threadId].store(currentNode, std::memory_order_relaxed);
-        publish();
-    }
-
     void incrementProgress(size_t threadId) {
         threadProgress[threadId].fetch_add(1, std::memory_order_relaxed);
         publish();

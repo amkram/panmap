@@ -87,14 +87,6 @@ inline const char* yellow() {
     return config().plain ? "" : "\033[33m";
 }
 
-inline const char* blue() {
-    return config().plain ? "" : "\033[34m";
-}
-
-inline const char* magenta() {
-    return config().plain ? "" : "\033[35m";
-}
-
 inline const char* cyan() {
     return config().plain ? "" : "\033[36m";
 }
@@ -111,14 +103,6 @@ inline const char* check() {
 
 inline const char* cross() {
     return config().plain ? "[x]" : "✗";
-}
-
-inline const char* dot() {
-    return config().plain ? "*" : "·";
-}
-
-inline const char* bullet() {
-    return config().plain ? "*" : "•";
 }
 }  // namespace box
 
@@ -381,11 +365,6 @@ class ProgressBar {
     void add(uint64_t delta = 1) {
         current_.fetch_add(delta, std::memory_order_relaxed);
         maybe_render();
-    }
-
-    void set_label(const std::string& l) {
-        std::lock_guard<std::mutex> g(mu_);
-        label_ = l;
     }
 
     void clear() {
