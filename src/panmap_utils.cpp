@@ -228,9 +228,22 @@ void simulateSNPsOnSequence(
   std::uniform_int_distribution<uint32_t> distNuc(0, 2);
   snpRecords.clear();
   snpRecords.reserve(numsnps);
-  std::uniform_int_distribution<uint32_t> distPos(1000, sequence.size() - 1000);
+  // Sampling window: skip a 1000 bp flank when the sequence is long enough, else use
+  // the whole sequence (guards size_t underflow of size()-1000 and lo>hi UB on short seqs).
+  uint32_t lo, hi;
+  if (sequence.size() > 2u * 1000u) {
+    lo = 1000;
+    hi = static_cast<uint32_t>(sequence.size()) - 1000;
+  } else if (!sequence.empty()) {
+    lo = 0;
+    hi = static_cast<uint32_t>(sequence.size()) - 1;
+  } else {
+    return;
+  }
+  std::uniform_int_distribution<uint32_t> distPos(lo, hi);
   std::unordered_set<uint32_t> visitedPositions;
-  while (snpRecords.size() < numsnps) {
+  const size_t windowSize = static_cast<size_t>(hi) - lo + 1;   // stop once every position has been tried
+  while (snpRecords.size() < numsnps && visitedPositions.size() < windowSize) {
     uint32_t pos = distPos(rng);
     if (visitedPositions.find(pos) != visitedPositions.end()) continue;
     visitedPositions.insert(pos);
