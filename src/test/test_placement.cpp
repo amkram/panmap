@@ -48,9 +48,34 @@ placement::PlacementGlobalState makeState(const indexUtils::SeedCountMap& readSe
     return state;
 }
 
+// Adapt hand-built seed changes to the zero-copy SoA API: build a single-segment
+// LiteTree view over the changes and call the real computeChildMetrics.
+void computeChildMetricsFor(placement::NodeMetrics& m,
+                            const std::vector<Change>& changes,
+                            placement::PlacementGlobalState& state) {
+    std::vector<uint64_t> hashes;
+    std::vector<int16_t> parents, children;
+    hashes.reserve(changes.size());
+    parents.reserve(changes.size());
+    children.reserve(changes.size());
+    for (const auto& [h, p, c] : changes) {
+        hashes.push_back(h);
+        parents.push_back(static_cast<int16_t>(p));
+        children.push_back(static_cast<int16_t>(c));
+    }
+    panmapUtils::LiteTree tree;
+    tree.segSeedHash = {hashes.data()};
+    tree.segSeedParent = {parents.data()};
+    tree.segSeedChild = {children.data()};
+    const panmapUtils::LiteTree* prev = state.liteTree;
+    state.liteTree = &tree;
+    placement::NodeMetrics::computeChildMetrics(m, 0, static_cast<uint32_t>(changes.size()), state);
+    state.liteTree = prev;
+}
+
 placement::NodeMetrics accumulateAlongPath(const ts::IndexData& d,
                                            const std::vector<panmapUtils::LiteNode*>& path,
-                                           const placement::PlacementGlobalState& state) {
+                                           placement::PlacementGlobalState& state) {
     placement::NodeMetrics metrics;
     for (auto* node : path) {
         std::vector<Change> changes;
@@ -60,7 +85,7 @@ placement::NodeMetrics accumulateAlongPath(const ts::IndexData& d,
         for (uint64_t j = start; j < end; ++j) {
             changes.emplace_back(d.hashAt(j), d.parentCountAt(j), d.childCountAt(j));
         }
-        placement::NodeMetrics::computeChildMetrics(metrics, changes, state);
+        computeChildMetricsFor(metrics, changes, state);
     }
     return metrics;
 }
@@ -86,7 +111,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     {
         std::vector<Change> ch = {{H, 0, 2}};
         placement::NodeMetrics m;
-        placement::NodeMetrics::computeChildMetrics(m, ch, state);
+        computeChildMetricsFor(m, ch, state);
         auto oracle = indexUtils::GroundTruthMetrics::compute({{H, 2}}, state);
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), oracle.logRawScore(state), 1e-3);
         BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), oracle.logCosineScore(state), 1e-3);
@@ -113,7 +138,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     {
         std::vector<Change> ch = {{X, 0, 5}};
         placement::NodeMetrics m;
-        placement::NodeMetrics::computeChildMetrics(m, ch, state);
+        computeChildMetricsFor(m, ch, state);
         BOOST_CHECK_SMALL(m.getLogRawScore(state.logReadMagnitude), 1e-12);
         BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 0u);
         BOOST_CHECK_GT(m.genomeMagnitudeSquared, 0.0);  // genome-only metric updated
@@ -123,7 +148,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     {
         std::vector<Change> ch = {{H, 2, 2}};
         placement::NodeMetrics m;
-        placement::NodeMetrics::computeChildMetrics(m, ch, state);
+        computeChildMetricsFor(m, ch, state);
         BOOST_CHECK_SMALL(m.logRawNumerator, 1e-12);
         BOOST_CHECK_SMALL(m.genomeMagnitudeSquared, 1e-12);
         BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 0u);
