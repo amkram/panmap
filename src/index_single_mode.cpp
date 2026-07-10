@@ -262,8 +262,8 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
             globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
         auto curCoordGapMapIt = gapMap.lower_bound(curCoordScalar);
 
-        // if startChar == '-', it means the start position is in the first gap run group and if the first gap run
-        // extends to the end of the genome, then we can skip this syncmer range
+        // startChar == '-' means the start is in the first gap run; if that run
+        // reaches genome end, skip this syncmer range
         const char startChar = blockSequences.getSequenceBase(curCoord);
         if (startChar == '-') {
             const auto curBlockId = curCoord.primaryBlockId;
@@ -1364,7 +1364,7 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
 
     panmapUtils::BlockSequences blockSequences(T);
 
-    // Simple DFS: apply block+nuc mutations, count substitutions, recurse, undo
+    // DFS: apply block+nuc mutations, count substitutions, recurse, undo
     std::function<void(panmanUtils::Node*)> dfs = [&](panmanUtils::Node* node) {
         std::vector<std::pair<panmapUtils::Coordinate, char>> nucUndoRecord;
         std::vector<std::pair<uint32_t, bool>> blockUndoRecord;
@@ -1446,7 +1446,7 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
     }
 
     // Count base composition from the median-length sample (approximate with uniform A/C/G/T)
-    // For rate normalization we just need per-base counts; use genome/4 as fallback
+    // Rate normalization needs per-base counts; use genome/4 as fallback
     std::vector<int64_t> baseCounts(4, genomeLen / 4);
 
     auto substMatBuilder = indexBuilder.initSubstitutionMatrix(16);
@@ -2180,7 +2180,6 @@ void index_single_mode::IndexBuilder::processSubtreeSequential(panmanUtils::Node
                                                                uint64_t dfsIndex,
                                                                BacktrackInfo* /* unused - kept for API compatibility */
 ) {
-    // Local backtrack info for this node
     BacktrackInfo nodeBacktrackInfo;
 
     // Process this node, recording changes for backtracking
@@ -2431,13 +2430,11 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     panmapUtils::BlockSequences blockSequences(T);
     panmapUtils::GlobalCoords globalCoords(blockSequences);
 
-    // Step 1: Pre-compute subtree sizes
     computeSubtreeSize(T->root);
 
     size_t totalNodes = T->allNodes.size();
     output::debug("Tree has {} nodes", totalNodes);
 
-    // Step 2: Compute DFS indices for all nodes
     uint64_t dfsCounter = 0;
     std::function<void(panmanUtils::Node*)> computeDfsIndices = [&](panmanUtils::Node* node) {
         nodeToDfsIndex[node->identifier] = dfsCounter++;
@@ -2447,8 +2444,8 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
     };
     computeDfsIndices(T->root);
 
-    // Step 3: Collect nodes in DFS order and divide into N equal chunks
-    // Simple approach: each chunk owns a contiguous range of DFS indices
+    // Collect nodes in DFS order and divide into N equal chunks;
+    // each chunk owns a contiguous range of DFS indices
     std::vector<panmanUtils::Node*> dfsOrder(totalNodes);
     std::function<void(panmanUtils::Node*, uint64_t&)> collectDfsOrder = [&](panmanUtils::Node* node, uint64_t& idx) {
         dfsOrder[idx++] = node;
@@ -2481,21 +2478,21 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
 
     output::debug("Partitioned into {} chunks of ~{} nodes each", chunks.size(), nodesPerChunk);
 
-    // Step 4: Create template BuildState
+    // Create template BuildState
     BuildState templateState;
     templateState.blockSequences = std::move(blockSequences);
     templateState.blockExistsDelayed = templateState.blockSequences.blockExists;
     templateState.blockStrandDelayed = templateState.blockSequences.blockStrand;
     templateState.gapMap = std::map<uint64_t, uint64_t>{{0, globalCoords.lastScalarCoord}};
 
-    // Step 5: Process root node to establish initial state
+    // Process root node to establish initial state
     std::unordered_set<std::string_view> rootEmptyNodes;
     BacktrackInfo rootBacktrackInfo;
     templateState.nodeChanges =
         std::make_shared<std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>>(totalNodes);
     processNode(T->root, templateState, globalCoords, rootEmptyNodes, 0, &rootBacktrackInfo);
 
-    // Step 6: Make N copies upfront, each walks to its range start then processes its range
+    // Make N copies upfront; each walks to its range start then processes its range
     std::vector<std::unordered_set<std::string_view>> chunkEmptyNodes(chunks.size());
 
     // Shared storage - each node slot is written by exactly one chunk
@@ -2523,7 +2520,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
             totalClonesCreated_.fetch_add(1, std::memory_order_relaxed);
 
             // We need to walk from root to our first node, then DFS through our range
-            // Key insight: nodes 0..startDfs-1 are ancestors or earlier siblings we must walk through
+            // nodes 0..startDfs-1 are ancestors or earlier siblings we must walk through
             // We do a DFS but only compute nodeChanges for nodes in our range [startDfs, endDfs)
 
             std::function<void(panmanUtils::Node*, uint64_t)> processDfsRange = [&](panmanUtils::Node* node,
@@ -2601,7 +2598,7 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
 
     output::debug("Total seed changes: {}, max per node: {}", totalChanges, largestNodeChangeCount);
 
-    // Step 7: Build index output
+    // Build index output
     LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
 
     capnp::List<BlockRange>::Builder blockRangesBuilder =

@@ -31,8 +31,8 @@ int createConsensus(const std::string& vcfFileName,
                     const std::string& consensusFileName,
                     const std::string& consensusHeader = "");
 
-// Direct alignment-to-BAM pipeline: parallel minimap2 alignment with direct
-// bam1_t construction (no SAM text intermediate). Writes sorted BAM file.
+// Parallel minimap2 alignment with direct bam1_t construction (no SAM text
+// intermediate). Writes sorted BAM file.
 void alignAndWriteBam(std::vector<std::string>& readSequences,
                       std::vector<std::string>& readQuals,
                       std::vector<std::string>& readNames,

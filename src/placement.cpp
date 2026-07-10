@@ -35,8 +35,7 @@
 
 namespace {
 
-// Compute the canonical hash of a homopolymer k-mer (all same base)
-// Returns the min of forward and reverse complement hash
+// Canonical hash (min of fwd/rc) of a homopolymer k-mer (all same base)
 constexpr size_t computeHomopolymerHash(char base, int k) {
     size_t baseVal = seeding::chash(base);
     size_t compVal;
@@ -183,7 +182,7 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
         state.seedInverseGenomeCounts.prefetch(seedHash);
     }
 
-    // Process in batches for better instruction pipelining and cache utilization
+    // Batch for instruction pipelining and cache utilization
     for (size_t batch_start = 0; batch_start < numChanges; batch_start += BATCH_SIZE) {
         const size_t batch_end = std::min(batch_start + BATCH_SIZE, numChanges);
 
@@ -306,7 +305,7 @@ DEFINE_UPDATE_SCORE_FUNC(updateLogContainmentScore,
 
 #undef DEFINE_UPDATE_SCORE_FUNC
 
-// Helper to deduplicate a tied-indices vector and pick the lowest index as best
+// Deduplicate tied-indices and pick the lowest index as best
 static void finalizeTiedIndices(std::vector<uint32_t>& tied, uint32_t& bestIndex) {
     if (tied.empty()) return;
     std::sort(tied.begin(), tied.end());
@@ -360,7 +359,6 @@ std::vector<panmapUtils::LiteNode*> getNodesWithinRadius(panmapUtils::LiteNode* 
     std::vector<panmapUtils::LiteNode*> result;
     absl::flat_hash_set<panmapUtils::LiteNode*> visited;
 
-    // BFS with distance tracking: (node, distance)
     std::queue<std::pair<panmapUtils::LiteNode*, int>> bfsQueue;
     bfsQueue.push({startNode, 0});
     visited.insert(startNode);
@@ -473,7 +471,6 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
         return metricCandidates;
     };
 
-    // Collect per-metric candidate sets
     auto logRawCands = getTopForMetric([](auto* n) { return n->logRawScore; }, "LogRaw");
     auto logCosineCands = getTopForMetric([](auto* n) { return n->logCosineScore; }, "LogCosine");
     auto containCands = getTopForMetric([](auto* n) { return n->containmentScore; }, "Containment");
@@ -631,7 +628,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
         std::vector<placement::NodeMetrics> next_metrics;
         std::vector<absl::flat_hash_map<uint64_t, int64_t>> next_seeds;
 
-        // Thread-local best scores (lock-free during traversal!)
+        // Thread-local best scores (lock-free during traversal)
         placement::PlacementResult local_result;
 
         // Pre-allocate buffers to reduce reallocation
@@ -685,7 +682,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
                     }
 
                     batch_counter++;
-                    uint32_t nodeIndex = node->nodeIndex;  // Use index instead of deserializing string!
+                    uint32_t nodeIndex = node->nodeIndex;  // avoid deserializing the string id
 
                     placement::NodeMetrics nodeMetrics = p_metrics;
                     placement::NodeMetrics::computeChildMetrics(nodeMetrics, node->seedChanges, state);
@@ -715,7 +712,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
                         double logContainmentScore =
                             nodeMetrics.getLogContainmentScore(state.logContainmentDenominator);
 
-                        // Update thread-local results (NO LOCKS - parallel performance!)
+                        // Update thread-local results (no locks)
                         tls.local_result.updateLogRawScore(nodeIndex, logRawScore, node);
                         tls.local_result.updateLogCosineScore(nodeIndex, logCosineScore, node);
                         tls.local_result.updateContainmentScore(nodeIndex, containmentScore, node);
@@ -742,7 +739,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
             logging::debug("Processed {} nodes", currentCount);
         }
 
-        // Parallel Merge Step - Optimized for minimal synchronization
+        // Parallel merge, minimizing synchronization
         std::vector<ThreadLocalData*> active_tls;
         active_tls.reserve(thread_data.size());
         for (auto& tls : thread_data) {
@@ -1248,7 +1245,7 @@ void placeLite(PlacementResult& result,
                                           }
                                       });
 
-                    // Calculate exact size needed for final merge to avoid any resizing
+                    // Exact size for final merge to avoid resizing
                     size_t exact_total_seeds = 0;
                     for (const auto& localMap : threadLocalMaps) {
                         exact_total_seeds += localMap.size();
@@ -1320,7 +1317,7 @@ void placeLite(PlacementResult& result,
 
                             if (syncmers.size() < static_cast<size_t>(params.l)) continue;
 
-                            // For l=1, just use syncmer hashes with quality filtering
+                            // For l=1, use syncmer hashes with quality filtering
                             if (params.l == 1) {
                                 for (const auto& [seedHash, isReverse, isSyncmer, startPos] : syncmers) {
                                     // Primer-trim filter
@@ -1376,7 +1373,7 @@ void placeLite(PlacementResult& result,
                                 ++filtered;
                             }
 
-                            // Rest of k-min-mers using rolling hash
+                            // Rest of k-min-mers
                             for (size_t j = 1; j < syncmers.size() - params.l + 1; ++j) {
                                 // Check if new syncmer at end of window passes quality
                                 if (!syncmerPassesQuality[j + params.l - 1]) {
@@ -1537,7 +1534,7 @@ void placeLite(PlacementResult& result,
                             const int validStart = params.trimStart;
                             const int validEnd = seqLen - params.trimEnd - params.k;
 
-                            // Special case for l=1: just use syncmer hashes directly
+                            // Special case for l=1: use syncmer hashes directly
                             if (params.l == 1) {
                                 for (const auto& syncmer : syncmers) {
                                     const int sp = static_cast<int>(std::get<3>(syncmer));
@@ -1848,8 +1845,8 @@ void placeLite(PlacementResult& result,
     }
 
     placement::NodeMetrics rootMetrics;
-    // CRITICAL: Root starts with empty genome (all genome metrics = 0).
-    // The root's seed changes will apply deltas to compute the actual root state.
+    // Root starts with empty genome (all genome metrics = 0); its seed changes
+    // apply deltas to compute the actual root state.
 
     logging::debug("Starting BFS placement traversal with {} tree nodes", liteTree->allLiteNodes.size());
 
@@ -1870,10 +1867,10 @@ void placeLite(PlacementResult& result,
         placeLiteHelperBFS(
             root_level_nodes, root_level_metrics, root_level_seed_counts, state, result, params, nodesProcessed);
 
-        // Lazy ID resolution: Only deserialize winning node IDs (eliminates ~1800ms overhead!)
+        // Lazy ID resolution: only deserialize winning node IDs (eliminates ~1800ms overhead)
         result.resolveNodeIds(liteTree);
 
-        // Optional alignment-based refinement: refine top candidates by full minimap2 alignment.
+        // Optional refinement: re-score top candidates by full minimap2 alignment.
         if (params.refineEnabled && state.fullTree != nullptr) {
             TraversalParams refineParams = params;
             bool pairedEnd = !reads2.empty();

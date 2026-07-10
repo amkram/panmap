@@ -122,7 +122,7 @@ void createVcfWithMutationMatrices(std::string& prefix,
         mpileupFileName = prefix + ".mpileup";
     }
 
-    // Use a temp file for raw VCF output (thread-safe via fork isolation)
+    // Temp file for raw VCF output (thread-safe via fork isolation)
     std::string rawVcfFile = prefix + ".vcf.raw";
     {
         const char* call_args[] = {
