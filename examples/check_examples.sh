@@ -28,8 +28,9 @@ pass=0 fail=0
 ok()   { echo "  PASS  $1"; pass=$((pass+1)); }
 bad()  { echo "  FAIL  $1"; fail=$((fail+1)); }
 
-# VCF: variant records only, sample-column path blanked (header carries date/version).
-norm_vcf() { grep -v '^##' "$1" | sed 's#[^[:space:]]*\.bam#SAMPLE#'; }
+# VCF: compare variant identity (CHROM/POS/REF/ALT + GT). bcftools QUAL/INFO stats aren't
+# reproducible across htslib versions / CPU arch; consensus.fa pins that they're applied.
+norm_vcf() { awk -F'\t' '!/^#/ { split($10, g, ":"); print $1"\t"$2"\t"$4"\t"$5"\t"g[1] }' "$1"; }
 
 # Resolve the index column to read names (FASTQ write order is thread-dependent),
 # emit sorted readname/node/taxon triples.
