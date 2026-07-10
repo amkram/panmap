@@ -1,7 +1,6 @@
 #pragma once
 
 /**
- * @file metrics_oracle.hpp
  * @brief Independent ground-truth oracle for placement metrics.
  *
  * Reproduces the five placement scores exactly:

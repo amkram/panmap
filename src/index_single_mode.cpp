@@ -878,7 +878,6 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         }
     }
 
-    // Handle potential syncmer deletions
     for (uint32_t pos : potentialSyncmerDeletions) {
         // Hard mask: skip deletion in flanked regions
         if (pos < hardMaskStart || pos > hardMaskEnd) continue;
@@ -1796,7 +1795,6 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
         }
     }
 
-    // Handle potential syncmer deletions
     for (uint32_t pos : potentialSyncmerDeletions) {
         if (state.refOnSyncmers.contains(pos)) {
             bool isHardMasked = (pos < hardMaskStart || pos > hardMaskEnd);

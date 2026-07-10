@@ -73,7 +73,6 @@ class LiteTree {
     std::unordered_map<std::string, LiteNode*> allLiteNodes;
     std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
 
-    // dfsIndex -> LiteNode*
     std::vector<LiteNode*> dfsIndexToNode;
 
     // Zero-copy seed-change SoA: raw pointers into the mapped decompressed index, one

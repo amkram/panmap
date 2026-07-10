@@ -21,7 +21,7 @@ std::string makeTempIndexPath() {
     auto name = "panmap_testidx_" + std::to_string(::getpid()) + "_" + std::to_string(counter.fetch_add(1)) + ".idx";
     return (std::filesystem::temp_directory_path() / name).string();
 }
-}  // namespace
+}
 
 IndexData loadIndex(const std::string& path) {
     std::vector<uint8_t> buffer;
