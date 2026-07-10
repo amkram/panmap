@@ -182,6 +182,7 @@ class IndexBuilder {
         indexBuilder.setL(l);
         indexBuilder.setOpen(openSyncmer);
         indexBuilder.setHpc(hpc);
+        indexBuilder.setFormatVersion(panmapUtils::INDEX_FORMAT_VERSION);
         nodeToDfsIndex.reserve(T->allNodes.size());
         nodeSeedCounts.resize(T->allNodes.size());
     }

@@ -21,6 +21,14 @@
 
 namespace panmapUtils {
 
+// On-disk index format revision. Bump on any wire-incompatible change to
+// index_lite.capnp (e.g. widening a field's type). The placement reader rejects
+// an index whose version differs, so a stale .idx fails with a clear "rebuild"
+// message instead of a cryptic Cap'n Proto error. Pre-versioning indexes lack
+// the field and read as 0.
+//   4: struct-of-arrays seed changes with 64-bit nodeChangeOffsets
+inline constexpr uint16_t INDEX_FORMAT_VERSION = 4;
+
 enum seedChangeType { ADD, DEL, SUB };
 
 void getSequenceFromReference(panmanUtils::Tree* tree,
