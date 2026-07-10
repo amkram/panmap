@@ -86,7 +86,7 @@ Mode column: `all` = applies to single-sample and `--meta`; `single` = single-sa
 ## Choosing an aligner (single-sample only, ignored with `--meta`)
 
 - **minimap2** (default): fast, good for most cases
-- **bwa** (`-a bwa`): bwa-mem backend; higher sensitivity, may be preferable for short reads
+- **bwa** (`-a bwa`): bwa-mem backend; higher sensitivity, may be preferable for very short or ancient reads
 
 ```bash
 panmap ref.panman reads.fq -a bwa -o sample
