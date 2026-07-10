@@ -174,7 +174,7 @@ int64_t score_reads_vs_reference(
             free_regs(regs[0], n_regs[0]);
             free_regs(regs[1], n_regs[1]);
         }
-        // If odd number of reads, map the last one alone
+        // odd read count: map the last one alone
         if (n_reads % 2 != 0) {
             int last = n_reads - 1;
             int n_reg = 0;

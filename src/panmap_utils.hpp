@@ -268,7 +268,7 @@ struct BlockSequences {
                     break;
                 }
             }
-            // End character to incorporate for gaps at the end
+            // end sentinel to anchor trailing gaps
             mainSeq[primaryBlockId].push_back('x');
         }
 
@@ -341,7 +341,6 @@ struct BlockSequences {
             uint32_t gBeg = gapStart[blockId][i], gEnd = gapStart[blockId][i + 1];
             char mainc = mainSeq[blockId][i];
             if (blockStrand[blockId]) {
-                // Gap nucs
                 for (uint32_t j = gBeg; j < gEnd; j++) {
                     if (gapSeq[blockId][j] != '-') {
                         seq += gapSeq[blockId][j];
@@ -350,7 +349,6 @@ struct BlockSequences {
                     }
                 }
 
-                // Main nuc
                 if (mainc != '-' && mainc != 'x') {
                     seq += mainc;
                 } else if (aligned && mainc != 'x') {
@@ -449,7 +447,6 @@ struct GlobalCoords {
 
                 // process main nuc
                 if (blockSequences.mainBase(i, j) == 'x') {
-                    // skip if main nuc is x
                     mainScalar[i][j] = -1;
                 } else {
                     mainScalar[i][j] = curScalarCoord;

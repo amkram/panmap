@@ -231,8 +231,7 @@ void readFastqPaired(std::vector<std::string>& readSequences,
         seq = kseq_init(fileno(fq2.fp));
         int forwardReads = readSequences.size();
         while (kseq_read(seq) >= 0) {
-            // R2 is reverse-complemented, so its per-base qualities must be
-            // reversed to stay aligned with the bases.
+            // R2 is reverse-complemented; reverse its per-base quals to stay aligned with the bases.
             readSequences.push_back(reverseComplement(seq->seq.s));
             readNames.push_back(seq->name.s);
             std::string r2qual = seq->qual.l > 0 ? std::string(seq->qual.s) : std::string(seq->seq.l, 'I');
