@@ -1379,11 +1379,15 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
             uint32_t blockId = blockMut.primaryBlockId;
             bool oldExists = blockSequences.blockExists[blockId];
             blockUndoRecord.emplace_back(blockId, oldExists);
-            // blockMutInfo=false marks BOTH deletions and strand inversions; only a
-            // deletion (non-inversion) removes the block. An inverted block still
-            // exists, so its substitutions must keep being counted.
-            if (!blockMut.inversion) {
-                blockSequences.blockExists[blockId] = blockMut.blockMutInfo;
+            // Match the canonical block-existence rule (panmap_utils.cpp): an
+            // insertion makes the block exist (even when also inverted); a
+            // non-inversion deletion removes it; an inversion of an existing
+            // block leaves existence unchanged. blockMutInfo=false marks both
+            // deletions and inversions, so it can't be assigned directly.
+            if (blockMut.blockMutInfo) {
+                blockSequences.blockExists[blockId] = true;
+            } else if (!blockMut.inversion) {
+                blockSequences.blockExists[blockId] = false;
             }
         }
 
