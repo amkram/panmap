@@ -1,4 +1,3 @@
-// Unit tests for the seeding primitives.
 #include <boost/test/unit_test.hpp>
 
 #include "seeding.hpp"
@@ -50,9 +49,9 @@ BOOST_AUTO_TEST_CASE(rollingsyncmers_contract) {
                 for (size_t i = 0; i < all.size(); ++i) {
                     BOOST_TEST(std::get<0>(all[i]) == std::get<0>(all2[i]));
                 }
-                // Positions in range. Non-sentinel entries store the canonical
-                // (orientation-invariant) k-mer hash; returnAll=true yields
-                // UINT64_MAX sentinels at non-syncmer positions.
+                // Non-sentinel entries store the canonical (orientation-invariant)
+                // k-mer hash; returnAll=true yields UINT64_MAX sentinels at
+                // non-syncmer positions.
                 for (const auto& [hash, isRev, isSync, pos] : all) {
                     BOOST_REQUIRE(pos >= 0);
                     BOOST_REQUIRE(static_cast<size_t>(pos) + k <= seq.size());
@@ -115,7 +114,7 @@ BOOST_AUTO_TEST_CASE(hpc_compress_and_mapping) {
     for (size_t i = 0; i < compressed.size(); ++i) {
         BOOST_REQUIRE(mapping[i] < orig.size());
         BOOST_TEST(static_cast<char>(::toupper(orig[mapping[i]])) == compressed[i]);
-        if (i > 0) BOOST_TEST(mapping[i] > mapping[i - 1]);  // strictly increasing
+        if (i > 0) BOOST_TEST(mapping[i] > mapping[i - 1]);
     }
 }
 

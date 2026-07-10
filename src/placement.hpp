@@ -46,7 +46,7 @@ struct TraversalParams {
     bool hpc = false;  // Homopolymer-compressed seeds (from index)
 
     // Alignment-based refinement: after k-mer scoring, optionally refine top candidates by full alignment
-    bool refineEnabled = false;    // Enable alignment-based refinement
+    bool refineEnabled = false;
     double refineTopPct = 0.01;    // Top X% of nodes to consider (default 1%)
     int refineMaxTopN = 150;       // Max nodes to align against (caps the %)
     int refineNeighborRadius = 2;  // Expand to neighbors within N branches
@@ -63,8 +63,8 @@ struct PlacementGlobalState {
     // Pre-computed once to avoid repeated log() calls during traversal
     absl::flat_hash_map<size_t, double, IdentityHash> logReadCounts;
 
-    int64_t totalReadSeedFrequency = 0;  // Sum of all read seed frequencies
-    size_t readUniqueSeedCount = 0;      // Number of unique seeds in reads
+    int64_t totalReadSeedFrequency = 0;
+    size_t readUniqueSeedCount = 0;
     double logReadMagnitude = 0.0;       // Precomputed log-scaled read magnitude: sqrt(Σlog(1+r)²)
 
     // Hash to sequence map for debugging output (optional, populated when verbose)
@@ -119,7 +119,7 @@ struct NodeMetrics {
 
     // Pre-indexed genome-only metrics (loaded from index, updated incrementally)
     double genomeMagnitudeSquared = 0.0;  // Σ(genomeCount²) for cosine denominator
-    size_t genomeUniqueSeedCount = 0;     // Total unique seeds in genome
+    size_t genomeUniqueSeedCount = 0;
 
     // LogRAW Score: Σ(log(1+readCount) / genomeCount) for matching seeds
     constexpr double getLogRawScore(double logReadMagnitude) const {

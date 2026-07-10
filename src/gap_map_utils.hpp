@@ -7,7 +7,7 @@
 
 namespace gap_map {
 
-// Templated gap map operations. T = coordinate type (int64_t or uint64_t).
+// T = coordinate type (int64_t or uint64_t).
 
 template <typename T>
 void updateGapMapStep(std::map<T, T>& gapMap,

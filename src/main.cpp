@@ -88,21 +88,17 @@ enum class PipelineStage {
 };
 
 struct Config {
-    // Input files
     std::string panman;  // Guide pangenome (.panman)
     std::string reads1;  // First read file (FASTQ/FASTA)
     std::string reads2;  // Second read file for paired-end
 
-    // Output
     std::string output;    // Output prefix
     std::string index;     // Pre-built index to load (--index)
     std::string indexOut;  // Where to write the index when building (--index-out)
 
-    // Pipeline control
     PipelineStage stopAfter = PipelineStage::Place;
     bool forceReindex = false;
 
-    // Mode
     bool metagenomic = false;  // Metagenomic mode (multi-sample)
     int topN = 1;              // Report top N placements
     bool dedupReads = false;   // Deduplicate reads before placement (for amplicon data)
@@ -124,7 +120,6 @@ struct Config {
     bool hpc = false;             // Homopolymer-compressed seeds
     bool extentGuard = false;     // Guard seed deletions at genome extent boundaries
 
-    // Resources
     int threads = 1;
     int zstdLevel = 7;
 
@@ -168,18 +163,14 @@ struct Config {
     bool writeOCRanks = false;
     int seed = 42;
 
-    // Batch mode
     std::string batchFile;  // Path to batch file listing samples (one per line: reads1 [reads2])
 
-    // Diagnostic options
     std::string dumpAllScores;  // Dump all node scores to this file
 
-    // Output control
     bool quiet = false;    // Minimal output (errors only)
     bool verbose = false;  // Extra debug output
     bool plain = false;    // Plain text output (no colors/unicode)
 
-    // Leaf-only placement
     bool forceLeaf = false;  // Restrict placement to leaf nodes only
 
     // Consensus options
@@ -1247,8 +1238,8 @@ int runAlignment(const Config& cfg,
 int runGenotyping(const Config& cfg);
 int runConsensus(const Config& cfg);
 
-// Copy the traversal-controlling fields out of Config. refineEnabled is computed per-caller
-// (it can be disabled after the full tree loads), so it's passed in explicitly.
+// refineEnabled is computed per-caller (it can be disabled after the full tree loads),
+// so it's passed in explicitly rather than read from cfg.
 static placement::TraversalParams makeTraversalParams(const Config& cfg, bool refineEnabled) {
     placement::TraversalParams p;
     p.seedMaskFraction = cfg.seedMaskFraction;

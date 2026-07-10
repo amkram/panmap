@@ -120,7 +120,6 @@ void extractReadSequences(const std::string& readPath1,
     }
 }
 
-// Extract full FASTQ data including sequences, qualities, and names
 void extractFullFastqData(const std::string& readPath1,
                           const std::string& readPath2,
                           std::vector<std::string>& readSequences,
@@ -1493,7 +1492,6 @@ void placeLite(PlacementResult& result,
                                totalFiltered);
 
             } else {
-                // Deduplicate reads first for efficiency
                 auto time_kminimizer_start = std::chrono::high_resolution_clock::now();
 
                 // Deduplicate reads first (same as l=0 case)
@@ -1715,7 +1713,7 @@ void placeLite(PlacementResult& result,
                 logging::debug("  Top {} high-frequency seeds:", std::min(size_t(5), above5pct));
                 for (size_t i = 0; i < std::min(size_t(5), sortedSeeds.size()); i++) {
                     double frac = static_cast<double>(sortedSeeds[i].second) / totalReads;
-                    if (frac < 0.01) break;  // Stop if below 1%
+                    if (frac < 0.01) break;
                     logging::debug("    {:.2f}%  (hash: {:016x})", frac * 100.0, sortedSeeds[i].first);
                 }
             }
