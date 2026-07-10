@@ -1,6 +1,5 @@
-// Index round-trip tests: structural integrity + delta reconstruction == direct
-// extraction. This file is the SOLE owner of the "reconstruction equals direct
-// genome seed extraction" contract; test_placement assumes it.
+// Index round-trip tests: structural integrity and delta reconstruction equals
+// direct genome seed extraction.
 #include <boost/test/unit_test.hpp>
 
 #include "helpers/seed_helpers.hpp"
@@ -15,8 +14,8 @@
 #include <vector>
 
 namespace {
-// Build params used wherever we compare against raw rollingSyncmers extraction:
-// l=1 (kminmers == syncmers) and flankMaskBp=0 (no masking), matching extractSeeds.
+// Params for comparison against raw rollingSyncmers extraction: l=1 (kminmers ==
+// syncmers) and flankMaskBp=0 (no masking), matching extractSeeds.
 constexpr int K = 15, S = 8, L = 1;
 
 std::vector<std::string> sampleNodeIds(const ts::RSVPanmanFixture& fix, int n, uint64_t seed) {
@@ -101,9 +100,9 @@ BOOST_AUTO_TEST_CASE(delta_reconstruction_equals_direct) {
         std::string genome = fix.genomeOf(nodeId);
         auto direct = ts::extractSeeds(genome, K, S, /*countDuplicates=*/true);
 
-        // N-imputation can only ADD seeds (N breaks syncmers in direct extraction but
-        // imputed bases preserve them). So every direct seed must appear in the
-        // reconstruction with the SAME count; the reconstruction may have extras.
+        // N-imputation can only add seeds (N breaks syncmers in direct extraction but
+        // imputed bases preserve them), so every direct seed must appear in the
+        // reconstruction with the same count; the reconstruction may have extras.
         const bool genomeHasN = genome.find('N') != std::string::npos;
         for (const auto& [h, count] : direct) {
             auto it = reconstructed.find(h);
@@ -118,8 +117,8 @@ BOOST_AUTO_TEST_CASE(delta_reconstruction_equals_direct) {
     }
 }
 
-// Exercises the production parallel builder (buildIndexParallel, the -t path) and
-// checks it yields the SAME reconstructed genome seeds as the sequential builder.
+// buildIndexParallel (the -t path) must yield the same reconstructed genome seeds
+// as the sequential builder.
 BOOST_AUTO_TEST_CASE(parallel_build_matches_single_thread) {
     ts::RSVPanmanFixture fix;
     ts::TestIndex seq(fix.tree(), K, S, 0, L, false, false, 0, /*numThreads=*/1);
@@ -151,12 +150,12 @@ BOOST_AUTO_TEST_CASE(parallel_build_matches_single_thread) {
 }
 
 // rsv_4K contains no block inversions, so the strand-flip whole-block seed
-// recompute (computeNewSyncmerRangesJump, index_single_mode.cpp ~line 307) would
-// otherwise be untested. Inject synthetic PURE block inversions (blockMutInfo=false,
-// inversion=true — exactly how panman encodes a real inversion) into a sample of
-// leaf nodes, each inverting a real block that exists at that node, then assert the
-// incremental index seeds equal from-scratch extraction. Injecting only at leaves
-// keeps each injection independent, so non-injected leaves are a clean control.
+// recompute (computeNewSyncmerRangesJump, index_single_mode.cpp ~line 307) is
+// otherwise untested. Inject synthetic pure block inversions (blockMutInfo=false,
+// inversion=true, how panman encodes an inversion) into a sample of leaf nodes,
+// each inverting an existing block, then assert the incremental index seeds equal
+// from-scratch extraction. Injecting only at leaves keeps each injection
+// independent, so non-injected leaves are controls.
 // (Also validated against 89 real inversions in tb_400.panman, all matching.)
 BOOST_AUTO_TEST_CASE(block_inversion_reconstruction_equals_direct) {
     ts::RSVPanmanFixture fix;
@@ -171,7 +170,7 @@ BOOST_AUTO_TEST_CASE(block_inversion_reconstruction_equals_direct) {
 
     // Inject a pure inversion of the largest existing forward block (length >= k, so
     // the flip changes seeds) into the first N leaves; the rest are controls. Record
-    // each pre-injection genome so we can confirm the injections are meaningful.
+    // each pre-injection genome to confirm the injections change the genome.
     std::vector<std::string> injected, controls;
     std::unordered_map<std::string, std::string> genomeBefore;
     const size_t kInject = 25;
@@ -217,7 +216,7 @@ BOOST_AUTO_TEST_CASE(block_inversion_reconstruction_equals_direct) {
     auto& d = idx.data();
     const auto& tree = *d.liteTree;
 
-    // Confirm the injections actually changed the genomes (real inversions, not no-ops).
+    // Confirm the injections changed the genomes (not no-ops).
     int meaningful = 0;
     for (const auto& id : injected) {
         if (T->getStringFromReference(id, false) != genomeBefore[id]) meaningful++;
@@ -275,9 +274,9 @@ BOOST_AUTO_TEST_CASE(block_inversion_reconstruction_equals_direct) {
     long invMism = 0, invMiss = 0, invExtra = 0;
     runSet("INJECTED-INVERSION", injected, kInject, invMism, invMiss, invExtra);
 
-    // The correctness contract must hold for inversion nodes exactly as it does for
-    // control nodes. Control establishes the baseline (should be 0); any inversion-
-    // specific missing/extra above that baseline is a real seed-recompute defect.
+    // The correctness contract must hold for inversion nodes as it does for control
+    // nodes. Control is the baseline (should be 0); any inversion-specific
+    // missing/extra above that baseline is a seed-recompute defect.
     BOOST_TEST(ctrlMiss == 0);
     BOOST_TEST(ctrlExtra == 0);
     BOOST_TEST(invMiss == 0);

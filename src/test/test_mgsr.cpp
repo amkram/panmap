@@ -1,6 +1,6 @@
-// MGSR unit tests. Only getDust (a free function, mgsr.cpp:1541) is unit-testable;
-// the EM/abundance path lives behind private squareEM members and is covered by the
-// metagenomic e2e scenario instead (see TESTING.md §4 / §7).
+// MGSR unit tests. Only getDust (free function, mgsr.cpp:1541) is unit-testable;
+// the EM/abundance path is behind private squareEM members, covered by the
+// metagenomic e2e scenario (TESTING.md §4 / §7).
 #include <boost/test/unit_test.hpp>
 
 #include "mgsr.hpp"

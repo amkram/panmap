@@ -278,9 +278,9 @@ void invertGapMap(std::map<T, T>& gapMap,
         auto curIt = leftIt;
         if (static_cast<int64_t>(end) <= static_cast<int64_t>(curIt->second)) {
             // [start, end] lies entirely within one gap run; reversing an all-gap span
-            // is a no-op. Emit a single gap run to `end` and stop -- without this clamp
-            // the walk below appended a run to the gap's end plus a negative-length run,
-            // corrupting the gap map (e.g. inverting [10,20] inside {0:30} dropped [21,30]).
+            // is a no-op. Without this clamp, the walk below appended a run to the gap's
+            // end plus a negative-length run, corrupting the gap map (e.g. inverting
+            // [10,20] inside {0:30} dropped [21,30]).
             blockRuns.emplace_back(true,
                                    std::make_pair(static_cast<int64_t>(start), static_cast<int64_t>(end)));
         } else {

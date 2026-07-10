@@ -2,8 +2,8 @@
 
 #include <string>
 
-// TEST_DATA_DIR is provided as a compile definition by CMake (absolute path to
-// src/test/data). Fall back to a relative path for ad-hoc builds.
+// CMake provides TEST_DATA_DIR as a compile definition: absolute path to
+// src/test/data. Fall back to a relative path for ad-hoc builds.
 #ifndef TEST_DATA_DIR
 #define TEST_DATA_DIR "src/test/data"
 #endif

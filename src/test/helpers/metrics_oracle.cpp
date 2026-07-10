@@ -12,10 +12,10 @@ GroundTruthMetrics GroundTruthMetrics::compute(const SeedCountMap& nodeGenome,
         if (genomeCount <= 0) continue;  // only seeds present in this node's genome
         const double logGenome = std::log1p(static_cast<double>(genomeCount));
 
-        // Genome-only metric (placement.cpp:215); accumulates over ALL present seeds.
+        // Genome-only metric (placement.cpp:215).
         m.genomeMagnitudeSquared += logGenome * logGenome;
 
-        // Read-interaction metrics only for seeds also present in the (filtered) reads.
+        // Read-interaction metrics only for seeds also in the reads.
         auto it = state.logReadCounts.find(hash);
         if (it == state.logReadCounts.end()) continue;
         const double logReadCount = it->second;

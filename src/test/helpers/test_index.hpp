@@ -2,8 +2,8 @@
 
 /**
  * @file test_index.hpp
- * @brief TestIndex RAII fixture + loadIndex(): the one place tests build/load a
- *        panmap index.
+ * @brief TestIndex RAII fixture and loadIndex(): build and load a panmap index
+ *        for tests.
  */
 
 #include "panmanUtils.hpp"
@@ -16,10 +16,10 @@
 
 namespace ts {
 
-// Owns a loaded index. The LiteIndex seed-change struct-of-arrays (stored segmented
-// as List(List(...)) in the file) are flattened into plain vectors on load, so tests
-// address them with a flat index and never touch capnp readers or re-traverse the
-// message. The LiteTree is self-contained after initialize() (copies structure).
+// Owns a loaded index. LiteIndex seed-change struct-of-arrays are stored segmented as
+// List(List(...)) in the file, and flattened into plain vectors on load so tests address
+// them by a flat index without touching capnp readers or re-traversing the message.
+// LiteTree is self-contained after initialize() (copies structure).
 class IndexData {
    public:
     std::unique_ptr<panmapUtils::LiteTree> liteTree;

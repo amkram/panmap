@@ -211,10 +211,10 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
 
     gls[0] += scaled_submat[ref_nuc_idx][ref_nuc_idx];
     for (int i = 1; i < gls.size(); i++) {
-        // scaled_submat is the 4x4 A/C/G/T substitution-spectrum prior, so only
-        // apply it for base ALTs. A non-base ALT (e.g. '*' spanning deletion)
-        // yields an index > 3 that would over-read the row; leave its likelihood
-        // unmodified (matching how indels use the unmodified bcftools posterior).
+        // scaled_submat is the 4x4 A/C/G/T substitution-spectrum prior, so apply
+        // it only to base ALTs. A non-base ALT (e.g. '*' spanning deletion) has
+        // index > 3 and would over-read the row, so leave its likelihood
+        // unmodified. Matches how indels use the unmodified bcftools posterior.
         int alt_idx = getIndexFromNucleotide(alts[i - 1]);
         if (alt_idx <= 3) {
             gls[i] = gls[i] + scaled_submat[ref_nuc_idx][alt_idx];

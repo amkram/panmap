@@ -3,8 +3,7 @@
 /**
  * @file traversal.hpp
  * @brief Reconstruct a node's genome seed set by accumulating index deltas along the
- *        root..node path. Produces the seed multiset only; metric checks live
- *        elsewhere, against the live PlacementGlobalState.
+ *        root..node path.
  */
 
 #include "metrics_oracle.hpp"  // indexUtils::SeedCountMap

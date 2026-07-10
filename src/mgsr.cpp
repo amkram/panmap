@@ -435,14 +435,12 @@ void mgsr::MgsrLiteTree::initialize(LiteIndex::Reader indexReader,
     }
 
     auto liteTreeReader = indexReader.getLiteTree();
-    // initialize blockScalarRanges
     auto blockScalarRangesReader = liteTreeReader.getBlockRanges();
     blockScalarRanges.resize(blockScalarRangesReader.size());
     for (size_t i = 0; i < blockScalarRangesReader.size(); i++) {
         blockScalarRanges[i] = {blockScalarRangesReader[i].getRangeBeg(), blockScalarRangesReader[i].getRangeEnd()};
     }
 
-    // initialize allLiteNodes
     std::vector<mgsr::MgsrLiteNode*> emptyNodesToRemove;
     auto liteNodesReader = liteTreeReader.getLiteNodes();
     mgsr::MgsrLiteNode* prevNode = nullptr;
@@ -608,7 +606,6 @@ void mgsr::MgsrLiteTree::calculateRefSeedCountsHelper(MgsrLiteNode* node,
 
     node->totalRefSeeds = refSeedsCount.size();
 
-    // Recursively calculate breadth ratio for children
     for (auto child : node->collapsedChildren) {
         calculateRefSeedCountsHelper(child, refSeedsCount);
     }
@@ -880,7 +877,6 @@ std::unordered_map<size_t, int32_t> mgsr::MgsrLiteTree::getSeedsAtNode(MgsrLiteN
     std::unordered_map<size_t, int32_t> kminmerOnRefCount;
     MgsrLiteNode* currentNode = node_;
 
-    // Get the path from root the current node
     std::vector<MgsrLiteNode*> nodePath;
     while (currentNode->parent != nullptr) {
         nodePath.push_back(currentNode);
@@ -1066,7 +1062,6 @@ applyMutations(panmanUtils::Node* node,
     std::vector<char>& blockExists = blockSequences.blockExists;
     std::vector<char>& blockStrand = blockSequences.blockStrand;
 
-    // process block mutations
     for (const auto& blockMutation : node->blockMutation) {
         const int32_t blockId = blockMutation.primaryBlockId;
         const bool isInsertion = blockMutation.blockMutInfo;
@@ -1110,7 +1105,6 @@ applyMutations(panmanUtils::Node* node,
         }
     }
 
-    // process nuc mutations
     for (const auto& nucMutation : node->nucMutation) {
         int length = nucMutation.mutInfo >> 4;
         int blockId;
@@ -1137,7 +1131,6 @@ applyMutations(panmanUtils::Node* node,
             if (oldBlockExists[pos.primaryBlockId] && blockExists[pos.primaryBlockId]) {
                 const int64_t scalarCoord = globalCoords.getScalarFromCoord(pos);
                 if (newNuc == '-') {
-                    // nuc to gap
                     if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true &&
                         gapRunUpdates.back().second.second + 1 == scalarCoord) {
                         ++(gapRunUpdates.back().second.second);
@@ -1150,7 +1143,6 @@ applyMutations(panmanUtils::Node* node,
                             globalCoords.getScalarFromCoord(pos, blockStrand[pos.primaryBlockId]));
                     }
                 } else if (oldNuc == '-') {
-                    // gap to nuc
                     if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false &&
                         gapRunUpdates.back().second.second + 1 == scalarCoord) {
                         ++(gapRunUpdates.back().second.second);
@@ -1477,10 +1469,8 @@ void mgsr::ReadDebruijnGraph::buildGraph(std::vector<Read>& reads) {
         }
     }
 
-    // find connected components
     identifyConnectedComponents();
 
-    // sort components by size (largest first)
     std::sort(connectedComponents.begin(),
               connectedComponents.end(),
               [](const std::vector<RDGNode*>& a, const std::vector<RDGNode*>& b) { return a.size() > b.size(); });
@@ -1583,9 +1573,8 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(const std::vector<std::string>& 
         }
     }
 
-    // Build directly as vector of pairs, skipping intermediate unordered_map.
-    // Use a flat hash map (unordered_map with string_view) to track insertion
-    // order into seqToIndexVec, then discard it.
+    // Build the vector of pairs directly; a temporary unordered_map tracks
+    // insertion order into seqToIndexVec, then is discarded.
     std::vector<std::pair<std::string_view, std::vector<size_t>>> seqToIndexVec;
     {
         std::unordered_map<std::string_view, size_t> seqToVecPos;
@@ -1629,7 +1618,7 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(const std::vector<std::string>& 
         if (forwardRolledHash != reverseRolledHash) {
             size_t minHash = std::min(forwardRolledHash, reverseRolledHash);
             if (refSeedHashSet.count(minHash)) {
-                // try_emplace avoids double-lookup: inserts and returns iterator in one shot
+                // try_emplace: single lookup instead of find + insert
                 curRead.uniqueSeedmers.try_emplace(minHash, std::vector<uint32_t>{iorder});
                 curRead.seedmersList.emplace_back(mgsr::readSeedmer{minHash,
                                                                     (uint32_t)std::get<3>(syncmers[0]),
@@ -1698,10 +1687,9 @@ void mgsr::mgsrPlacer::initializeQueryDataBatch(const std::vector<std::string>& 
         }
     }
 
-    // Sort indices. The comparator is restructured to avoid redundant
-    // lexicographical_compare: the prefix scan already establishes order for
-    // most pairs, so fall through to the positional tiebreaker only when
-    // the prefix scan exhausts both lists equally.
+    // The comparator avoids a redundant lexicographical_compare: the prefix
+    // scan orders most pairs; fall through to the positional tiebreaker only
+    // when it exhausts both lists equally.
     std::vector<size_t> sortedUniqueReadsIndices(uniqueReads.size());
     std::iota(sortedUniqueReadsIndices.begin(), sortedUniqueReadsIndices.end(), 0);
     std::stable_sort(sortedUniqueReadsIndices.begin(),
@@ -1849,7 +1837,6 @@ void mgsr::ThreadsManager::initializeQueryData(const std::string& readPath1,
             ++seqToIndexVecIndex;
         }
 
-        // seedmers for each unique read sequence
         std::vector<mgsr::Read> uniqueReadSeedmers(seqToIndexVec.size());
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, seqToIndexVec.size(), seqToIndexVec.size() / num_cpus),
@@ -1862,7 +1849,6 @@ void mgsr::ThreadsManager::initializeQueryData(const std::string& readPath1,
 
                     size_t forwardRolledHash = 0;
                     size_t reverseRolledHash = 0;
-                    // first kminmer
                     if (l == 1) {
                         auto syncmerRev = std::get<1>(syncmers[0]);
                         if (syncmerRev) {
@@ -1896,7 +1882,6 @@ void mgsr::ThreadsManager::initializeQueryData(const std::string& readPath1,
                         ++iorder;
                     }
 
-                    // rest of kminmer
                     for (uint64_t i = 1; i < syncmers.size() - l + 1; ++i) {
                         if (!std::get<2>(syncmers[i - 1]) || !std::get<2>(syncmers[i + l - 1])) {
                             std::cerr << "invalid syncmer" << std::endl;
@@ -2144,7 +2129,6 @@ void mgsr::ThreadsManager::initializeQueryData(const std::string& readPath1,
         }
     }
 
-    // merge all groups
     size_t totalReads = 0;
     for (const auto& group : readsByGroup) {
         totalReads += group.size();
@@ -2170,14 +2154,11 @@ void mgsr::ThreadsManager::initializeQueryData(const std::string& readPath1,
         std::random_device rd;
         std::mt19937 g(rd());
 
-        // Create indices for shuffling
         std::vector<size_t> indices(reads.size());
         std::iota(indices.begin(), indices.end(), 0);
 
-        // Shuffle the indices
         std::shuffle(indices.begin(), indices.end(), g);
 
-        // Apply the shuffle to both vectors
         std::vector<mgsr::Read> shuffledReads;
         std::vector<std::vector<size_t>> shuffledReadSeedmersDuplicatesIndex;
         shuffledReads.reserve(reads.size());
@@ -2188,7 +2169,6 @@ void mgsr::ThreadsManager::initializeQueryData(const std::string& readPath1,
             shuffledReadSeedmersDuplicatesIndex.emplace_back(std::move(readSeedmersDuplicatesIndex[idx]));
         }
 
-        // Replace original vectors with shuffled ones
         reads = std::move(shuffledReads);
         readSeedmersDuplicatesIndex = std::move(shuffledReadSeedmersDuplicatesIndex);
     }
@@ -2253,7 +2233,6 @@ void mgsr::mgsrPlacer::initializeQueryData(std::span<mgsr::Read> reads, bool fas
         }
     }
 
-    // initialize score index structures
     size_t numReads = reads.size();
     size_t numNodes = liteTree->allLiteNodes.size();
     // maxScoreNodeIndex.resize(numReads);
@@ -2311,7 +2290,7 @@ void mgsr::updateGapMapStep(std::map<uint64_t, uint64_t>& gapMap,
         if (!leftItExists || (!rightItExists && start > leftIt->second) ||
             (leftItExists && start > leftIt->second && rightItExists && start < rightIt->first)) {
             if (leftItExists && start == leftIt->second + 1) {
-                // 1 base after left range and merge with left
+                // 1 base after left range: merge with it
                 curIt = leftIt;
                 backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
                 curIt->second = end;
@@ -2539,7 +2518,7 @@ void mgsr::invertGapMap(std::map<uint64_t, uint64_t>& gapMap,
         // start outside of a range
 
         if (end < rightIt->first) {
-            // completely completely between two ranges... all nucs are on.. do nothing
+            // entirely between two ranges; all nucs are on, do nothing
             return;
         }
 
@@ -2663,7 +2642,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         const auto& [curBeg, curEnd] = mergedLocalMutationRanges.back();
         const auto& [nextBeg, nextEnd] = localMutationRanges[i];
 
-        // check if the current range and the next range are adjacent on their global scalar coordinates
+        // are the current and next ranges adjacent on global scalar coordinates?
         if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curEnd.primaryBlockId]) + 1 >=
             globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
             if (globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextEnd.primaryBlockId]) >
@@ -2691,7 +2670,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         auto rightGapMapIt =
             gapMap.lower_bound(globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]));
 
-        // expand to the left... if reach newSyncmerRanges.back(), merge
+        // expand left; merge if we reach newSyncmerRanges.back()
         bool reachedEnd = false;
         uint32_t offset = 0;
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
@@ -2733,7 +2712,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
                 globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) <=
                     globalCoords.getScalarFromCoord(curSyncmerRange.endCoord,
                                                     blockStrand[curSyncmerRange.endCoord.primaryBlockId])) {
-                // reached current newSyncmerRange... merge
+                // reached current newSyncmerRange, merge
                 curBegCoord = curSyncmerRange.begCoord;
                 curBegScalarTest =
                     globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
@@ -2755,7 +2734,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
             }
         }
 
-        // expand to the right... if reach mergedLocalMutationRanges[localMutationRangeIndex + 1], merge
+        // expand right; merge if we reach mergedLocalMutationRanges[localMutationRangeIndex + 1]
         offset = 0;
         if (rightGapMapIt == gapMap.begin()) {
             rightGapMapIt = gapMap.begin();
@@ -2817,7 +2796,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
                     globalCoords.getScalarFromCoord(
                         mergedLocalMutationRanges[localMutationRangeIndex + 1].first,
                         blockStrand[mergedLocalMutationRanges[localMutationRangeIndex + 1].first.primaryBlockId])) {
-                // reached next mutation range... merge
+                // reached next mutation range, merge
                 curEndCoord = mergedLocalMutationRanges[localMutationRangeIndex + 1].second;
                 curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
                 rightGapMapIt = gapMap.lower_bound(curEndScalar);
@@ -2939,7 +2918,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         const auto& [curBeg, curEnd] = mergedLocalMutationRanges.back();
         const auto& [nextBeg, nextEnd] = localMutationRanges[i];
 
-        // check if the current range and the next range are adjacent on their global scalar coordinates
+        // are the current and next ranges adjacent on global scalar coordinates?
         if (globalCoords.getScalarFromCoord(curEnd, blockStrand[curEnd.primaryBlockId]) + 1 >=
             globalCoords.getScalarFromCoord(nextBeg, blockStrand[nextBeg.primaryBlockId])) {
             if (globalCoords.getScalarFromCoord(nextEnd, blockStrand[nextEnd.primaryBlockId]) >
@@ -2967,7 +2946,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         auto rightGapMapIt =
             gapMap.lower_bound(globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]));
 
-        // expand to the left... if reach newSyncmerRanges.back(), merge
+        // expand left; merge if we reach newSyncmerRanges.back()
         bool reachedEnd = false;
         uint32_t offset = 0;
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
@@ -3009,7 +2988,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
                 globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]) <=
                     globalCoords.getScalarFromCoord(curSyncmerRange.endCoord,
                                                     blockStrand[curSyncmerRange.endCoord.primaryBlockId])) {
-                // reached current newSyncmerRange... merge
+                // reached current newSyncmerRange, merge
                 curBegCoord = curSyncmerRange.begCoord;
                 curBegScalarTest =
                     globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
@@ -3031,7 +3010,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
             }
         }
 
-        // expand to the right... if reach mergedLocalMutationRanges[localMutationRangeIndex + 1], merge
+        // expand right; merge if we reach mergedLocalMutationRanges[localMutationRangeIndex + 1]
         offset = 0;
         if (rightGapMapIt == gapMap.begin()) {
             rightGapMapIt = gapMap.begin();
@@ -3097,7 +3076,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
                     globalCoords.getScalarFromCoord(
                         mergedLocalMutationRanges[localMutationRangeIndex + 1].first,
                         blockStrand[mergedLocalMutationRanges[localMutationRangeIndex + 1].first.primaryBlockId])) {
-                // reached next mutation range... merge
+                // reached next mutation range, merge
                 curEndCoord = mergedLocalMutationRanges[localMutationRangeIndex + 1].second;
                 curEndScalar = globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
                 rightGapMapIt = gapMap.lower_bound(curEndScalar);
@@ -3142,8 +3121,8 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
             globalCoords.getScalarFromCoord(curEndCoord, blockStrand[curEndCoord.primaryBlockId]);
         auto curCoordGapMapIt = gapMap.lower_bound(curCoordScalar);
 
-        // if startChar == '-', it means the start position is in the first gap run group and if the first gap run
-        // extends to the end of the genome, then we can skip this syncmer range
+        // startChar == '-' means start is in the first gap run. If that run
+        // extends to the genome end, skip this syncmer range.
         const char startChar = blockSequences.getSequenceBase(curCoord);
         if (startChar == '-') {
             const auto curBlockId = curCoord.primaryBlockId;
@@ -3173,7 +3152,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
         while (true) {
             const auto curBlockId = curCoord.primaryBlockId;
             if (curCoordGapMapIt == gapMap.end()) {
-                // do nothing... Current and all subsequent positions are non-gap
+                // nothing to do: current and all later positions are non-gap
             } else if (recomputeBlock || (blockStrandDelayed[curBlockId] != blockStrand[curBlockId] &&
                                           blockExistsDelayed[curBlockId] && blockExists[curBlockId])) {
                 // need to recompute this whole block
@@ -3613,7 +3592,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         }
     }
 
-    // processing k-min-mers
     std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges =
         computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
@@ -3796,11 +3774,9 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         }
     }
 
-    //  Adding node changes to index
     NodeChanges::Builder curNodeChanges = perNodeChanges[dfsIndex];
     curNodeChanges.setNodeIndex(dfsIndex);
 
-    // adding inserted/substituted seeds to index
     capnp::List<uint32_t>::Builder seedDeltaIndicesBuilder = curNodeChanges.initSeedDeltaIndices(
         addedSeedIndices.size() + deletedSeedIndices.size() + substitutedSeedIndices.size() * 2);
     capnp::List<bool>::Builder seedDeltaIsDeletedBuilder = curNodeChanges.initSeedDeltaIsDeleted(
@@ -3913,7 +3889,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
             substitutedIdx++;
         }
 
-        // adding coord deltas to index
         capnp::List<GapRunDelta>::Builder gapRunDeltaBuilder = curNodeChanges.initGapRunDeltas(gapRunUpdates.size());
         for (size_t i = 0; i < gapRunUpdates.size(); i++) {
             const auto& [toGap, range] = gapRunUpdates[i];
@@ -3922,7 +3897,6 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
             gapRunDeltaBuilder[i].setToGap(toGap);
         }
 
-        // adding inverted blocks to index
         capnp::List<uint32_t>::Builder invertedBlocksBuilder =
             curNodeChanges.initInvertedBlocks(invertedBlocksVec.size());
         for (size_t i = 0; i < invertedBlocksVec.size(); i++) {
@@ -3952,9 +3926,8 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 
     revertGapMapInversions(gapRunBlockInversionBacktracks, gapMap);
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(
-        gapRunBlockInversionBacktracks);  // gapRunBlockInversionBacktracks is no longer needed... clear memory
+        gapRunBlockInversionBacktracks);  // no longer needed; free memory
 
-    // update delayed block states
     for (const auto& [blockId, oldExists, oldStrand, newExists, newStrand] : blockMutationRecord) {
         blockExistsDelayed[blockId] = newExists;
         blockStrandDelayed[blockId] = newStrand;
@@ -4006,12 +3979,12 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 
     for (const auto& [pos, changeType, rsyncmer] : refOnSyncmersChangeRecord) {
         if (changeType == panmapUtils::seedChangeType::ADD) {
-            // Was added... need to delete
+            // was added, so delete
 
             refOnSyncmers[pos] = std::nullopt;
             refOnSyncmersMap.erase(pos);
         } else {
-            // was deleted or replaced... need to restore
+            // was deleted or replaced, so restore
             refOnSyncmers[pos] = rsyncmer;
             refOnSyncmersMap.insert(pos);
         }
@@ -4019,7 +3992,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
 
     for (const auto& [blockId, pos, changeType] : blockOnSyncmersChangeRecord) {
         if (changeType == panmapUtils::seedChangeType::ADD) {
-            // was added... need to delete
+            // was added, so delete
             blockOnSyncmers[blockId].erase(pos);
             if (blockOnSyncmers[blockId].empty()) {
                 blockOnSyncmers.erase(blockId);
@@ -4050,7 +4023,6 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
     std::map<uint64_t, uint64_t> gapMap{{0, globalCoords.lastScalarCoord}};
     std::unordered_set<uint64_t> invertedBlocks;
 
-    // add lite tree to index
     LiteTree::Builder liteTreeBuilder = indexBuilder.initLiteTree();
     std::unordered_set<std::string_view> emptyNodes;
     uint64_t dfsIndex = 0;
@@ -4064,7 +4036,6 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
                      invertedBlocks,
                      dfsIndex);
 
-    // Add unique k-min-mers to index
     capnp::List<uint64_t>::Builder seedHashesBuilder = indexBuilder.initSeedHashes(uniqueKminmers.size());
     capnp::List<bool>::Builder seedIsReverseBuilder = indexBuilder.initSeedIsReverse(uniqueKminmers.size());
     capnp::List<uint32_t>::Builder seedStartPosBuilder =
@@ -4080,7 +4051,6 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
         }
     }
 
-    // Add block infos to index
     capnp::List<BlockRange>::Builder blockRangesBuilder =
         liteTreeBuilder.initBlockRanges(globalCoords.numBlocks());
     for (size_t i = 0; i < globalCoords.numBlocks(); i++) {
@@ -4088,7 +4058,6 @@ void mgsr::mgsrIndexBuilder::buildIndex() {
         blockRangesBuilder[i].setRangeEnd(globalCoords.getBlockEndScalar(i));
     }
 
-    // Add node to index
     capnp::List<LiteNode>::Builder nodesBuilder = liteTreeBuilder.initLiteNodes(T->allNodes.size());
     for (const auto& [nodeId, node] : T->allNodes) {
         auto dfsIndex = nodeToDfsIndex[nodeId];
@@ -4576,7 +4545,7 @@ void mgsr::mgsrPlacer::updateSeedmerChangesTypeFlag(mgsr::RefSeedmerChangeType s
         false   // NOT_EXIST_TO_NOT_EXIST
     };
 
-    // Use enum value as index (ensure your enum values are sequential)
+    // index by enum value; values must be sequential
     int index = static_cast<int>(seedmerChangeType);
     flags.first &= allUniqueToNonUnique[index];
     flags.second &= allNonUniqueToUnique[index];
@@ -4607,10 +4576,9 @@ uint64_t mgsr::mgsrPlacer::extendMinichain(std::map<uint64_t, uint64_t>::const_i
     auto currentRefPositionIt = refPositionIt;
 
     while (currentQidx < curSeedmerList.size() - 1) {
-        // Get next seedmer
         const auto [nqhash, nqbeg, nqend, nqrev, nqidx] = curSeedmerList[currentQidx + 1];
 
-        // Check if next hash exists and is unique
+        // next hash must exist and be unique
         auto nextHashToPositionIt = hashToPositionMap.find(nqhash);
         if (nextHashToPositionIt == hashToPositionMap.end() || nextHashToPositionIt->second.size() != 1) {
             break;
@@ -4619,12 +4587,12 @@ uint64_t mgsr::mgsrPlacer::extendMinichain(std::map<uint64_t, uint64_t>::const_i
         auto nextRefPositionIt = *(nextHashToPositionIt->second.begin());
         bool nrev = nqrev != seedInfos[nextRefPositionIt->second].isReverse;
 
-        // Check if orientation matches
+        // orientation must match
         if (rev != nrev) {
             break;
         }
 
-        // Check if positions are adjacent in the correct direction
+        // positions must be adjacent in the chain direction
         bool isAdjacent = false;
         if (rev && nextRefPositionIt == std::prev(currentRefPositionIt)) {
             isAdjacent = true;
@@ -4636,7 +4604,6 @@ uint64_t mgsr::mgsrPlacer::extendMinichain(std::map<uint64_t, uint64_t>::const_i
             break;
         }
 
-        // Extend the chain
         curEnd = nqidx;
         currentQidx++;
         chainLength++;
@@ -4699,7 +4666,6 @@ void mgsr::mgsrPlacer::extendChainRemoval(uint64_t& c,
             seedmerChangeType == mgsr::RefSeedmerChangeType::EXIST_UNIQUE_TO_NOT_EXIST) {
             ++curEnd;
             ++c;
-            // Continue the loop instead of recursive call
         } else {
             break;
         }
@@ -4738,8 +4704,7 @@ void mgsr::mgsrPlacer::extendChainAddition(uint64_t& c,
             if (curRefPositionIt == nextRefPositionIt) {
                 ++c;
                 ++curEnd;
-                refPositionIt = nextRefPositionIt;  // Update refPositionIt for next iteration
-                                                    // Continue the loop instead of recursive call
+                refPositionIt = nextRefPositionIt;
             } else {
                 break;
             }
@@ -4780,8 +4745,7 @@ void mgsr::mgsrPlacer::extendChainUpdate(uint64_t& c,
             if (curRefPositionIt == nextRefPositionIt) {
                 ++c;
                 ++curEnd;
-                refPositionIt = nextRefPositionIt;  // Update refPositionIt for next iteration
-                                                    // Continue the loop instead of recursive call
+                refPositionIt = nextRefPositionIt;
             } else {
                 break;
             }
@@ -4810,7 +4774,6 @@ bool mgsr::mgsrPlacer::colinearAdjacent(std::map<uint64_t, uint64_t>::const_iter
 void mgsr::mgsrPlacer::addToMinichains(const std::vector<readSeedmer>& curSeedmerList,
                                        std::vector<mgsr::Minichain>& curMinichains,
                                        mgsr::Minichain minichain) {
-    // add and/or merge minichains
     bool addRangeRev = minichain.rev;
     uint64_t addRangeBeg = minichain.begIndex;
     uint64_t addRangeEnd = minichain.endIndex;
@@ -4943,7 +4906,6 @@ void mgsr::mgsrPlacer::addToMinichains(const std::vector<readSeedmer>& curSeedme
 }
 
 void mgsr::mgsrPlacer::removeFromMinichains(std::vector<mgsr::Minichain>& curMinichains, mgsr::Minichain minichain) {
-    // remove from existing minichains
     uint64_t removeRangeBeg = minichain.begIndex;
     uint64_t removeRangeEnd = minichain.endIndex;
     if (curMinichains.size() == 1) {
@@ -5086,7 +5048,6 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex,
                     auto positionItFromCurrentHash =
                         hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
                     extendChainAddition(c, curEnd, affectedSeedmerInfos, rev, positionItFromCurrentHash, readIndex);
-                    // encode minichain_t
                     mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, rev};
                     auto& curMinichainToAdd = minichainsToAdd[curMinichainsToAddIndex];
                     curMinichainToAdd.first = minichain;
@@ -5101,7 +5062,6 @@ void mgsr::mgsrPlacer::updateMinichainsMixed(size_t readIndex,
                     auto positionItFromCurrentHash =
                         hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
                     extendChainUpdate(c, curEnd, affectedSeedmerInfos, rev, positionItFromCurrentHash, readIndex);
-                    // encode minichain_t
                     mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, rev};
                     auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
                     curMinichainToUpdate.first = minichain;
@@ -5167,7 +5127,6 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex,
         if (allUniqueToNonUnique) {
             // match to no match -> remove from minichains
             extendChainRemoval(c, curEnd, affectedSeedmerInfos, curSeedmerList.size() - 1);
-            // encode minichain_t
             mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, false};
             auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
             curMinichainToUpdate.first = minichain;
@@ -5179,7 +5138,6 @@ void mgsr::mgsrPlacer::updateMinichains(size_t readIndex,
             bool rev = refRev != curSeedmerList[affectedSeedmerIndex].rev;
             auto positionItFromCurrentHash = hashToPositionMap.at(curSeedmerList[affectedSeedmerIndex].hash).front();
             extendChainAddition(c, curEnd, affectedSeedmerInfos, rev, positionItFromCurrentHash, readIndex);
-            // encode minichain_t
             mgsr::Minichain minichain = {(uint32_t)affectedSeedmerIndex, (uint32_t)curEnd, rev};
             auto& curMinichainToUpdate = minichainsToUpdate[curMinichainsToUpdateIndex];
             curMinichainToUpdate.first = minichain;
@@ -5478,7 +5436,6 @@ int32_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
     } else if (minichains.size() == 1) {
         return minichains[0].getLength();
     } else {
-        // find longest minichain
         uint64_t longestMinichainLength = 0;
         int32_t longestMinichainIndex = -1;
         for (int32_t i = 0; i < minichains.size(); ++i) {
@@ -5521,7 +5478,7 @@ int32_t mgsr::mgsrPlacer::getReadPseudoScore(mgsr::Read& curRead) {
 std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId) const {
     MgsrLiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
-    // Get the path from root the current node
+    // Path from root to current node
     std::vector<MgsrLiteNode*> nodePath;
     while (currentNode->parent != nullptr) {
         nodePath.push_back(currentNode);
@@ -5542,7 +5499,7 @@ std::vector<uint32_t> mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeI
 void mgsr::mgsrPlacer::getScoresAtNode(const std::string& nodeId, std::vector<uint32_t>& curNodeScores) const {
     MgsrLiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
-    // Get the path from root the current node
+    // Path from root to current node
     std::vector<MgsrLiteNode*> nodePath;
     while (currentNode->parent != nullptr) {
         nodePath.push_back(currentNode);
@@ -5747,7 +5704,7 @@ void mgsr::mgsrPlacer::computeOverlapCoefficientsHelper(
         computeOverlapCoefficientsHelper(child, allSeedmerHashesSet, overlapCoefficients);
     }
 
-    // BACKTRACK
+    // Backtrack
     for (const auto [seedIndex, toDelete] : curSeedDeltas) {
         const size_t seedHash = seedInfos[seedIndex].hash;
         const bool seedRev = seedInfos[seedIndex].isReverse;
@@ -5785,24 +5742,20 @@ mgsr::mgsrPlacer::computeOverlapCoefficients(const absl::flat_hash_set<size_t>& 
 }
 
 void mgsr::mgsrPlacer::traverseTreeHelper(MgsrLiteNode* node) {
-    // Update progress if tracker is available
     if (progressTracker) {
         progressTracker->incrementProgress(threadId);
     }
 
-    // **** Update seeds ****
     std::unordered_set<uint64_t> affectedSeedmers;
     updateSeeds(node, affectedSeedmers);
 
-    // **** Update gapMap ****
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
     updateGapMap(node, gapMapBacktracks, gapMapBlocksBacktracks);
 
-    // **** Revert gapMap inversions ****
     revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>>().swap(
-        gapMapBlocksBacktracks);  // gapMapBlocksBacktracks is no longer needed... clear memory
+        gapMapBlocksBacktracks);  // gapMapBlocksBacktracks no longer needed; free memory
 
     auto nodeDfsIndex = curDfsIndex;
     for (MgsrLiteNode* child : node->children) {
@@ -5833,21 +5786,17 @@ void mgsr::mgsrPlacer::traverseTree() {
 }
 
 void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
-    // Update progress if tracker is available
     if (progressTracker) {
         progressTracker->incrementProgress(threadId);
     }
 
-    // **** Update seeds ****
     std::unordered_set<uint64_t> affectedSeedmers;
     updateSeeds(node, affectedSeedmers);
 
-    // **** Update gapMap ****
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBacktracks;
     std::vector<std::pair<bool, std::pair<uint64_t, uint64_t>>> gapMapBlocksBacktracks;
     updateGapMap(node, gapMapBacktracks, gapMapBlocksBacktracks);
 
-    // **** Start placing reads ****
     // unordered_map<readIndex, pair<vector<affectedSeedmerIndexOnRead>, pair<allUniqueToNonUnique,
     // allNonUniqueToUnique>>>
     absl::flat_hash_map<uint32_t, std::pair<std::vector<mgsr::affectedSeedmerInfo>, std::pair<bool, bool>>>
@@ -5877,7 +5826,7 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
             }
         }
     } else if (positionMap.empty()) {
-        // node for some reason has no seeds... delete all read scores and minichains
+        // node has no seeds; delete all read scores and minichains
         // preallocate memory for score deltas
         size_t numReadsToReset = 0;
         for (size_t i = 0; i < reads.size(); ++i) {
@@ -6000,10 +5949,8 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
         node->readScoreDeltas[threadId] = std::move(currentNodeScoreDeltas);
     }
 
-    // **** Revert gapMap inversions ****
     revertGapMapInversions(gapMapBlocksBacktracks, gapMap);
 
-    // clear memory that are no longer needed
     decltype(gapMapBlocksBacktracks){}.swap(gapMapBlocksBacktracks);
     decltype(readToAffectedSeedmerIndex){}.swap(readToAffectedSeedmerIndex);
 
@@ -6013,10 +5960,8 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
         placeReadsHelper(child);
     }
 
-    // Backtrack seeds and delayedRefSeedmerStatus
     backtrackSeeds(node, nodeDfsIndex);
 
-    // Backtrack gapMap
     for (auto it = gapMapBacktracks.rbegin(); it != gapMapBacktracks.rend(); ++it) {
         const auto& [del, range] = *it;
         if (del) {
@@ -6026,16 +5971,13 @@ void mgsr::mgsrPlacer::placeReadsHelper(MgsrLiteNode* node) {
         }
     }
 
-    // Backtrack kminmer count and overlap coefficient
     binaryOverlapKminmerCount = binaryOverlapKminmerCountBacktract;
 
-    // Backtrack read scores
     for (size_t i = 0; i < readScoresBacktrack.size(); ++i) {
         const auto& [readIdx, score] = readScoresBacktrack[i];
         setReadScore(readIdx, score);
     }
 
-    // Backtrack read minichains
     for (const auto& [readIdx, minichains] : readMinichainsBacktrack) {
         reads[readIdx].minichains = std::move(minichains);
     }
@@ -6578,7 +6520,6 @@ void mgsr::mgsrPlacer::calculateBreadthRatio(
         std::cerr << "\rCalculating breadth ratio at DFS index " << node->collapsedDfsIndex << " / "
                   << liteTree->getNumActiveNodes() << std::flush;
 
-    // Recursively calculate breadth ratio for children
     for (auto child : node->collapsedChildren) {
         calculateBreadthRatio(child, refSeedsCount, breaths, assignedReadsByNode);
     }
@@ -6600,7 +6541,6 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
     std::vector<std::unordered_map<MgsrLiteNode*, std::vector<size_t>>> assignedReadsByNodePerThread(
         threadRanges.size());
 
-    // Assign reads per thread
     tbb::parallel_for(tbb::blocked_range<size_t>(0, threadRanges.size()),
                       [&](const tbb::blocked_range<size_t>& rangeIndex) {
                           for (size_t i = rangeIndex.begin(); i != rangeIndex.end(); ++i) {
@@ -6614,7 +6554,6 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
                           }
                       });
 
-    // Collect all unique nodes
     std::unordered_set<MgsrLiteNode*> allNodesAssigned;
     for (const auto& threadMap : assignedReadsByNodePerThread) {
         for (const auto& [node, _] : threadMap) {
@@ -6622,7 +6561,6 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
         }
     }
 
-    // Convert to vector for parallel iteration
     std::vector<MgsrLiteNode*> nodeAssignedList(allNodesAssigned.begin(), allNodesAssigned.end());
 
     // Pre-allocate the result map
@@ -6630,14 +6568,12 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
         assignedReadsByNode[node];
     }
 
-    // Parallel merge and sort
     tbb::parallel_for(tbb::blocked_range<size_t>(0, nodeAssignedList.size()),
                       [&](const tbb::blocked_range<size_t>& range) {
                           for (size_t i = range.begin(); i != range.end(); ++i) {
                               MgsrLiteNode* node = nodeAssignedList[i];
                               auto& mergedVec = assignedReadsByNode[node];
 
-                              // Calculate total size and reserve
                               size_t totalSize = 0;
                               for (size_t threadId = 0; threadId < assignedReadsByNodePerThread.size(); ++threadId) {
                                   const auto& threadMap = assignedReadsByNodePerThread[threadId];
@@ -6652,7 +6588,6 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
                               }
                               mergedVec.reserve(totalSize);
 
-                              // Merge from all threads, converting local indices to global
                               for (size_t threadId = 0; threadId < assignedReadsByNodePerThread.size(); ++threadId) {
                                   const auto& threadMap = assignedReadsByNodePerThread[threadId];
                                   auto it = threadMap.find(node);
@@ -6667,7 +6602,6 @@ void mgsr::ThreadsManager::assignReads(std::unordered_map<MgsrLiteNode*, std::ve
                                   }
                               }
 
-                              // Sort the merged global indices
                               std::sort(mergedVec.begin(), mergedVec.end());
                           }
                       });
@@ -6703,7 +6637,6 @@ void mgsr::ThreadsManager::scoreNodesMultithreaded() {
     auto start_time_selectNodes = std::chrono::high_resolution_clock::now();
 
     std::vector<double> readWEPPWeights(reads.size(), 0.0);
-    // precompute read WEPP weights
     size_t prunedReads = 0;
     for (size_t i = 0; i < reads.size(); ++i) {
         const auto& curRead = reads[i];
@@ -7024,7 +6957,6 @@ void mgsr::ThreadsManager::countSeedNodesFrequency() {
     mgsr::MgsrLiteNode* processingNode = nullptr;
     std::unordered_map<size_t, int32_t> kminmerOnRefCount;
 
-    // fill in seedMatchedNodeRanges
     for (const auto& seedInfo : liteTree->seedInfos) {
         if (allSeedmerHashesSet.find(seedInfo.hash) == allSeedmerHashesSet.end()) continue;
         seedMatchedNodeRanges.try_emplace(seedInfo.hash, std::pair(nullptr, std::vector<EPPNodeRange>{}));
@@ -7328,7 +7260,6 @@ void mgsr::mgsrPlacer::scoreReadsHelper(mgsr::MgsrLiteNode* node, mgsr::MgsrLite
         }
     }
 
-    // STORE READ SCORE INDEX
     if (!modifiedReads.empty()) {
         if (lowMemory) {
             std::vector<uint32_t> modifiedReadIndices;
@@ -7347,13 +7278,11 @@ void mgsr::mgsrPlacer::scoreReadsHelper(mgsr::MgsrLiteNode* node, mgsr::MgsrLite
             int32_t newScore = std::max(curRead.numForwardMatching, curRead.numReverseMatching);
             auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
             if (newScore > maxScore) {
-                // reset epp and assign current node as lastParsimoniousNode
                 curRead.epp = 0;
                 lastParsimoniousNode = node;
                 maxScore = newScore;
                 curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
             } else if (newScore < maxScore) {
-                // collect epp and reset lastParsimoniousNode
                 if (lastParsimoniousNode != nullptr) {
                     curRead.epp += node->collapsedDfsIndex - lastParsimoniousNode->collapsedDfsIndex;
                     lastParsimoniousNode = nullptr;
@@ -7372,13 +7301,11 @@ void mgsr::mgsrPlacer::scoreReadsHelper(mgsr::MgsrLiteNode* node, mgsr::MgsrLite
                 int32_t newScore = std::max(curRead.numForwardMatching, curRead.numReverseMatching);
                 auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
                 if (newScore > maxScore) {
-                    // reset epp and assign current node as lastParsimoniousNode
                     curRead.epp = 0;
                     lastParsimoniousNode = node;
                     maxScore = newScore;
                     curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
                 } else if (newScore < maxScore) {
-                    // collect epp and reset lastParsimoniousNode
                     if (lastParsimoniousNode != nullptr) {
                         curRead.epp += node->collapsedDfsIndex - lastParsimoniousNode->collapsedDfsIndex;
                         lastParsimoniousNode = nullptr;
@@ -7422,13 +7349,11 @@ void mgsr::mgsrPlacer::scoreReadsHelper(mgsr::MgsrLiteNode* node, mgsr::MgsrLite
 
                 auto& lastParsimoniousNode = curRead.lastParsimoniousNode;
                 if (newScore > maxScore) {
-                    // reset epp and assign current node as lastParsimoniousNode
                     curRead.epp = 0;
                     lastParsimoniousNode = node;
                     maxScore = newScore;
                     curRead.maxScoreRev = curRead.numReverseMatching > curRead.numForwardMatching;
                 } else if (newScore < maxScore) {
-                    // collect epp and reset lastParsimoniousNode
                     if (lastParsimoniousNode != nullptr) {
                         curRead.epp += node->collapsedDfsIndex - lastParsimoniousNode->collapsedDfsIndex;
                         lastParsimoniousNode = nullptr;
@@ -7453,7 +7378,7 @@ void mgsr::mgsrPlacer::scoreReadsHelper(mgsr::MgsrLiteNode* node, mgsr::MgsrLite
         scoreReadsHelper(child, processingNode);
     }
 
-    // BACKTRACK
+    // Backtrack
     for (const auto [seedIndex, toDelete] : curSeedDeltas) {
         const size_t seedHash = seedInfos[seedIndex].hash;
         if (seedmerToReads.find(seedHash) == seedmerToReads.end()) {
@@ -7559,7 +7484,6 @@ void mgsr::mgsrPlacer::scoreReadsBatchHelper(mgsr::MgsrLiteNode* node,
         }
     }
 
-    // STORE READ SCORE INDEX
     if (!modifiedReads.empty()) {
         auto& currentNodeScoreDeltas = this->readScoreDeltasBatch[node->collapsedDfsIndex];
         if (!currentNodeScoreDeltas.empty()) {
@@ -7646,8 +7570,7 @@ void mgsr::ThreadsManager::computeKminmerCoverageHelper(
                 readScores[threadReadStart + readIndex] += currentScoreDelta;
                 for (size_t i = 0; i < numTrailing; ++i) {
                     int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
-                    // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply the
-                    // trailing delta
+                    // curDecodedTrailingDelta == -8 means the read is unchanged; skip the trailing delta
                     if (curDecodedTrailingDelta > -8) {
                         if (readScoresBacktrackIndex == readScoresBacktrack.size()) {
                             readScoresBacktrack.emplace_back(threadReadStart + readIndex + i + 1,
@@ -7968,7 +7891,7 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId,
                                            const std::vector<size_t>& readIndexOffset) const {
     MgsrLiteNode* currentNode = liteTree->allLiteNodes[nodeId];
 
-    // Get the path from root the current node
+    // Path from root to current node
     std::vector<MgsrLiteNode*> nodePath;
     while (currentNode->parent != nullptr) {
         nodePath.push_back(currentNode);
@@ -7988,8 +7911,7 @@ void mgsr::ThreadsManager::getScoresAtNode(const std::string& nodeId,
                     curNodeScores[readIndexOffset[threadReadStart + readIndex]] += currentScoreDelta;
                     for (size_t i = 0; i < numTrailing; ++i) {
                         int16_t curDecodedTrailingDelta = scoreDelta.decodeTrailingDelta(i);
-                        // if curDecodedTrailingDelta == -8, it means the read is not changed, so we don't need to apply
-                        // the trailing delta
+                        // curDecodedTrailingDelta == -8 means the read is unchanged; skip the trailing delta
                         if (curDecodedTrailingDelta > -8) {
                             if (reads[threadReadStart + readIndex + i + 1].maxScore == 0) continue;
                             curNodeScores[readIndexOffset[threadReadStart + readIndex + i + 1]] +=
@@ -8051,7 +7973,6 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager,
             size_t previousRank = std::numeric_limits<size_t>::max();
             size_t numUniqueRanks = 0;
             for (const auto& node : nodesVec) {
-                // check if node is a leaf
                 bool isLeaf = false;
                 if (node->identifier.substr(0, 5) != "node_") isLeaf = true;
                 for (const auto& identicalNodeIdentifier : node->identicalNodeIdentifiers) {

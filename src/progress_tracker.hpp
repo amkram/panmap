@@ -34,7 +34,7 @@ class ProgressTracker {
         }
         bar_->set(totalProgress);
         bar_->clear();
-        // Don't emit an action line here; the caller emits the canonical "Placed" line.
+        // Don't emit an action line here; the caller emits the "Placed" line.
         bar_.reset();
     }
 

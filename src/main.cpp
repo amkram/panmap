@@ -842,7 +842,7 @@ struct BatchEntry {
 
 // Parse a batch file: one sample per line, "reads1 [reads2] [output_prefix]"
 // (whitespace- or tab-separated). The output prefix is optional and auto-derived
-// from reads1 when omitted. Shared by single-sample batch and metagenomic modes.
+// from reads1 when omitted.
 bool readBatchFiles(const std::string& batchPath, std::vector<BatchEntry>& entries) {
     std::ifstream batchIn(batchPath);
     if (!batchIn.is_open()) {
@@ -1118,7 +1118,7 @@ bool runMetagenomic(const Config& cfg) {
     output::trace() << "Running metagenomic mode with index: " << cfg.index << " and threads: " << cfg.threads
                     << std::endl;
 
-    // MGSR index is auto-built/validated before we get here.
+    // MGSR index is auto-built and validated upstream.
     if (cfg.index.empty() || !fs::exists(cfg.index)) {
         std::cerr << "Error: index file " << cfg.index << " does not exist" << std::endl;
         return false;
@@ -1206,7 +1206,7 @@ bool runMetagenomic(const Config& cfg) {
                  lowMemory,
                  true);
 
-    // Backstop: a non-MGSR index loads with no seed info and would silently map 0 reads.
+    // A non-MGSR index loads with no seed info and would silently map 0 reads.
     if (T.seedInfos.empty()) {
         std::cerr << "Error: " << cfg.index
                   << " is not a valid MGSR index (no seed info). "
@@ -1278,7 +1278,7 @@ int runBatchPlacement(const Config& cfg) {
 
     output::info("Batch mode: {} samples", samples.size());
 
-    // Load index ONCE
+    // Load the index once and reuse it for every sample.
     logging::debug("Loading index...");
     IndexReader reader(cfg.index, cfg.threads);
     auto idx = reader.getRoot<LiteIndex>();
@@ -2055,7 +2055,7 @@ int main(int argc, char** argv) {
             cfg.index);
         return 1;
     }
-    // Only set default output if we're not in dump mode (dump modes handle their own output)
+    // Set default output only outside dump mode; dump modes handle their own output.
     if (cfg.output.empty() && cfg.dumpNodeId.empty()) {
         // Derive output prefix from reads filename (without path and common extensions)
         if (!cfg.reads1.empty()) {

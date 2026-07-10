@@ -218,7 +218,7 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
                 const double logChild = (childCount > 0) ? std::log1p(static_cast<double>(childCount)) : 0.0;
                 const double logParent = (parentCount > 0) ? std::log1p(static_cast<double>(parentCount)) : 0.0;
 
-                // Genome-only metrics: computed for ALL seed changes, even if not in reads.
+                // Genome-only metrics: computed for all seed changes, even if not in reads.
 
                 // Genome magnitude squared delta: log(1+child)² - log(1+parent)²
                 // Use log-scale to match the log-scaled read vector for proper cosine similarity
@@ -552,7 +552,7 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
                   allCandidates.size(),
                   params.refineTopPct * 100);
 
-    // Step 3: Align reads to ALL unique candidates once (shared work)
+    // Step 3: Align reads to all unique candidates once
     absl::flat_hash_map<uint32_t, int64_t> alignmentScoreMap;  // nodeIndex -> score
 
     logging::info("Refinement seed winners: LogRaw={} LogCosine={} Contain={} WContain={} LogContain={}",
@@ -820,7 +820,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
     auto merge_start = std::chrono::high_resolution_clock::now();
 
     // Merge one metric's thread-local best/tied into the accumulated result. Tolerance is
-    // relative to the current accumulated best, matching the per-metric logic this replaces.
+    // relative to the current accumulated best.
     auto mergeMetric = [](double& bestScore, uint32_t& bestIndex, std::vector<uint32_t>& tied,
                           double localScore, uint32_t localIndex, const std::vector<uint32_t>& localTied) {
         if (localIndex == UINT32_MAX) return;
@@ -1003,7 +1003,7 @@ void placeLite(PlacementResult& result,
                     reinterpret_cast<const int16_t*>(capnp::toAny(childCountsReader[seg]).getRawBytes().begin());
             }
 
-            // Phase 2b: Assign (offset,size) ranges to nodes (no data copy)
+            // Assign (offset,size) ranges to nodes (no data copy)
             tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes), [&](const tbb::blocked_range<size_t>& range) {
                 size_t localNodesWithChanges = 0;
                 for (size_t dfsIndex = range.begin(); dfsIndex < range.end(); ++dfsIndex) {
@@ -1158,14 +1158,14 @@ void placeLite(PlacementResult& result,
                                 // Trim filter: skip seeds that start in trimmed regions
                                 if (static_cast<int>(startPos) < validStart || static_cast<int>(startPos) > validEnd) {
                                     ++trimFiltered;
-                                    continue;  // Skip seed in primer region
+                                    continue;
                                 }
 
                                 // Quality filter: check average quality over k-mer span
                                 double avgQual = avgPhredQuality(qual, startPos, params.k);
                                 if (avgQual < static_cast<double>(params.minSeedQuality)) {
                                     ++filtered;
-                                    continue;  // Skip low-quality seed
+                                    continue;
                                 }
 
                                 localMap[kmerHash] += 1;
@@ -1179,7 +1179,6 @@ void placeLite(PlacementResult& result,
                     totalFiltered += count.load(std::memory_order_relaxed);
                 }
 
-                // Merge thread-local maps
                 mergeSeedMaps(threadLocalMaps, state.seedFreqInReads);
 
                 auto time_seed_extract_end = std::chrono::high_resolution_clock::now();
@@ -1193,7 +1192,7 @@ void placeLite(PlacementResult& result,
                               totalFiltered);
 
             } else {
-                // Original path: deduplicate reads first for efficiency
+                // Deduplicate reads first for efficiency
                 std::vector<std::pair<std::string, size_t>> sortedReads;
                 auto time_dedup_start = std::chrono::high_resolution_clock::now();
                 {
@@ -1298,7 +1297,7 @@ void placeLite(PlacementResult& result,
                                                   // Trim filter: skip seeds that start in trimmed regions
                                                   if (static_cast<int>(startPos) < validStart ||
                                                       static_cast<int>(startPos) > validEnd) {
-                                                      continue;  // Skip seed in primer region
+                                                      continue;
                                                   }
 
                                                   localMap[kmerHash] += multiplicity;
@@ -1470,7 +1469,6 @@ void placeLite(PlacementResult& result,
                     totalFiltered += count.load(std::memory_order_relaxed);
                 }
 
-                // Merge thread-local maps
                 mergeSeedMaps(threadLocalMaps, state.seedFreqInReads);
 
                 auto time_kminimizer_end = std::chrono::high_resolution_clock::now();
@@ -1484,7 +1482,7 @@ void placeLite(PlacementResult& result,
                                totalFiltered);
 
             } else {
-                // Original path: deduplicate reads first for efficiency
+                // Deduplicate reads first for efficiency
                 auto time_kminimizer_start = std::chrono::high_resolution_clock::now();
 
                 // Deduplicate reads first (same as l=0 case)
@@ -1688,7 +1686,7 @@ void placeLite(PlacementResult& result,
         logging::debug("  Seeds >1%% of reads: {}", above1pct);
         logging::debug("===============================");
 
-        // Only sort if we need to mask seeds or output diagnostics (slow for large datasets)
+        // Sort only when masking seeds or emitting diagnostics (slow for large datasets)
         std::vector<std::pair<size_t, int64_t>> sortedSeeds;
         bool needSorting = (params.seedMaskFraction > 0.0) || params.store_diagnostics;
 
@@ -1821,7 +1819,7 @@ void placeLite(PlacementResult& result,
 
     placement::NodeMetrics rootMetrics;
     // Root starts with empty genome (all genome metrics = 0); its seed changes
-    // apply deltas to compute the actual root state.
+    // apply deltas to compute the root state.
 
     logging::debug("Starting BFS placement traversal with {} tree nodes", liteTree->allLiteNodes.size());
 

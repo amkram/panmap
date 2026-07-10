@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Bump the panmap version in all files that track it.
-# The runtime version is generated from CMakeLists.txt via src/version.h.in,
-# so main.cpp never needs editing. Recipe files still embed the version
-# because bioconda fetches a tarball whose URL contains it.
+# Bump the panmap version in every file that tracks it.
+# Runtime version comes from CMakeLists.txt via src/version.h.in, so main.cpp
+# needs no edits. Recipe files still embed the version because bioconda fetches
+# a tarball whose URL contains it.
 #
 # Usage: scripts/bump_version.sh X.Y.Z
 
@@ -22,7 +22,7 @@ fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
-# sed -i differs between GNU and BSD/macOS; pass a backup suffix (portable on both) then remove it.
+# sed -i differs between GNU and BSD/macOS; pass a backup suffix that works on both, then delete it.
 sed -i.bak -E "s/^(project\(panmap VERSION )[0-9]+\.[0-9]+\.[0-9]+(\))/\1${new_version}\2/" \
     "${repo_root}/CMakeLists.txt" \
     "${repo_root}/recipe/CMakeLists.txt"
