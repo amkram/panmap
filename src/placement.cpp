@@ -783,79 +783,51 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
     logging::debug("Merging {} thread-local results...", thread_data.size());
     auto merge_start = std::chrono::high_resolution_clock::now();
 
+    // Merge one metric's thread-local best/tied into the accumulated result. Tolerance is
+    // relative to the current accumulated best, matching the per-metric logic this replaces.
+    auto mergeMetric = [](double& bestScore, uint32_t& bestIndex, std::vector<uint32_t>& tied,
+                          double localScore, uint32_t localIndex, const std::vector<uint32_t>& localTied) {
+        if (localIndex == UINT32_MAX) return;
+        double tolerance = std::max(bestScore * 0.0001, 1e-9);
+        if (localScore > bestScore + tolerance) {
+            bestScore = localScore;
+            bestIndex = localIndex;
+            tied = localTied;
+        } else if (localScore >= bestScore - tolerance) {
+            tied.insert(tied.end(), localTied.begin(), localTied.end());
+        }
+    };
+
     for (auto& tls : thread_data) {
-        // Merge LogRAW scores
-        if (tls.local_result.bestLogRawNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestLogRawScore * 0.0001, 1e-9);
-            if (tls.local_result.bestLogRawScore > result.bestLogRawScore + tolerance) {
-                result.bestLogRawScore = tls.local_result.bestLogRawScore;
-                result.bestLogRawNodeIndex = tls.local_result.bestLogRawNodeIndex;
-                result.tiedLogRawNodeIndices = tls.local_result.tiedLogRawNodeIndices;
-            } else if (tls.local_result.bestLogRawScore >= result.bestLogRawScore - tolerance) {
-                result.tiedLogRawNodeIndices.insert(result.tiedLogRawNodeIndices.end(),
-                                                    tls.local_result.tiedLogRawNodeIndices.begin(),
-                                                    tls.local_result.tiedLogRawNodeIndices.end());
-            }
-        }
-        // Merge LogCosine scores
-        if (tls.local_result.bestLogCosineNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestLogCosineScore * 0.0001, 1e-9);
-            if (tls.local_result.bestLogCosineScore > result.bestLogCosineScore + tolerance) {
-                result.bestLogCosineScore = tls.local_result.bestLogCosineScore;
-                result.bestLogCosineNodeIndex = tls.local_result.bestLogCosineNodeIndex;
-                result.tiedLogCosineNodeIndices = tls.local_result.tiedLogCosineNodeIndices;
-            } else if (tls.local_result.bestLogCosineScore >= result.bestLogCosineScore - tolerance) {
-                result.tiedLogCosineNodeIndices.insert(result.tiedLogCosineNodeIndices.end(),
-                                                       tls.local_result.tiedLogCosineNodeIndices.begin(),
-                                                       tls.local_result.tiedLogCosineNodeIndices.end());
-            }
-        }
-        // Merge Containment scores
-        if (tls.local_result.bestContainmentNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestContainmentScore * 0.0001, 1e-9);
-            if (tls.local_result.bestContainmentScore > result.bestContainmentScore + tolerance) {
-                result.bestContainmentScore = tls.local_result.bestContainmentScore;
-                result.bestContainmentNodeIndex = tls.local_result.bestContainmentNodeIndex;
-                result.tiedContainmentNodeIndices = tls.local_result.tiedContainmentNodeIndices;
-            } else if (tls.local_result.bestContainmentScore >= result.bestContainmentScore - tolerance) {
-                result.tiedContainmentNodeIndices.insert(result.tiedContainmentNodeIndices.end(),
-                                                         tls.local_result.tiedContainmentNodeIndices.begin(),
-                                                         tls.local_result.tiedContainmentNodeIndices.end());
-            }
-        }
-        // Merge Weighted Containment scores
-        if (tls.local_result.bestWeightedContainmentNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestWeightedContainmentScore * 0.0001, 1e-9);
-            if (tls.local_result.bestWeightedContainmentScore > result.bestWeightedContainmentScore + tolerance) {
-                result.bestWeightedContainmentScore = tls.local_result.bestWeightedContainmentScore;
-                result.bestWeightedContainmentNodeIndex = tls.local_result.bestWeightedContainmentNodeIndex;
-                result.tiedWeightedContainmentNodeIndices = tls.local_result.tiedWeightedContainmentNodeIndices;
-            } else if (tls.local_result.bestWeightedContainmentScore >=
-                       result.bestWeightedContainmentScore - tolerance) {
-                result.tiedWeightedContainmentNodeIndices.insert(
-                    result.tiedWeightedContainmentNodeIndices.end(),
-                    tls.local_result.tiedWeightedContainmentNodeIndices.begin(),
-                    tls.local_result.tiedWeightedContainmentNodeIndices.end());
-            }
-        }
-        // Merge Log Containment scores
-        if (tls.local_result.bestLogContainmentNodeIndex != UINT32_MAX) {
-            double tolerance = std::max(result.bestLogContainmentScore * 0.0001, 1e-9);
-            if (tls.local_result.bestLogContainmentScore > result.bestLogContainmentScore + tolerance) {
-                result.bestLogContainmentScore = tls.local_result.bestLogContainmentScore;
-                result.bestLogContainmentNodeIndex = tls.local_result.bestLogContainmentNodeIndex;
-                result.tiedLogContainmentNodeIndices = tls.local_result.tiedLogContainmentNodeIndices;
-            } else if (tls.local_result.bestLogContainmentScore >= result.bestLogContainmentScore - tolerance) {
-                result.tiedLogContainmentNodeIndices.insert(result.tiedLogContainmentNodeIndices.end(),
-                                                            tls.local_result.tiedLogContainmentNodeIndices.begin(),
-                                                            tls.local_result.tiedLogContainmentNodeIndices.end());
-            }
-        }
+        auto& lr = tls.local_result;
+        mergeMetric(result.bestLogRawScore, result.bestLogRawNodeIndex, result.tiedLogRawNodeIndices,
+                    lr.bestLogRawScore, lr.bestLogRawNodeIndex, lr.tiedLogRawNodeIndices);
+        mergeMetric(result.bestLogCosineScore, result.bestLogCosineNodeIndex, result.tiedLogCosineNodeIndices,
+                    lr.bestLogCosineScore, lr.bestLogCosineNodeIndex, lr.tiedLogCosineNodeIndices);
+        mergeMetric(result.bestContainmentScore, result.bestContainmentNodeIndex, result.tiedContainmentNodeIndices,
+                    lr.bestContainmentScore, lr.bestContainmentNodeIndex, lr.tiedContainmentNodeIndices);
+        mergeMetric(result.bestWeightedContainmentScore, result.bestWeightedContainmentNodeIndex,
+                    result.tiedWeightedContainmentNodeIndices, lr.bestWeightedContainmentScore,
+                    lr.bestWeightedContainmentNodeIndex, lr.tiedWeightedContainmentNodeIndices);
+        mergeMetric(result.bestLogContainmentScore, result.bestLogContainmentNodeIndex,
+                    result.tiedLogContainmentNodeIndices, lr.bestLogContainmentScore,
+                    lr.bestLogContainmentNodeIndex, lr.tiedLogContainmentNodeIndices);
     }
 
     auto merge_end = std::chrono::high_resolution_clock::now();
     auto merge_ms = std::chrono::duration_cast<std::chrono::milliseconds>(merge_end - merge_start).count();
     logging::debug("Thread-local merge completed in {}ms", merge_ms);
+}
+
+// Sum sizes, reserve with absl load-factor headroom (1.15x), then serially merge thread-local
+// seed-frequency maps into dest. Merge order across maps doesn't affect the summed counts.
+template <class MapVec, class Dest>
+static void mergeSeedMaps(const MapVec& maps, Dest& dest) {
+    size_t exact_total_seeds = 0;
+    for (const auto& localMap : maps) exact_total_seeds += localMap.size();
+    dest.reserve((exact_total_seeds * 23) / 20);
+    for (const auto& localMap : maps)
+        for (const auto& [hash, count] : localMap) dest[hash] += count;
 }
 
 void placeLite(PlacementResult& result,
@@ -1125,16 +1097,7 @@ void placeLite(PlacementResult& result,
                 }
 
                 // Merge thread-local maps
-                size_t exact_total_seeds = 0;
-                for (const auto& localMap : threadLocalMaps) {
-                    exact_total_seeds += localMap.size();
-                }
-                state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
-                for (const auto& localMap : threadLocalMaps) {
-                    for (const auto& [hash, count] : localMap) {
-                        state.seedFreqInReads[hash] += count;
-                    }
-                }
+                mergeSeedMaps(threadLocalMaps, state.seedFreqInReads);
 
                 auto time_seed_extract_end = std::chrono::high_resolution_clock::now();
                 auto duration_seed_extract = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1261,20 +1224,7 @@ void placeLite(PlacementResult& result,
                                       });
 
                     // Exact size for final merge to avoid resizing
-                    size_t exact_total_seeds = 0;
-                    for (const auto& localMap : threadLocalMaps) {
-                        exact_total_seeds += localMap.size();
-                    }
-
-                    // absl::flat_hash_map maintains load factor ~0.875, so reserve 1.15x
-                    state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
-
-                    // Merge serially: fast (< 100ms typically); extraction is the bottleneck, not the merge
-                    for (const auto& localMap : threadLocalMaps) {
-                        for (const auto& [hash, count] : localMap) {
-                            state.seedFreqInReads[hash] += count;
-                        }
-                    }
+                    mergeSeedMaps(threadLocalMaps, state.seedFreqInReads);
                 }
                 auto time_seed_extract_end = std::chrono::high_resolution_clock::now();
                 auto duration_seed_extract = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1438,16 +1388,7 @@ void placeLite(PlacementResult& result,
                 }
 
                 // Merge thread-local maps
-                size_t exact_total_seeds = 0;
-                for (const auto& localMap : threadLocalMaps) {
-                    exact_total_seeds += localMap.size();
-                }
-                state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
-                for (const auto& localMap : threadLocalMaps) {
-                    for (const auto& [hash, count] : localMap) {
-                        state.seedFreqInReads[hash] += count;
-                    }
-                }
+                mergeSeedMaps(threadLocalMaps, state.seedFreqInReads);
 
                 auto time_kminimizer_end = std::chrono::high_resolution_clock::now();
                 auto duration_kminimizer =
@@ -1602,17 +1543,7 @@ void placeLite(PlacementResult& result,
                         }
                     });
 
-                size_t exact_total_seeds = 0;
-                for (const auto& localMap : threadLocalMaps) {
-                    exact_total_seeds += localMap.size();
-                }
-                state.seedFreqInReads.reserve((exact_total_seeds * 23) / 20);
-
-                for (const auto& localMap : threadLocalMaps) {
-                    for (const auto& [hash, count] : localMap) {
-                        state.seedFreqInReads[hash] += count;
-                    }
-                }
+                mergeSeedMaps(threadLocalMaps, state.seedFreqInReads);
 
                 auto time_kminimizer_end = std::chrono::high_resolution_clock::now();
                 auto duration_kminimizer =

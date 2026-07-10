@@ -38,6 +38,24 @@ void genotyping::stringSplit(const std::string& str, char delimiter, std::vector
     }
 }
 
+// Parse "size:prob" fields shared by the insertion (idx 4) and deletion (idx 5) matrix rows.
+static void parseSizeProbFields(const std::vector<std::string>& fields,
+                                std::unordered_map<int64_t, double>& out) {
+    if (fields.empty()) {
+        throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
+    }
+    for (const auto& f : fields) {
+        std::vector<std::string> subFields;
+        genotyping::stringSplit(f, ':', subFields);
+        if (subFields.size() != 2) {
+            throw std::invalid_argument("Invalid format in mutation matrix file");
+        }
+        int64_t size = std::stoll(subFields[0]);
+        double prob = std::stod(subFields[1]);
+        out[size] = prob;
+    }
+}
+
 void genotyping::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf) {
     std::string line;
     int idx = 0;
@@ -60,35 +78,9 @@ void genotyping::fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifs
             }
             mutMat.submat[idx] = std::move(probs);
         } else if (idx == 4) {
-            if (fields.empty()) {
-                throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
-            }
-
-            for (const auto& f : fields) {
-                std::vector<std::string> subFields;
-                stringSplit(f, ':', subFields);
-                if (subFields.size() != 2) {
-                    throw std::invalid_argument("Invalid format in mutation matrix file");
-                }
-                int64_t size = std::stoll(subFields[0]);
-                double prob = std::stod(subFields[1]);
-                mutMat.insmat[size] = prob;
-            }
+            parseSizeProbFields(fields, mutMat.insmat);
         } else if (idx == 5) {
-            if (fields.empty()) {
-                throw std::invalid_argument("Received invalid mutation matrix (.mm) file");
-            }
-
-            for (const auto& f : fields) {
-                std::vector<std::string> subFields;
-                stringSplit(f, ':', subFields);
-                if (subFields.size() != 2) {
-                    throw std::invalid_argument("Invalid format in mutation matrix file");
-                }
-                int64_t size = std::stoll(subFields[0]);
-                double prob = std::stod(subFields[1]);
-                mutMat.delmat[size] = prob;
-            }
+            parseSizeProbFields(fields, mutMat.delmat);
         }
         idx++;
     }
@@ -191,16 +183,9 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
 
     if (fields[4] == ".") {
         return "";
-    } else if (fields[7].substr(0, 2) != "DP") {
-        if (fields[9][0] == '0')
-            return "";
-        else
-            return line;
-    } else if (getIndexFromNucleotide(fields[3][0]) > 3) {
-        if (fields[9][0] == '0')
-            return "";
-        else
-            return line;
+    }
+    if (fields[7].substr(0, 2) != "DP" || getIndexFromNucleotide(fields[3][0]) > 3) {
+        return fields[9][0] == '0' ? "" : line;
     }
 
     if (fields[3].size() > 1) {

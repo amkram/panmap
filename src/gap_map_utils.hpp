@@ -23,6 +23,15 @@ void updateGapMapStep(std::map<T, T>& gapMap,
     bool rightItExists = rightIt != gapMap.end();
     bool leftItExists = leftIt != gapMap.end();
 
+    // Record a run's removal (backtrack + optional gapMapUpdates) then erase it.
+    auto eraseRun = [&](auto it) {
+        backtrack.emplace_back(false, std::make_pair(it->first, it->second));
+        if (recordGapMapUpdates) {
+            gapMapUpdates.emplace_back(true, std::make_pair(it->first, it->second));
+        }
+        gapMap.erase(it);
+    };
+
     if (toGap) {
         if (gapMap.empty()) {
             gapMap[start] = end;
@@ -75,11 +84,7 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             if (nextIt->second <= curIt->second) {
                 auto tmpIt = nextIt;
                 nextIt = std::next(nextIt);
-                backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
-                if (recordGapMapUpdates) {
-                    gapMapUpdates.emplace_back(true, std::make_pair(tmpIt->first, tmpIt->second));
-                }
-                gapMap.erase(tmpIt);
+                eraseRun(tmpIt);
             } else if (nextIt->first <= end + 1) {
                 backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
                 curIt->second = nextIt->second;
@@ -112,11 +117,7 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             // ends within the curIt range
             if (end <= curIt->second) {
                 if (end == curIt->second) {
-                    backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-                    if (recordGapMapUpdates) {
-                        gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-                    }
-                    gapMap.erase(curIt);
+                    eraseRun(curIt);
                 } else {
                     gapMap[end + 1] = curIt->second;
                     backtrack.emplace_back(true, std::make_pair(end + 1, curIt->second));
@@ -130,11 +131,7 @@ void updateGapMapStep(std::map<T, T>& gapMap,
                 return;
             } else {
                 nextIt = std::next(curIt);
-                backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-                if (recordGapMapUpdates) {
-                    gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-                }
-                gapMap.erase(curIt);
+                eraseRun(curIt);
             }
 
         } else {
@@ -144,11 +141,7 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             if (end <= curIt->second) {
                 // contained in the curIt range
                 if (start == curIt->first && end == curIt->second) {
-                    backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-                    if (recordGapMapUpdates) {
-                        gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-                    }
-                    gapMap.erase(curIt);
+                    eraseRun(curIt);
                 } else if (start == curIt->first) {
                     gapMap[end + 1] = curIt->second;
                     backtrack.emplace_back(true, std::make_pair(end + 1, curIt->second));
@@ -178,11 +171,7 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             } else {
                 if (start == curIt->first) {
                     nextIt = std::next(curIt);
-                    backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
-                    if (recordGapMapUpdates) {
-                        gapMapUpdates.emplace_back(true, std::make_pair(curIt->first, curIt->second));
-                    }
-                    gapMap.erase(curIt);
+                    eraseRun(curIt);
                 } else {
                     backtrack.emplace_back(false, std::make_pair(curIt->first, curIt->second));
                     curIt->second = start - 1;
@@ -204,11 +193,7 @@ void updateGapMapStep(std::map<T, T>& gapMap,
             } else if (nextIt->second <= end) {
                 auto tmpIt = nextIt;
                 nextIt = std::next(nextIt);
-                backtrack.emplace_back(false, std::make_pair(tmpIt->first, tmpIt->second));
-                if (recordGapMapUpdates) {
-                    gapMapUpdates.emplace_back(true, std::make_pair(tmpIt->first, tmpIt->second));
-                }
-                gapMap.erase(tmpIt);
+                eraseRun(tmpIt);
             } else {
                 gapMap[end + 1] = nextIt->second;
                 backtrack.emplace_back(true, std::make_pair(end + 1, nextIt->second));
