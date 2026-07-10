@@ -1520,7 +1520,9 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
 
     output::step("Writing index ({} bytes uncompressed)...", dataSize);
 
-    if (!panmap_zstd::compressToFile(data, dataSize, path, zstdLevel, numThreads)) {
+    // Many independent 64 MB frames so the index inflates in parallel on load.
+    constexpr size_t kIndexFrameSize = 64ull * 1024 * 1024;
+    if (!panmap_zstd::compressToFile(data, dataSize, path, zstdLevel, numThreads, kIndexFrameSize)) {
         output::error("failed to write compressed index to {}", path);
         std::exit(1);
     }

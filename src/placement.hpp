@@ -86,6 +86,9 @@ struct PlacementGlobalState {
     // Full tree for verification mode (nullptr if unused)
     panmanUtils::Tree* fullTree = nullptr;
 
+    // Lite tree that owns the zero-copy seed-change SoA pointers (set before traversal)
+    const panmapUtils::LiteTree* liteTree = nullptr;
+
     // Leave-one-out validation: node index to skip during scoring (UINT32_MAX = none)
     uint32_t skipNodeIndex = UINT32_MAX;
 
@@ -140,7 +143,8 @@ struct NodeMetrics {
 
     // Compute child metrics from parent metrics + seed changes
     static void computeChildMetrics(NodeMetrics& childMetrics,
-                                    std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges,
+                                    uint64_t seedChangeOffset,
+                                    uint32_t seedChangeSize,
                                     const PlacementGlobalState& state);
 };
 

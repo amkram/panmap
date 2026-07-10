@@ -9,6 +9,9 @@
 #include <string>
 #include <iostream>
 #include <span>
+#include <algorithm>
+#include <cstdint>
+#include <vector>
 #include <map>
 #include <array>
 #include <unordered_set>
@@ -51,8 +54,9 @@ class LiteNode {
     // Node index in DFS order
     uint32_t nodeIndex = 0;
 
-    // Seed changes from parent to this node (hash, parentCount, childCount)
-    std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges;
+    // Seed changes from parent: range into the tree's zero-copy seed-change SoA.
+    uint64_t seedChangeOffset = 0;
+    uint32_t seedChangeSize = 0;
 };
 
 class LiteTree {
@@ -65,8 +69,30 @@ class LiteTree {
     // dfsIndex -> LiteNode*
     std::vector<LiteNode*> dfsIndexToNode;
 
-    // Flat storage; nodes hold spans into this
-    std::vector<std::tuple<uint64_t, int64_t, int64_t>> allSeedChanges;
+    // Zero-copy seed-change SoA: raw pointers into the mapped decompressed index, one
+    // per capnp segment (counts are Int16 on disk). Nodes hold (offset,size) ranges;
+    // SEED_CHANGE_SEGMENT must match the index writer's CAPNP_SPLIT.
+    static constexpr uint64_t SEED_CHANGE_SEGMENT = 500'000'000ULL;
+    std::vector<const uint64_t*> segSeedHash;
+    std::vector<const int16_t*> segSeedParent;
+    std::vector<const int16_t*> segSeedChild;
+
+    // Iterate a node's seed changes, splitting at segment boundaries. Non-hot callers.
+    template <typename F>
+    void forEachSeedChange(uint64_t offset, uint64_t size, F&& f) const {
+        uint64_t pos = offset, remaining = size;
+        while (remaining > 0) {
+            const uint64_t seg = pos / SEED_CHANGE_SEGMENT;
+            const uint64_t local = pos - seg * SEED_CHANGE_SEGMENT;
+            const uint64_t n = std::min<uint64_t>(remaining, SEED_CHANGE_SEGMENT - local);
+            const uint64_t* H = segSeedHash[seg] + local;
+            const int16_t* P = segSeedParent[seg] + local;
+            const int16_t* C = segSeedChild[seg] + local;
+            for (uint64_t i = 0; i < n; ++i) f(H[i], static_cast<int64_t>(P[i]), static_cast<int64_t>(C[i]));
+            pos += n;
+            remaining -= n;
+        }
+    }
 
     // Skip re-loading seed changes in batch mode
     bool seedChangesLoaded = false;

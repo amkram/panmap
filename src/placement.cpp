@@ -5,6 +5,7 @@
 #include "index_lite.capnp.h"
 #include "logging.hpp"
 #include "mm_align.h"
+#include <capnp/any.h>  // toAny(...).getRawBytes() for zero-copy seed-change access
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -164,95 +165,112 @@ void extractFullFastqData(const std::string& readPath1,
 }  // anonymous namespace
 
 void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMetrics,
-                                                 std::span<const std::tuple<uint64_t, int64_t, int64_t>> seedChanges,
+                                                 uint64_t seedChangeOffset,
+                                                 uint32_t seedChangeSize,
                                                  const placement::PlacementGlobalState& state) {
-    const size_t numChanges = seedChanges.size();
-
-    if (numChanges == 0) [[unlikely]]
+    if (seedChangeSize == 0) [[unlikely]]
         return;
     constexpr size_t PREFETCH_DISTANCE = 24;  // deeper pipeline (L3 latency ~40 cycles)
     constexpr size_t BATCH_SIZE = 64;         // cache-line aligned batches
+    constexpr uint64_t SEG = panmapUtils::LiteTree::SEED_CHANGE_SEGMENT;
+    const panmapUtils::LiteTree& tree = *state.liteTree;
 
-    // Prefetch both seedChanges and hash table buckets
-    const size_t initialPrefetchCount = std::min(numChanges, PREFETCH_DISTANCE);
-    for (size_t i = 0; i < initialPrefetchCount; ++i) {
-        const auto& [seedHash, _, __] = seedChanges[i];
-        __builtin_prefetch(&seedChanges[i], 0, 0);
-        state.seedFreqInReads.prefetch(seedHash);
-        state.seedInverseGenomeCounts.prefetch(seedHash);
-    }
+    // Walk the node's range over the zero-copy SoA, split at segment boundaries
+    // (rare). Within a segment hash/parent/child are contiguous raw pointers.
+    uint64_t gpos = seedChangeOffset;
+    uint64_t gremaining = seedChangeSize;
+    while (gremaining > 0) {
+        const uint64_t seg = gpos / SEG;
+        const uint64_t local = gpos - seg * SEG;
+        const size_t numChanges = static_cast<size_t>(std::min<uint64_t>(gremaining, SEG - local));
+        const uint64_t* H = tree.segSeedHash[seg] + local;
+        const int16_t* Pc = tree.segSeedParent[seg] + local;
+        const int16_t* Cc = tree.segSeedChild[seg] + local;
 
-    // Batch for instruction pipelining and cache utilization
-    for (size_t batch_start = 0; batch_start < numChanges; batch_start += BATCH_SIZE) {
-        const size_t batch_end = std::min(batch_start + BATCH_SIZE, numChanges);
-
-        for (size_t i = batch_start; i < batch_end; ++i) {
-            // Prefetch far ahead - both data and hash table
-            if (i + PREFETCH_DISTANCE < numChanges) [[likely]] {
-                const auto& [nextHash, _, __] = seedChanges[i + PREFETCH_DISTANCE];
-                __builtin_prefetch(&seedChanges[i + PREFETCH_DISTANCE], 0, 0);
-                state.seedFreqInReads.prefetch(nextHash);
-                state.seedInverseGenomeCounts.prefetch(nextHash);
-            }
-
-            const auto& [seedHash, parentCount, childCount] = seedChanges[i];
-
-            const int64_t freqDelta = childCount - parentCount;
-
-            // Pre-compute log-scaled genome counts for cosine metric
-            const double logChild = (childCount > 0) ? std::log1p(static_cast<double>(childCount)) : 0.0;
-            const double logParent = (parentCount > 0) ? std::log1p(static_cast<double>(parentCount)) : 0.0;
-
-            // Genome-only metrics: computed for ALL seed changes, even if not in reads.
-
-            // Genome magnitude squared delta: log(1+child)² - log(1+parent)²
-            // Use log-scale to match the log-scaled read vector for proper cosine similarity
-            const double magDelta = logChild * logChild - logParent * logParent;
-            childMetrics.genomeMagnitudeSquared += magDelta;
-
-            // Genome unique seed count delta (branchless)
-            const int64_t wasPresent = (parentCount > 0) ? 1 : 0;
-            const int64_t isPresent = (childCount > 0) ? 1 : 0;
-            childMetrics.genomeUniqueSeedCount += (isPresent - wasPresent);
-
-            // Fast path: skip unchanged seeds
-            if (freqDelta == 0) [[likely]]
-                continue;
-
-            auto logIt = state.logReadCounts.find(seedHash);
-            if (logIt == state.logReadCounts.end()) [[likely]]
-                continue;
-
-            const double logReadCount = logIt->second;
-
-            // Presence intersection count delta
-            const int64_t becamePresent = (parentCount == 0) & (childCount != 0);
-            const int64_t becameAbsent = (childCount == 0) & (parentCount != 0);
-            const int64_t presenceDelta = becamePresent - becameAbsent;
-            childMetrics.presenceIntersectionCount += presenceDelta;
-
-            // LogRaw numerator: Σ(log(1+readCount) / genomeCount)
-            const double oldLogContrib = (parentCount > 0) ? (logReadCount / parentCount) : 0.0;
-            const double newLogContrib = (childCount > 0) ? (logReadCount / childCount) : 0.0;
-            childMetrics.logRawNumerator += (newLogContrib - oldLogContrib);
-
-            // LogCosine numerator: Σ(log(1+readCount) × log(1+genomeCount))
-            // Both vectors in log-space for proper cosine similarity
-            childMetrics.logCosineNumerator += logReadCount * (logChild - logParent);
-
-            // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome.
-            // Weights each seed by 1/(node's genome count), rewarding genomes where matching
-            // seeds are rare/unique. Delta: 1/childCount - 1/parentCount for seeds in reads.
-            {
-                const double oldWcContrib = (parentCount > 0) ? (1.0 / parentCount) : 0.0;
-                const double newWcContrib = (childCount > 0) ? (1.0 / childCount) : 0.0;
-                childMetrics.weightedContainmentNumerator += (newWcContrib - oldWcContrib);
-            }
-
-            // Log containment numerator: Σ(log(1+r_i)) for seeds in reads ∩ genome
-            // Like containment but weights each seed by its log read abundance
-            childMetrics.logContainmentNumerator += presenceDelta * logReadCount;
+        // Prefetch both seed hashes and hash table buckets
+        const size_t initialPrefetchCount = std::min(numChanges, PREFETCH_DISTANCE);
+        for (size_t i = 0; i < initialPrefetchCount; ++i) {
+            __builtin_prefetch(&H[i], 0, 0);
+            state.seedFreqInReads.prefetch(H[i]);
+            state.seedInverseGenomeCounts.prefetch(H[i]);
         }
+
+        // Batch for instruction pipelining and cache utilization
+        for (size_t batch_start = 0; batch_start < numChanges; batch_start += BATCH_SIZE) {
+            const size_t batch_end = std::min(batch_start + BATCH_SIZE, numChanges);
+
+            for (size_t i = batch_start; i < batch_end; ++i) {
+                // Prefetch far ahead - both data and hash table
+                if (i + PREFETCH_DISTANCE < numChanges) [[likely]] {
+                    const uint64_t nextHash = H[i + PREFETCH_DISTANCE];
+                    __builtin_prefetch(&H[i + PREFETCH_DISTANCE], 0, 0);
+                    state.seedFreqInReads.prefetch(nextHash);
+                    state.seedInverseGenomeCounts.prefetch(nextHash);
+                }
+
+                const uint64_t seedHash = H[i];
+                const int64_t parentCount = static_cast<int64_t>(Pc[i]);
+                const int64_t childCount = static_cast<int64_t>(Cc[i]);
+
+                const int64_t freqDelta = childCount - parentCount;
+
+                // Pre-compute log-scaled genome counts for cosine metric
+                const double logChild = (childCount > 0) ? std::log1p(static_cast<double>(childCount)) : 0.0;
+                const double logParent = (parentCount > 0) ? std::log1p(static_cast<double>(parentCount)) : 0.0;
+
+                // Genome-only metrics: computed for ALL seed changes, even if not in reads.
+
+                // Genome magnitude squared delta: log(1+child)² - log(1+parent)²
+                // Use log-scale to match the log-scaled read vector for proper cosine similarity
+                const double magDelta = logChild * logChild - logParent * logParent;
+                childMetrics.genomeMagnitudeSquared += magDelta;
+
+                // Genome unique seed count delta (branchless)
+                const int64_t wasPresent = (parentCount > 0) ? 1 : 0;
+                const int64_t isPresent = (childCount > 0) ? 1 : 0;
+                childMetrics.genomeUniqueSeedCount += (isPresent - wasPresent);
+
+                // Fast path: skip unchanged seeds
+                if (freqDelta == 0) [[likely]]
+                    continue;
+
+                auto logIt = state.logReadCounts.find(seedHash);
+                if (logIt == state.logReadCounts.end()) [[likely]]
+                    continue;
+
+                const double logReadCount = logIt->second;
+
+                // Presence intersection count delta
+                const int64_t becamePresent = (parentCount == 0) & (childCount != 0);
+                const int64_t becameAbsent = (childCount == 0) & (parentCount != 0);
+                const int64_t presenceDelta = becamePresent - becameAbsent;
+                childMetrics.presenceIntersectionCount += presenceDelta;
+
+                // LogRaw numerator: Σ(log(1+readCount) / genomeCount)
+                const double oldLogContrib = (parentCount > 0) ? (logReadCount / parentCount) : 0.0;
+                const double newLogContrib = (childCount > 0) ? (logReadCount / childCount) : 0.0;
+                childMetrics.logRawNumerator += (newLogContrib - oldLogContrib);
+
+                // LogCosine numerator: Σ(log(1+readCount) × log(1+genomeCount))
+                // Both vectors in log-space for proper cosine similarity
+                childMetrics.logCosineNumerator += logReadCount * (logChild - logParent);
+
+                // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome.
+                // Weights each seed by 1/(node's genome count), rewarding genomes where matching
+                // seeds are rare/unique. Delta: 1/childCount - 1/parentCount for seeds in reads.
+                {
+                    const double oldWcContrib = (parentCount > 0) ? (1.0 / parentCount) : 0.0;
+                    const double newWcContrib = (childCount > 0) ? (1.0 / childCount) : 0.0;
+                    childMetrics.weightedContainmentNumerator += (newWcContrib - oldWcContrib);
+                }
+
+                // Log containment numerator: Σ(log(1+r_i)) for seeds in reads ∩ genome
+                // Like containment but weights each seed by its log read abundance
+                childMetrics.logContainmentNumerator += presenceDelta * logReadCount;
+            }
+        }
+        gpos += numChanges;
+        gremaining -= numChanges;
     }
 }
 
@@ -681,29 +699,31 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
                     for (size_t j = 1; j <= PREFETCH_DISTANCE && i + j < r.end(); ++j) {
                         __builtin_prefetch(current_nodes[i + j], 0, 1);
                         __builtin_prefetch(&current_metrics[i + j], 0, 1);
-                        if (current_nodes[i + j]) {
-                            __builtin_prefetch(&current_nodes[i + j]->seedChanges, 0, 1);
-                        }
+                        // seedChangeOffset/Size are POD in the node, prefetched above
                     }
 
                     batch_counter++;
                     uint32_t nodeIndex = node->nodeIndex;  // avoid deserializing the string id
 
                     placement::NodeMetrics nodeMetrics = p_metrics;
-                    placement::NodeMetrics::computeChildMetrics(nodeMetrics, node->seedChanges, state);
+                    placement::NodeMetrics::computeChildMetrics(
+                        nodeMetrics, node->seedChangeOffset, node->seedChangeSize, state);
 
                     absl::flat_hash_map<uint64_t, int64_t> incrementalGenomeCounts;
                     if (params.verify_scores) {
                         incrementalGenomeCounts = p_seed_counts;
-                        for (const auto& [seedHash, parentCount, childCount] : node->seedChanges) {
-                            int64_t delta = childCount - parentCount;
-                            if (delta != 0) {
-                                incrementalGenomeCounts[seedHash] += delta;
-                                if (incrementalGenomeCounts[seedHash] <= 0) {
-                                    incrementalGenomeCounts.erase(seedHash);
+                        state.liteTree->forEachSeedChange(
+                            node->seedChangeOffset,
+                            node->seedChangeSize,
+                            [&](uint64_t seedHash, int64_t parentCount, int64_t childCount) {
+                                int64_t delta = childCount - parentCount;
+                                if (delta != 0) {
+                                    incrementalGenomeCounts[seedHash] += delta;
+                                    if (incrementalGenomeCounts[seedHash] <= 0) {
+                                        incrementalGenomeCounts.erase(seedHash);
+                                    }
                                 }
-                            }
-                        }
+                            });
                     }
 
                     // Skip scoring for excluded nodes (leave-one-out) and internal nodes (force-leaf)
@@ -901,51 +921,40 @@ void placeLite(PlacementResult& result,
             }
             totalHashDeltas = nodeOffsets[numNodes];
 
-            liteTree->allSeedChanges.resize(totalHashDeltas);
-
-            // Parallel Pass 2: Populate data and assign spans
-
-            // VERSION 3: Struct-of-arrays format (with optional overflow arrays for large indices)
+            // Zero-copy: point into the decompressed index (kept mapped for the tree's
+            // lifetime) via toAny(list).getRawBytes() (contiguous little-endian data)
+            // instead of copying every seed-change tuple into a flat array.
+            static_assert(panmapUtils::LiteTree::SEED_CHANGE_SEGMENT == 500'000'000ULL,
+                          "SEED_CHANGE_SEGMENT must match the index writer's CAPNP_SPLIT");
             auto hashesReader = indexRoot.getSeedChangeHashes();
             auto parentCountsReader = indexRoot.getSeedChangeParentCounts();
             auto childCountsReader = indexRoot.getSeedChangeChildCounts();
 
-            size_t numSegs = hashesReader.size();
-            logging::debug("Struct-of-arrays format: {} hashes in {} segments", totalHashDeltas, numSegs);
+            const size_t numSegs = hashesReader.size();
+            logging::debug("Struct-of-arrays (zero-copy): {} hashes in {} segments", totalHashDeltas, numSegs);
 
-            constexpr size_t GRAIN_SIZE = 262144;  // 256K items per chunk
-            constexpr size_t CAPNP_SPLIT = 500'000'000;
+            liteTree->segSeedHash.resize(numSegs);
+            liteTree->segSeedParent.resize(numSegs);
+            liteTree->segSeedChild.resize(numSegs);
             for (uint32_t seg = 0; seg < numSegs; seg++) {
-                size_t segStart = static_cast<size_t>(seg) * CAPNP_SPLIT;
-                size_t segEnd = std::min(segStart + CAPNP_SPLIT, totalHashDeltas);
-                auto hashes = hashesReader[seg];
-                auto parents = parentCountsReader[seg];
-                auto children = childCountsReader[seg];
-                tbb::parallel_for(tbb::blocked_range<size_t>(segStart, segEnd, GRAIN_SIZE),
-                                  [&](const tbb::blocked_range<size_t>& range) {
-                                      for (size_t i = range.begin(); i < range.end(); ++i) {
-                                          uint32_t segOffset = i - segStart;
-                                          liteTree->allSeedChanges[i] = std::make_tuple(
-                                              hashes[segOffset], parents[segOffset], children[segOffset]);
-                                      }
-                                  });
+                liteTree->segSeedHash[seg] =
+                    reinterpret_cast<const uint64_t*>(capnp::toAny(hashesReader[seg]).getRawBytes().begin());
+                liteTree->segSeedParent[seg] =
+                    reinterpret_cast<const int16_t*>(capnp::toAny(parentCountsReader[seg]).getRawBytes().begin());
+                liteTree->segSeedChild[seg] =
+                    reinterpret_cast<const int16_t*>(capnp::toAny(childCountsReader[seg]).getRawBytes().begin());
             }
 
-            // Phase 2b: Assign spans to nodes
+            // Phase 2b: Assign (offset,size) ranges to nodes (no data copy)
             tbb::parallel_for(tbb::blocked_range<size_t>(0, numNodes), [&](const tbb::blocked_range<size_t>& range) {
                 size_t localNodesWithChanges = 0;
                 for (size_t dfsIndex = range.begin(); dfsIndex < range.end(); ++dfsIndex) {
                     auto* liteNode = liteTree->dfsIndexToNode[dfsIndex];
-                    size_t offset = nodeOffsets[dfsIndex];
-                    size_t size = nodeOffsets[dfsIndex + 1] - offset;
-
-                    if (size > 0) {
-                        liteNode->seedChanges = std::span<std::tuple<uint64_t, int64_t, int64_t>>(
-                            liteTree->allSeedChanges.data() + offset, size);
-                        localNodesWithChanges++;
-                    } else {
-                        liteNode->seedChanges = std::span<std::tuple<uint64_t, int64_t, int64_t>>();
-                    }
+                    const size_t offset = nodeOffsets[dfsIndex];
+                    const size_t size = nodeOffsets[dfsIndex + 1] - offset;
+                    liteNode->seedChangeOffset = offset;
+                    liteNode->seedChangeSize = static_cast<uint32_t>(size);
+                    if (size > 0) localNodesWithChanges++;
                 }
                 nodesWithChanges.fetch_add(localNodesWithChanges, std::memory_order_relaxed);
             });
@@ -1789,18 +1798,21 @@ void placeLite(PlacementResult& result,
     logging::debug("Read magnitude precomputation: {}ms", duration_magnitude.count());
 
     state.root = liteTree->root;
+    state.liteTree = liteTree;  // zero-copy seed-change SoA pointers used by computeChildMetrics
 
     // Precompute inverse genome counts from root's seed changes
     // g_i = number of genomes containing seed i (root's childCount for that seed)
     // Used by weighted containment metric to upweight rare/discriminative seeds
     if (liteTree->root) {
-        for (const auto& [seedHash, parentCount, childCount] : liteTree->root->seedChanges) {
-            if (childCount > 0 && state.logReadCounts.contains(seedHash)) {
-                double invCount = 1.0 / static_cast<double>(childCount);
-                state.seedInverseGenomeCounts[seedHash] = invCount;
-                state.weightedContainmentDenominator += invCount;
-            }
-        }
+        liteTree->forEachSeedChange(liteTree->root->seedChangeOffset,
+                                    liteTree->root->seedChangeSize,
+                                    [&](uint64_t seedHash, int64_t /*parentCount*/, int64_t childCount) {
+                                        if (childCount > 0 && state.logReadCounts.contains(seedHash)) {
+                                            double invCount = 1.0 / static_cast<double>(childCount);
+                                            state.seedInverseGenomeCounts[seedHash] = invCount;
+                                            state.weightedContainmentDenominator += invCount;
+                                        }
+                                    });
         logging::debug("Weighted containment: {} seeds with inverse genome counts, denominator={:.6f}",
                        state.seedInverseGenomeCounts.size(),
                        state.weightedContainmentDenominator);

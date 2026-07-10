@@ -1,8 +1,12 @@
 #include "zstd_compression.hpp"
 #include "logging.hpp"
 #include <zstd.h>
+#include <algorithm>
+#include <atomic>
 #include <fstream>
 #include <thread>
+#include <utility>
+#include <vector>
 #include <tbb/parallel_for.h>
 #include <boost/iostreams/device/mapped_file.hpp>
 
@@ -17,49 +21,69 @@ bool compressToFile(const void* inputData,
     if (numThreads == 0) {
         numThreads = std::thread::hardware_concurrency();
     }
+    if (frameSize == 0) {
+        frameSize = 64ull * 1024 * 1024;
+    }
 
-    logging::info("Compressing {} bytes to {} with ZSTD level {} using {} threads (frame size: {} MB)",
+    // Independent per-chunk frames (not one nbWorkers frame) so decompressFromFile
+    // can inflate them in parallel -- single-frame inflate dominates large-index load.
+    const size_t numChunks = std::max<size_t>(1, (inputSize + frameSize - 1) / frameSize);
+
+    logging::info("Compressing {} bytes to {} with ZSTD level {} using {} threads ({} frames x {} MB)",
                   inputSize,
                   outputPath,
                   compressionLevel,
                   numThreads,
+                  numChunks,
                   frameSize / (1024 * 1024));
 
     auto startTime = std::chrono::high_resolution_clock::now();
+
+    const uint8_t* in = static_cast<const uint8_t*>(inputData);
+    std::vector<std::vector<uint8_t>> frames(numChunks);
+    std::atomic<bool> anyError{false};
+
+    tbb::parallel_for(size_t(0), numChunks, [&](size_t i) {
+        if (anyError.load(std::memory_order_relaxed)) return;
+        const size_t inOff = i * frameSize;
+        const size_t inLen = std::min(frameSize, inputSize - inOff);
+        std::vector<uint8_t> out(ZSTD_compressBound(inLen));
+        ZSTD_CCtx* cctx = ZSTD_createCCtx();
+        if (!cctx) {
+            anyError.store(true, std::memory_order_relaxed);
+            return;
+        }
+        ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, compressionLevel);
+        ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 1);  // one-shot => content-size header written
+        const size_t r = ZSTD_compress2(cctx, out.data(), out.size(), in + inOff, inLen);
+        ZSTD_freeCCtx(cctx);
+        if (ZSTD_isError(r)) {
+            logging::err("ZSTD compression failed on frame {}: {}", i, ZSTD_getErrorName(r));
+            anyError.store(true, std::memory_order_relaxed);
+            return;
+        }
+        out.resize(r);
+        out.shrink_to_fit();  // free the compressBound slack so only ~compressed size is held
+        frames[i] = std::move(out);
+    });
+
+    if (anyError.load()) {
+        return false;
+    }
 
     std::ofstream outFile(outputPath, std::ios::binary);
     if (!outFile) {
         logging::err("Failed to open output file: {}", outputPath);
         return false;
     }
-
-    ZSTD_CCtx* cctx = ZSTD_createCCtx();
-    if (!cctx) {
-        logging::err("Failed to create ZSTD compression context");
-        return false;
-    }
-
-    ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, compressionLevel);
-    ZSTD_CCtx_setParameter(cctx, ZSTD_c_nbWorkers, numThreads);
-    ZSTD_CCtx_setParameter(cctx, ZSTD_c_jobSize, frameSize);
-    ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 1);
-
-    size_t const maxCompressedSize = ZSTD_compressBound(inputSize);
-    std::vector<uint8_t> compressedData(maxCompressedSize);
-
-    size_t const compressedSize = ZSTD_compress2(cctx, compressedData.data(), maxCompressedSize, inputData, inputSize);
-
-    ZSTD_freeCCtx(cctx);
-
-    if (ZSTD_isError(compressedSize)) {
-        logging::err("ZSTD compression failed: {}", ZSTD_getErrorName(compressedSize));
-        return false;
-    }
-
-    outFile.write(reinterpret_cast<const char*>(compressedData.data()), compressedSize);
-    if (!outFile) {
-        logging::err("Failed to write compressed data to file: {}", outputPath);
-        return false;
+    size_t compressedSize = 0;
+    for (const auto& f : frames) {  // concatenate frames in order
+        outFile.write(reinterpret_cast<const char*>(f.data()), static_cast<std::streamsize>(f.size()));
+        if (!outFile) {
+            logging::err("Failed to write compressed data to file: {}", outputPath);
+            return false;
+        }
+        compressedSize += f.size();
     }
     outFile.close();
 
@@ -104,29 +128,35 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
     const char* compressedData = mappedFile.data();
     size_t compressedSize = mappedFile.size();
 
-    unsigned long long const decompressedSize = ZSTD_getFrameContentSize(compressedData, compressedSize);
-
-    if (decompressedSize == ZSTD_CONTENTSIZE_ERROR) {
-        logging::err("Not a valid ZSTD frame: {}", inputPath);
-        return false;
+    // Total size = sum over frames; getFrameContentSize on the whole buffer reports
+    // only the first frame (indexes are written multi-frame).
+    size_t numFrames = 0;
+    unsigned long long decompressedSize = 0;
+    size_t pos = 0;
+    while (pos < compressedSize) {
+        unsigned long long frameCompSize = ZSTD_findFrameCompressedSize(compressedData + pos, compressedSize - pos);
+        if (ZSTD_isError(frameCompSize)) {
+            break;
+        }
+        unsigned long long frameContentSize = ZSTD_getFrameContentSize(compressedData + pos, frameCompSize);
+        if (frameContentSize == ZSTD_CONTENTSIZE_ERROR) {
+            logging::err("Not a valid ZSTD frame in: {}", inputPath);
+            return false;
+        }
+        if (frameContentSize == ZSTD_CONTENTSIZE_UNKNOWN) {
+            logging::err("Cannot determine uncompressed size for a frame in: {}", inputPath);
+            return false;
+        }
+        decompressedSize += frameContentSize;
+        numFrames++;
+        pos += frameCompSize;
     }
-    if (decompressedSize == ZSTD_CONTENTSIZE_UNKNOWN) {
-        logging::err("Cannot determine uncompressed size: {}", inputPath);
+    if (numFrames == 0) {
+        logging::err("No valid ZSTD frames in: {}", inputPath);
         return false;
     }
 
     outputData.resize(decompressedSize);
-
-    size_t numFrames = 0;
-    size_t pos = 0;
-    while (pos < compressedSize) {
-        unsigned long long frameSize = ZSTD_findFrameCompressedSize(compressedData + pos, compressedSize - pos);
-        if (ZSTD_isError(frameSize)) {
-            break;
-        }
-        numFrames++;
-        pos += frameSize;
-    }
 
     if (numFrames > 1 && numThreads > 1) {
         logging::debug("Detected {} ZSTD frames, decompressing in parallel", numFrames);
@@ -180,7 +210,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
         }
 
     } else {
-        logging::debug("Using single-threaded decompression");
+        logging::debug("Decompressing {} frame(s) single-threaded", numFrames);
 
         ZSTD_DCtx* dctx = ZSTD_createDCtx();
         if (!dctx) {
@@ -188,19 +218,34 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
             return false;
         }
 
-        size_t const actualSize =
-            ZSTD_decompressDCtx(dctx, outputData.data(), decompressedSize, compressedData, compressedSize);
+        // ZSTD_decompressDCtx handles one frame; walk them for multi-frame input.
+        size_t inPos = 0;
+        size_t outPos = 0;
+        while (inPos < compressedSize) {
+            unsigned long long frameCompSize =
+                ZSTD_findFrameCompressedSize(compressedData + inPos, compressedSize - inPos);
+            if (ZSTD_isError(frameCompSize)) break;
+            unsigned long long frameContentSize = ZSTD_getFrameContentSize(compressedData + inPos, frameCompSize);
+            size_t const r = ZSTD_decompressDCtx(dctx,
+                                                 outputData.data() + outPos,
+                                                 static_cast<size_t>(frameContentSize),
+                                                 compressedData + inPos,
+                                                 static_cast<size_t>(frameCompSize));
+            if (ZSTD_isError(r) || r != frameContentSize) {
+                logging::err("ZSTD decompression failed: {}",
+                             ZSTD_isError(r) ? ZSTD_getErrorName(r) : "frame size mismatch");
+                ZSTD_freeDCtx(dctx);
+                mappedFile.close();
+                return false;
+            }
+            inPos += frameCompSize;
+            outPos += frameContentSize;
+        }
 
         ZSTD_freeDCtx(dctx);
 
-        if (ZSTD_isError(actualSize)) {
-            logging::err("ZSTD decompression failed: {}", ZSTD_getErrorName(actualSize));
-            mappedFile.close();
-            return false;
-        }
-
-        if (actualSize != decompressedSize) {
-            logging::err("Decompressed size mismatch: expected {}, got {}", decompressedSize, actualSize);
+        if (outPos != decompressedSize) {
+            logging::err("Decompressed size mismatch: expected {}, got {}", decompressedSize, outPos);
             mappedFile.close();
             return false;
         }
