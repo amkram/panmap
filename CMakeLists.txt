@@ -767,6 +767,12 @@ add_test(NAME e2e
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# README demos diffed against examples/expected/ (single-sample, --meta, --filter-and-assign).
+add_test(NAME examples
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/examples/check_examples.sh $<TARGET_FILE:panmap>
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # Include dirs live on panmap_lib as PUBLIC usage requirements so the object library's
 # own sources and consumers (panmap, panmap_tests) inherit them.
 target_include_directories(panmap_lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
