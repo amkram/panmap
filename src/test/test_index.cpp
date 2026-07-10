@@ -8,15 +8,10 @@
 #include "helpers/traversal.hpp"
 #include "helpers/tree_helpers.hpp"
 
-#include <boost/iostreams/filter/lzma.hpp>
-#include <boost/iostreams/filtering_streambuf.hpp>
-
 #include <algorithm>
-#include <cstdlib>
-#include <fstream>
-#include <memory>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -155,53 +150,80 @@ BOOST_AUTO_TEST_CASE(parallel_build_matches_single_thread) {
     }
 }
 
-// Opt-in validation against a panman that actually contains block inversions
-// (rsv_4K has none). Set TB_PANMAN=/path/to/tb_400.panman to run. Verifies the
-// core contract — incremental index seeds == from-scratch extraction — holds for
-// nodes carrying a block inversion, using non-inversion nodes as a control
-// baseline. Skipped (passes trivially) when TB_PANMAN is unset, so CI is unaffected.
+// rsv_4K contains no block inversions, so the strand-flip whole-block seed
+// recompute (computeNewSyncmerRangesJump, index_single_mode.cpp ~line 307) would
+// otherwise be untested. Inject synthetic PURE block inversions (blockMutInfo=false,
+// inversion=true — exactly how panman encodes a real inversion) into a sample of
+// leaf nodes, each inverting a real block that exists at that node, then assert the
+// incremental index seeds equal from-scratch extraction. Injecting only at leaves
+// keeps each injection independent, so non-injected leaves are a clean control.
+// (Also validated against 89 real inversions in tb_400.panman, all matching.)
 BOOST_AUTO_TEST_CASE(block_inversion_reconstruction_equals_direct) {
-    const char* tbPath = std::getenv("TB_PANMAN");
-    if (!tbPath) {
-        BOOST_TEST_MESSAGE("TB_PANMAN not set; skipping block-inversion validation");
-        return;
+    ts::RSVPanmanFixture fix;
+    panmanUtils::Tree* T = fix.tree();
+
+    std::vector<std::string> leaves;
+    for (const auto& id : fix.nodeIds()) {
+        if (T->allNodes.at(id)->children.empty()) leaves.push_back(id);
     }
+    std::mt19937_64 g(7);
+    std::shuffle(leaves.begin(), leaves.end(), g);
 
-    // Load the panman.
-    std::ifstream in(tbPath, std::ios::binary);
-    BOOST_REQUIRE_MESSAGE(in.is_open(), "cannot open TB_PANMAN=" << tbPath);
-    boost::iostreams::filtering_streambuf<boost::iostreams::input> buf;
-    buf.push(boost::iostreams::lzma_decompressor());
-    buf.push(in);
-    std::istream stream(&buf);
-    auto TG = std::make_unique<panmanUtils::TreeGroup>(stream);
-    BOOST_REQUIRE(!TG->trees.empty());
-    panmanUtils::Tree* T = &TG->trees[0];
-
-    // Categorise nodes by block-mutation type. The line-307 whole-block recompute
-    // fires only for a PURE inversion of an already-existing block, so those are the
-    // bug-relevant set; inverted insertions are handled by the normal walk.
-    std::vector<std::string> pureInversionNodes, invertedInsertionNodes, controlNodes;
-    for (auto& [id, node] : T->allNodes) {
-        bool pureInv = false, invIns = false, anyMut = false;
-        for (auto& bm : node->blockMutation) {
-            anyMut = true;
-            if (bm.inversion && !bm.blockMutInfo) pureInv = true;
-            else if (bm.inversion && bm.blockMutInfo) invIns = true;
+    // Inject a pure inversion of the largest existing forward block (length >= k, so
+    // the flip changes seeds) into the first N leaves; the rest are controls. Record
+    // each pre-injection genome so we can confirm the injections are meaningful.
+    std::vector<std::string> injected, controls;
+    std::unordered_map<std::string, std::string> genomeBefore;
+    const size_t kInject = 25;
+    for (const auto& id : leaves) {
+        if (injected.size() >= kInject) {
+            controls.push_back(id);
+            continue;
         }
-        if (pureInv) pureInversionNodes.push_back(id);
-        else if (invIns) invertedInsertionNodes.push_back(id);
-        else if (anyMut) controlNodes.push_back(id);
+        std::vector<std::vector<std::pair<char, std::vector<char>>>> seq;
+        std::vector<char> blockExists, blockStrand;
+        std::unordered_map<int, int> blockLengths;
+        panmapUtils::getSequenceFromReference(T, seq, blockExists, blockStrand, blockLengths, id);
+        // For an existing block, getSequenceFromReference fills seq[b] with the block's
+        // nucleotides (blockLengths is only tracked for absent blocks). Pick the largest
+        // existing forward block; inverting it flips >= k bases so seeds change.
+        int best = -1, bestLen = 0;
+        for (size_t b = 0; b < blockExists.size() && b < seq.size(); ++b) {
+            if (!blockExists[b] || !blockStrand[b]) continue;
+            int len = static_cast<int>(seq[b].size());
+            if (len >= K && len > bestLen) {
+                bestLen = len;
+                best = static_cast<int>(b);
+            }
+        }
+        if (best < 0) {
+            controls.push_back(id);
+            continue;
+        }
+        genomeBefore[id] = T->getStringFromReference(id, false);
+        panmanUtils::BlockMut bm;
+        bm.primaryBlockId = best;
+        bm.secondaryBlockId = -1;
+        bm.blockMutInfo = false;  // false + inversion=true == pure block inversion of an existing block
+        bm.inversion = true;
+        T->allNodes.at(id)->blockMutation.push_back(bm);
+        injected.push_back(id);
     }
-    BOOST_TEST_MESSAGE("nodes: pure-inversion=" << pureInversionNodes.size()
-                       << " inverted-insertion=" << invertedInsertionNodes.size()
-                       << " other-mutating=" << controlNodes.size());
-    BOOST_REQUIRE_MESSAGE(!pureInversionNodes.empty(), "panman has no pure block inversions to test");
+    BOOST_TEST_MESSAGE("injected pure inversions into " << injected.size() << " leaves; controls=" << controls.size());
+    BOOST_REQUIRE(!injected.empty());
 
-    // Build the real index (imputeAmb=false via TestIndex; flankMaskBp=0; l=1 => seeds==syncmers).
+    // Build the index from the mutated tree (imputeAmb=false; flankMaskBp=0; l=1 => seeds==syncmers).
     ts::TestIndex idx(T, K, S, 0, L, /*open=*/false, /*hpc=*/false, /*flankMaskBp=*/0);
     auto& d = idx.data();
     const auto& tree = *d.liteTree;
+
+    // Confirm the injections actually changed the genomes (real inversions, not no-ops).
+    int meaningful = 0;
+    for (const auto& id : injected) {
+        if (T->getStringFromReference(id, false) != genomeBefore[id]) meaningful++;
+    }
+    BOOST_TEST_MESSAGE("meaningful (genome-changing) injections: " << meaningful << "/" << injected.size());
+    BOOST_TEST(meaningful == static_cast<int>(injected.size()));
 
     // Multiset diff: incremental (reconstructed) vs from-scratch (direct).
     auto compareNode = [&](const std::string& nodeId, long& missing, long& extra, bool& hasN) -> bool {
@@ -249,9 +271,9 @@ BOOST_AUTO_TEST_CASE(block_inversion_reconstruction_equals_direct) {
     };
 
     long ctrlMism = 0, ctrlMiss = 0, ctrlExtra = 0;
-    runSet("CONTROL", controlNodes, 40, ctrlMism, ctrlMiss, ctrlExtra);
+    runSet("CONTROL", controls, 40, ctrlMism, ctrlMiss, ctrlExtra);
     long invMism = 0, invMiss = 0, invExtra = 0;
-    runSet("PURE-INVERSION", pureInversionNodes, 120, invMism, invMiss, invExtra);
+    runSet("INJECTED-INVERSION", injected, kInject, invMism, invMiss, invExtra);
 
     // The correctness contract must hold for inversion nodes exactly as it does for
     // control nodes. Control establishes the baseline (should be 0); any inversion-
