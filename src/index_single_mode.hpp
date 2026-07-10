@@ -145,14 +145,8 @@ class IndexBuilder {
     tbb::spin_mutex nodeToDfsIndexMutex_;
     std::atomic<uint64_t> processedNodes_{0};
 
-    std::atomic<int> activeClones_{0};
-    int maxConcurrentClones_{0};  // set based on memory
-
-    // Instrumentation stats for parallel builds
+    // Instrumentation stat for parallel builds
     std::atomic<uint64_t> totalClonesCreated_{0};
-    std::atomic<uint64_t> parallelForkPoints_{0};
-    std::atomic<uint64_t> sequentialFallbacks_{0};
-    std::atomic<int> peakActiveClones_{0};
     mutable std::chrono::steady_clock::time_point lastProgressLog_{};
     std::chrono::steady_clock::time_point buildStartTime_{};  // For nodes/sec calculation
     std::unique_ptr<output::ProgressBar> buildProgressBar_;
@@ -235,34 +229,6 @@ class IndexBuilder {
                           std::map<uint64_t, uint64_t>& gapMap,
                           std::unordered_set<uint64_t>& invertedBlocks,
                           uint64_t& dfsIndex);
-
-    // Sequential subtree processing (no cloning, uses passed-by-reference state)
-    void processSubtreeSequential(panmanUtils::Node* node,
-                                  BuildState& state,
-                                  panmapUtils::GlobalCoords& globalCoords,
-                                  std::unordered_set<std::string_view>& localEmptyNodes,
-                                  uint64_t dfsIndex,
-                                  BacktrackInfo* backtrackInfo = nullptr);
-
-    // Parallel subtree processing - spawns parallel tasks at fork points
-    void processSubtreeParallel(panmanUtils::Node* node,
-                                BuildState& state,
-                                panmapUtils::GlobalCoords& globalCoords,
-                                std::unordered_set<std::string_view>& localEmptyNodes,
-                                uint64_t dfsIndex,
-                                tbb::spin_mutex& emptyNodesMutex,
-                                size_t parallelThreshold,
-                                size_t depth = 0  // Recursion depth for instrumentation
-    );
-
-    // Parallel DFS helper (clones state only at top levels)
-    void buildIndexHelperParallel(panmanUtils::Node* node,
-                                  BuildState state,
-                                  panmapUtils::GlobalCoords& globalCoords,
-                                  std::unordered_set<std::string_view>& emptyNodes,
-                                  uint64_t dfsIndex,
-                                  tbb::task_group& taskGroup,
-                                  int depth);
 
     // Process a single node and compute its seed counts
     void processNode(

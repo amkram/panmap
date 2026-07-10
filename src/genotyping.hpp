@@ -31,15 +31,6 @@ struct mutationMatrices {
 
 void fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf);
 
-void buildMutationMatricesHelper(mutationMatrices& mutMat,
-                                 panmanUtils::Tree* tree,
-                                 panmanUtils::Node* node,
-                                 std::vector<int64_t>& parentBaseCounts,
-                                 std::vector<int64_t>& totalBaseCounts,
-                                 std::vector<std::vector<int64_t>>& subCount,
-                                 std::unordered_map<int64_t, int64_t>& insCount,
-                                 std::unordered_map<int64_t, int64_t>& delCount);
-
 std::string applyMutationSpectrum(const std::string& line, const std::vector<std::vector<double>>& scaled_submat);
 
 }  // namespace genotyping
