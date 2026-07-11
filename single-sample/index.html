@@ -1032,11 +1032,11 @@ placement (the default run, <code>--stop align</code>, <code>--stop genotype</co
 <p>This example places paired-end reads onto a SARS-CoV-2 pangenome and calls variants.</p>
 <h3 id="1-get-a-panman">1. Get a PanMAN<a class="headerlink" href="#1-get-a-panman" title="Permanent link">&para;</a></h3>
 <p>Download or build a PanMAN for your organism. For SARS-CoV-2, a pre-built PanMAN with 20,000 samples is included:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ls<span class="w"> </span>examples/data/sars_20000_twilight_dipper.panman
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ls<span class="w"> </span>examples/data/panmans/sars_20000_twilight_dipper.panman
 </code></pre></div>
 <h3 id="2-run-the-full-pipeline">2. Run the full pipeline<a class="headerlink" href="#2-run-the-full-pipeline" title="Permanent link">&para;</a></h3>
 <p>Runs index -&gt; place -&gt; align -&gt; genotype -&gt; consensus by default, and auto-builds/reuses the index next to the PanMAN.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>panmap<span class="w"> </span>examples/data/sars_20000_twilight_dipper.panman<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>panmap<span class="w"> </span>examples/data/panmans/sars_20000_twilight_dipper.panman<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>reads_R1.fq.gz<span class="w"> </span>reads_R2.fq.gz<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-t<span class="w"> </span><span class="m">8</span><span class="w"> </span>-o<span class="w"> </span>my_sample
 </code></pre></div>
@@ -1070,7 +1070,7 @@ placement (the default run, <code>--stop align</code>, <code>--stop genotype</co
 <p>The seed index is built once next to the PanMAN (<code>sars_20000_twilight_dipper.panman.idx</code>) and reused automatically on later runs.</p>
 <h3 id="4-reuse-the-index">4. Reuse the index<a class="headerlink" href="#4-reuse-the-index" title="Permanent link">&para;</a></h3>
 <p>The cached index is reused automatically for later samples: just run panmap again. Use <code>--reindex</code> to force a rebuild, or <code>--index &lt;path&gt;</code> to load a pre-built index from another location.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>panmap<span class="w"> </span>examples/data/sars_20000_twilight_dipper.panman<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>panmap<span class="w"> </span>examples/data/panmans/sars_20000_twilight_dipper.panman<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>sample2_R1.fq.gz<span class="w"> </span>sample2_R2.fq.gz<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-t<span class="w"> </span><span class="m">8</span><span class="w"> </span>-o<span class="w"> </span>sample2
 </code></pre></div>
