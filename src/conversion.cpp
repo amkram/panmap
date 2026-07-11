@@ -306,7 +306,13 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
         qname.resize(qname.size() - 2);
     }
 
-    uint16_t flag = compute_sam_flags(is_paired, is_read1, aln->rev, mate_rev, proper_frag, mate_unmapped);
+    // R2 of a pair is reverse-complemented upstream (readFastqPaired) before alignment,
+    // so the aligner's rev bit for it is inverted relative to the original fragment.
+    // Report the original read's true strand in the FLAG and TLEN; the stored SEQ/CIGAR
+    // stay in the aligned (forward-reference) orientation, which is what BAM expects for
+    // either strand.
+    const uint8_t effective_rev = (is_paired && !is_read1) ? static_cast<uint8_t>(!aln->rev) : aln->rev;
+    uint16_t flag = compute_sam_flags(is_paired, is_read1, effective_rev, mate_rev, proper_frag, mate_unmapped);
 
     // Build full CIGAR with soft clips for unaligned query ends
     uint32_t clip5 = aln->rev ? (read_len - aln->qe) : aln->qs;
@@ -351,7 +357,7 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
     int32_t mtid = -1;
     hts_pos_t mpos_val = -1;
     if (is_paired) {
-        tlen = compute_tlen(this_rs, this_re, aln->rev, mate_rs, mate_re, mate_rev);
+        tlen = compute_tlen(this_rs, this_re, effective_rev, mate_rs, mate_re, mate_rev);
         mtid = 0;
         mpos_val = mate_pos;
     }
@@ -434,7 +440,7 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
                                                r_lens[r1_idx],
                                                true,
                                                true,
-                                               res->r2.rev,
+                                               static_cast<uint8_t>(!res->r2.rev),  // mate (R2) true strand
                                                res->r2.rs,
                                                res->r1.rs,
                                                res->r1.re,

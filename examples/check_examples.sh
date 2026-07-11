@@ -52,8 +52,10 @@ if "$PANMAP" "$data_dir/sars_20000_twilight_dipper.panman" \
   e="$exp_dir/single_sample"
   diff -q "$e/isolate.placement.tsv" "$o.placement.tsv" >/dev/null && ok "placement.tsv" || bad "placement.tsv"
   diff -q "$e/isolate.ref.fa"        "$o.ref.fa"        >/dev/null && ok "ref.fa"        || bad "ref.fa"
-  diff -q "$e/isolate.consensus.fa"  "$o.consensus.fa"  >/dev/null && ok "consensus.fa"  || bad "consensus.fa"
-  diff <(norm_vcf "$e/isolate.vcf") <(norm_vcf "$o.vcf") >/dev/null && ok "vcf (variant records)" || bad "vcf (variant records)"
+  if diff -q "$e/isolate.consensus.fa" "$o.consensus.fa" >/dev/null; then ok "consensus.fa"; else
+    bad "consensus.fa"; echo "    consensus diff (< expected / > got):"; diff "$e/isolate.consensus.fa" "$o.consensus.fa" | head -12; fi
+  if diff <(norm_vcf "$e/isolate.vcf") <(norm_vcf "$o.vcf") >/dev/null; then ok "vcf (variant records)"; else
+    bad "vcf (variant records)"; echo "    vcf variant diff (< expected / > got):"; diff <(norm_vcf "$e/isolate.vcf") <(norm_vcf "$o.vcf") | sed 's/^/      /'; fi
 else
   bad "single-sample run failed (see $work/d1.log)"; cat "$work/d1.log"
 fi
