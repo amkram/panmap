@@ -583,13 +583,15 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
             if (it == alignmentScoreMap.end()) continue;
             int64_t score = it->second;
             if (score > bestScore || (score == bestScore && bestIdx != UINT32_MAX)) {
-                // Tie-break by seed score
+                // Tie-break by seed score, then by lowest node index so the winner
+                // is deterministic (mcs.expanded is an unordered hash set).
                 if (score == bestScore) {
                     auto* nodeA = liteTree->dfsIndexToNode[nodeIdx];
                     auto* nodeB = liteTree->dfsIndexToNode[bestIdx];
                     float seedA = nodeA ? seedScoreGetter(nodeA) : 0.0f;
                     float seedB = nodeB ? seedScoreGetter(nodeB) : 0.0f;
-                    if (seedA <= seedB) continue;  // Current best still wins
+                    if (seedA < seedB) continue;                        // current best wins on seed score
+                    if (seedA == seedB && nodeIdx > bestIdx) continue;  // exact tie -> lowest index wins
                 }
                 bestScore = score;
                 bestIdx = nodeIdx;
