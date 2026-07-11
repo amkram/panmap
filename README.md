@@ -25,8 +25,8 @@ panmap -h
 With Docker (pulled from registry):
 
 ```bash
-docker pull quay.io/biocontainers/panmap:0.1.2--0
-docker run --rm quay.io/biocontainers/panmap:0.1.2--0 panmap -h
+docker pull quay.io/biocontainers/panmap:0.1.3--0
+docker run --rm quay.io/biocontainers/panmap:0.1.3--0 panmap -h
 ```
 
 Or build locally with Docker (~6 min):
