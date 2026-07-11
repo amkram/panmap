@@ -80,7 +80,6 @@ output/
 
 !examples/expected/
 !examples/expected/**
-/examples/data/v_mtdna.panman
 
 /manuscript.md
 /review.md
@@ -104,7 +103,7 @@ output/
 /*.mgsr.*.out
 /gmon.out
 
-/examples/data/*.panman.*.fa
+/examples/data/panmans/*.panman.*.fa
 
 /scripts/mutation_check.sh
 

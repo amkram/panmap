@@ -36,7 +36,7 @@ This example places paired-end reads onto a SARS-CoV-2 pangenome and calls varia
 Download or build a PanMAN for your organism. For SARS-CoV-2, a pre-built PanMAN with 20,000 samples is included:
 
 ```bash
-ls examples/data/sars_20000_twilight_dipper.panman
+ls examples/data/panmans/sars_20000_twilight_dipper.panman
 ```
 
 ### 2. Run the full pipeline
@@ -44,7 +44,7 @@ ls examples/data/sars_20000_twilight_dipper.panman
 Runs index -> place -> align -> genotype -> consensus by default, and auto-builds/reuses the index next to the PanMAN.
 
 ```bash
-panmap examples/data/sars_20000_twilight_dipper.panman \
+panmap examples/data/panmans/sars_20000_twilight_dipper.panman \
   reads_R1.fq.gz reads_R2.fq.gz \
   -t 8 -o my_sample
 ```
@@ -65,7 +65,7 @@ The seed index is built once next to the PanMAN (`sars_20000_twilight_dipper.pan
 The cached index is reused automatically for later samples: just run panmap again. Use `--reindex` to force a rebuild, or `--index <path>` to load a pre-built index from another location.
 
 ```bash
-panmap examples/data/sars_20000_twilight_dipper.panman \
+panmap examples/data/panmans/sars_20000_twilight_dipper.panman \
   sample2_R1.fq.gz sample2_R2.fq.gz \
   -t 8 -o sample2
 ```
