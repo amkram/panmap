@@ -177,7 +177,7 @@ struct Config {
     bool impute = false;              // Impute N's from parent sequence (ignore _->N mutations)
     bool noMutationSpectrum = false;  // Skip mutation spectrum filtering in VCF
     bool baq = false;                 // Enable BAQ (Base Alignment Quality) in mpileup
-    int minDepth = 5;                 // Min high-quality read depth to call a consensus variant
+    int minDepth = 1;                 // Min high-quality read depth to call a consensus variant
     double minQual = 30.0;            // Min bcftools variant QUAL to call a consensus variant
 
     // Pre-computed substitution spectrum from index (4x4 phred-scaled matrix)
@@ -1837,8 +1837,9 @@ int main(int argc, char** argv) {
         "Disable mutation spectrum filtering in VCF genotyping")(
         "baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")(
         "min-depth",
-        po::value<int>(&cfg.minDepth)->default_value(5),
-        "Min high-quality read depth to call a consensus variant (below: no-call)")(
+        po::value<int>(&cfg.minDepth)->default_value(1),
+        "Min high-quality read depth to call a consensus variant (default 1 supports "
+        "low coverage; raise for stringent high-coverage consensus)")(
         "min-qual",
         po::value<double>(&cfg.minQual)->default_value(30.0),
         "Min variant QUAL (phred) to call a consensus variant")(
