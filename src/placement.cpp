@@ -254,13 +254,16 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
                 // Both vectors in log-space for proper cosine similarity
                 childMetrics.logCosineNumerator += logReadCount * (logChild - logParent);
 
-                // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome.
-                // Weights each seed by 1/(node's genome count), rewarding genomes where matching
-                // seeds are rare/unique. Delta: 1/childCount - 1/parentCount for seeds in reads.
+                // Weighted containment numerator: Σ(1/genomeCount_i) over read seeds
+                // present in this genome, weighting each by inverse genome frequency so
+                // rare/discriminative seeds count more. presenceDelta (+1 gained / -1 lost)
+                // moves the seed in/out of the node's genome as we descend from the parent.
                 {
-                    const double oldWcContrib = (parentCount > 0) ? (1.0 / parentCount) : 0.0;
-                    const double newWcContrib = (childCount > 0) ? (1.0 / childCount) : 0.0;
-                    childMetrics.weightedContainmentNumerator += (newWcContrib - oldWcContrib);
+                    auto igcIt = state.seedInverseGenomeCounts.find(seedHash);
+                    const double invGenomeCount =
+                        (igcIt != state.seedInverseGenomeCounts.end()) ? igcIt->second : 0.0;
+                    childMetrics.weightedContainmentNumerator +=
+                        static_cast<double>(presenceDelta) * invGenomeCount;
                 }
 
                 // Log containment numerator: Σ(log(1+r_i)) for seeds in reads ∩ genome
@@ -1808,20 +1811,30 @@ void placeLite(PlacementResult& result,
     state.root = liteTree->root;
     state.liteTree = liteTree;  // zero-copy seed-change SoA pointers used by computeChildMetrics
 
-    // Precompute inverse genome counts from root's seed changes
-    // g_i = number of genomes containing seed i (root's childCount for that seed)
-    // Used by weighted containment metric to upweight rare/discriminative seeds
-    if (liteTree->root) {
-        liteTree->forEachSeedChange(liteTree->root->seedChangeOffset,
-                                    liteTree->root->seedChangeSize,
-                                    [&](uint64_t seedHash, int64_t /*parentCount*/, int64_t childCount) {
-                                        if (childCount > 0 && state.logReadCounts.contains(seedHash)) {
-                                            double invCount = 1.0 / static_cast<double>(childCount);
-                                            state.seedInverseGenomeCounts[seedHash] = invCount;
-                                            state.weightedContainmentDenominator += invCount;
-                                        }
-                                    });
-        logging::debug("Weighted containment: {} seeds with inverse genome counts, denominator={:.6f}",
+    // Precompute inverse genome frequency for read seeds: weight = 1 / (number of leaf
+    // genomes containing the seed), from the index's per-seed genome counts. Upweights
+    // rare/discriminative seeds in the weighted-containment metric. The denominator sums
+    // the weights over all read seeds that occur in the pangenome, so the score is a
+    // proper containment fraction in [0, 1].
+    if (indexRoot.hasSeedGenomeCountHashes() && indexRoot.hasSeedGenomeCounts()) {
+        auto gcHashesReader = indexRoot.getSeedGenomeCountHashes();
+        auto gcCountsReader = indexRoot.getSeedGenomeCounts();
+        const size_t gcSegs = std::min(gcHashesReader.size(), gcCountsReader.size());
+        for (uint32_t seg = 0; seg < gcSegs; ++seg) {
+            auto hSeg = gcHashesReader[seg];
+            auto cSeg = gcCountsReader[seg];
+            const size_t n = std::min<size_t>(hSeg.size(), cSeg.size());
+            const uint64_t* H = reinterpret_cast<const uint64_t*>(capnp::toAny(hSeg).getRawBytes().begin());
+            const uint32_t* C = reinterpret_cast<const uint32_t*>(capnp::toAny(cSeg).getRawBytes().begin());
+            for (size_t j = 0; j < n; ++j) {
+                if (C[j] > 0 && state.logReadCounts.contains(H[j])) {
+                    const double invCount = 1.0 / static_cast<double>(C[j]);
+                    state.seedInverseGenomeCounts[H[j]] = invCount;
+                    state.weightedContainmentDenominator += invCount;
+                }
+            }
+        }
+        logging::debug("Weighted containment: {} read seeds with genome counts, denominator={:.6f}",
                        state.seedInverseGenomeCounts.size(),
                        state.weightedContainmentDenominator);
     }

@@ -21,10 +21,13 @@ GroundTruthMetrics GroundTruthMetrics::compute(const SeedCountMap& nodeGenome,
         const double logReadCount = it->second;
 
         m.presenceIntersectionCount++;
-        m.logRawNumerator += logReadCount / static_cast<double>(genomeCount);      // placement.cpp:240-242
-        m.logCosineNumerator += logReadCount * logGenome;                          // placement.cpp:246
-        m.weightedContainmentNumerator += 1.0 / static_cast<double>(genomeCount);  // placement.cpp:253-255
-        m.logContainmentNumerator += logReadCount;                                 // placement.cpp:260
+        m.logRawNumerator += logReadCount / static_cast<double>(genomeCount);  // placement.cpp:240-242
+        m.logCosineNumerator += logReadCount * logGenome;                      // placement.cpp:246
+        // Weighted containment weights each present read seed by its inverse genome
+        // frequency (number of genomes containing it), taken from state.
+        if (auto gcIt = state.seedInverseGenomeCounts.find(hash); gcIt != state.seedInverseGenomeCounts.end())
+            m.weightedContainmentNumerator += gcIt->second;
+        m.logContainmentNumerator += logReadCount;  // placement.cpp:260
     }
     return m;
 }

@@ -70,10 +70,11 @@ struct PlacementGlobalState {
     // Hash to sequence map for debugging output (optional, populated when verbose)
     absl::flat_hash_map<size_t, std::string, IdentityHash> hashToSequence;
 
-    // Precomputed inverse genome counts: 1/g_i for each seed in reads
-    // g_i = number of genomes in the pangenome containing seed i (from root)
+    // Precomputed inverse genome frequency: 1/g_i for each read seed present in the
+    // pangenome, where g_i = number of leaf genomes containing seed i (from the index's
+    // seedGenomeCount* fields).
     absl::flat_hash_map<size_t, double, IdentityHash> seedInverseGenomeCounts;
-    double weightedContainmentDenominator = 0.0;  // Σ(1/g_i) for all seeds in reads
+    double weightedContainmentDenominator = 0.0;  // Σ(1/g_i) over read seeds in the pangenome
     double logContainmentDenominator = 0.0;       // Σ log(1+r_i) for all seeds in reads
 
     int kmerSize = 31;
@@ -140,8 +141,8 @@ struct NodeMetrics {
         return (readUniqueSeedCount > 0) ? static_cast<double>(presenceIntersectionCount) / readUniqueSeedCount : 0.0;
     }
 
-    // Weighted Containment: Σ(1/nodeGenomeCount_i for R∩G) / Σ(1/rootGenomeCount_i for R)
-    // Upweights rare (discriminative) seeds, downweights common ones
+    // Weighted Containment: Σ(1/g_i for R∩G) / Σ(1/g_i for R), g_i = #genomes with seed i.
+    // A containment fraction in [0,1] that upweights rare (discriminative) seeds.
     constexpr double getWeightedContainmentScore(double weightedContainmentDenominator) const {
         return (weightedContainmentDenominator > 0.0) ? weightedContainmentNumerator / weightedContainmentDenominator
                                                       : 0.0;

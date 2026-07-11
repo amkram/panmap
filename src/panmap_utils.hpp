@@ -27,7 +27,8 @@ namespace panmapUtils {
 // message instead of a cryptic Cap'n Proto error. Pre-versioning indexes lack
 // the field and read as 0.
 //   4: struct-of-arrays seed changes with 64-bit nodeChangeOffsets
-inline constexpr uint16_t INDEX_FORMAT_VERSION = 4;
+//   5: adds per-seed genome-frequency counts (seedGenomeCount*)
+inline constexpr uint16_t INDEX_FORMAT_VERSION = 5;
 
 enum seedChangeType { ADD, DEL, SUB };
 

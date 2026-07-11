@@ -190,6 +190,11 @@ class IndexBuilder {
     void buildIndex();
     void buildIndexParallel(int numThreads = 0);  // 0 = auto-detect
 
+    // Compute per-seed genome frequency (number of leaf genomes containing each seed)
+    // from the per-node seed changes, and serialize it into the index. Used by the
+    // weighted-containment placement metric.
+    void writeSeedGenomeCounts(const std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>& nodeChanges);
+
     // Compute 4x4 substitution spectrum from tree mutations and store in index
     void computeSubstitutionSpectrum();
 

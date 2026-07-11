@@ -1179,6 +1179,73 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
     }
 }
 
+void index_single_mode::IndexBuilder::writeSeedGenomeCounts(
+    const std::vector<std::vector<std::tuple<uint64_t, int64_t, int64_t>>>& nodeChanges) {
+    const size_t numNodes = nodeChanges.size();
+
+    // Invert nodeToDfsIndex -> node* per dfsIndex.
+    std::vector<panmanUtils::Node*> dfsIndexToNode(numNodes, nullptr);
+    for (const auto& [nodeId, node] : T->allNodes) {
+        auto it = nodeToDfsIndex.find(nodeId);
+        if (it != nodeToDfsIndex.end() && it->second < numNodes) dfsIndexToNode[it->second] = node;
+    }
+
+    // Leaves per subtree, by dfsIndex. dfsIndex is DFS pre-order, so a node's
+    // descendants have higher indices; accumulate children into parents high -> low.
+    std::vector<uint64_t> leafCount(numNodes, 0);
+    for (size_t i = numNodes; i-- > 0;) {
+        panmanUtils::Node* node = dfsIndexToNode[i];
+        if (!node) continue;
+        if (node->children.empty()) leafCount[i] += 1;
+        if (node->parent) {
+            auto pit = nodeToDfsIndex.find(node->parent->identifier);
+            if (pit != nodeToDfsIndex.end() && pit->second < numNodes) leafCount[pit->second] += leafCount[i];
+        }
+    }
+
+    // Genome frequency per seed: a seed becoming present at node N (parentCount<=0,
+    // childCount>0) is present in every leaf under N; becoming absent removes them.
+    // Summing these signed subtree-leaf contributions yields the leaf count containing it.
+    std::unordered_map<uint64_t, int64_t> genomeCount;
+    for (size_t d = 0; d < numNodes; ++d) {
+        const int64_t leaves = static_cast<int64_t>(leafCount[d]);
+        for (const auto& [hash, parentCount, childCount] : nodeChanges[d]) {
+            if (parentCount <= 0 && childCount > 0) genomeCount[hash] += leaves;
+            else if (parentCount > 0 && childCount <= 0) genomeCount[hash] -= leaves;
+        }
+    }
+
+    // Serialize hash-sorted (hash, count) for seeds present in >=1 leaf, segmented
+    // like seedChangeHashes so the lists never exceed the capnp per-list limit.
+    std::vector<uint64_t> hashes;
+    hashes.reserve(genomeCount.size());
+    for (const auto& [hash, count] : genomeCount)
+        if (count > 0) hashes.push_back(hash);
+    std::sort(hashes.begin(), hashes.end());
+
+    const size_t n = hashes.size();
+    constexpr size_t CAPNP_SPLIT = 500'000'000;
+    const size_t numSeg = std::max<size_t>(1, (n + CAPNP_SPLIT - 1) / CAPNP_SPLIT);
+    auto hashBuilder = indexBuilder.initSeedGenomeCountHashes(numSeg);
+    auto countBuilder = indexBuilder.initSeedGenomeCounts(numSeg);
+    for (size_t seg = 0; seg < numSeg; ++seg) {
+        const size_t segStart = seg * CAPNP_SPLIT;
+        const size_t segSize = (segStart < n) ? std::min(CAPNP_SPLIT, n - segStart) : 0;
+        hashBuilder.init(seg, segSize);
+        countBuilder.init(seg, segSize);
+    }
+    uint64_t maxGc = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t seg = i / CAPNP_SPLIT;
+        const size_t off = i % CAPNP_SPLIT;
+        hashBuilder[seg].set(off, hashes[i]);
+        const int64_t c = genomeCount[hashes[i]];
+        maxGc = std::max<uint64_t>(maxGc, static_cast<uint64_t>(c));
+        countBuilder[seg].set(off, static_cast<uint32_t>(std::min<int64_t>(c, UINT32_MAX)));
+    }
+    logging::debug("Seed genome counts: {} unique seeds, max genome count {}", n, maxGc);
+}
+
 void index_single_mode::IndexBuilder::buildIndex() {
     panmapUtils::BlockSequences blockSequences(T);
     panmapUtils::GlobalCoords globalCoords(blockSequences);
@@ -1342,6 +1409,8 @@ void index_single_mode::IndexBuilder::buildIndex() {
         }
     }
     nodeChangeOffsetsBuilder.set(numNodes, offset);
+
+    writeSeedGenomeCounts(nodeChanges);
 
     output::done(fmt::format("Index built ({} seed changes)", totalChanges));
 }
@@ -2457,6 +2526,8 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
         }
     }
     nodeChangeOffsetsBuilder.set(numNodes, offset);
+
+    writeSeedGenomeCounts(nodeChanges);
 
     auto serializeEnd = std::chrono::high_resolution_clock::now();
     auto serializeMs = std::chrono::duration_cast<std::chrono::milliseconds>(serializeEnd - serializeStart).count();

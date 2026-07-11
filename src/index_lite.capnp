@@ -67,4 +67,11 @@ struct LiteIndex {
   # On-disk format version (see panmapUtils::INDEX_FORMAT_VERSION). Absent (=0) in
   # pre-versioning indexes so the reader can reject them with a rebuild message.
   formatVersion @17 :UInt16;
+
+  # Per-seed genome frequency: for each unique seed hash, the number of leaf genomes
+  # whose reconstructed genome contains it. Two parallel, hash-sorted lists, segmented
+  # (CAPNP_SPLIT) like seedChangeHashes. Used by the weighted-containment metric to
+  # upweight rare/discriminative seeds (weight = 1 / genome count).
+  seedGenomeCountHashes @18 :List(List(UInt64));
+  seedGenomeCounts @19 :List(List(UInt32));
 }

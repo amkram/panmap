@@ -102,7 +102,8 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     state.readUniqueSeedCount = 1;
     state.logReadMagnitude = std::log1p(3.0);  // single seed
     state.logContainmentDenominator = std::log1p(3.0);
-    state.weightedContainmentDenominator = 1.0;
+    state.seedInverseGenomeCounts[H] = 0.5;      // H present in 2 genomes -> weight 1/2
+    state.weightedContainmentDenominator = 0.5;  // Σ(1/g_i) over read seeds = just H
 
     // (a) H appears in genome (0 -> 2): all read-interaction numerators update.
     {
@@ -121,12 +122,12 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
 
         // Hand-derived ground truth for r=3, g=2 (independently verified, not via the
         // oracle): logRaw = log(4)/2 / log(4) = 0.5; logCosine = log(4)log(3) /
-        // (log(4)·log(3)) = 1; containment = 1/1 = 1; weightedContainment = (1/2)/1 =
-        // 0.5; logContainment = log(4)/log(4) = 1.
+        // (log(4)·log(3)) = 1; containment = 1/1 = 1; weightedContainment = (1/2)/(1/2)
+        // = 1 (H is the only read seed and it is present); logContainment = log(4)/log(4) = 1.
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), 0.5, 1e-3);
         BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), 1.0, 1e-3);
         BOOST_CHECK_CLOSE(m.getContainmentScore(state.readUniqueSeedCount), 1.0, 1e-3);
-        BOOST_CHECK_CLOSE(m.getWeightedContainmentScore(state.weightedContainmentDenominator), 0.5, 1e-3);
+        BOOST_CHECK_CLOSE(m.getWeightedContainmentScore(state.weightedContainmentDenominator), 1.0, 1e-3);
         BOOST_CHECK_CLOSE(m.getLogContainmentScore(state.logContainmentDenominator), 1.0, 1e-3);
     }
 
