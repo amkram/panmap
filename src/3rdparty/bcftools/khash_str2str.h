@@ -25,7 +25,7 @@ DEALINGS IN THE SOFTWARE.  */
 #ifndef KHASH_STR2STR_H
 #define KHASH_STR2STR_H
 
-#include "../samtools/htslib-1.20/htslib/khash.h"
+#include <htslib/khash.h>
 
 KHASH_MAP_INIT_STR(str2str, const char*)
 
