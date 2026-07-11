@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(panmap VERSION 0.1.2)
+project(panmap VERSION 0.1.3)
 
 # Use ccache as compiler launcher when installed: unchanged translation units
 # (notably mgsr.cpp, ~25s at -O3) are served from cache. No-op if ccache is
@@ -595,10 +595,13 @@ target_compile_options(bwa PRIVATE -fPIC)
 file(GLOB BCFTOOLS_SOURCES src/3rdparty/bcftools/*.c)
 add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
 target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
+# bcftools sources include <htslib/...>; resolve them against the htslib whose
+# library we actually link — conda's headers under USE_SYSTEM_LIBS (version-matched),
+# else the vendored htslib-1.20 source tree (present without waiting on htslib_ext).
 if(USE_SYSTEM_LIBS)
-    # build.sh rewrites bcftools' vendored-relative htslib includes to <htslib/...>;
-    # point them at the conda htslib headers.
     target_include_directories(bcftools PRIVATE ${HTS_INCLUDE_DIR})
+else()
+    target_include_directories(bcftools PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 endif()
 target_compile_options(bcftools PRIVATE -fPIC)
 
