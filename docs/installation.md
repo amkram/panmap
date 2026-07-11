@@ -21,8 +21,8 @@ This installs `panmap` and `panmanUtils`. [Mamba](https://mamba.readthedocs.io/)
 Bioconda release:
 
 ```bash
-docker pull quay.io/biocontainers/panmap:0.1.2--0
-docker run --rm quay.io/biocontainers/panmap:0.1.2--0 panmap -h
+docker pull quay.io/biocontainers/panmap:0.1.3--0
+docker run --rm quay.io/biocontainers/panmap:0.1.3--0 panmap -h
 ```
 
 Pick a concrete tag from the
@@ -31,7 +31,7 @@ images are not tagged `latest`. To run on local files, mount the working directo
 
 ```bash
 docker run --rm -v "$(pwd):/data" -w /data \
-  quay.io/biocontainers/panmap:0.1.2--0 \
+  quay.io/biocontainers/panmap:0.1.3--0 \
   panmap ref.panman reads.fq -o sample
 ```
 

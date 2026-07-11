@@ -43,6 +43,43 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j2
 
+  # Guards the bioconda recipe's exact build path: the repo's own CMakeLists driven
+  # with USE_SYSTEM_LIBS + an offline PANMAN_SOURCE_DIR (the recipe supplies panman as
+  # a tarball, not via FetchContent). Keeps a CMakeLists change from silently breaking
+  # the conda package while the primary gate (which FetchContents panman) stays green.
+  bioconda-build:
+    name: bioconda recipe build (linux)
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-bioconda
+          max-size: 500M
+      - name: Supply panman as the recipe does (offline source dir, not FetchContent)
+        run: |
+          mkdir -p external/panman
+          curl -fsSL https://github.com/TurakhiaLab/panman/archive/refs/tags/v0.1.4.tar.gz \
+            | tar xz -C external/panman --strip-components=1
+      - name: Configure + build (recipe invocation)
+        run: |
+          cmake -S . -B build-bioconda \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_SYSTEM_LIBS=ON \
+            -DPANMAN_SOURCE_DIR="$PWD/external/panman" \
+            -DOPTION_BUILD_TESTS=OFF \
+            -DOPTION_BUILD_SIMULATE=OFF
+          cmake --build build-bioconda -j"$(nproc)"
+      - name: Smoke test
+        run: ./build-bioconda/bin/panmap --version
+
   # Cross-platform safety net. macOS runners bill ~10x, so only on push to main.
   build-test-macos:
     name: build & test (macos)
