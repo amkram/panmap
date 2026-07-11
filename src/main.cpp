@@ -1831,7 +1831,8 @@ int main(int argc, char** argv) {
         "Min reads for a seed; -1=auto (filter singletons only when est. coverage >3x), 1=keep all, 2=filter singletons")(
         "force-leaf",
         po::bool_switch(&cfg.forceLeaf),
-        "Restrict placement to leaf nodes only (default unless --stop place)")(
+        "Restrict placement to observed leaf genomes only (default: off; "
+        "internal/ancestral nodes are eligible)")(
         "no-mutation-spectrum",
         po::bool_switch(&cfg.noMutationSpectrum),
         "Disable mutation spectrum filtering in VCF genotyping")(
@@ -2070,13 +2071,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Default --force-leaf on whenever the pipeline runs past placement
-    // (unless user explicitly set it). Only --stop place allows placement
-    // on internal nodes. bool_switch always has a default, so vm.count() is
-    // always 1 here; use defaulted() to detect an explicit flag.
-    if (vm["force-leaf"].defaulted() && cfg.stopAfter > PipelineStage::Place) {
-        cfg.forceLeaf = true;
-    }
+    // Internal/ancestral nodes are eligible placement references in every stage
+    // (place -> align -> genotype -> consensus); the downstream reference is
+    // materialized from any node id, so an ancestral node closer than the best
+    // leaf improves the consensus. Pass --force-leaf to restrict to observed
+    // leaf genomes.
 
     // The index path is always derived from the panman (placement -> .idx, metagenomic
     // -> .midx); -o does not affect it. Pass --index to load a specific pre-built index.
