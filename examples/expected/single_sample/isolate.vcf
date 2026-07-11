@@ -1,9 +1,9 @@
 ##fileformat=VCFv4.2
 ##FILTER=<ID=PASS,Description="All filters passed">
 ##bcftoolsVersion=1.21+htslib-1.20
-##bcftoolsCommand=mpileup -Ou -B -f /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.ref.fa -o /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.mpileup /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.bam
-##reference=file:///private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.ref.fa
-##contig=<ID=England/CAMC-141DBEA/2021|OU190639.1|2021-03-19,length=29830>
+##bcftoolsCommand=mpileup -Ou -B -f isolate.ref.fa -o isolate.mpileup isolate.bam
+##reference=file://isolate.ref.fa
+##contig=<ID=node_7618,length=29709>
 ##ALT=<ID=*,Description="Represents allele(s) other than observed.">
 ##INFO=<ID=INDEL,Number=0,Type=Flag,Description="Indicates that the variant is an INDEL.">
 ##INFO=<ID=IDV,Number=1,Type=Integer,Description="Maximum number of raw reads supporting an indel">
@@ -25,8 +25,6 @@
 ##INFO=<ID=DP4,Number=4,Type=Integer,Description="Number of high-quality ref-forward , ref-reverse, alt-forward and alt-reverse bases">
 ##INFO=<ID=MQ,Number=1,Type=Integer,Description="Average mapping quality">
 ##bcftools_callVersion=1.21+htslib-1.20
-##bcftools_callCommand=call --ploidy 1 -m -A -O v -o /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.vcf.raw /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.mpileup; Date=Sat Jul 11 00:44:40 2026
-#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	/private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.bam
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	22013	.	C	T	217.9537	.	DP=253;VDB=2.27276e-18;SGB=-0.693147;RPBZ=-2.70393;MQBZ=1.7691;MQSBZ=-7.87151;BQBZ=-1.06526;SCBZ=-3.24616;MQ0F=0;AC=1;AN=1;DP4=0,1,94,68;MQ=56	GT:PL:AD	1:255,0:1,162
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	24206	.	C	T	160.9537	.	DP=80;VDB=2.79608e-38;SGB=-0.693147;RPBZ=6.51863;MQBZ=0.741802;MQSBZ=-7.10747;BQBZ=-2.8366;SCBZ=-0.932324;MQ0F=0;AC=1;AN=1;DP4=3,2,42,15;MQ=57	GT:PL:AD	1:255,57:5,57
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	25520	.	C	G	203.6311	.	DP=111;VDB=2.05896e-33;SGB=-0.693147;MQSBZ=-6.69032;MQ0F=0.0810811;AC=1;AN=1;DP4=0,0,29,30;MQ=45	GT:PL:AD	1:255,0:0,59
+##bcftools_callCommand=call --ploidy 1 -m -A -O v -o isolate.vcf.raw isolate.mpileup; Date=Sat Jul 11 13:52:54 2026
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	isolate.bam
+node_7618	24152	.	C	T	148.9584	.	DP=75;VDB=1.01195e-37;SGB=-0.693147;RPBZ=6.29435;MQBZ=0.868635;MQSBZ=-6.5412;BQBZ=-2.90029;SCBZ=-0.57769;MQ0F=0;AC=1;AN=1;DP4=3,2,38,15;MQ=57	GT:PL:AD	1:255,69:5,53

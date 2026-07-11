@@ -1,6 +1,6 @@
 metric	score	nodes
-log_raw	65.239724	England/CAMC-141DBEA/2021|OU190639.1|2021-03-19
-log_cosine	0.691734	England/CAMC-141DBEA/2021|OU190639.1|2021-03-19
-containment	0.074504	England/CAMC-139D13C/2021|OU059360.1|2021-03-03
-weighted_containment	1.051716	England/CAMC-139D13C/2021|OU059360.1|2021-03-03
-log_containment	0.232535	England/CAMC-141DBEA/2021|OU190639.1|2021-03-19
+log_raw	65.337605	node_7618,node_7619,node_7620,node_7621,node_7622,node_7623,node_7624,node_7625,node_7626,node_7627,node_7628,node_7629,node_7630,node_7631
+log_cosine	0.692733	node_7618,node_7619,node_7620,node_7621,node_7622,node_7623,node_7624,node_7625,node_7626,node_7627,node_7628,node_7629,node_7630,node_7631
+containment	0.074623	node_7617
+weighted_containment	1.053396	node_7617
+log_containment	0.232884	node_7618,node_7619,node_7620,node_7621,node_7622,node_7623,node_7624,node_7625,node_7626,node_7627,node_7628,node_7629,node_7630,node_7631
