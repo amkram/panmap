@@ -360,8 +360,41 @@ bool buildMgsrIndex(const Config& cfg) {
     return true;
 }
 
+// A cached single-sample index is reusable only if it was built for the same
+// request: matching seeding parameters (k/s/t/l/hpc/open-syncmer) and not older
+// than the panman. Placement reads the seeding params back out of the index, so a
+// stale cache would silently override the user's CLI parameters (or an edited
+// panman). On any mismatch — or an unreadable index — rebuild.
+static bool cachedIndexUsable(const Config& cfg) {
+    if (fs::exists(cfg.panman)) {
+        boost::system::error_code ecIdx, ecPan;
+        std::time_t idxTime = fs::last_write_time(cfg.index, ecIdx);
+        std::time_t panTime = fs::last_write_time(cfg.panman, ecPan);
+        if (!ecIdx && !ecPan && idxTime < panTime) {
+            logging::warn("Cached index {} is older than {}; rebuilding.", cfg.index, cfg.panman);
+            return false;
+        }
+    }
+    try {
+        IndexReader reader(cfg.index, cfg.threads);
+        auto idx = reader.getRoot<LiteIndex>();
+        if (idx.getK() != cfg.k || idx.getS() != cfg.s || idx.getT() != cfg.t || idx.getL() != cfg.l ||
+            idx.getHpc() != cfg.hpc || idx.getOpen() != cfg.openSyncmer) {
+            logging::warn(
+                "Cached index {} was built with different seeding parameters "
+                "(k/s/t/l/hpc/open-syncmer); rebuilding.",
+                cfg.index);
+            return false;
+        }
+    } catch (const std::exception& e) {
+        logging::warn("Cached index {} could not be read ({}); rebuilding.", cfg.index, e.what());
+        return false;
+    }
+    return true;
+}
+
 bool buildIndex(const Config& cfg) {
-    if (fs::exists(cfg.index) && !cfg.forceReindex) {
+    if (fs::exists(cfg.index) && !cfg.forceReindex && cachedIndexUsable(cfg)) {
         output::done("index", cfg.index, "cached");
         return true;
     }
@@ -1471,7 +1504,8 @@ int runBatchPlacement(const Config& cfg) {
     output::done(
         fmt::format("Batch complete: {}/{} placed in {}s", successCount, samples.size(), totalElapsed.count()));
     if (failCount > 0) logging::warn("{} samples failed placement", failCount);
-    return 0;
+    // Non-zero exit if any sample failed, matching single-sample and metagenomic modes.
+    return failCount > 0 ? 1 : 0;
 }
 
 std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
@@ -2217,7 +2251,8 @@ int main(int argc, char** argv) {
             if (fs::path(cfg.index).extension() == ".idx") {
                 output::error(
                     "{} is a single-sample (placement) index; metagenomic mode uses .midx. "
-                    "Pass --index <name>.midx (built automatically if missing).",
+                    "Omit --index to auto-build <panman>.midx, or pass an existing .midx "
+                    "(or --index-out to build at a custom path).",
                     cfg.index);
                 return 1;
             }
