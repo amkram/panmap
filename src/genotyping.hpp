@@ -31,6 +31,16 @@ struct mutationMatrices {
 
 void fillMutationMatricesFromFile(mutationMatrices& mutMat, std::ifstream& inf);
 
-std::string applyMutationSpectrum(const std::string& line, const std::vector<std::vector<double>>& scaled_submat);
+std::string applyMutationSpectrum(const std::string& line, const std::vector<std::vector<double>>& scaled_submat,
+                                  int minDepth, double minQual);
+
+// Field-standard consensus gate for haploid genotyping: the called allele (calledIdx
+// into AD; 0 = ref) must (a) be the majority — strictly more high-quality reads than
+// all other alleles combined — and (b) be supported by at least minDepth high-quality
+// reads. Below that, a position should be a no-call (ref/N), not a variant. Returns
+// true (no filtering) only when AD is missing/uninformative.
+bool passesConsensusGate(int calledIdx, const std::vector<int>& ad, int minDepth);
+// Same gate applied to a raw VCF sample field ("GT:PL:AD").
+bool passesConsensusGate(const std::string& sampleField, int minDepth);
 
 }  // namespace genotyping

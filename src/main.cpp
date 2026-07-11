@@ -177,6 +177,8 @@ struct Config {
     bool impute = false;              // Impute N's from parent sequence (ignore _->N mutations)
     bool noMutationSpectrum = false;  // Skip mutation spectrum filtering in VCF
     bool baq = false;                 // Enable BAQ (Base Alignment Quality) in mpileup
+    int minDepth = 5;                 // Min high-quality read depth to call a consensus variant
+    double minQual = 30.0;            // Min bcftools variant QUAL to call a consensus variant
 
     // Pre-computed substitution spectrum from index (4x4 phred-scaled matrix)
     // Empty if index has no spectrum or --no-mutation-spectrum is set
@@ -1690,7 +1692,8 @@ int runGenotyping(const Config& cfg) {
     if (createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq, refName) != 0) {
         return 1;
     }
-    if (createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred) != 0) {
+    if (createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred, cfg.minDepth,
+                                      cfg.minQual) != 0) {
         return 1;
     }
 
@@ -1833,6 +1836,12 @@ int main(int argc, char** argv) {
         po::bool_switch(&cfg.noMutationSpectrum),
         "Disable mutation spectrum filtering in VCF genotyping")(
         "baq", po::bool_switch(&cfg.baq), "Enable BAQ (Base Alignment Quality) in mpileup (default: off)")(
+        "min-depth",
+        po::value<int>(&cfg.minDepth)->default_value(5),
+        "Min high-quality read depth to call a consensus variant (below: no-call)")(
+        "min-qual",
+        po::value<double>(&cfg.minQual)->default_value(30.0),
+        "Min variant QUAL (phred) to call a consensus variant")(
         "refine", po::bool_switch(&cfg.refine), "Enable alignment-based refinement")(
         "refine-top-pct",
         po::value<double>(&cfg.refineTopPct)->default_value(0.01),

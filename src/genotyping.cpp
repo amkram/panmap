@@ -164,8 +164,42 @@ parse_sample_formats(const std::string& sample_formats_str) {
     return std::make_tuple(gt, pls, ads, sample_formats[1], sample_formats[2]);
 }
 
+bool genotyping::passesConsensusGate(int calledIdx, const std::vector<int>& ad, int minDepth) {
+    if (calledIdx <= 0) return false;  // ref/invalid is not an ALT call
+    if (ad.empty() || calledIdx >= static_cast<int>(ad.size())) return true;  // no AD -> can't gate
+    long total = 0;
+    for (int a : ad) total += a;
+    if (total < minDepth) return false;                   // insufficient high-quality depth -> no-call
+    return static_cast<long>(ad[calledIdx]) * 2 > total;  // strict majority of high-quality reads
+}
+
+bool genotyping::passesConsensusGate(const std::string& sampleField, int minDepth) {
+    std::vector<std::string> parts;
+    std::istringstream ss(sampleField);
+    std::string p;
+    while (std::getline(ss, p, ':')) parts.push_back(p);
+    if (parts.size() < 3) return true;  // unexpected FORMAT (expect GT:PL:AD) -> don't filter
+    int gt = 0;
+    try {
+        gt = std::stoi(parts[0]);
+    } catch (...) {
+        return true;
+    }
+    std::vector<int> ad;
+    std::istringstream as(parts[2]);
+    std::string a;
+    while (std::getline(as, a, ',')) {
+        try {
+            ad.push_back(std::stoi(a));
+        } catch (...) {
+        }
+    }
+    return passesConsensusGate(gt, ad, minDepth);
+}
+
 std::string genotyping::applyMutationSpectrum(const std::string& line,
-                                              const std::vector<std::vector<double>>& scaled_submat) {
+                                              const std::vector<std::vector<double>>& scaled_submat, int minDepth,
+                                              double minQual) {
     std::vector<std::string> fields;
     std::istringstream line_stream(line);
     std::string field;
@@ -230,8 +264,14 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
 
     if (min_gl_index == 0) return "";
 
+    // Consensus gate: only emit an ALT that is the majority allele and has at least
+    // minDepth high-quality reads. Guards against bcftools (and, at low coverage, the
+    // spectrum prior) emitting sub-majority or shallow ALTs as false positives.
+    if (!passesConsensusGate(min_gl_index, ads, minDepth)) return "";
+
     gt = min_gl_index;
     double qual = gls[0];
+    if (qual < minQual) return "";  // low-confidence call (QUAL below threshold) -> no-call
 
     std::stringstream ss;
     ss << fields[0] << "\t" << fields[1] << "\t" << fields[2] << "\t" << fields[3] << "\t" << fields[4] << "\t"

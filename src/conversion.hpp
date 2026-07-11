@@ -26,7 +26,9 @@ int createMplpBcf(const std::string& prefix,
 int createVcfWithMutationMatrices(std::string& prefix,
                                   std::string& mpileupFileName,
                                   std::string& vcfFileName,
-                                  const std::vector<std::vector<double>>& substMatrixPhred);
+                                  const std::vector<std::vector<double>>& substMatrixPhred,
+                                  int minDepth,
+                                  double minQual);
 
 int createConsensus(const std::string& vcfFileName,
                     const std::string& refFileName,
