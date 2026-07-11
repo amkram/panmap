@@ -77,12 +77,14 @@ check "placed to $NODE_ID" grep -q "$NODE_ID" "$TMPDIR/place_node.placement.tsv"
 NODE_SCORE=$(awk -F'\t' '/^log_raw/ {print $2}' "$TMPDIR/place_node.placement.tsv")
 check "log_raw score > 50" awk "BEGIN {exit ($NODE_SCORE > 50) ? 0 : 1}"
 
-# force-leaf sends the alignment to the closest leaf, which differs from the internal
-# node, so variants are expected. The input is a single genome sequence (depth 1), so
-# disable the consensus depth/QUAL gate for this genome-vs-leaf comparison.
-echo "[5] Full pipeline - internal node"
+# --force-leaf sends the alignment to the closest leaf, which differs from the internal
+# node, so variants are expected. (Placement now allows internal nodes past --stop place,
+# so without --force-leaf this input would place back on the node itself and call 0
+# variants; the flag is required to exercise the genome-vs-leaf path.) The input is a
+# single genome sequence (depth 1), so disable the consensus depth/QUAL gate.
+echo "[5] Full pipeline - internal node (force-leaf)"
 drive $PANMAP "$TMPDIR/rsv_4K.panman" "$NODE_FA" \
-    --stop genotype --min-depth 1 --min-qual 0 -o "$TMPDIR/full_node" -t 2
+    --stop genotype --force-leaf --min-depth 1 --min-qual 0 -o "$TMPDIR/full_node" -t 2
 check "vcf exists" test -f "$TMPDIR/full_node.vcf"
 check "bam exists" test -f "$TMPDIR/full_node.bam"
 NODE_NVARS=$(grep -cv '^#' "$TMPDIR/full_node.vcf" || true)
