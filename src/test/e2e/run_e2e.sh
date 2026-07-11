@@ -78,10 +78,11 @@ NODE_SCORE=$(awk -F'\t' '/^log_raw/ {print $2}' "$TMPDIR/place_node.placement.ts
 check "log_raw score > 50" awk "BEGIN {exit ($NODE_SCORE > 50) ? 0 : 1}"
 
 # force-leaf sends the alignment to the closest leaf, which differs from the internal
-# node, so variants are expected.
+# node, so variants are expected. The input is a single genome sequence (depth 1), so
+# disable the consensus depth/QUAL gate for this genome-vs-leaf comparison.
 echo "[5] Full pipeline - internal node"
 drive $PANMAP "$TMPDIR/rsv_4K.panman" "$NODE_FA" \
-    --stop genotype -o "$TMPDIR/full_node" -t 2
+    --stop genotype --min-depth 1 --min-qual 0 -o "$TMPDIR/full_node" -t 2
 check "vcf exists" test -f "$TMPDIR/full_node.vcf"
 check "bam exists" test -f "$TMPDIR/full_node.bam"
 NODE_NVARS=$(grep -cv '^#' "$TMPDIR/full_node.vcf" || true)
