@@ -849,14 +849,14 @@ about 8 GB of RAM.</p>
 <h2 id="docker">Docker<a class="headerlink" href="#docker" title="Permanent link">&para;</a></h2>
 <p><a href="https://biocontainers.pro/">BioContainers</a> builds a container image for each
 Bioconda release:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>pull<span class="w"> </span>quay.io/biocontainers/panmap:0.1.2--0
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>quay.io/biocontainers/panmap:0.1.2--0<span class="w"> </span>panmap<span class="w"> </span>-h
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span>pull<span class="w"> </span>quay.io/biocontainers/panmap:0.1.3--0
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>quay.io/biocontainers/panmap:0.1.3--0<span class="w"> </span>panmap<span class="w"> </span>-h
 </code></pre></div>
 <p>Pick a concrete tag from the
 <a href="https://quay.io/repository/biocontainers/panmap?tab=tags">tags page</a>; BioContainers
 images are not tagged <code>latest</code>. To run on local files, mount the working directory:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span><span class="s2">:/data&quot;</span><span class="w"> </span>-w<span class="w"> </span>/data<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>quay.io/biocontainers/panmap:0.1.2--0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>quay.io/biocontainers/panmap:0.1.3--0<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>panmap<span class="w"> </span>ref.panman<span class="w"> </span>reads.fq<span class="w"> </span>-o<span class="w"> </span>sample
 </code></pre></div>
 <p>You can also build the image from the repository (<code>~6 min</code>):</p>
