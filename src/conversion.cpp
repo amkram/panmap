@@ -134,7 +134,9 @@ int createMplpBcf(const std::string& prefix,
 int createVcfWithMutationMatrices(std::string& prefix,
                                   std::string& mpileupFileName,
                                   std::string& vcfFileName,
-                                  const std::vector<std::vector<double>>& substMatrixPhred) {
+                                  const std::vector<std::vector<double>>& substMatrixPhred,
+                                  int minDepth,
+                                  double minQual) {
     if (mpileupFileName.size() == 0) {
         mpileupFileName = prefix + ".mpileup";
     }
@@ -142,8 +144,10 @@ int createVcfWithMutationMatrices(std::string& prefix,
     // Temp file for raw VCF output (thread-safe via fork isolation)
     std::string rawVcfFile = prefix + ".vcf.raw";
     {
+        // -m = multiallelic caller (current bcftools default; -c is the legacy
+        // consensus caller). --ploidy 1 for a haploid consensus; -A keeps ALT alleles.
         const char* call_args[] = {
-            "call", "--ploidy", "1", "-c", "-A", "-O", "v", "-o", rawVcfFile.c_str(), mpileupFileName.c_str()};
+            "call", "--ploidy", "1", "-m", "-A", "-O", "v", "-o", rawVcfFile.c_str(), mpileupFileName.c_str()};
         int rc = run_bcftools_in_fork(main_vcfcall, 10, const_cast<char**>(call_args));
         if (rc != 0) {
             output::error("bcftools call failed (exit code {})", rc);
@@ -157,7 +161,8 @@ int createVcfWithMutationMatrices(std::string& prefix,
     std::string line;
     while (std::getline(rawVcfIn, line)) {
         if (hasSpectrum) {
-            std::string spectrum_applied_line = genotyping::applyMutationSpectrum(line, substMatrixPhred);
+            std::string spectrum_applied_line =
+                genotyping::applyMutationSpectrum(line, substMatrixPhred, minDepth, minQual);
             if (spectrum_applied_line.size() > 0) vcfOutFile << spectrum_applied_line << "\n";
         } else {
             // No spectrum: write header plus non-ref variants only
@@ -170,7 +175,9 @@ int createVcfWithMutationMatrices(std::string& prefix,
             std::string f;
             std::vector<std::string> fields;
             while (std::getline(iss, f, '\t')) fields.push_back(f);
-            if (fields.size() >= 10 && fields[4] != "." && fields[9][0] != '0') {
+            bool qualOk = fields.size() >= 6 && (fields[5] == "." || std::stod(fields[5]) >= minQual);
+            if (fields.size() >= 10 && fields[4] != "." && fields[9][0] != '0' && qualOk &&
+                genotyping::passesConsensusGate(fields[9], minDepth)) {
                 vcfOutFile << line << "\n";
             }
         }

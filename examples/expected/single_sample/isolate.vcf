@@ -1,8 +1,8 @@
 ##fileformat=VCFv4.2
 ##FILTER=<ID=PASS,Description="All filters passed">
 ##bcftoolsVersion=1.21+htslib-1.20
-##bcftoolsCommand=mpileup -Ou -B -f examples/expected/single_sample/isolate.ref.fa -o examples/expected/single_sample/isolate.mpileup examples/expected/single_sample/isolate.bam
-##reference=file://examples/expected/single_sample/isolate.ref.fa
+##bcftoolsCommand=mpileup -Ou -B -f /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.ref.fa -o /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.mpileup /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.bam
+##reference=file:///private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.ref.fa
 ##contig=<ID=England/CAMC-141DBEA/2021|OU190639.1|2021-03-19,length=29830>
 ##ALT=<ID=*,Description="Represents allele(s) other than observed.">
 ##INFO=<ID=INDEL,Number=0,Type=Flag,Description="Indicates that the variant is an INDEL.">
@@ -20,22 +20,13 @@
 ##FORMAT=<ID=PL,Number=G,Type=Integer,Description="List of Phred-scaled genotype likelihoods">
 ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths (high-quality bases)">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
-##INFO=<ID=AF1,Number=1,Type=Float,Description="Max-likelihood estimate of the first ALT allele frequency (assuming HWE)">
-##INFO=<ID=AF2,Number=1,Type=Float,Description="Max-likelihood estimate of the first and second group ALT allele frequency (assuming HWE)">
-##INFO=<ID=AC1,Number=1,Type=Float,Description="Max-likelihood estimate of the first ALT allele count (no HWE assumption)">
-##INFO=<ID=MQ,Number=1,Type=Integer,Description="Root-mean-square mapping quality of covering reads">
-##INFO=<ID=FQ,Number=1,Type=Float,Description="Phred probability of all samples being the same">
-##INFO=<ID=PV4,Number=4,Type=Float,Description="P-values for strand bias, baseQ bias, mapQ bias and tail distance bias">
-##INFO=<ID=G3,Number=3,Type=Float,Description="ML estimate of genotype frequencies">
-##INFO=<ID=HWE,Number=1,Type=Float,Description="Chi^2 based HWE test P-value based on G3">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes for each ALT allele, in the same order as listed">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">
 ##INFO=<ID=DP4,Number=4,Type=Integer,Description="Number of high-quality ref-forward , ref-reverse, alt-forward and alt-reverse bases">
+##INFO=<ID=MQ,Number=1,Type=Integer,Description="Average mapping quality">
 ##bcftools_callVersion=1.21+htslib-1.20
-##bcftools_callCommand=call --ploidy 1 -c -A -O v -o examples/expected/single_sample/isolate.vcf.raw examples/expected/single_sample/isolate.mpileup; Date=Thu Jul  9 20:09:47 2026
-#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	examples/expected/single_sample/isolate.bam
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	3364	.	A	G	5.2745	.	DP=2;SGB=-0.379885;MQ0F=0;AF1=1;AC1=1;DP4=0,0,0,1;MQ=48;FQ=-999	GT:PL:AD	1:48,0:0,1
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	8593	.	C	T	20.9584	.	DP=10;VDB=0.0221621;SGB=-0.511536;RPBZ=1.93649;MQBZ=2;MQSBZ=-2;BQBZ=0;SCBZ=-1.93649;MQ0F=0;AF1=0.5;AC1=1;DP4=0,2,3,0;MQ=57;FQ=-999;PV4=0.1,1,1,0	GT:PL:AD	1:137,79:2,3
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	22013	.	C	T	217.9584	.	DP=49;VDB=0.787572;SGB=-0.692914;MQSBZ=-2.74263;MQ0F=0;AF1=1;AC1=1;DP4=0,0,14,11;MQ=59;FQ=-999	GT:PL:AD	1:255,0:0,25
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	22552	.	C	T	115.9584	.	DP=105;VDB=3.57567e-21;SGB=-0.693147;RPBZ=-0.955562;MQBZ=-0.318541;MQSBZ=-6.3699;BQBZ=1.71942;SCBZ=-0.336072;MQ0F=0;AF1=0.5;AC1=1;DP4=2,5,21,25;MQ=54;FQ=-999;PV4=0.685135,1,0.494948,1	GT:PL:AD	1:255,102:7,46
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	24206	.	C	T	142.9584	.	DP=22;VDB=5.52906e-06;SGB=-0.662043;RPBZ=3.14643;MQBZ=0.130289;MQSBZ=-2.08463;BQBZ=-0.471405;SCBZ=1.63299;MQ0F=0;AF1=0.5;AC1=1;DP4=1,1,1,8;MQ=53;FQ=-999;PV4=0.345455,0.318714,0.368445,0	GT:PL:AD	1:255,75:2,9
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	25520	.	C	G	9.6358	.	DP=4;VDB=0.22;SGB=-0.453602;MQ0F=0.25;AF1=1;AC1=1;DP4=0,0,0,2;MQ=42;FQ=-999	GT:PL:AD	1:61,0:0,2
-England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	26440	.	G	T	6.5295	.	DP=13;VDB=0.0058656;SGB=-0.556411;RPBZ=1.1547;MQBZ=-1.34164;MQSBZ=-1.78885;BQBZ=0.440959;SCBZ=0;MQ0F=0;AF1=0.5;AC1=1;DP4=2,1,2,2;MQ=57;FQ=-999;PV4=1,1,0.101555,0.142795	GT:PL:AD	1:175,126:3,4
+##bcftools_callCommand=call --ploidy 1 -m -A -O v -o /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.vcf.raw /private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.mpileup; Date=Sat Jul 11 00:44:40 2026
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	/private/tmp/claude-501/-Users-alex-poopdoop/2c9559db-c797-4c22-97a2-c14b0dca933a/scratchpad/gen/isolate.bam
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	22013	.	C	T	217.9537	.	DP=253;VDB=2.27276e-18;SGB=-0.693147;RPBZ=-2.70393;MQBZ=1.7691;MQSBZ=-7.87151;BQBZ=-1.06526;SCBZ=-3.24616;MQ0F=0;AC=1;AN=1;DP4=0,1,94,68;MQ=56	GT:PL:AD	1:255,0:1,162
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	24206	.	C	T	160.9537	.	DP=80;VDB=2.79608e-38;SGB=-0.693147;RPBZ=6.51863;MQBZ=0.741802;MQSBZ=-7.10747;BQBZ=-2.8366;SCBZ=-0.932324;MQ0F=0;AC=1;AN=1;DP4=3,2,42,15;MQ=57	GT:PL:AD	1:255,57:5,57
+England/CAMC-141DBEA/2021|OU190639.1|2021-03-19	25520	.	C	G	203.6311	.	DP=111;VDB=2.05896e-33;SGB=-0.693147;MQSBZ=-6.69032;MQ0F=0.0810811;AC=1;AN=1;DP4=0,0,29,30;MQ=45	GT:PL:AD	1:255,0:0,59
