@@ -294,9 +294,9 @@ struct BlockSequences {
         return gapSeq[blockId][gapStart[blockId][pos] + gapPos];
     }
 
-    const bool getBlockStrand(int blockId) const { return blockStrand[blockId]; }
+    bool getBlockStrand(int blockId) const { return blockStrand[blockId]; }
 
-    const bool getBlockExists(int blockId) const { return blockExists[blockId]; }
+    bool getBlockExists(int blockId) const { return blockExists[blockId]; }
 
     char getSequenceBase(const Coordinate& coord) const {
         if (coord.nucGapPosition != -1) {
@@ -595,7 +595,7 @@ struct GlobalCoords {
             }
         } else {
             // cur coord is at a gap nuc
-            if (coord.nucGapPosition == nGap(coord.primaryBlockId, coord.nucPosition) - 1) {
+            if (static_cast<uint32_t>(coord.nucGapPosition) == nGap(coord.primaryBlockId, coord.nucPosition) - 1) {
                 // cur gap nuc is the last gap nuc -> step to the main nuc
                 coord.nucGapPosition = -1;
             } else {
@@ -727,7 +727,7 @@ inline bool canonicalToAmb(char oldNuc, char newNuc) {
 // Shared between lite and MGSR index building
 
 inline void applyMutations(panmanUtils::Node* node,
-                           size_t dfsIndex,
+                           size_t /*dfsIndex*/,
                            BlockSequences& blockSequences,
                            std::unordered_set<uint64_t>& invertedBlocks,
                            GlobalCoords& globalCoords,
@@ -791,8 +791,8 @@ inline void applyMutations(panmanUtils::Node* node,
 
         for (int i = 0; i < length; i++) {
             Coordinate pos = Coordinate(nucMutation, i);
-            if ((pos.nucPosition == blockSequences.blockLength(pos.primaryBlockId) - 1 && pos.nucGapPosition == -1) ||
-                (pos.nucPosition >= blockSequences.blockLength(pos.primaryBlockId))) {
+            if ((static_cast<size_t>(pos.nucPosition) == blockSequences.blockLength(pos.primaryBlockId) - 1 && pos.nucGapPosition == -1) ||
+                (static_cast<size_t>(pos.nucPosition) >= blockSequences.blockLength(pos.primaryBlockId))) {
                 continue;
             }
             lastOffset = i;
@@ -813,7 +813,7 @@ inline void applyMutations(panmanUtils::Node* node,
                 const int64_t scalarCoord = globalCoords.getScalarFromCoord(pos);
                 if (newNuc == '-') {
                     if (!gapRunUpdates.empty() && gapRunUpdates.back().first == true &&
-                        gapRunUpdates.back().second.second + 1 == scalarCoord) {
+                        gapRunUpdates.back().second.second + 1 == static_cast<uint64_t>(scalarCoord)) {
                         ++(gapRunUpdates.back().second.second);
                     } else {
                         gapRunUpdates.emplace_back(true, std::make_pair(scalarCoord, scalarCoord));
@@ -825,7 +825,7 @@ inline void applyMutations(panmanUtils::Node* node,
                     }
                 } else if (oldNuc == '-') {
                     if (!gapRunUpdates.empty() && gapRunUpdates.back().first == false &&
-                        gapRunUpdates.back().second.second + 1 == scalarCoord) {
+                        gapRunUpdates.back().second.second + 1 == static_cast<uint64_t>(scalarCoord)) {
                         ++(gapRunUpdates.back().second.second);
                     } else {
                         gapRunUpdates.emplace_back(false, std::make_pair(scalarCoord, scalarCoord));

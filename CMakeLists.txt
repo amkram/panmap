@@ -60,7 +60,7 @@ if(USE_SYSTEM_LIBS AND DEFINED ENV{CONDA_PREFIX})
     link_directories("$ENV{CONDA_PREFIX}/lib")
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations")
 
 include(FetchContent)
 include(ExternalProject)
