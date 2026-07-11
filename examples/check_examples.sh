@@ -46,8 +46,8 @@ resolve_assignments() {
 echo
 echo "[1/3] single-sample pipeline"
 o="$work/isolate"
-if "$PANMAP" "$data_dir/sars_20000_twilight_dipper.panman" \
-     "$data_dir/isolate_R1.fastq.gz" "$data_dir/isolate_R2.fastq.gz" \
+if "$PANMAP" "$data_dir/panmans/sars_20000_twilight_dipper.panman" \
+     "$data_dir/reads/isolate_R1.fastq.gz" "$data_dir/reads/isolate_R2.fastq.gz" \
      -o "$o" >"$work/d1.log" 2>&1; then
   e="$exp_dir/single_sample"
   diff -q "$e/isolate.placement.tsv" "$o.placement.tsv" >/dev/null && ok "placement.tsv" || bad "placement.tsv"
@@ -64,7 +64,7 @@ fi
 echo
 echo "[2/3] metagenomic abundance (--meta)"
 o="$work/example"
-if "$PANMAP" "$data_dir/sars_20000_twilight_dipper.panman" $data_dir/sars20000_5hap_*.fastq.gz \
+if "$PANMAP" "$data_dir/panmans/sars_20000_twilight_dipper.panman" $data_dir/reads/sars20000_5hap_*.fastq.gz \
      --meta --threads 4 --em-delta-threshold 0.00001 --output "$o" >"$work/d2.log" 2>&1; then
   diff <(sort "$exp_dir/meta_abundance/example.mgsr.abundance.out") \
        <(sort "$o.mgsr.abundance.out") >/dev/null \
@@ -76,10 +76,9 @@ fi
 # ---- Demo 3: filter and assign ----------------------------------------------
 echo
 echo "[3/3] filter and assign (--filter-and-assign)"
-[[ -f "$data_dir/v_mtdna.panman" ]] || cp data/vertebrate_mtdna/v_mtdna.panman "$data_dir/"
 o="$work/subsampled"
-if "$PANMAP" "$data_dir/v_mtdna.panman" "$data_dir/subsampled.fastq.gz" --meta --filter-and-assign \
-     -k 15 -s 8 -l 1 --discard 0.6 --dust 5 --taxonomic-metadata "$data_dir/v_mtdna.meta.tsv" \
+if "$PANMAP" "$data_dir/panmans/v_mtdna.panman" "$data_dir/reads/subsampled.fastq.gz" --meta --filter-and-assign \
+     -k 15 -s 8 -l 1 --discard 0.6 --dust 5 --taxonomic-metadata "$data_dir/metadata/v_mtdna.meta.tsv" \
      -t 4 --breadth-ratio --output "$o" >"$work/d3.log" 2>&1; then
   e="$exp_dir/filter_assign"
   # Assigned reads as a set (order is thread-dependent).

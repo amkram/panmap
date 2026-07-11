@@ -62,8 +62,8 @@ panmap [options] <pangenome.panman> <reads1.fastq> [reads2.fastq]
 **Example**:
 
 ```bash
-panmap examples/data/sars_20000_twilight_dipper.panman \
-       examples/data/isolate_R1.fastq.gz examples/data/isolate_R2.fastq.gz
+panmap examples/data/panmans/sars_20000_twilight_dipper.panman \
+       examples/data/reads/isolate_R1.fastq.gz examples/data/reads/isolate_R2.fastq.gz
 ```
 This places, genotypes, and assembles a small set of SARS-CoV-2 reads against a 20,000 genome PanMAN (~0.6s).
 
@@ -94,8 +94,8 @@ panmap --meta [options] <pangenome.panman> <reads...>
 ```bash
 mkdir -p examples/output
 panmap --meta -t 4 --em-delta-threshold 0.00001 -o examples/output/example \
-       examples/data/sars_20000_twilight_dipper.panman \
-       examples/data/sars20000_5hap_*.fastq.gz
+       examples/data/panmans/sars_20000_twilight_dipper.panman \
+       examples/data/reads/sars20000_5hap_*.fastq.gz
 ```
 
 Writes `examples/output/example.mgsr.abundance.out` (haplotype abundance per sample). These are simulated shotgun-sequencing reads of SARS-CoV-2 mixtures. For wastewater samples see the [full documentation](https://amkram.github.io/panmap/) or [examples/wastewater](examples/wastewater).
@@ -110,9 +110,9 @@ panmap --meta --filter-and-assign [options] <pangenome.panman> <reads...>
 
 ```bash
 mkdir -p examples/output
-panmap data/vertebrate_mtdna/v_mtdna.panman examples/data/subsampled.fastq.gz \
+panmap examples/data/panmans/v_mtdna.panman examples/data/reads/subsampled.fastq.gz \
        --meta --filter-and-assign -k 15 -s 8 -l 1 --discard 0.6 --dust 5 \
-       --breadth-ratio -t 4 --taxonomic-metadata data/vertebrate_mtdna/v_mtdna.meta.tsv -o examples/output/subsampled
+       --breadth-ratio -t 4 --taxonomic-metadata examples/data/metadata/v_mtdna.meta.tsv -o examples/output/subsampled
 ```
 
 Writes (prefix `examples/output/subsampled`):

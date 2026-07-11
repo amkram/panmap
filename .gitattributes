@@ -4,5 +4,4 @@
 # that bioconda (and others) download. Tests are run from a git checkout, not a
 # release tarball.
 examples/data/ export-ignore
-data/ export-ignore
 src/test/data/ export-ignore

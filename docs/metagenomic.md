@@ -21,13 +21,13 @@ prefetch SRR19707934 && fasterq-dump SRR19707934
 
 # Align to reference
 minimap2 -a --sam-hit-only --MD -2 -x sr \
-  ../examples/data/NC_045512v2.fa \
+  ../examples/data/refs/NC_045512v2.fa \
   SRR19707934_1.fastq SRR19707934_2.fastq \
   | samtools sort -@ 8 -o SRR19707934.sorted.bam
 
 # Trim primers
 ivar trim -e \
-  -b ../examples/data/SNAPaddtlCov.bed \
+  -b ../examples/data/refs/SNAPaddtlCov.bed \
   -p SRR19707934.trimmed.bam \
   -i SRR19707934.sorted.bam \
   -q 1 -m 80 -x 3
@@ -35,7 +35,7 @@ samtools sort -@ 8 -o SRR19707934.trimmed.sorted.bam SRR19707934.trimmed.bam
 
 # Prepare amplicon stacks and trimmed reads
 python3 ../scripts/trim_and_stack_amplicon.py stack \
-  SRR19707934.sorted.bam ../examples/data/SNAPaddtlCov.bed \
+  SRR19707934.sorted.bam ../examples/data/refs/SNAPaddtlCov.bed \
   -o SRR19707934.amplicon_stacks.tsv
 samtools fastq --no-sc SRR19707934.trimmed.sorted.bam \
   > SRR19707934.trimmed.fastq
@@ -45,7 +45,7 @@ samtools fastq --no-sc SRR19707934.trimmed.sorted.bam \
 
 ```bash
 # The MGSR index (.midx) is built automatically on first run.
-panmap ../examples/data/sars_20000_twilight_dipper.panman \
+panmap ../examples/data/panmans/sars_20000_twilight_dipper.panman \
   SRR19707934.trimmed.fastq \
   --meta \
   --amplicon-depth SRR19707934.amplicon_stacks.tsv \
@@ -59,7 +59,7 @@ Output: `SRR19707934.mgsr.abundance.out`, estimated node abundances.
 ### 3. Identify lineages
 
 ```bash
-panmap ../examples/data/sars_20000_twilight_dipper.panman \
+panmap ../examples/data/panmans/sars_20000_twilight_dipper.panman \
   --dump-sequences "$(cut -f1 SRR19707934.mgsr.abundance.out \
     | tr ',' '\n' | grep '\S' | tr '\n' ' ' | sed 's/ $//g')" \
   --output SRR19707934
@@ -85,13 +85,13 @@ these parameters on first run):
 ```bash
 mkdir example_run && cd example_run
 
-panmap ../data/vertebrate_mtdna/v_mtdna.panman \
-  ../examples/data/subsampled.fastq.gz \
+panmap ../examples/data/panmans/v_mtdna.panman \
+  ../examples/data/reads/subsampled.fastq.gz \
   --meta \
   -k 15 -s 8 -l 1 \
   --filter-and-assign \
   --discard 0.6 --dust 5 \
-  --taxonomic-metadata ../data/vertebrate_mtdna/v_mtdna.meta.tsv \
+  --taxonomic-metadata ../examples/data/metadata/v_mtdna.meta.tsv \
   -t 4 --breadth-ratio \
   --output subsampled
 ```

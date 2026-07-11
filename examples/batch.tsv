@@ -1,3 +1,3 @@
-examples/data/isolate_R1.fastq.gz	examples/data/isolate_R2.fastq.gz	output/isolate
-examples/data/sars20000_5hap_0snp-a_200000_rep0_R1.fastq.gz	examples/data/sars20000_5hap_0snp-a_200000_rep0_R2.fastq.gz	output/sars5hap
-examples/data/subsampled.fastq.gz	output/subsampled
+examples/data/reads/isolate_R1.fastq.gz	examples/data/reads/isolate_R2.fastq.gz	output/isolate
+examples/data/reads/sars20000_5hap_0snp-a_200000_rep0_R1.fastq.gz	examples/data/reads/sars20000_5hap_0snp-a_200000_rep0_R2.fastq.gz	output/sars5hap
+examples/data/reads/subsampled.fastq.gz	output/subsampled
