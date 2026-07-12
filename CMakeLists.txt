@@ -51,6 +51,16 @@ else()
 endif()
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" ${_use_system_libs_default})
 
+# Default to a Release (NDEBUG) build when the user specifies nothing: it's the sensible
+# default for a released tool, and -DNDEBUG compiles out protobuf's inline DCHECKs (which
+# otherwise reference abseil log internals). An explicit OPTION_DEBUG build is left alone
+# so its asserts stay live -- the abseil log libs are linked unconditionally below, so a
+# non-NDEBUG build links fine regardless. Skipped for multi-config generators.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES AND NOT OPTION_DEBUG)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (Release, Debug, RelWithDebInfo, MinSizeRel)" FORCE)
+    message(STATUS "No CMAKE_BUILD_TYPE specified; defaulting to Release.")
+endif()
+
 # Point the build at an active conda env ONLY when using its libraries. Injecting
 # its include/lib dirs unconditionally leaks headers (e.g. an incompatible protobuf)
 # into a bundled (USE_SYSTEM_LIBS=OFF) build and breaks it.
@@ -346,7 +356,7 @@ endif()
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt.orig" "${PANMAN_CMAKE_CONTENT}")
 
     file(WRITE "${panman_SOURCE_DIR}/CMakeLists.txt" [=[
-cmake_minimum_required (VERSION 3.8)
+cmake_minimum_required (VERSION 3.14)
 project(panmanUtils)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pipe -g -ggdb3 -Wno-unused-function -Wno-deprecated-declarations -w")
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -430,6 +440,10 @@ target_link_libraries(panman_lib
     ${PANMAN_KJ_LIB}
     jsoncpp_lib
     ${PANMAN_PROTOBUF_LIB}
+    # Protobuf's inline DCHECKs reference abseil log symbols in non-NDEBUG builds;
+    # module-mode find_package(Protobuf) doesn't pull these in, so link them here.
+    absl::log
+    absl::check
     ${Boost_LIBRARIES}
     ${TBB_LIBRARY}
     pthread
@@ -442,6 +456,9 @@ target_link_libraries(panmanUtils
     ${PANMAN_KJ_LIB}
     jsoncpp_lib
     ${PANMAN_PROTOBUF_LIB}
+    # See panman_lib above: abseil log symbols for protobuf's non-NDEBUG DCHECKs.
+    absl::log
+    absl::check
     ${Boost_LIBRARIES}
     ${TBB_LIBRARY}
     ${PANMAN_CAPNP_LIB}
@@ -590,7 +607,9 @@ add_dependencies(minimap2 minimap2_target)
 
 add_library(bwa STATIC ${BWA_SOURCES})
 target_include_directories(bwa PUBLIC src/3rdparty/bwa)
-target_compile_options(bwa PRIVATE -fPIC)
+# Vendored upstream: -w keeps its warnings out of our build now that the
+# top-level flags carry -Wall -Wextra (not our code to fix).
+target_compile_options(bwa PRIVATE -fPIC -w)
 
 file(GLOB BCFTOOLS_SOURCES src/3rdparty/bcftools/*.c)
 add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
@@ -603,7 +622,8 @@ if(USE_SYSTEM_LIBS)
 else()
     target_include_directories(bcftools PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/samtools/htslib-1.20)
 endif()
-target_compile_options(bcftools PRIVATE -fPIC)
+# Vendored upstream: -w keeps its warnings out of our build (see bwa above).
+target_compile_options(bcftools PRIVATE -fPIC -w)
 
 # Product sources minus main.cpp, compiled once into an OBJECT library (panmap_lib)
 # so `panmap` and the test binary link the exact same objects. Single owner of the
@@ -696,6 +716,8 @@ if(OPTION_BUILD_SIMULATE)
         spdlog::spdlog
         absl::flat_hash_map
         absl::flat_hash_set
+        absl::log
+        absl::check
         ZLIB::ZLIB
         pthread
         m
@@ -820,6 +842,10 @@ target_link_libraries(panmap_lib PUBLIC
     spdlog::spdlog
     libdeflate_shared
     absl::flat_hash_map
+    # Protobuf's inline DCHECKs reference abseil log symbols in non-NDEBUG builds
+    # (module-mode find_package(Protobuf) omits them); link so any build type resolves.
+    absl::log
+    absl::check
     m
     pthread
 )
