@@ -16,6 +16,13 @@ concurrency:
 permissions:
   contents: read
 
+# ccache: hash the compiler's *content*, not its mtime (the default). The conda
+# toolchain is re-extracted whenever the env cache misses or environment.yml changes,
+# giving identical compilers fresh mtimes -- which otherwise invalidates the entire
+# ccache and drops build-test from ~100% to ~0% hits.
+env:
+  CCACHE_COMPILERCHECK: content
+
 jobs:
   # Primary gate (every PR + push): build against conda libs — the bioconda
   # distribution path — and run the full unit + end-to-end suite. Fast because
