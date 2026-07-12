@@ -21,6 +21,8 @@
 #include <mutex>
 #include <iomanip>
 #include <utility>
+#include <cstring>
+#include <fstream>
 
 std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::computeNewSyncmerRangesJump(
     panmanUtils::Node* /*node*/,
@@ -1521,6 +1523,37 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
     output::done("Substitution spectrum computed");
 }
 
+namespace index_single_mode {
+std::array<uint8_t, kIndexHeaderSize> encodeIndexHeader(const IndexParamsHeader& p) {
+    std::array<uint8_t, kIndexHeaderSize> h{};
+    auto put32 = [&](size_t off, uint32_t v) { std::memcpy(h.data() + off, &v, 4); };
+    put32(0, kIndexMagic);
+    put32(4, kIndexHeaderVersion);
+    put32(8, static_cast<uint32_t>(p.k));
+    put32(12, static_cast<uint32_t>(p.s));
+    put32(16, static_cast<uint32_t>(p.t));
+    put32(20, static_cast<uint32_t>(p.l));
+    h[24] = p.hpc ? 1 : 0;
+    h[25] = p.open ? 1 : 0;
+    return h;
+}
+
+bool readIndexHeader(const std::string& path, IndexParamsHeader& out) {
+    std::ifstream f(path, std::ios::binary);
+    std::array<uint8_t, kIndexHeaderSize> h{};
+    if (!f.read(reinterpret_cast<char*>(h.data()), kIndexHeaderSize)) return false;
+    auto get32 = [&](size_t off) { uint32_t v; std::memcpy(&v, h.data() + off, 4); return v; };
+    if (get32(0) != kIndexMagic || get32(4) != kIndexHeaderVersion) return false;
+    out.k = static_cast<int32_t>(get32(8));
+    out.s = static_cast<int32_t>(get32(12));
+    out.t = static_cast<int32_t>(get32(16));
+    out.l = static_cast<int32_t>(get32(20));
+    out.hpc = h[24] != 0;
+    out.open = h[25] != 0;
+    return true;
+}
+}  // namespace index_single_mode
+
 void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads, int zstdLevel) {
     output::step("Serializing index...");
 
@@ -1530,9 +1563,21 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
 
     output::step("Writing index ({} bytes uncompressed)...", dataSize);
 
+    // Uncompressed param header: lets cache-validation read the seeding params without
+    // decompressing the payload (see readIndexHeader / cachedIndexUsable).
+    IndexParamsHeader ph;
+    ph.k = indexBuilder.getK();
+    ph.s = indexBuilder.getS();
+    ph.t = indexBuilder.getT();
+    ph.l = indexBuilder.getL();
+    ph.hpc = indexBuilder.getHpc();
+    ph.open = indexBuilder.getOpen();
+    const auto header = encodeIndexHeader(ph);
+
     // Many independent 64 MB frames so the index inflates in parallel on load.
     constexpr size_t kIndexFrameSize = 64ull * 1024 * 1024;
-    if (!panmap_zstd::compressToFile(data, dataSize, path, zstdLevel, numThreads, kIndexFrameSize)) {
+    if (!panmap_zstd::compressToFile(data, dataSize, path, zstdLevel, numThreads, kIndexFrameSize,
+                                     header.data(), header.size())) {
         output::error("failed to write compressed index to {}", path);
         std::exit(1);
     }

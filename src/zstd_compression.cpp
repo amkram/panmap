@@ -17,7 +17,9 @@ bool compressToFile(const void* inputData,
                     const std::string& outputPath,
                     int compressionLevel,
                     int numThreads,
-                    size_t frameSize) {
+                    size_t frameSize,
+                    const void* headerData,
+                    size_t headerSize) {
     if (numThreads == 0) {
         numThreads = std::thread::hardware_concurrency();
     }
@@ -76,6 +78,9 @@ bool compressToFile(const void* inputData,
         logging::err("Failed to open output file: {}", outputPath);
         return false;
     }
+    if (headerData != nullptr && headerSize > 0) {  // uncompressed prefix (e.g. index params)
+        outFile.write(reinterpret_cast<const char*>(headerData), static_cast<std::streamsize>(headerSize));
+    }
     size_t compressedSize = 0;
     for (const auto& f : frames) {  // concatenate frames in order
         outFile.write(reinterpret_cast<const char*>(f.data()), static_cast<std::streamsize>(f.size()));
@@ -103,7 +108,8 @@ bool compressToFile(const void* inputData,
     return true;
 }
 
-bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outputData, int numThreads) {
+bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outputData, int numThreads,
+                        size_t dataOffset) {
     if (numThreads == 0) {
         numThreads = std::thread::hardware_concurrency();
     }
@@ -132,7 +138,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
     // only the first frame (indexes are written multi-frame).
     size_t numFrames = 0;
     unsigned long long decompressedSize = 0;
-    size_t pos = 0;
+    size_t pos = dataOffset;  // skip an uncompressed header prefix, if any
     while (pos < compressedSize) {
         unsigned long long frameCompSize = ZSTD_findFrameCompressedSize(compressedData + pos, compressedSize - pos);
         if (ZSTD_isError(frameCompSize)) {
@@ -164,7 +170,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
         std::vector<std::pair<size_t, size_t>> frameRanges;
         std::vector<std::pair<size_t, size_t>> outputRanges;
 
-        pos = 0;
+        pos = dataOffset;  // frames begin after the uncompressed header
         size_t outPos = 0;
         while (pos < compressedSize) {
             unsigned long long frameCompSize = ZSTD_findFrameCompressedSize(compressedData + pos, compressedSize - pos);
@@ -219,7 +225,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
         }
 
         // ZSTD_decompressDCtx handles one frame; walk them for multi-frame input.
-        size_t inPos = 0;
+        size_t inPos = dataOffset;  // frames begin after the uncompressed header
         size_t outPos = 0;
         while (inPos < compressedSize) {
             unsigned long long frameCompSize =
