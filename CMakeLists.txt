@@ -882,6 +882,14 @@ target_link_libraries(panmap_lib PUBLIC
 
 target_link_libraries(panmap PRIVATE panmap_lib)
 
+find_library(JEMALLOC_LIBRARY NAMES jemalloc)
+if(JEMALLOC_LIBRARY)
+    message(STATUS "Linking jemalloc: ${JEMALLOC_LIBRARY}")
+    target_link_libraries(panmap PRIVATE "-Wl,--no-as-needed,${JEMALLOC_LIBRARY},--as-needed")
+else()
+    message(STATUS "jemalloc not found; using the system allocator (placement will be slower)")
+endif()
+
 # Compiler options by build type, on panmap_lib PUBLIC so its sources compile with
 # them AND consumers inherit them.
 if(OPTION_DEBUG)
