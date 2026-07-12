@@ -5,7 +5,7 @@
 [![Bioconda](https://img.shields.io/conda/vn/bioconda/panmap?label=bioconda)](https://anaconda.org/bioconda/panmap)
 [![Conda downloads](https://img.shields.io/conda/dn/bioconda/panmap?label=conda%20downloads)](https://anaconda.org/bioconda/panmap)
 [![biocontainer](https://img.shields.io/badge/biocontainer-quay.io-blue)](https://quay.io/repository/biocontainers/panmap?tab=tags)
-[![License: MIT](https://img.shields.io/github/license/amkram/panmap)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/github/license/amkram/panmap)](LICENSE)
 
 Pangenome-based sequence placement, alignment, and genotyping.
 
@@ -129,3 +129,22 @@ Reference outputs for the demos are in [examples/expected/](examples/expected/).
 ## Links
 
 [Full documentation](https://amkram.github.io/panmap/) · [Installation options](https://amkram.github.io/panmap/installation/) · [CLI reference](https://amkram.github.io/panmap/cli-reference/) · [PanMAN format](https://github.com/TurakhiaLab/panman)
+
+## License
+
+Copyright © 2024 Alexander Kramer, Alan Zhang, et al.
+
+panmap is distributed under the **GNU General Public License v3.0 only**
+([LICENSE](LICENSE)) — its binary statically links
+[BWA](https://github.com/lh3/bwa), which is GPL-3.0-only.
+
+Bundled third-party components:
+
+| Component | License |
+| --- | --- |
+| BWA (`src/3rdparty/bwa`) | GPL-3.0-only (`COPYING`; `bwt_gen.c` is GPL-2.0-or-later, see `NOTICE-bwt_gen`) |
+| minimap2 (`src/3rdparty/minimap2`) | MIT |
+| bcftools (`src/3rdparty/bcftools`) | MIT/Expat |
+| htslib (`src/3rdparty/samtools`) | MIT/Expat |
+| Cap'n Proto (`src/3rdparty/capnproto`) | MIT |
+| PanMAN (built from source) | MIT |
