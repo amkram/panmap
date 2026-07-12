@@ -29,6 +29,24 @@ std::pair<size_t, size_t> hashSeq(const std::string& s) {
     return std::make_pair(fHash, rHash);
 }
 
+// Fixed-capacity ring buffer for the s-mer hash window in rollingSyncmers. The window is
+// exactly k-s+1 wide (one pop + one push per roll), so a contiguous buffer allocated once
+// replaces std::deque's per-op chunk management -- a hot spot in read/index seeding. Only
+// the deque operations rollingSyncmers actually uses are provided; behaviour is identical.
+namespace {
+struct SmerRing {
+    std::vector<size_t> buf;
+    size_t cap = 0, head = 0, count = 0;
+    void reset(size_t capacity) { buf.assign(capacity, 0); cap = capacity; head = 0; count = 0; }
+    size_t size() const { return count; }
+    size_t& operator[](size_t j) { size_t idx = head + j; if (idx >= cap) idx -= cap; return buf[idx]; }
+    void push_back(size_t x)  { size_t idx = head + count; if (idx >= cap) idx -= cap; buf[idx] = x; ++count; }
+    void push_front(size_t x) { head = head ? head - 1 : cap - 1; buf[head] = x; ++count; }
+    void pop_front() { head = (head + 1 == cap) ? 0 : head + 1; --count; }
+    void pop_back()  { --count; }
+};
+}  // namespace
+
 std::vector<std::tuple<size_t, bool, bool, int64_t>>
 rollingSyncmers(std::string_view seq, int k, int s, bool open, int t, bool returnAll) {
     std::vector<std::tuple<size_t, bool, bool, int64_t>> syncmers;
@@ -45,8 +63,9 @@ rollingSyncmers(std::string_view seq, int k, int s, bool open, int t, bool retur
     size_t curMinSmerHashReverse = max_size_t;
     int curMinSmerHashIndexForward = -1;
     int curMinSmerHashIndexReverse = -1;
-    std::deque<size_t> curSmerHashesForward;
-    std::deque<size_t> curSmerHashesReverse;
+    SmerRing curSmerHashesForward, curSmerHashesReverse;
+    curSmerHashesForward.reset(static_cast<size_t>(k - s + 1));
+    curSmerHashesReverse.reset(static_cast<size_t>(k - s + 1));
 
     // first smer
     for (int i = 0; i < s; ++i) {
