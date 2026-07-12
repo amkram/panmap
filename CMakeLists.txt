@@ -317,8 +317,8 @@ else()
 FetchContent_Declare(
     panman
     GIT_REPOSITORY https://github.com/TurakhiaLab/panman
-    GIT_TAG f6e44c9f43b6804f466665742d5a979a2675982e # using the old version for now until panman implements backward compatibility with published trees
-    GIT_SHALLOW False
+    GIT_TAG v0.1.4  # single source of truth: same release the bioconda recipe builds
+    GIT_SHALLOW True
     UPDATE_COMMAND ""
     PATCH_COMMAND sed -i.bak "15d" <SOURCE_DIR>/src/panmanUtils.cpp &&
                   sed -i.bak "s/PROJECT_VERSION/\\\"1.0\\\"/g" <SOURCE_DIR>/src/panmanUtils.cpp &&
