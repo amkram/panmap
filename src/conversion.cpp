@@ -304,7 +304,7 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
                                      int32_t mate_re,
                                      uint8_t proper_frag,
                                      bool mate_unmapped,
-                                     sam_hdr_t* header) {
+                                     [[maybe_unused]] sam_hdr_t* header) {
     bam1_t* b = bam_init1();
 
     // Strip /1 or /2 suffix from read name (matching minimap2 convention)

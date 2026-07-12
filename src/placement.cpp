@@ -1572,7 +1572,7 @@ void placeLite(PlacementResult& result,
                             const auto& syncmers =
                                 seeding::rollingSyncmers(seq, params.k, params.s, params.open, params.t, false);
 
-                            if (syncmers.size() < params.l) continue;
+                            if (syncmers.size() < static_cast<size_t>(params.l)) continue;
 
                             // Primer-trim: keep only syncmers whose k-mer start is within
                             // [validStart, validEnd]. Trimming removes contiguous end syncmers,

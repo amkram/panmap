@@ -20,10 +20,11 @@
 #include <atomic>
 #include <mutex>
 #include <iomanip>
+#include <utility>
 
 std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::computeNewSyncmerRangesJump(
-    panmanUtils::Node* node,
-    size_t dfsIndex,
+    panmanUtils::Node* /*node*/,
+    size_t /*dfsIndex*/,
     const panmapUtils::BlockSequences& blockSequences,
     const std::vector<char>& blockExistsDelayed,
     const std::vector<char>& blockStrandDelayed,
@@ -99,15 +100,15 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         bool reachedEnd = false;
         uint32_t offset = 0;
         leftGapMapIt = leftGapMapIt == gapMap.begin() ? gapMap.begin() : std::prev(leftGapMapIt);
-        while (offset < k - 1) {
+        while (std::cmp_less(offset, k - 1)) {
             auto curBegScalar = globalCoords.getScalarFromCoord(curBegCoord, blockStrand[curBegCoord.primaryBlockId]);
             if (curBegScalar == 0) {
                 break;
             }
             if (leftGapMapIt == gapMap.begin()) {
-                if (curBegScalar - 1 > leftGapMapIt->second) {
+                if (std::cmp_greater(curBegScalar - 1, leftGapMapIt->second)) {
                     globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
-                } else if (curBegScalar >= leftGapMapIt->first) {
+                } else if (std::cmp_greater_equal(curBegScalar, leftGapMapIt->first)) {
                     if (leftGapMapIt->first == 0) {
                         break;
                     } else {
@@ -118,7 +119,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                         }
                     }
                 }
-            } else if (curBegScalar - 1 > leftGapMapIt->second) {
+            } else if (std::cmp_greater(curBegScalar - 1, leftGapMapIt->second)) {
                 globalCoords.stepBackwardScalar(curBegCoord, blockStrand);
             } else {
                 curBegScalar = leftGapMapIt->first - 1;
@@ -157,10 +158,11 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
             // already at begin
         } else if (rightGapMapIt == gapMap.end()) {
             rightGapMapIt = std::prev(rightGapMapIt);
-        } else if (rightGapMapIt->first != curEndScalar && curEndScalar <= std::prev(rightGapMapIt)->second) {
+        } else if (std::cmp_not_equal(rightGapMapIt->first, curEndScalar) &&
+                   std::cmp_less_equal(curEndScalar, std::prev(rightGapMapIt)->second)) {
             rightGapMapIt = std::prev(rightGapMapIt);
         }
-        while (offset < k - 1) {
+        while (std::cmp_less(offset, k - 1)) {
             if (curEndScalar == globalCoords.lastScalarCoord) {
                 reachedEnd = true;
                 break;
@@ -168,8 +170,8 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
 
             if (rightGapMapIt == gapMap.end()) {
                 auto lastGapMapIt = std::prev(gapMap.end());
-                if (curEndScalar <= lastGapMapIt->second) {
-                    if (lastGapMapIt->second != globalCoords.lastScalarCoord) {
+                if (std::cmp_less_equal(curEndScalar, lastGapMapIt->second)) {
+                    if (std::cmp_not_equal(lastGapMapIt->second, globalCoords.lastScalarCoord)) {
                         curEndScalar = lastGapMapIt->second + 1;
                         curEndCoord = globalCoords.getCoordFromScalar(curEndScalar);
                         if (!blockStrand[curEndCoord.primaryBlockId]) {
@@ -180,9 +182,10 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                     globalCoords.stepForwardScalar(curEndCoord, blockStrand);
                     ++curEndScalar;
                 }
-            } else if (curEndScalar <= rightGapMapIt->second &&
-                       (curEndScalar >= rightGapMapIt->first || curEndScalar + 1 >= rightGapMapIt->first)) {
-                if (rightGapMapIt->second == globalCoords.lastScalarCoord) {
+            } else if (std::cmp_less_equal(curEndScalar, rightGapMapIt->second) &&
+                       (std::cmp_greater_equal(curEndScalar, rightGapMapIt->first) ||
+                        std::cmp_greater_equal(curEndScalar + 1, rightGapMapIt->first))) {
+                if (std::cmp_equal(rightGapMapIt->second, globalCoords.lastScalarCoord)) {
                     if (localMutationRangeIndex == mergedLocalMutationRanges.size() - 1) {
                         reachedEnd = true;
                         break;
@@ -225,7 +228,8 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                     // already at begin
                 } else if (rightGapMapIt == gapMap.end()) {
                     rightGapMapIt = std::prev(rightGapMapIt);
-                } else if (rightGapMapIt->first != curEndScalar && curEndScalar <= std::prev(rightGapMapIt)->second) {
+                } else if (std::cmp_not_equal(rightGapMapIt->first, curEndScalar) &&
+                   std::cmp_less_equal(curEndScalar, std::prev(rightGapMapIt)->second)) {
                     rightGapMapIt = std::prev(rightGapMapIt);
                 }
                 syncmerRangeEndCoord = curEndCoord;
@@ -267,7 +271,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
         const char startChar = blockSequences.getSequenceBase(curCoord);
         if (startChar == '-') {
             const auto curBlockId = curCoord.primaryBlockId;
-            if (gapMap.begin()->second == lastScalarCoord) {
+            if (std::cmp_equal(gapMap.begin()->second, lastScalarCoord)) {
                 continue;
             } else if (blockStrandDelayed[curBlockId] == blockStrand[curBlockId] || !blockExistsDelayed[curBlockId] ||
                        !blockExists[curBlockId]) {
@@ -342,7 +346,8 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                 // Only delete seeds inside the genome extent. Flank regions (before
                 // firstNonGapScalar or after lastNonGapScalar) are missing data, not true
                 // gaps; their seeds stay inherited from the parent.
-                if (curCoordScalar >= firstNonGapScalar && curCoordScalar <= lastNonGapScalar) {
+                if (std::cmp_greater_equal(curCoordScalar, firstNonGapScalar) &&
+                    std::cmp_less_equal(curCoordScalar, lastNonGapScalar)) {
                     blockOnSyncmers[curCoord.primaryBlockId].erase(curCoordScalar);
                     if (blockOnSyncmers[curCoord.primaryBlockId].empty())
                         blockOnSyncmers.erase(curCoord.primaryBlockId);
@@ -366,15 +371,16 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                         // guard the std::prev to avoid dereferencing before begin().
                         while (curCoordGapMapIt != gapMap.end() &&
                                !((curCoordGapMapIt == gapMap.begin() ||
-                                  std::prev(curCoordGapMapIt)->second < curCoordScalar) &&
-                                 (curCoordScalar < curCoordGapMapIt->first))) {
+                                  std::cmp_less(std::prev(curCoordGapMapIt)->second, curCoordScalar)) &&
+                                 (std::cmp_less(curCoordScalar, curCoordGapMapIt->first)))) {
                             ++curCoordGapMapIt;
                         }
                     }
                 }
-            } else if (curCoordGapMapIt != gapMap.end() && curCoordScalar == curCoordGapMapIt->first - 1) {
+            } else if (curCoordGapMapIt != gapMap.end() &&
+                       std::cmp_equal(curCoordScalar, curCoordGapMapIt->first - 1)) {
                 // step over gap run
-                if (curCoordGapMapIt->second == lastScalarCoord) {
+                if (std::cmp_equal(curCoordGapMapIt->second, lastScalarCoord)) {
                     break;
                 } else {
                     curCoord = globalCoords.getCoordFromScalar(curCoordGapMapIt->second + 1);
@@ -422,7 +428,7 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
 std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>>
 index_single_mode::IndexBuilder::computeNewKminmerRanges(
     std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
-    const uint64_t dfsIndex) {
+    const uint64_t /*dfsIndex*/) {
     std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>>
         newKminmerRanges;
     auto l = indexBuilder.getL();
@@ -452,7 +458,7 @@ index_single_mode::IndexBuilder::computeNewKminmerRanges(
     }
 
     int64_t syncmerChangeIndex = 0;
-    while (syncmerChangeIndex < refOnSyncmersChangeRecord.size()) {
+    while (syncmerChangeIndex < static_cast<int64_t>(refOnSyncmersChangeRecord.size())) {
         const auto& [syncmerPos, changeType, rsyncmer] = refOnSyncmersChangeRecord[syncmerChangeIndex];
         index_single_mode::SyncmerSet::iterator curBegIt, curEndIt;
         if (changeType == panmapUtils::seedChangeType::DEL) {
@@ -492,7 +498,7 @@ index_single_mode::IndexBuilder::computeNewKminmerRanges(
         offset = 1;
         if (l == 2) {
             while (curEndIt != refOnSyncmersMap.end()) {
-                if (syncmerChangeIndex != refOnSyncmersChangeRecord.size() - 1) {
+                if (syncmerChangeIndex != static_cast<int64_t>(refOnSyncmersChangeRecord.size()) - 1) {
                     const auto& [nextSyncmerPos, nextChangeType, nextRsyncmer] =
                         refOnSyncmersChangeRecord[syncmerChangeIndex + 1];
                     if (nextChangeType != panmapUtils::seedChangeType::DEL) {
@@ -518,7 +524,7 @@ index_single_mode::IndexBuilder::computeNewKminmerRanges(
         } else {
             // expand to the right
             while (offset < l - 1 && curEndIt != refOnSyncmersMap.end()) {
-                if (syncmerChangeIndex != refOnSyncmersChangeRecord.size() - 1) {
+                if (syncmerChangeIndex != static_cast<int64_t>(refOnSyncmersChangeRecord.size()) - 1) {
                     const auto& [nextSyncmerPos, nextChangeType, nextRsyncmer] =
                         refOnSyncmersChangeRecord[syncmerChangeIndex + 1];
                     if (nextChangeType != panmapUtils::seedChangeType::DEL) {
@@ -559,7 +565,7 @@ std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode
 index_single_mode::IndexBuilder::computeNewKminmerRanges(
     std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
     BuildState& state,
-    const uint64_t dfsIndex) {
+    const uint64_t /*dfsIndex*/) {
     std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>>
         newKminmerRanges;
     auto l = indexBuilder.getL();
@@ -960,11 +966,11 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         for (size_t j = 0; j < l; j++) {
             if (curIt == refOnSyncmersMap.end()) {
                 break;
-            } else if (endIt != refOnSyncmersMap.end() && *curIt == *endIt && j != l - 1) {
+            } else if (endIt != refOnSyncmersMap.end() && *curIt == *endIt && std::cmp_not_equal(j, l - 1)) {
                 break;
             }
             startingSyncmerHashes.push_back(refOnSyncmers.at(*curIt).hash);
-            if (j != l - 1) ++curIt;
+            if (std::cmp_not_equal(j, l - 1)) ++curIt;
         }
         if (startingSyncmerHashes.size() < l) {
             continue;
@@ -1049,7 +1055,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
     }
     if (!newKminmerRanges.empty() && newKminmerRanges.back().second == refOnSyncmersMap.end()) {
         auto delIt = newKminmerRanges.back().second;
-        for (size_t j = 0; j < l - 1; j++) {
+        for (size_t j = 0; std::cmp_less(j, l - 1); j++) {
             --delIt;
             uint64_t delPos = *delIt;
             if (refOnKminmers.contains(delPos)) {
@@ -1400,7 +1406,8 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
 
                 for (int i = 0; i < length; i++) {
                     panmapUtils::Coordinate pos(nucMutation, i);
-                    if (pos.nucPosition >= blockSequences.blockLength(pos.primaryBlockId)) continue;
+                    if (static_cast<size_t>(pos.nucPosition) >= blockSequences.blockLength(pos.primaryBlockId))
+                        continue;
 
                     char oldNuc = blockSequences.getSequenceBase(pos);
                     int newNucCode = (nucMutation.nucs >> (4 * (5 - i))) & 0xF;

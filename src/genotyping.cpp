@@ -235,7 +235,7 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
     if (alts.size() + 1 == pls.size()) {
         gls = pls;
     } else {
-        for (int i = 0; i < pls.size(); i += 2) {
+        for (size_t i = 0; i < pls.size(); i += 2) {
             gls.push_back(pls[i]);
             if (gls.size() == alts.size() + 1) {
                 break;
@@ -244,7 +244,7 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
     }
 
     gls[0] += scaled_submat[ref_nuc_idx][ref_nuc_idx];
-    for (int i = 1; i < gls.size(); i++) {
+    for (size_t i = 1; i < gls.size(); i++) {
         // scaled_submat is the 4x4 A/C/G/T substitution-spectrum prior, so apply
         // it only to base ALTs. A non-base ALT (e.g. '*' spanning deletion) has
         // index > 3 and would over-read the row, so leave its likelihood
@@ -257,9 +257,9 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
 
     double min_gl = *std::min_element(gls.begin(), gls.end());
     int min_gl_index = 0;
-    for (int i = 0; i < gls.size(); i++) {
+    for (size_t i = 0; i < gls.size(); i++) {
         gls[i] -= min_gl;
-        if (gls[i] == 0) min_gl_index = i;
+        if (gls[i] == 0) min_gl_index = static_cast<int>(i);
     }
 
     if (min_gl_index == 0) return "";

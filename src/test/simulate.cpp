@@ -342,7 +342,7 @@ genLen(const std::pair<int, int>& indel_len, const genotyping::mutationMatrices&
     std::vector<int> wgts;
     std::vector<size_t> lens;
     double minProb = getMinDouble(probs);
-    for (size_t i = indel_len.first; i < indel_len.second + 1; i++) {
+    for (size_t i = indel_len.first; i < static_cast<size_t>(indel_len.second + 1); i++) {
         lens.push_back(i);
         wgts.push_back(pow(10, (minProb - probs[i - 1]) / 10) * 1000);
     }
@@ -351,7 +351,7 @@ genLen(const std::pair<int, int>& indel_len, const genotyping::mutationMatrices&
     return lens[index];
 }
 
-void genMut(const std::string& curNode,
+void genMut([[maybe_unused]] const std::string& curNode,
             const std::string& seq,
             const fs::path& fastaOut,
             const fs::path& vcfOut,
@@ -361,7 +361,7 @@ void genMut(const std::string& curNode,
             size_t beg,
             size_t end,
             std::mt19937& gen,
-            unsigned seed) {
+            [[maybe_unused]] unsigned seed) {
     if (fs::exists(fastaOut) && fs::exists(vcfOut)) {
         return;
     }
@@ -375,7 +375,7 @@ void genMut(const std::string& curNode,
     std::vector<std::string> vref;
     std::vector<int> vtp;
     std::vector<int> num = genMutNum(mutnum_double, gen);
-    for (int i = 0; i < num.size(); i++) {
+    for (size_t i = 0; i < num.size(); i++) {
         for (int j = 0; j < num[i]; j++) {
             switch (i) {
                 case 0: vtp.push_back(1); break;
@@ -388,7 +388,7 @@ void genMut(const std::string& curNode,
 
     int c = 0;
     int sumnum = num[0] + num[1] + num[2];
-    while (muts.size() < sumnum) {
+    while (muts.size() < static_cast<size_t>(sumnum)) {
         int curPos = distribPos(gen);
         int varType = vtp[c % vtp.size()];
         int length;
@@ -443,7 +443,7 @@ void genMut(const std::string& curNode,
                 vros << "ref\t" << std::to_string(pos + 1) + "\t.\t";
                 char ref = seq[pos];
                 std::string inss;
-                for (size_t j = 0; j < get<2>(muts[i]); j++) {
+                for (size_t j = 0; j < static_cast<size_t>(get<2>(muts[i])); j++) {
                     inss += getRandomChar(bases, gen);
                 }
                 nseq = nseq.substr(0, pos + offset + 1) + inss +
@@ -482,11 +482,11 @@ struct snpInfo {
     char mut;
 };
 
-void genMutSNP(const std::string& curNode,
+void genMutSNP([[maybe_unused]] const std::string& curNode,
                const std::string& seq,
                const fs::path& fastaOut,
                const fs::path& vcfOut,
-               const genotyping::mutationMatrices& mutMat,
+               [[maybe_unused]] const genotyping::mutationMatrices& mutMat,
                std::mt19937& gen,
                std::vector<std::discrete_distribution<>>& distributions,
                std::vector<char>& bases) {
@@ -680,8 +680,8 @@ std::vector<int> genMutNum(const std::vector<double>& mutNum_double, std::mt1993
 
 inline std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector<std::vector<double>>& phredMatrix) {
     std::vector<std::vector<double>> prob_matrix = phredMatrix;
-    for (int i = 0; i < prob_matrix.size(); i++) {
-        for (int j = 0; j < prob_matrix[i].size(); j++) {
+    for (size_t i = 0; i < prob_matrix.size(); i++) {
+        for (size_t j = 0; j < prob_matrix[i].size(); j++) {
             prob_matrix[i][j] = pow(10, -prob_matrix[i][j] / 10);
         }
     }
@@ -690,8 +690,8 @@ inline std::vector<std::vector<double>> phredMatrix2ProbMatrix(const std::vector
 
 inline std::vector<std::vector<double>> probMatrix2PhredMatrix(const std::vector<std::vector<double>>& probMatrix) {
     std::vector<std::vector<double>> phred_matrix = probMatrix;
-    for (int i = 0; i < phred_matrix.size(); i++) {
-        for (int j = 0; j < phred_matrix[i].size(); j++) {
+    for (size_t i = 0; i < phred_matrix.size(); i++) {
+        for (size_t j = 0; j < phred_matrix[i].size(); j++) {
             phred_matrix[i][j] = -10 * log10(phred_matrix[i][j]);
         }
     }
@@ -724,15 +724,15 @@ void scaleMutationMatrices(genotyping::mutationMatrices& mutMat, double mutation
     double scale_factor = mutation_rate / avg_mutation_rate;
 
     std::vector<double> scaled_submat_prob_row_sums(scaled_submat_prob.size());
-    for (int i = 0; i < scaled_submat_prob.size(); i++) {
-        for (int j = 0; j < scaled_submat_prob[i].size(); j++) {
+    for (size_t i = 0; i < scaled_submat_prob.size(); i++) {
+        for (size_t j = 0; j < scaled_submat_prob[i].size(); j++) {
             if (i == j) continue;
             scaled_submat_prob[i][j] *= scale_factor;
             scaled_submat_prob_row_sums[i] += scaled_submat_prob[i][j];
         }
     }
 
-    for (int i = 0; i < scaled_submat_prob.size(); i++) {
+    for (size_t i = 0; i < scaled_submat_prob.size(); i++) {
         scaled_submat_prob[i][i] = 1 - scaled_submat_prob_row_sums[i];
     }
 

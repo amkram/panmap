@@ -221,7 +221,12 @@ int our_mplp_func(void* data, bam1_t* b) {
             ret = -1;
         } else {
             ret = 1;
-            (void)bam_copy1(b, bam_records[bam_index]);
+            /* bam_copy1 returns b (or NULL on allocation failure); result
+             * intentionally ignored. Capture it so the copy still counts as a
+             * use of the value: a bare (void) cast does NOT silence GCC's
+             * warn_unused_result on bam_copy1. */
+            bam1_t *copied = bam_copy1(b, bam_records[bam_index]);
+            (void)copied;
         }
         bam_index += 1;
 

@@ -739,15 +739,15 @@ class ThreadsManager {
                    double maskReadsRelativeFrequency,
                    bool progressBar,
                    bool lowMemory)
-        : liteTree(liteTree),
-          prefix(prefix),
+        : prefix(prefix),
           numThreads(numThreads),
+          liteTree(liteTree),
           maskSeeds(maskSeeds),
           maskReads(maskReads),
           maskSeedsRelativeFrequency(maskSeedsRelativeFrequency),
           maskReadsRelativeFrequency(maskReadsRelativeFrequency),
-          progressBar(progressBar),
-          lowMemory(lowMemory) {
+          lowMemory(lowMemory),
+          progressBar(progressBar) {
         threadRanges.resize(numThreads);
         readMinichainsInitialized.resize(numThreads);
         readMinichainsAdded.resize(numThreads);
@@ -887,15 +887,15 @@ class mgsrPlacer {
     mgsrPlacer(MgsrLiteTree* liteTree, ThreadsManager& threadsManager, bool lowMemory, size_t threadId)
         : liteTree(liteTree),
           threadsManager(&threadsManager),
-          lowMemory(lowMemory),
           k(threadsManager.k),
           s(threadsManager.s),
           t(threadsManager.t),
           l(threadsManager.l),
           openSyncmer(threadsManager.openSyncmer),
           maskReads(threadsManager.maskReads),
-          threadId(threadId),
-          progressBar(threadsManager.progressBar) {}
+          lowMemory(lowMemory),
+          progressBar(threadsManager.progressBar),
+          threadId(threadId) {}
 
     mgsrPlacer(MgsrLiteTree* liteTree, int k, int s, int t, int l, bool openSyncmer, bool lowMemory, size_t threadId)
         : liteTree(liteTree), lowMemory(lowMemory), threadId(threadId) {

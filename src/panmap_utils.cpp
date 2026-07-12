@@ -51,7 +51,7 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
     blockStrand.resize(tree->blocks.size() + 1, true);
     int32_t maxBlockId = 0;
 
-    for (int32_t blockId = 0; blockId < tree->blocks.size(); blockId++) {
+    for (int32_t blockId = 0; blockId < static_cast<int32_t>(tree->blocks.size()); blockId++) {
         blockLengths[blockId] = 0;
         maxBlockId = std::max(maxBlockId, blockId);
         if (blockSequence[blockId]) {
@@ -118,9 +118,9 @@ void getSequenceFromReference(panmanUtils::Tree* tree,
             int length = nucMutation.mutInfo >> 4;
             for (int i = 0; i < length; i++) {
                 panmapUtils::Coordinate pos = panmapUtils::Coordinate(nucMutation, i);
-                if (pos.nucPosition == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) {
+                if (static_cast<size_t>(pos.nucPosition) == sequence[pos.primaryBlockId].size() - 1 && pos.nucGapPosition == -1) {
                     continue;
-                } else if (pos.nucPosition >= sequence[pos.primaryBlockId].size()) {
+                } else if (static_cast<size_t>(pos.nucPosition) >= sequence[pos.primaryBlockId].size()) {
                     continue;
                 }
                 int newNucCode = (nucMutation.nucs >> (4 * (5 - i))) & 0xF;
