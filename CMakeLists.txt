@@ -400,8 +400,11 @@ add_library(panman_lib STATIC ${PANMAN_SOURCES})
 set_target_properties(panman_lib PROPERTIES OUTPUT_NAME "panman")
 target_compile_options(panman_lib PRIVATE -fPIC)
 
-# Define the panmanUtils target with actual sources
-add_executable(panmanUtils
+# The standalone panmanUtils CLI is not used by panmap (which links libpanman.a) or
+# its tests, and building it re-compiles the heavy generated protobuf/capnp TUs a
+# second time. EXCLUDE_FROM_ALL keeps the target defined (buildable on demand) but out
+# of the default build.
+add_executable(panmanUtils EXCLUDE_FROM_ALL
     src/panmanUtils.cpp
     ${PROTO_SRCS}
 )
@@ -467,7 +470,7 @@ target_link_libraries(panmanUtils
 )
 
 # Install targets
-install(TARGETS panmanUtils panman_lib
+install(TARGETS panman_lib
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
 )
@@ -556,40 +559,25 @@ else()
 endif()
 
 
+# Only the bwa-mem path is used (via src/bwa_align.c). This is the linker-map closure
+# of the bwa .c files those symbols pull in; the bwa-aln / bwa-sw (bwtsw2_*) / short-read
+# pairing / standalone-CLI files (bwtaln, bwase/bwape, fastmap, pemerge, run, kopen, ...)
+# are unused. A dropped-but-needed file surfaces as an unresolved symbol at link.
 set(BWA_SOURCES
-    src/3rdparty/bwa/bamlite.c
     src/3rdparty/bwa/bntseq.c
     src/3rdparty/bwa/bwa.c
     src/3rdparty/bwa/bwamem.c
     src/3rdparty/bwa/bwamem_extra.c
     src/3rdparty/bwa/bwamem_pair.c
-    src/3rdparty/bwa/bwape.c
-    src/3rdparty/bwa/bwase.c
-    src/3rdparty/bwa/bwaseqio.c
-    src/3rdparty/bwa/bwashm.c
     src/3rdparty/bwa/bwt.c
     src/3rdparty/bwa/bwt_gen.c
-    src/3rdparty/bwa/bwt_lite.c
-    src/3rdparty/bwa/bwtaln.c
-    src/3rdparty/bwa/bwtgap.c
     src/3rdparty/bwa/bwtindex.c
-    src/3rdparty/bwa/bwtsw2_aux.c
-    src/3rdparty/bwa/bwtsw2_chain.c
-    src/3rdparty/bwa/bwtsw2_core.c
-    src/3rdparty/bwa/bwtsw2_main.c
-    src/3rdparty/bwa/bwtsw2_pair.c
-    src/3rdparty/bwa/fastmap.c
     src/3rdparty/bwa/is.c
-    src/3rdparty/bwa/kopen.c
     src/3rdparty/bwa/kstring.c
     src/3rdparty/bwa/ksw.c
-    src/3rdparty/bwa/malloc_wrap.c
-    src/3rdparty/bwa/maxk.c
-    src/3rdparty/bwa/pemerge.c
     src/3rdparty/bwa/QSufSort.c
     src/3rdparty/bwa/rle.c
     src/3rdparty/bwa/rope.c
-    src/3rdparty/bwa/run.c
     src/3rdparty/bwa/utils.c
     src/mm_align.c
 )
@@ -611,7 +599,39 @@ target_include_directories(bwa PUBLIC src/3rdparty/bwa)
 # top-level flags carry -Wall -Wextra (not our code to fix).
 target_compile_options(bwa PRIVATE -fPIC -w)
 
-file(GLOB BCFTOOLS_SOURCES src/3rdparty/bcftools/*.c)
+# panmap only calls three bcftools subcommands (main_mpileup / main_vcfcall /
+# main_consensus, see conversion.cpp). This is the exact set of .c files those pull
+# in -- the closure of archive members a linker map reports for the panmap/simulate
+# binaries -- rather than GLOB'ing all ~55 (vcfroh, vcfcnv, csq, gtcheck, ... are
+# unused). To regenerate: relink with -Wl,-Map and grep the libbcftools.a(*.c.o)
+# members. A missing entry surfaces immediately as an unresolved symbol at link.
+set(BCFTOOLS_SOURCES
+    src/3rdparty/bcftools/bam2bcf.c
+    src/3rdparty/bcftools/bam2bcf_edlib.c
+    src/3rdparty/bcftools/bam2bcf_iaux.c
+    src/3rdparty/bcftools/bam2bcf_indel.c
+    src/3rdparty/bcftools/bam_sample.c
+    src/3rdparty/bcftools/ccall.c
+    src/3rdparty/bcftools/consensus.c
+    src/3rdparty/bcftools/edlib.c
+    src/3rdparty/bcftools/em.c
+    src/3rdparty/bcftools/filter.c
+    src/3rdparty/bcftools/gvcf.c
+    src/3rdparty/bcftools/kmin.c
+    src/3rdparty/bcftools/mcall.c
+    src/3rdparty/bcftools/mpileup.c
+    src/3rdparty/bcftools/ploidy.c
+    src/3rdparty/bcftools/prob1.c
+    src/3rdparty/bcftools/read_consensus.c
+    src/3rdparty/bcftools/regidx.c
+    src/3rdparty/bcftools/smpl_ilist.c
+    src/3rdparty/bcftools/str_finder.c
+    src/3rdparty/bcftools/vcfbuf.c
+    src/3rdparty/bcftools/vcfcall.c
+    src/3rdparty/bcftools/vcfmerge.c
+    src/3rdparty/bcftools/vcmp.c
+    src/3rdparty/bcftools/version.c
+)
 add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
 target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
 # bcftools sources include <htslib/...>; resolve them against the htslib whose
