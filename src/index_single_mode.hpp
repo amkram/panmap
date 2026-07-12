@@ -15,8 +15,26 @@
 #include <atomic>
 #include <absl/container/btree_set.h>
 #include <absl/container/flat_hash_map.h>
+#include <array>
+#include <cstdint>
+#include <string>
 
 namespace index_single_mode {
+
+// A small uncompressed header prepended to the .idx so cache-validation can read the
+// seeding params without decompressing the (up to GB-scale) payload -- previously the
+// validation step fully decompressed the index just to read six fields, then the
+// placement step decompressed it a second time.
+constexpr uint32_t kIndexMagic = 0x31494D50u;  // "PMI1" little-endian
+constexpr uint32_t kIndexHeaderVersion = 1;
+constexpr size_t kIndexHeaderSize = 32;
+struct IndexParamsHeader {
+    int32_t k = 0, s = 0, t = 0, l = 0;
+    bool hpc = false, open = false;
+};
+std::array<uint8_t, kIndexHeaderSize> encodeIndexHeader(const IndexParamsHeader& p);
+// Reads the header from the start of `path`. Returns false if absent / not this format.
+bool readIndexHeader(const std::string& path, IndexParamsHeader& out);
 
 // btree_set has better cache locality than std::set
 using SyncmerSet = absl::btree_set<uint64_t>;

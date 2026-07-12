@@ -199,7 +199,12 @@ class IndexReader : public ::capnp::MessageReader {
     std::unique_ptr<::capnp::FlatArrayMessageReader> reader;
 
     explicit IndexReader(const std::string& path, int numThreads = 0) : ::capnp::MessageReader(makeOptions()) {
-        if (!panmap_zstd::decompressFromFile(path, data, numThreads)) {
+        // New-format indexes carry a small uncompressed param header before the frames;
+        // skip it. Old-format indexes (no header) decompress from offset 0.
+        index_single_mode::IndexParamsHeader ph;
+        const size_t dataOffset =
+            index_single_mode::readIndexHeader(path, ph) ? index_single_mode::kIndexHeaderSize : 0;
+        if (!panmap_zstd::decompressFromFile(path, data, numThreads, dataOffset)) {
             throw std::runtime_error("Failed to decompress index: " + path);
         }
 
@@ -368,19 +373,20 @@ static bool cachedIndexUsable(const Config& cfg) {
             return false;
         }
     }
-    try {
-        IndexReader reader(cfg.index, cfg.threads);
-        auto idx = reader.getRoot<LiteIndex>();
-        if (idx.getK() != cfg.k || idx.getS() != cfg.s || idx.getT() != cfg.t || idx.getL() != cfg.l ||
-            idx.getHpc() != cfg.hpc || idx.getOpen() != cfg.openSyncmer) {
-            logging::warn(
-                "Cached index {} was built with different seeding parameters "
-                "(k/s/t/l/hpc/open-syncmer); rebuilding.",
-                cfg.index);
-            return false;
-        }
-    } catch (const std::exception& e) {
-        logging::warn("Cached index {} could not be read ({}); rebuilding.", cfg.index, e.what());
+    // Read the seeding params from the small uncompressed header instead of decompressing
+    // the whole (up to GB-scale) payload just to compare six fields.
+    index_single_mode::IndexParamsHeader ph;
+    if (!index_single_mode::readIndexHeader(cfg.index, ph)) {
+        logging::warn("Cached index {} has no readable param header (old format/corrupt); rebuilding.",
+                      cfg.index);
+        return false;
+    }
+    if (ph.k != cfg.k || ph.s != cfg.s || ph.t != cfg.t || ph.l != cfg.l ||
+        ph.hpc != cfg.hpc || ph.open != cfg.openSyncmer) {
+        logging::warn(
+            "Cached index {} was built with different seeding parameters "
+            "(k/s/t/l/hpc/open-syncmer); rebuilding.",
+            cfg.index);
         return false;
     }
     return true;

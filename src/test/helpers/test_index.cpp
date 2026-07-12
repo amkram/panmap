@@ -25,7 +25,11 @@ std::string makeTempIndexPath() {
 
 IndexData loadIndex(const std::string& path) {
     std::vector<uint8_t> buffer;
-    if (!panmap_zstd::decompressFromFile(path, buffer)) {
+    // Skip the uncompressed param header prepended by writeIndex (see readIndexHeader).
+    index_single_mode::IndexParamsHeader ph;
+    const size_t dataOffset =
+        index_single_mode::readIndexHeader(path, ph) ? index_single_mode::kIndexHeaderSize : 0;
+    if (!panmap_zstd::decompressFromFile(path, buffer, 0, dataOffset)) {
         throw std::runtime_error("Failed to decompress index: " + path);
     }
 
