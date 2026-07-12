@@ -30,9 +30,10 @@ std::vector<std::string> sampleNodeIds(const ts::RSVPanmanFixture& fix, int n, u
 BOOST_AUTO_TEST_SUITE(index_tests)
 
 BOOST_AUTO_TEST_CASE(index_parameters_persisted) {
-    ts::RSVPanmanFixture fix;
-    ts::TestIndex idx(fix.tree(), /*k=*/19, /*s=*/6, /*t=*/0, /*l=*/3, /*open=*/false, /*hpc=*/false);
-    auto& d = idx.data();
+    // Non-default params (differ from sharedRSVIndex's 15/8/0/1) prove the values aren't
+    // hardcoded; built over the shared tree to skip a second fixture load.
+    ts::TestIndex idx(ts::sharedRSVFixture().tree(), /*k=*/19, /*s=*/6, /*t=*/0, /*l=*/3);
+    const auto& d = idx.data();
     BOOST_TEST(d.k == 19);
     BOOST_TEST(d.s == 6);
     BOOST_TEST(d.t == 0);
@@ -42,9 +43,8 @@ BOOST_AUTO_TEST_CASE(index_parameters_persisted) {
 }
 
 BOOST_AUTO_TEST_CASE(offset_and_parent_child_consistency) {
-    ts::RSVPanmanFixture fix;
-    ts::TestIndex idx(fix.tree(), K, S, 0, L);
-    auto& d = idx.data();
+    const auto& fix = ts::sharedRSVFixture();
+    const auto& d = ts::sharedRSVIndex();
 
     const size_t numOffsets = d.numNodesPlusOne();
     BOOST_REQUIRE(numOffsets >= 2);
@@ -84,9 +84,8 @@ BOOST_AUTO_TEST_CASE(offset_and_parent_child_consistency) {
 }
 
 BOOST_AUTO_TEST_CASE(delta_reconstruction_equals_direct) {
-    ts::RSVPanmanFixture fix;
-    ts::TestIndex idx(fix.tree(), K, S, 0, L);
-    auto& d = idx.data();
+    const auto& fix = ts::sharedRSVFixture();
+    const auto& d = ts::sharedRSVIndex();
     const auto& tree = *d.liteTree;
 
     std::vector<std::string> targets = {tree.root->identifier};
@@ -120,12 +119,11 @@ BOOST_AUTO_TEST_CASE(delta_reconstruction_equals_direct) {
 // buildIndexParallel (the -t path) must yield the same reconstructed genome seeds
 // as the sequential builder.
 BOOST_AUTO_TEST_CASE(parallel_build_matches_single_thread) {
-    ts::RSVPanmanFixture fix;
-    ts::TestIndex seq(fix.tree(), K, S, 0, L, false, false, 0, /*numThreads=*/1);
+    const auto& fix = ts::sharedRSVFixture();
+    const auto& ds = ts::sharedRSVIndex();   // the shared index IS the sequential (1-thread) build
     ts::TestIndex par(fix.tree(), K, S, 0, L, false, false, 0, /*numThreads=*/4);
 
-    auto& ds = seq.data();
-    auto& dp = par.data();
+    const auto& dp = par.data();
     BOOST_TEST(ds.numChanges() == dp.numChanges());
 
     const auto& ts_tree = *ds.liteTree;

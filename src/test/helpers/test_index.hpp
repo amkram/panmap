@@ -6,6 +6,7 @@
  *        for tests.
  */
 
+#include "helpers/tree_helpers.hpp"
 #include "panmanUtils.hpp"
 #include "panmap_utils.hpp"
 
@@ -75,5 +76,12 @@ class TestIndex {
     std::string path_;
     IndexData data_;
 };
+
+// Lazily-built, shared, READ-ONLY rsv_4K fixture and its k=15/s=8/t=0/l=1 index. Boost.Test
+// runs a binary's cases serially in one process, so one load+build is reused across cases
+// rather than repeated per case (the fixture load + full index build is the dominant unit-test
+// cost). NEVER use these from a test that MUTATES the tree -- build your own there.
+const RSVPanmanFixture& sharedRSVFixture();
+const IndexData& sharedRSVIndex();
 
 }  // namespace ts

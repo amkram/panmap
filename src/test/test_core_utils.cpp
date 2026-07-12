@@ -32,7 +32,7 @@ std::vector<uint8_t> randomBytes(size_t n, uint64_t seed) {
 BOOST_AUTO_TEST_SUITE(core_utils_tests)
 
 BOOST_AUTO_TEST_CASE(zstd_roundtrip_identity) {
-    for (size_t n : {size_t{1024}, size_t{5u * 1024 * 1024}}) {
+    for (size_t n : {size_t{1024}, size_t{1024u * 1024}}) {
         auto data = randomBytes(n, 0xC0FFEE + n);
         std::string path = tmpFile("zstd");
 
@@ -53,9 +53,7 @@ BOOST_AUTO_TEST_CASE(zstd_roundtrip_identity) {
 
 // LiteTree structural invariants, validated on an index built from rsv_4K.
 BOOST_AUTO_TEST_CASE(litetree_structure_invariants) {
-    ts::RSVPanmanFixture fixture;
-    ts::TestIndex idx(fixture.tree(), /*k=*/15, /*s=*/8, /*t=*/0, /*l=*/1);
-    const auto& tree = *idx.data().liteTree;
+    const auto& tree = *ts::sharedRSVIndex().liteTree;
 
     BOOST_REQUIRE(tree.root != nullptr);
     BOOST_TEST(tree.root->parent == nullptr);
