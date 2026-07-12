@@ -1107,7 +1107,9 @@ applyMutations(panmanUtils::Node* node,
 
     for (const auto& nucMutation : node->nucMutation) {
         int length = nucMutation.mutInfo >> 4;
-        int blockId;
+        // Set together with lastOffset below and only read when lastOffset != -1,
+        // but the compiler can't prove that correlation (-Wmaybe-uninitialized).
+        int blockId = -1;
         int lastOffset = -1;
 
         for (int i = 0; i < length; i++) {
