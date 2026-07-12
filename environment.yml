@@ -12,6 +12,8 @@ channels:
 dependencies:
   - cmake
   - make
+  - ccache        # compiler cache; CMake auto-uses it. Unchanged TUs (mgsr.cpp ~25s
+                  # at -O3) are served from cache and survive `rm -rf build`.
   - compilers
   - pkg-config
   - git

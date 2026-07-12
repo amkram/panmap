@@ -515,10 +515,18 @@ if(USE_SYSTEM_LIBS AND DEFINED ENV{CONDA_PREFIX})
 else()
     set(_mm2_env "")
 endif()
+# minimap2 has its own Makefile invoked as a nested make. Without a job count it inherits
+# the parent's job-server FDs it can't use (falls back to -j1 with two warnings); unset
+# MAKEFLAGS and give it an explicit -j so it builds in parallel and stays quiet.
+include(ProcessorCount)
+ProcessorCount(NPROC)
+if(NPROC EQUAL 0)
+    set(NPROC 4)
+endif()
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
-    COMMAND ${CMAKE_COMMAND} -E env ${_mm2_env} make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 clean
-    COMMAND ${CMAKE_COMMAND} -E env ${_mm2_env} make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 -j ${MINIMAP2_MAKE_ARGS}
+    COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS ${_mm2_env} make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 clean
+    COMMAND ${CMAKE_COMMAND} -E env --unset=MAKEFLAGS ${_mm2_env} make -C ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2 -j${NPROC} ${MINIMAP2_MAKE_ARGS}
     COMMAND mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/bin
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/libminimap2.a ${CMAKE_CURRENT_BINARY_DIR}/lib/libminimap2.a
     COMMAND cp ${CMAKE_CURRENT_SOURCE_DIR}/src/3rdparty/minimap2/minimap2 ${CMAKE_CURRENT_BINARY_DIR}/bin/minimap2
@@ -582,7 +590,6 @@ set(BWA_SOURCES
     src/3rdparty/bwa/rle.c
     src/3rdparty/bwa/rope.c
     src/3rdparty/bwa/utils.c
-    src/mm_align.c
 )
 
 add_custom_target(build-deps DEPENDS
