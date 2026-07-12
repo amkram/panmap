@@ -40,11 +40,11 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
-# `simulate` is a dev-only read simulator, not used by panmap, its tests, CI (which
-# already sets this OFF), or the evaluation harness (which uses wgsim). Off by default;
-# pass -DOPTION_BUILD_SIMULATE=ON to build it.
+
+# Pass -DOPTION_BUILD_SIMULATE=ON to build simulate binary.
 option(OPTION_BUILD_SIMULATE "Build the standalone read simulator (dev tool)." OFF)
 option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013+)" OFF)
+
 # Default to system libs inside an active conda env so a plain cmake there builds
 # without extra flags; otherwise build the bundled sources.
 if(DEFINED ENV{CONDA_PREFIX})
@@ -54,19 +54,12 @@ else()
 endif()
 option(USE_SYSTEM_LIBS "Use system libraries when available instead of building from source" ${_use_system_libs_default})
 
-# Default to a Release (NDEBUG) build when the user specifies nothing: it's the sensible
-# default for a released tool, and -DNDEBUG compiles out protobuf's inline DCHECKs (which
-# otherwise reference abseil log internals). An explicit OPTION_DEBUG build is left alone
-# so its asserts stay live -- the abseil log libs are linked unconditionally below, so a
-# non-NDEBUG build links fine regardless. Skipped for multi-config generators.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES AND NOT OPTION_DEBUG)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (Release, Debug, RelWithDebInfo, MinSizeRel)" FORCE)
     message(STATUS "No CMAKE_BUILD_TYPE specified; defaulting to Release.")
 endif()
 
-# Point the build at an active conda env ONLY when using its libraries. Injecting
-# its include/lib dirs unconditionally leaks headers (e.g. an incompatible protobuf)
-# into a bundled (USE_SYSTEM_LIBS=OFF) build and breaks it.
+# Point the build at an active conda env ONLY when using its libraries.
 if(USE_SYSTEM_LIBS AND DEFINED ENV{CONDA_PREFIX})
     list(PREPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
     include_directories(SYSTEM "$ENV{CONDA_PREFIX}/include")
@@ -154,11 +147,8 @@ find_package(Protobuf REQUIRED)
 if(NOT Protobuf_FOUND)
     message(FATAL_ERROR "Protobuf not found")
 endif()
-# Use find_library to get a concrete path (avoids IMPORTED target scope issues)
 set(PROTOBUF_LIB_PATH ${PROTOBUF_LIBRARY})
 
-# TBB and jsoncpp headers only when built from source; imported targets
-# carry their own usage-requirement includes.
 if(NOT USE_SYSTEM_LIBS AND NOT APPLE)
     include_directories(${tbb_SOURCE_DIR}/include)
 endif()
@@ -167,8 +157,6 @@ if(NOT USE_SYSTEM_LIBS)
 endif()
 include_directories(SYSTEM ${Protobuf_INCLUDE_DIRS})
 
-# Both branches define the same vars/target (CAPNP_LIBRARY, KJ_LIBRARY, CAPNP_EXECUTABLE,
-# CAPNPC_CXX_EXECUTABLE, CAPNP_SCHEMA_DIR, and a 'capnp_tools' target) consumed below.
 if(USE_SYSTEM_LIBS)
     find_library(CAPNP_LIBRARY NAMES capnp REQUIRED)
     find_library(KJ_LIBRARY NAMES kj REQUIRED)
@@ -200,7 +188,6 @@ else()
     include_directories(${CAPNP_INSTALL_DIR}/include)
 endif()
 
-# index_lite.capnp is the only capnp schema used.
 set(LITE_CAPNP_SRC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/index_lite.capnp")
 set(LITE_CAPNP_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(LITE_CAPNP_GEN_CPP "${LITE_CAPNP_GEN_DIR}/index_lite.capnp.c++")
@@ -645,8 +632,7 @@ set(BCFTOOLS_SOURCES
 add_library(bcftools STATIC ${BCFTOOLS_SOURCES})
 target_include_directories(bcftools PUBLIC src/3rdparty/bcftools)
 # bcftools sources include <htslib/...>; resolve them against the htslib whose
-# library we actually link — conda's headers under USE_SYSTEM_LIBS (version-matched),
-# else the vendored htslib-1.20 source tree (present without waiting on htslib_ext).
+# library we actually link
 if(USE_SYSTEM_LIBS)
     target_include_directories(bcftools PRIVATE ${HTS_INCLUDE_DIR})
 else()
@@ -655,9 +641,6 @@ endif()
 # Vendored upstream: -w keeps its warnings out of our build (see bwa above).
 target_compile_options(bcftools PRIVATE -fPIC -w)
 
-# Product sources minus main.cpp, compiled once into an OBJECT library (panmap_lib)
-# so `panmap` and the test binary link the exact same objects. Single owner of the
-# source list; no target re-lists these files. (Distinct from panman_lib, the PanMAN submodule.)
 set(PANMAP_LIB_SOURCES
     src/conversion.cpp
     src/panmap_utils.cpp
@@ -849,9 +832,6 @@ else()
     FetchContent_MakeAvailable(deflate)
 endif()
 
-# Link libraries live on panmap_lib as PUBLIC so its sources compile with the right
-# usage requirements (include dirs / compile defs from panman, htslib, etc.) AND so
-# consumers (panmap, panmap_tests) inherit the full link set transitively.
 target_link_libraries(panmap_lib PUBLIC
     panman
     panman_lib
@@ -883,15 +863,13 @@ target_link_libraries(panmap_lib PUBLIC
 target_link_libraries(panmap PRIVATE panmap_lib)
 
 find_library(JEMALLOC_LIBRARY NAMES jemalloc)
-if(JEMALLOC_LIBRARY)
+if(JEMALLOC_LIBRARY AND NOT APPLE)
     message(STATUS "Linking jemalloc: ${JEMALLOC_LIBRARY}")
     target_link_libraries(panmap PRIVATE "-Wl,--no-as-needed,${JEMALLOC_LIBRARY},--as-needed")
 else()
-    message(STATUS "jemalloc not found; using the system allocator (placement will be slower)")
+    message(STATUS "jemalloc not linked (not found or macOS); using the system allocator")
 endif()
 
-# Compiler options by build type, on panmap_lib PUBLIC so its sources compile with
-# them AND consumers inherit them.
 if(OPTION_DEBUG)
     target_compile_options(panmap_lib PUBLIC -g -O0 -ggdb)
 elseif(OPTION_PORTABLE)
@@ -915,8 +893,6 @@ else()
     )
 endif()
 
-# Test data, only when building tests; lets a tests-off build (e.g. conda) skip
-# src/test/data entirely so it can be export-ignored.
 if(OPTION_BUILD_TESTS)
     configure_file(src/test/data/test.aligned.fa test.aligned.fa COPYONLY)
     configure_file(src/test/data/test.nwk test.nwk COPYONLY)
