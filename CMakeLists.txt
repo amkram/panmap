@@ -882,6 +882,19 @@ target_link_libraries(panmap_lib PUBLIC
 
 target_link_libraries(panmap PRIVATE panmap_lib)
 
+# jemalloc: interposing a fast allocator sharply cuts panmap's allocation churn
+# (single-thread placement ~20-25% faster, indexing a few %, no RAM cost, output
+# byte-identical). Optional -- fall back to the system allocator if absent. panmap
+# doesn't reference jemalloc symbols directly, so --no-as-needed keeps it in
+# DT_NEEDED (scoped to just this lib) so it actually interposes malloc.
+find_library(JEMALLOC_LIBRARY NAMES jemalloc)
+if(JEMALLOC_LIBRARY)
+    message(STATUS "Linking jemalloc: ${JEMALLOC_LIBRARY}")
+    target_link_libraries(panmap PRIVATE "-Wl,--no-as-needed,${JEMALLOC_LIBRARY},--as-needed")
+else()
+    message(STATUS "jemalloc not found; using the system allocator (placement will be slower)")
+endif()
+
 # Compiler options by build type, on panmap_lib PUBLIC so its sources compile with
 # them AND consumers inherit them.
 if(OPTION_DEBUG)
