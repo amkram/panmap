@@ -201,9 +201,8 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
 // For nodes along the path to a known leaf, the five live getters must equal the oracle
 // computed from the reconstructed genome and the same state.
 BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
-    ts::RSVPanmanFixture fix;
-    ts::TestIndex idx(fix.tree(), K, S, 0, L);
-    auto& d = idx.data();
+    const auto& fix = ts::sharedRSVFixture();
+    const auto& d = ts::sharedRSVIndex();
     const auto& tree = *d.liteTree;
 
     // Reads from the truth genome; seeds extracted the same way as the genome.

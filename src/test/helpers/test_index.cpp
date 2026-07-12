@@ -104,4 +104,15 @@ TestIndex::~TestIndex() {
     std::filesystem::remove(path_, ec);
 }
 
+const RSVPanmanFixture& sharedRSVFixture() {
+    static const RSVPanmanFixture fx;   // rsv_4K loaded once for the whole binary
+    return fx;
+}
+
+const IndexData& sharedRSVIndex() {
+    // Built once; index build is read-only on the tree, so the shared fixture stays reusable.
+    static TestIndex idx(sharedRSVFixture().tree(), /*k=*/15, /*s=*/8, /*t=*/0, /*l=*/1);
+    return idx.data();
+}
+
 }  // namespace ts
