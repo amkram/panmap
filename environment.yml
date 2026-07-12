@@ -30,5 +30,4 @@ dependencies:
   - libdeflate
   - zlib
   - eigen
-  - jemalloc      # allocator: interposed at link; cuts allocation churn (placement
-                  # ~20-25% faster at no RAM cost, output identical). Optional in CMake.
+  - jemalloc
