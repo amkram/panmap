@@ -19,6 +19,12 @@ fi
 echo "Using panmap: $PANMAP"
 "$PANMAP" --version >/dev/null 2>&1 || { echo "ERROR: '$PANMAP' is not runnable" >&2; exit 2; }
 
+# Which demo to run: 1|2|3 selects one (ctest registers them as separate cases so a
+# `ctest -j` run splits the three independent, ~equal-cost demos across cores);
+# default "all" runs the full sequence for local use.
+DEMO="${2:-all}"
+run_demo() { [[ "$DEMO" == all || "$DEMO" == "$1" ]]; }
+
 data_dir=examples/data
 exp_dir=examples/expected
 work="$(mktemp -d)"
@@ -43,6 +49,7 @@ resolve_assignments() {
 }
 
 # ---- Demo 1: single-sample pipeline -----------------------------------------
+if run_demo 1; then
 echo
 echo "[1/3] single-sample pipeline"
 o="$work/isolate"
@@ -60,7 +67,10 @@ else
   bad "single-sample run failed (see $work/d1.log)"; cat "$work/d1.log"
 fi
 
+fi
+
 # ---- Demo 2: metagenomic abundance ------------------------------------------
+if run_demo 2; then
 echo
 echo "[2/3] metagenomic abundance (--meta)"
 o="$work/example"
@@ -73,7 +83,10 @@ else
   bad "metagenomic run failed (see $work/d2.log)"; cat "$work/d2.log"
 fi
 
+fi
+
 # ---- Demo 3: filter and assign ----------------------------------------------
+if run_demo 3; then
 echo
 echo "[3/3] filter and assign (--filter-and-assign)"
 o="$work/subsampled"
@@ -95,6 +108,8 @@ if "$PANMAP" "$data_dir/panmans/v_mtdna.panman" "$data_dir/reads/subsampled.fast
     && ok "assignedReadsLCANode.out (read->LCA)" || bad "assignedReadsLCANode.out (read->LCA)"
 else
   bad "filter-and-assign run failed (see $work/d3.log)"; cat "$work/d3.log"
+fi
+
 fi
 
 # ---- summary -----------------------------------------------------------------

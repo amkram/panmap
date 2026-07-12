@@ -1,10 +1,11 @@
+# syntax=docker/dockerfile:1
 # Stage 1: Build
 FROM ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  build-essential cmake git wget ca-certificates \
+  build-essential cmake git wget ca-certificates ccache \
   protobuf-compiler libprotobuf-dev \
   libboost-program-options-dev libboost-iostreams-dev \
   libboost-filesystem-dev libboost-system-dev libboost-date-time-dev \
@@ -13,9 +14,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build/panmap
 COPY . .
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  && cmake --build build -j$(nproc) \
-  && cmake --install build --prefix /usr/local
+
+# ccache lives on a BuildKit cache mount kept warm across CI runs by
+# buildkit-cache-dance in the workflow, so the from-source deps (abseil, tbb,
+# spdlog, jsoncpp, panman) and unchanged objects come from cache -- only changed
+# sources recompile. COMPILERCHECK=content hashes the compiler bytes, not mtime,
+# so a re-pulled toolchain still hits. OPTION_PORTABLE pins the ISA to x86-64-v3
+# so objects cached on one runner never SIGILL on another's CPU (and the shipped
+# image runs on any Haswell-or-newer host).
+ENV CCACHE_DIR=/ccache CCACHE_COMPILERCHECK=content
+RUN --mount=type=cache,target=/ccache \
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_PORTABLE=ON \
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+  && cmake --build build -j"$(nproc)" \
+  && cmake --install build --prefix /usr/local \
+  && ccache -s
 
 # Collect all shared library dependencies for the runtime stage
 RUN mkdir -p /runtime-libs && \
