@@ -805,11 +805,17 @@ add_test(NAME e2e
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-# README demos diffed against examples/expected/ (single-sample, --meta, --filter-and-assign).
-add_test(NAME examples
-    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/examples/check_examples.sh $<TARGET_FILE:panmap>
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# README demos diffed against examples/expected/. Three independent demos registered
+# as separate cases so `ctest -j` runs them in parallel instead of one long serial
+# test (they touch disjoint outputs: .idx vs .midx and different panmans).
+set(_example_demos single meta filter)   # index i (1-based) -> demo selector for check_examples.sh
+set(_i 1)
+foreach(_name IN LISTS _example_demos)
+    add_test(NAME examples-${_name}
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/examples/check_examples.sh $<TARGET_FILE:panmap> ${_i}
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    math(EXPR _i "${_i} + 1")
+endforeach()
 
 # Include dirs live on panmap_lib as PUBLIC usage requirements so the object library's
 # own sources and consumers (panmap, panmap_tests) inherit them.
