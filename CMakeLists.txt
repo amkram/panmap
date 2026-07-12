@@ -40,7 +40,10 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 option(OPTION_DEBUG "Compile with debug symbols and no optimizations." OFF)
 option(OPTION_BUILD_TESTS "Build tests." OFF)
-option(OPTION_BUILD_SIMULATE "Build simulate." ON)
+# `simulate` is a dev-only read simulator, not used by panmap, its tests, CI (which
+# already sets this OFF), or the evaluation harness (which uses wgsim). Off by default;
+# pass -DOPTION_BUILD_SIMULATE=ON to build it.
+option(OPTION_BUILD_SIMULATE "Build the standalone read simulator (dev tool)." OFF)
 option(OPTION_PORTABLE "Build portable binary (x86-64-v3: AVX2/FMA, Haswell 2013+)" OFF)
 # Default to system libs inside an active conda env so a plain cmake there builds
 # without extra flags; otherwise build the bundled sources.
