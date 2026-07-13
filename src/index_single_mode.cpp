@@ -18,6 +18,7 @@
 #include <bitset>
 #include <chrono>
 #include <atomic>
+#include <unordered_map>
 #include <mutex>
 #include <iomanip>
 #include <utility>
@@ -697,6 +698,47 @@ index_single_mode::IndexBuilder::computeNewKminmerRanges(
     return newKminmerRanges;
 }
 
+namespace {
+// Collapse a node's change record to one net entry per position. A node that both edits a
+// seed and deletes that seed's block records the position twice (SUB/ADD, then DEL), but the
+// consumers assume one entry -- the stale non-DEL entry names a position the DEL already
+// erased, so computeNewKminmerRanges' find() fails and the backtrack restores a wrong value.
+// Net kind = whether the position survives to the node's end (final map); restore value = the
+// first (pre-node) entry. No-op when no position repeats.
+void dedupeSyncmerChangeRecord(
+    std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& rec,
+    const index_single_mode::SyncmerSet& finalMap) {
+    if (rec.size() < 2) return;
+    std::unordered_map<uint64_t, std::pair<panmapUtils::seedChangeType, seeding::rsyncmer_t>> firstTouch;
+    firstTouch.reserve(rec.size());
+    std::vector<uint64_t> order;
+    order.reserve(rec.size());
+    bool anyRepeat = false;
+    for (const auto& [pos, type, rsync] : rec) {
+        auto [it, inserted] = firstTouch.try_emplace(pos, type, rsync);
+        if (inserted)
+            order.push_back(pos);
+        else
+            anyRepeat = true;
+    }
+    if (!anyRepeat) return;
+    std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>> out;
+    out.reserve(order.size());
+    for (uint64_t pos : order) {
+        const auto& [firstType, firstRsync] = firstTouch[pos];
+        const bool finalHas = finalMap.find(pos) != finalMap.end();
+        if (firstType == panmapUtils::seedChangeType::ADD) {  // parent lacked pos; keep only if it survives
+            if (finalHas) out.emplace_back(pos, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
+        } else {  // parent had pos; restore its pre-node value
+            out.emplace_back(pos,
+                             finalHas ? panmapUtils::seedChangeType::SUB : panmapUtils::seedChangeType::DEL,
+                             firstRsync);
+        }
+    }
+    rec = std::move(out);
+}
+}  // namespace
+
 void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
                                                        std::unordered_set<std::string_view>& emptyNodes,
                                                        panmapUtils::BlockSequences& blockSequences,
@@ -929,6 +971,7 @@ void index_single_mode::IndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         }
     }
 
+    dedupeSyncmerChangeRecord(refOnSyncmersChangeRecord, refOnSyncmersMap);
     std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>>
         newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
@@ -1916,6 +1959,7 @@ void index_single_mode::IndexBuilder::processNode(panmanUtils::Node* node,
     std::vector<uint64_t> addedSeedHashes;
     std::vector<std::pair<uint64_t, uint64_t>> substitutedSeedHashes;  // <oldHash, newHash>
 
+    dedupeSyncmerChangeRecord(refOnSyncmersChangeRecord, state.refOnSyncmersMap);
     std::vector<std::pair<index_single_mode::SyncmerSet::iterator, index_single_mode::SyncmerSet::iterator>>
         newKminmerRanges = computeNewKminmerRanges(refOnSyncmersChangeRecord, state, dfsIndex);
 
