@@ -7,6 +7,7 @@
 
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/iostreams/device/mapped_file.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/filter/lzma.hpp>
 #include <boost/algorithm/string.hpp>
@@ -126,6 +127,7 @@ struct Config {
     // Metagenomic options
     bool indexPacked = false;
     bool readPacked = false;
+    bool indexUncompressed = false;
     bool noProgress = false;
     size_t topOc = 1000;
     uint32_t maskReads = 0;
@@ -196,22 +198,40 @@ struct Config {
 class IndexReader : public ::capnp::MessageReader {
    public:
     std::vector<uint8_t> data;
+    // Held for the uncompressed path; the mmap must outlive `reader` (declared after it,
+    // so it is destroyed first), which points directly into the mapped bytes.
+    boost::iostreams::mapped_file_source mmapFile;
     std::unique_ptr<::capnp::FlatArrayMessageReader> reader;
 
     explicit IndexReader(const std::string& path, int numThreads = 0) : ::capnp::MessageReader(makeOptions()) {
-        // New-format indexes carry a small uncompressed param header before the frames;
+        // New-format indexes carry a small uncompressed param header before the payload;
         // skip it. Old-format indexes (no header) decompress from offset 0.
         index_single_mode::IndexParamsHeader ph;
-        const size_t dataOffset =
-            index_single_mode::readIndexHeader(path, ph) ? index_single_mode::kIndexHeaderSize : 0;
-        if (!panmap_zstd::decompressFromFile(path, data, numThreads, dataOffset)) {
-            throw std::runtime_error("Failed to decompress index: " + path);
+        const bool hasHeader = index_single_mode::readIndexHeader(path, ph);
+        const size_t dataOffset = hasHeader ? index_single_mode::kIndexHeaderSize : 0;
+
+        const capnp::word* words = nullptr;
+        size_t numWords = 0;
+        if (hasHeader && ph.uncompressed) {
+            // Uncompressed index: mmap and hand the bytes straight to capnp (zero-copy,
+            // no decompression pass). dataOffset (32) is 8-aligned within the page-aligned
+            // mapping, so the word cast is properly aligned.
+            mmapFile.open(path);
+            if (!mmapFile.is_open()) {
+                throw std::runtime_error("Failed to mmap index: " + path);
+            }
+            words = reinterpret_cast<const capnp::word*>(mmapFile.data() + dataOffset);
+            numWords = (mmapFile.size() - dataOffset) / sizeof(capnp::word);
+        } else {
+            if (!panmap_zstd::decompressFromFile(path, data, numThreads, dataOffset)) {
+                throw std::runtime_error("Failed to decompress index: " + path);
+            }
+            words = reinterpret_cast<const capnp::word*>(data.data());
+            numWords = data.size() / sizeof(capnp::word);
         }
 
         reader = std::make_unique<::capnp::FlatArrayMessageReader>(
-            kj::ArrayPtr<const capnp::word>(reinterpret_cast<const capnp::word*>(data.data()),
-                                            data.size() / sizeof(capnp::word)),
-            makeOptions());
+            kj::ArrayPtr<const capnp::word>(words, numWords), makeOptions());
     }
 
     kj::ArrayPtr<const capnp::word> getSegment(uint id) override { return reader->getSegment(id); }
@@ -417,7 +437,7 @@ bool buildIndex(const Config& cfg) {
                                             cfg.extentGuard);
     builder.buildIndexParallel(cfg.threads);
     builder.computeSubstitutionSpectrum();
-    builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel);
+    builder.writeIndex(cfg.index, cfg.threads, cfg.zstdLevel, cfg.indexUncompressed);
 
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
     output::done("index", cfg.index, fmt::format("{} nodes", output::fmt_count(tg->trees[0].allNodes.size())), ms);
@@ -1865,6 +1885,9 @@ int main(int argc, char** argv) {
     metagenomic.add_options()(
         "index-packed", po::bool_switch(&cfg.indexPacked), "Build packed capnp message (default false)")(
         "read-packed", po::bool_switch(&cfg.readPacked), "Read packed capnp message (default false)")(
+        "index-uncompressed", po::bool_switch(&cfg.indexUncompressed),
+        "Store the index uncompressed so it is mmap'd on load (no decompression pass; "
+        "larger on disk, faster to load; default false)")(
         "no-progress", po::bool_switch(&cfg.noProgress), "Disable progress bars");
 
     po::options_description em("Metagenomic: EM");

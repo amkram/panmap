@@ -1535,6 +1535,7 @@ std::array<uint8_t, kIndexHeaderSize> encodeIndexHeader(const IndexParamsHeader&
     put32(20, static_cast<uint32_t>(p.l));
     h[24] = p.hpc ? 1 : 0;
     h[25] = p.open ? 1 : 0;
+    h[26] = p.uncompressed ? 1 : 0;
     return h;
 }
 
@@ -1550,11 +1551,13 @@ bool readIndexHeader(const std::string& path, IndexParamsHeader& out) {
     out.l = static_cast<int32_t>(get32(20));
     out.hpc = h[24] != 0;
     out.open = h[25] != 0;
+    out.uncompressed = h[26] != 0;
     return true;
 }
 }  // namespace index_single_mode
 
-void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads, int zstdLevel) {
+void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int numThreads, int zstdLevel,
+                                                 bool uncompressed) {
     output::step("Serializing index...");
 
     kj::Array<capnp::word> flatArray = capnp::messageToFlatArray(outMessage);
@@ -1572,14 +1575,27 @@ void index_single_mode::IndexBuilder::writeIndex(const std::string& path, int nu
     ph.l = indexBuilder.getL();
     ph.hpc = indexBuilder.getHpc();
     ph.open = indexBuilder.getOpen();
+    ph.uncompressed = uncompressed;
     const auto header = encodeIndexHeader(ph);
 
-    // Many independent 64 MB frames so the index inflates in parallel on load.
-    constexpr size_t kIndexFrameSize = 64ull * 1024 * 1024;
-    if (!panmap_zstd::compressToFile(data, dataSize, path, zstdLevel, numThreads, kIndexFrameSize,
-                                     header.data(), header.size())) {
-        output::error("failed to write compressed index to {}", path);
-        std::exit(1);
+    if (uncompressed) {
+        // Store the raw capnp bytes so load() can mmap the file and hand them straight to
+        // capnp (zero-copy, no decompression pass) -- bigger on disk, faster to load.
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(header.data()), header.size());
+        out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(dataSize));
+        if (!out) {
+            output::error("failed to write uncompressed index to {}", path);
+            std::exit(1);
+        }
+    } else {
+        // Many independent 64 MB frames so the index inflates in parallel on load.
+        constexpr size_t kIndexFrameSize = 64ull * 1024 * 1024;
+        if (!panmap_zstd::compressToFile(data, dataSize, path, zstdLevel, numThreads, kIndexFrameSize,
+                                         header.data(), header.size())) {
+            output::error("failed to write compressed index to {}", path);
+            std::exit(1);
+        }
     }
 
     output::done("Index written to " + path);
