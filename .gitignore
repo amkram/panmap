@@ -27,6 +27,7 @@ _deps/
 
 # Libraries
 *.so
+*.so.*
 *.dylib
 *.dll
 *.lai

@@ -16,17 +16,10 @@ concurrency:
 permissions:
   contents: read
 
-# ccache: hash the compiler's *content*, not its mtime (the default). The conda
-# toolchain is re-extracted whenever the env cache misses or environment.yml changes,
-# giving identical compilers fresh mtimes -- which otherwise invalidates the entire
-# ccache and drops build-test from ~100% to ~0% hits.
 env:
   CCACHE_COMPILERCHECK: content
 
 jobs:
-  # Primary gate (every PR + push): build against conda libs — the bioconda
-  # distribution path — and run the full unit + end-to-end suite. Fast because
-  # conda ships prebuilt binary deps (no from-source capnp/htslib/protobuf).
   build-test:
     name: build & test (linux)
     runs-on: ubuntu-22.04
@@ -50,10 +43,6 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j"$(getconf _NPROCESSORS_ONLN)"
 
-  # Guards the bioconda recipe's exact build path: the repo's own CMakeLists driven
-  # with USE_SYSTEM_LIBS + an offline PANMAN_SOURCE_DIR (the recipe supplies panman as
-  # a tarball, not via FetchContent). Keeps a CMakeLists change from silently breaking
-  # the conda package while the primary gate (which FetchContents panman) stays green.
   bioconda-build:
     name: bioconda recipe build (linux)
     runs-on: ubuntu-22.04
@@ -87,7 +76,6 @@ jobs:
       - name: Smoke test
         run: ./build-bioconda/bin/panmap --version
 
-  # Cross-platform safety net. macOS runners bill ~10x, so only on push to main.
   build-test-macos:
     name: build & test (macos)
     if: github.event_name == 'push'
@@ -106,25 +94,16 @@ jobs:
           key: ${{ runner.os }}-ccache
           max-size: 500M
       - name: Configure
-        # macOS runners are arm64 (Apple Silicon); OPTION_PORTABLE's -march=x86-64-v3
-        # is x86-only. Homogeneous arm64 runners have no cross-CPU ccache-SIGILL issue,
-        # so keep -march=native (OPTION_PORTABLE off) here. Portability matters only for
-        # the heterogeneous x86 Linux runners.
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPTION_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build -j"$(sysctl -n hw.ncpu)"
       - name: Test
         run: ctest --test-dir build --output-on-failure -j"$(getconf _NPROCESSORS_ONLN)"
 
-  # Validates the vendored from-source build path (USE_SYSTEM_LIBS=OFF) and the
-  # shipped image -- the only job exercising that path. Push-to-main only, so it
-  # never gates PRs (build-test + bioconda cover those). ccache on a BuildKit cache
-  # mount (persisted by buildkit-cache-dance) + GHA layer cache keep it fast: the
-  # from-source deps and unchanged objects come from cache; only changed .cpp rebuild.
   docker:
     name: docker build
-    # TODO(ci/speedup): restrict to `if: github.event_name == 'push'` once the cache
-    # is proven; kept on PRs now so the cache-warming can be validated on this branch.
+    # Push-to-main only.
+    if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
