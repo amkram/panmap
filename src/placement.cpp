@@ -13,6 +13,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_sort.h>
 #include <tbb/enumerable_thread_specific.h>
+#include <boost/iostreams/device/mapped_file.hpp>
 #include <zlib.h>
 #include "kseq.h"
 
@@ -88,27 +89,104 @@ inline double avgPhredQuality(const std::string& qual, int64_t startPos, int k) 
     return static_cast<double>(sum) / k;
 }
 
+namespace {
+// End offset of the line containing p (index of the '\n', or `size`).
+inline size_t fqLineEnd(const char* d, size_t size, size_t p) {
+    while (p < size && d[p] != '\n') ++p;
+    return p;
+}
+// Offset of the next strict-4-line FASTQ record start at or after `from`, or `size`.
+// A '@' in a quality line is ruled out by requiring a '+' line 3 and seq/qual equal length.
+size_t fqNextRecord(const char* d, size_t size, size_t from) {
+    size_t o = from;
+    if (o > 0) {  // align to a line start
+        while (o < size && d[o - 1] != '\n') ++o;
+    }
+    while (o < size) {
+        if (d[o] == '@') {
+            const size_t seqStart = fqLineEnd(d, size, o) + 1;
+            if (seqStart <= size) {
+                const size_t seqEnd = fqLineEnd(d, size, seqStart);
+                const size_t plusStart = seqEnd + 1;
+                if (plusStart < size && d[plusStart] == '+') {
+                    const size_t qualStart = fqLineEnd(d, size, plusStart) + 1;
+                    const size_t qualEnd = fqLineEnd(d, size, qualStart);
+                    if (seqEnd - seqStart == qualEnd - qualStart) return o;
+                }
+            }
+        }
+        o = fqLineEnd(d, size, o) + 1;
+    }
+    return size;
+}
+// Parallel reader for uncompressed strict-4-line FASTQ: appends sequences in file order
+// to `out`. Returns false (caller falls back to kseq) for gzip / non-FASTQ / unreadable.
+bool parallelFastqSeqs(const std::string& path, std::vector<std::string>& out) {
+    boost::iostreams::mapped_file_source mf;
+    try {
+        mf.open(path);
+    } catch (...) {
+        return false;
+    }
+    if (!mf.is_open() || mf.size() < 4) return false;
+    const char* d = mf.data();
+    const size_t size = mf.size();
+    // gzip magic, or not starting on a record -> let the serial kseq path handle it
+    if ((static_cast<unsigned char>(d[0]) == 0x1f && static_cast<unsigned char>(d[1]) == 0x8b) || d[0] != '@')
+        return false;
+
+    size_t nThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
+    nThreads = std::clamp<size_t>(nThreads, 1, 64);
+    std::vector<size_t> bounds(nThreads + 1);
+    bounds[0] = 0;
+    bounds[nThreads] = size;
+    for (size_t i = 1; i < nThreads; ++i) {
+        bounds[i] = fqNextRecord(d, size, (size / nThreads) * i);
+    }
+    std::vector<std::vector<std::string>> local(nThreads);
+    tbb::parallel_for(size_t(0), nThreads, [&](size_t r) {
+        size_t o = bounds[r];
+        const size_t end = bounds[r + 1];
+        auto& v = local[r];
+        while (o < end) {
+            const size_t seqStart = fqLineEnd(d, size, o) + 1;
+            size_t seqEnd = fqLineEnd(d, size, seqStart);
+            if (seqEnd > seqStart && d[seqEnd - 1] == '\r') --seqEnd;  // strip CR (\r\n)
+            v.emplace_back(d + seqStart, seqEnd - seqStart);
+            const size_t plusEnd = fqLineEnd(d, size, fqLineEnd(d, size, seqStart) + 1);
+            o = fqLineEnd(d, size, plusEnd + 1) + 1;  // past the qual line to the next record
+        }
+    });
+    for (auto& v : local)
+        for (auto& s : v) out.push_back(std::move(s));
+    return true;
+}
+}  // namespace
+
 void extractReadSequences(const std::string& readPath1,
                           const std::string& readPath2,
                           std::vector<std::string>& readSequences) {
-    mgsr::FastqFile fq1(readPath1);
-    kseq_t* seq = kseq_init(fileno(fq1.fp));
-    int line;
-    while ((line = kseq_read(seq)) >= 0) {
-        readSequences.push_back(seq->seq.s);
-    }
-    kseq_destroy(seq);
-
-    if (readPath2.size() > 0) {
-        mgsr::FastqFile fq2(readPath2);
-        seq = kseq_init(fileno(fq2.fp));
-
-        line = 0;
-        int forwardReads = readSequences.size();
-        while ((line = kseq_read(seq)) >= 0) {
+    // Fast path: parallel mmap parse of uncompressed FASTQ; falls back to serial kseq
+    // for gzip / non-FASTQ. Identical result order (R1 in file order, then R2).
+    if (!parallelFastqSeqs(readPath1, readSequences)) {
+        mgsr::FastqFile fq1(readPath1);
+        kseq_t* seq = kseq_init(fileno(fq1.fp));
+        while (kseq_read(seq) >= 0) {
             readSequences.push_back(seq->seq.s);
         }
         kseq_destroy(seq);
+    }
+
+    if (readPath2.size() > 0) {
+        int forwardReads = readSequences.size();
+        if (!parallelFastqSeqs(readPath2, readSequences)) {
+            mgsr::FastqFile fq2(readPath2);
+            kseq_t* seq = kseq_init(fileno(fq2.fp));
+            while (kseq_read(seq) >= 0) {
+                readSequences.push_back(seq->seq.s);
+            }
+            kseq_destroy(seq);
+        }
 
         if (readSequences.size() != static_cast<size_t>(forwardReads) * 2) {
             output::error("File {} does not contain the same number of reads as {}", readPath2, readPath1);
