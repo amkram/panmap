@@ -268,8 +268,9 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
         const size_t initialPrefetchCount = std::min(numChanges, PREFETCH_DISTANCE);
         for (size_t i = 0; i < initialPrefetchCount; ++i) {
             __builtin_prefetch(&H[i], 0, 0);
-            state.seedFreqInReads.prefetch(H[i]);
-            state.seedInverseGenomeCounts.prefetch(H[i]);
+            // Prefetch the table this loop actually probes (logReadCounts), not the
+            // read-processing tables that are never read here.
+            state.logReadCounts.prefetch(H[i]);
         }
 
         // Batch for instruction pipelining and cache utilization
@@ -281,8 +282,7 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
                 if (i + PREFETCH_DISTANCE < numChanges) [[likely]] {
                     const uint64_t nextHash = H[i + PREFETCH_DISTANCE];
                     __builtin_prefetch(&H[i + PREFETCH_DISTANCE], 0, 0);
-                    state.seedFreqInReads.prefetch(nextHash);
-                    state.seedInverseGenomeCounts.prefetch(nextHash);
+                    state.logReadCounts.prefetch(nextHash);
                 }
 
                 const uint64_t seedHash = H[i];
