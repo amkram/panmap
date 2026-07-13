@@ -123,8 +123,10 @@ jobs:
   # from-source deps and unchanged objects come from cache; only changed .cpp rebuild.
   docker:
     name: docker build
-    # TODO(ci/speedup): restrict to `if: github.event_name == 'push'` once the cache
-    # is proven; kept on PRs now so the cache-warming can be validated on this branch.
+    # Push-to-main only. Its GHA layer cache (mode=max) is large, so running it on PRs
+    # evicted the build-test/bioconda ccaches from the shared 10GB pool (LRU) and those
+    # then cold-rebuilt from scratch (build 6s -> 230s). build-test + bioconda cover PRs.
+    if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
