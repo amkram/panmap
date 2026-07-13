@@ -31,6 +31,10 @@ constexpr size_t kIndexHeaderSize = 32;
 struct IndexParamsHeader {
     int32_t k = 0, s = 0, t = 0, l = 0;
     bool hpc = false, open = false;
+    // When set, the payload after the header is raw (unframed) capnp bytes rather than
+    // ZSTD frames, so load can mmap it and hand the bytes straight to capnp (zero-copy,
+    // no decompression pass). Bigger on disk, faster to load.
+    bool uncompressed = false;
 };
 std::array<uint8_t, kIndexHeaderSize> encodeIndexHeader(const IndexParamsHeader& p);
 // Reads the header from the start of `path`. Returns false if absent / not this format.
@@ -211,7 +215,8 @@ class IndexBuilder {
     // Compute 4x4 substitution spectrum from tree mutations and store in index
     void computeSubstitutionSpectrum();
 
-    void writeIndex(const std::string& path, int numThreads = 0, int zstdLevel = 7);
+    void writeIndex(const std::string& path, int numThreads = 0, int zstdLevel = 7,
+                    bool uncompressed = false);
 
     // Parameter getters (for testing)
     int getK() const { return k_; }
