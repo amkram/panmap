@@ -699,12 +699,8 @@ index_single_mode::IndexBuilder::computeNewKminmerRanges(
 }
 
 namespace {
-// Collapse a node's change record to one net entry per position. A node that both edits a
-// seed and deletes that seed's block records the position twice (SUB/ADD, then DEL), but the
-// consumers assume one entry -- the stale non-DEL entry names a position the DEL already
-// erased, so computeNewKminmerRanges' find() fails and the backtrack restores a wrong value.
-// Net kind = whether the position survives to the node's end (final map); restore value = the
-// first (pre-node) entry. No-op when no position repeats.
+// Collapse a node's change record to one net entry per position, to handle a node that both edits a
+// seed and deletes that seed's block.
 void dedupeSyncmerChangeRecord(
     std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& rec,
     const index_single_mode::SyncmerSet& finalMap) {
