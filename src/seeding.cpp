@@ -29,10 +29,7 @@ std::pair<size_t, size_t> hashSeq(const std::string& s) {
     return std::make_pair(fHash, rHash);
 }
 
-// Fixed-capacity ring buffer for the s-mer hash window in rollingSyncmers. The window is
-// exactly k-s+1 wide (one pop + one push per roll), so a contiguous buffer allocated once
-// replaces std::deque's per-op chunk management -- a hot spot in read/index seeding. Only
-// the deque operations rollingSyncmers actually uses are provided; behaviour is identical.
+// Ring buffer (width k-s+1) replacing std::deque to avoid per-roll allocation.
 namespace {
 struct SmerRing {
     std::vector<size_t> buf;

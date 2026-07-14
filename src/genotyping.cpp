@@ -245,10 +245,8 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
 
     gls[0] += scaled_submat[ref_nuc_idx][ref_nuc_idx];
     for (size_t i = 1; i < gls.size(); i++) {
-        // scaled_submat is the 4x4 A/C/G/T substitution-spectrum prior, so apply
-        // it only to base ALTs. A non-base ALT (e.g. '*' spanning deletion) has
-        // index > 3 and would over-read the row, so leave its likelihood
-        // unmodified. Matches how indels use the unmodified bcftools posterior.
+        // scaled_submat is the 4x4 A/C/G/T substitution prior; apply only to base ALTs. A
+        // non-base ALT (e.g. '*') has index >3 and would over-read the row, so leave it as-is.
         int alt_idx = getIndexFromNucleotide(alts[i - 1]);
         if (alt_idx <= 3) {
             gls[i] = gls[i] + scaled_submat[ref_nuc_idx][alt_idx];
@@ -264,9 +262,9 @@ std::string genotyping::applyMutationSpectrum(const std::string& line,
 
     if (min_gl_index == 0) return "";
 
-    // Consensus gate: only emit an ALT that is the majority allele and has at least
-    // minDepth high-quality reads. Guards against bcftools (and, at low coverage, the
-    // spectrum prior) emitting sub-majority or shallow ALTs as false positives.
+    // Consensus gate: emit an ALT only if it's the majority allele with >= minDepth
+    // high-quality reads. Guards against bcftools / the low-coverage spectrum prior
+    // emitting sub-majority or shallow false-positive ALTs.
     if (!passesConsensusGate(min_gl_index, ads, minDepth)) return "";
 
     gt = min_gl_index;

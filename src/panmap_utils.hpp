@@ -21,11 +21,8 @@
 
 namespace panmapUtils {
 
-// On-disk index format revision. Bump on any wire-incompatible change to
-// index_lite.capnp (e.g. widening a field's type). The placement reader rejects
-// an index whose version differs, so a stale .idx fails with a clear "rebuild"
-// message instead of a cryptic Cap'n Proto error. Pre-versioning indexes lack
-// the field and read as 0.
+// On-disk index revision; bump on any wire-incompatible change to index_lite.capnp.
+// Reader rejects a mismatched version (clear "rebuild" msg). Pre-versioning indexes read as 0.
 //   4: struct-of-arrays seed changes with 64-bit nodeChangeOffsets
 inline constexpr uint16_t INDEX_FORMAT_VERSION = 4;
 
@@ -75,9 +72,8 @@ class LiteTree {
 
     std::vector<LiteNode*> dfsIndexToNode;
 
-    // Zero-copy seed-change SoA: raw pointers into the mapped decompressed index, one
-    // per capnp segment (counts are Int16 on disk). Nodes hold (offset,size) ranges;
-    // SEED_CHANGE_SEGMENT must match the index writer's CAPNP_SPLIT.
+    // Zero-copy seed-change SoA: raw pointers into the mapped decompressed index, one per capnp
+    // segment (counts Int16). Nodes hold (offset,size) ranges; SEED_CHANGE_SEGMENT must match writer's CAPNP_SPLIT.
     static constexpr uint64_t SEED_CHANGE_SEGMENT = 500'000'000ULL;
     std::vector<const uint64_t*> segSeedHash;
     std::vector<const int16_t*> segSeedParent;

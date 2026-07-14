@@ -345,9 +345,8 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                 localRangeCoordToGlobalScalarCoords.push_back(curCoordScalar);
                 localRangeCoordToBlockId.push_back(curCoord.primaryBlockId);
             } else if (refOnSyncmers.contains(curCoordScalar)) {
-                // Only delete seeds inside the genome extent. Flank regions (before
-                // firstNonGapScalar or after lastNonGapScalar) are missing data, not true
-                // gaps; their seeds stay inherited from the parent.
+                // Only delete seeds inside the genome extent; flank regions are missing
+                // data, not true gaps, so their seeds stay inherited from the parent.
                 if (std::cmp_greater_equal(curCoordScalar, firstNonGapScalar) &&
                     std::cmp_less_equal(curCoordScalar, lastNonGapScalar)) {
                     blockOnSyncmers[curCoord.primaryBlockId].erase(curCoordScalar);
@@ -368,9 +367,8 @@ std::vector<panmapUtils::NewSyncmerRange> index_single_mode::IndexBuilder::compu
                     recomputeBlock = false;
                     recomputeInProgress = false;
                     if (curCoordGapMapIt != gapMap.end()) {
-                        // At begin() there is no previous run, so the lower bound
-                        // (prev->second < curCoordScalar) is vacuously satisfied;
-                        // guard the std::prev to avoid dereferencing before begin().
+                        // At begin() there is no previous run (lower bound vacuously
+                        // satisfied); guard std::prev to avoid dereferencing before begin().
                         while (curCoordGapMapIt != gapMap.end() &&
                                !((curCoordGapMapIt == gapMap.begin() ||
                                   std::cmp_less(std::prev(curCoordGapMapIt)->second, curCoordScalar)) &&
@@ -1386,11 +1384,8 @@ void index_single_mode::IndexBuilder::computeSubstitutionSpectrum() {
             uint32_t blockId = blockMut.primaryBlockId;
             bool oldExists = blockSequences.blockExists[blockId];
             blockUndoRecord.emplace_back(blockId, oldExists);
-            // Match the canonical block-existence rule (panmap_utils.cpp): an
-            // insertion makes the block exist (even when also inverted); a
-            // non-inversion deletion removes it; an inversion of an existing
-            // block leaves existence unchanged. blockMutInfo=false marks both
-            // deletions and inversions, so it can't be assigned directly.
+            // Canonical block-existence rule (panmap_utils.cpp): insertion sets exists, non-inversion
+            // deletion clears it, inversion leaves it unchanged; blockMutInfo=false marks del+inv both.
             if (blockMut.blockMutInfo) {
                 blockSequences.blockExists[blockId] = true;
             } else if (!blockMut.inversion) {
@@ -2367,9 +2362,8 @@ void index_single_mode::IndexBuilder::buildIndexParallel(int numThreads) {
 
             totalClonesCreated_.fetch_add(1, std::memory_order_relaxed);
 
-            // Walk from root to the range's first node, then DFS through the range.
-            // Nodes 0..startDfs-1 are ancestors or earlier siblings that must be walked.
-            // Compute nodeChanges only for nodes in [startDfs, endDfs).
+            // Walk from root to the range's first node, then DFS through the range. Compute
+            // nodeChanges only for nodes in [startDfs, endDfs); earlier nodes are just walked.
 
             std::function<void(panmanUtils::Node*, uint64_t)> processDfsRange = [&](panmanUtils::Node* node,
                                                                                     uint64_t dfsIdx) {

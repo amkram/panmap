@@ -25,25 +25,24 @@ namespace placement {
 struct PlacementResult;
 struct PlacementGlobalState;
 
-// Parameters for lite placement traversal
 struct TraversalParams {
     int k = 19;                       // k-mer size
-    int s = 8;                        // syncmer parameter s
-    int t = 0;                        // t-syncmer parameter
-    int l = 3;                        // k-minimizer window size (1 = use raw syncmers)
-    bool open = false;                // use open syncmers
-    bool verify_scores = false;       // recompute scores from scratch for verification
-    bool store_diagnostics = false;   // store metric components on nodes for diagnostic output
-    double seedMaskFraction = 0.001;  // Mask top N fraction of seeds by frequency (0 = disabled, 0.001 = top 0.1%)
-    int minSeedQuality = 0;           // Min avg Phred quality for seed region (0 = disabled)
-    bool dedupReads = false;          // Deduplicate reads before placement (count each unique sequence once)
+    int s = 8;
+    int t = 0;
+    int l = 3;                        // 1 = raw syncmers, not k-minimizers
+    bool open = false;
+    bool verify_scores = false;
+    bool store_diagnostics = false;
+    double seedMaskFraction = 0.001;  // 0 = disabled; else mask top fraction of seeds by frequency
+    int minSeedQuality = 0;           // min avg Phred over seed span; 0 = disabled
+    bool dedupReads = false;
     bool pairFilter =
-        true;           // Filter: only count seeds from read-pairs that have at least one matching seed at current node
-    int trimStart = 0;  // Trim N bases from start of each read before seeding (for primer removal)
-    int trimEnd = 0;    // Trim N bases from end of each read before seeding (for primer removal)
+        true;           // only count seeds from read-pairs with >=1 matching seed at current node
+    int trimStart = 0;  // bases trimmed from read start (primer removal)
+    int trimEnd = 0;    // bases trimmed from read end (primer removal)
     int minReadSupport =
-        -1;            // Min read count for a seed; -1 = auto (2 if est. coverage > 3x, else 1), 1 = all seeds, 2 = filter singletons
-    bool hpc = false;  // Homopolymer-compressed seeds (from index)
+        -1;            // -1 = auto (2 if est. coverage > 3x, else 1); 1 = keep all; 2 = drop singletons
+    bool hpc = false;
 
     // Alignment-based refinement: after k-mer scoring, optionally refine top candidates by full alignment
     bool refineEnabled = false;
@@ -54,7 +53,6 @@ struct TraversalParams {
     bool forceLeaf = false;        // Restrict scoring to leaf nodes only
 };
 
-// Track global state during placement
 struct PlacementGlobalState {
     // Seed hash frequency map from reads (computed once, used for all nodes)
     absl::flat_hash_map<size_t, int64_t, IdentityHash> seedFreqInReads;
@@ -96,21 +94,18 @@ struct PlacementGlobalState {
     bool forceLeaf = false;
 };
 
-// Resolve the effective minimum read-count support for a seed. configuredMinSupport < 0
-// means "auto": 2 when estimated coverage (mean read count over seeds seen in >=2 reads)
-// exceeds 3x, else 1. Logs the auto decision.
+// Effective min read-count support for a seed. configuredMinSupport < 0 means "auto":
+// 2 when est. coverage (mean read count over seeds seen in >=2 reads) exceeds 3x, else 1.
 int64_t resolveMinReadSupport(const absl::flat_hash_map<size_t, int64_t, IdentityHash>& seedFreqInReads,
                               int configuredMinSupport);
 
-// Fill the read-derived scoring fields of `state` from state.seedFreqInReads, keeping only
-// seeds with read count >= minSupport: logReadCounts, totalReadSeedFrequency,
-// readUniqueSeedCount, logReadMagnitude, logContainmentDenominator. Returns the number of
-// seeds the filter dropped.
+// Fill state's read-derived scoring fields (logReadCounts, totalReadSeedFrequency,
+// readUniqueSeedCount, logReadMagnitude, logContainmentDenominator) from seedFreqInReads,
+// keeping only seeds with read count >= minSupport. Returns count of dropped seeds.
 size_t computeReadSeedMagnitudes(PlacementGlobalState& state, int64_t minSupport);
 
 // Delta-based metrics (forward-only traversal)
 struct NodeMetrics {
-    // Read-genome interaction metrics (computed incrementally)
     double logRawNumerator = 0.0;               // Σ(log(1+readCount) / genomeCount) for LogRAW metric
     double logCosineNumerator = 0.0;            // Σ(log(1+readCount) × genomeCount) for LogCosine metric
     size_t presenceIntersectionCount = 0;       // Count of seeds present in both read and genome
@@ -153,43 +148,35 @@ struct NodeMetrics {
         return (logContainmentDenominator > 0.0) ? logContainmentNumerator / logContainmentDenominator : 0.0;
     }
 
-    // Compute child metrics from parent metrics + seed changes
     static void computeChildMetrics(NodeMetrics& childMetrics,
                                     uint64_t seedChangeOffset,
                                     uint32_t seedChangeSize,
                                     const PlacementGlobalState& state);
 };
 
-// Consolidated score tracking and results for lite placement
 struct PlacementResult {
-    // LogRAW Score results (log-scaled, coverage-robust)
     double bestLogRawScore = 0.0;
     uint32_t bestLogRawNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedLogRawNodeIndices;
 
-    // LogCosine Score results (log-scaled cosine similarity)
     double bestLogCosineScore = 0.0;
     uint32_t bestLogCosineNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedLogCosineNodeIndices;
 
-    // Containment Index results
     double bestContainmentScore = 0.0;
     uint32_t bestContainmentNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedContainmentNodeIndices;
 
-    // Weighted Containment Index results
     double bestWeightedContainmentScore = 0.0;
     uint32_t bestWeightedContainmentNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedWeightedContainmentNodeIndices;
 
-    // Log Containment Index results
     double bestLogContainmentScore = 0.0;
     uint32_t bestLogContainmentNodeIndex = UINT32_MAX;
     std::vector<uint32_t> tiedLogContainmentNodeIndices;
 
-    // Per-call, per-node seed scores indexed by node DFS index; only populated
-    // when refinement is enabled. Kept here rather than on the shared LiteNode so
-    // concurrent batch placements don't race. Metric order:
+    // Per-node seed scores by DFS index (populated only when refinement enabled). Kept here
+    // not on the shared LiteNode so concurrent batch placements don't race. Metric order:
     // {logRaw, logCosine, containment, weightedContainment, logContainment}.
     std::vector<std::array<float, 5>> nodeScores;
 

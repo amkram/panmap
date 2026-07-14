@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
-#include <immintrin.h>  // x86-only SIMD intrinsics
+#include <immintrin.h>
 #endif
 
 #include <algorithm>
@@ -28,7 +28,7 @@ KSEQ_INIT(int, read)
 
 namespace seeding {
 
-// Perfect shuffle for interleaving paired-end reads (R1_0, R2_0, R1_1, R2_1, ...)
+// Interleave paired-end reads: R1_0, R2_0, R1_1, R2_1, ...
 template <typename T>
 inline void perfect_shuffle(std::vector<T>& v) {
     const size_t n = v.size();
@@ -69,15 +69,14 @@ struct uniqueKminmer_t {
     }
 };
 
-// A syncmer seed within a single sequence
 struct seed_t {
     size_t hash;
-    int64_t pos;    // Position in sequence
-    int32_t idx;    // Index in vector, set during indexing
+    int64_t pos;
+    int32_t idx;    // set during indexing
     bool reversed;
-    uint32_t rpos;  // Position on reference, set during alignment
+    uint32_t rpos;  // set during alignment
 
-    int64_t endPos;  // End position, counting gaps
+    int64_t endPos;  // counting gaps
 
     bool operator<(const seed_t& rhs) const { return pos < rhs.pos; }
 
@@ -129,9 +128,7 @@ rollingSyncmers(std::string_view seq, int k, int s, bool open, int t = 0, bool r
 
 std::string reverseComplement(std::string dna_sequence);
 
-// Reads sequences, qualities, and names without computing seeds.
-// For paired-end (fastqPath2 non-empty): RC's R2 sequences and interleaves pairs
-// (R1_0, R2_0, R1_1, R2_1, ...).
+// Paired-end (fastqPath2 set): reverse-complements R2 and interleaves pairs.
 void readFastqPaired(std::vector<std::string>& readSequences,
                      std::vector<std::string>& readQuals,
                      std::vector<std::string>& readNames,
@@ -141,8 +138,7 @@ void readFastqPaired(std::vector<std::string>& readSequences,
 // Homopolymer compression: collapse consecutive identical bases (e.g., AAACGG -> ACG)
 std::string hpcCompress(const std::string& seq);
 
-// HPC with position mapping: returns (compressed_seq, mapping) where
-// mapping[i] = index in original seq of the i-th base in compressed seq
+// mapping[i] = index in original seq of the i-th base in the compressed seq
 std::pair<std::string, std::vector<size_t>> hpcCompressWithMapping(const std::string& seq);
 
 }  // namespace seeding

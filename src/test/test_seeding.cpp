@@ -49,9 +49,8 @@ BOOST_AUTO_TEST_CASE(rollingsyncmers_contract) {
                 for (size_t i = 0; i < all.size(); ++i) {
                     BOOST_TEST(std::get<0>(all[i]) == std::get<0>(all2[i]));
                 }
-                // Non-sentinel entries store the canonical (orientation-invariant)
-                // k-mer hash; returnAll=true yields UINT64_MAX sentinels at
-                // non-syncmer positions.
+                // Non-sentinel entries store the canonical k-mer hash; returnAll=true yields
+                // UINT64_MAX sentinels at non-syncmer positions.
                 for (const auto& [hash, isRev, isSync, pos] : all) {
                     BOOST_REQUIRE(pos >= 0);
                     BOOST_REQUIRE(static_cast<size_t>(pos) + k <= seq.size());

@@ -14,8 +14,7 @@
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
 #include <tbb/tbb.h>
-// Compatibility shim: oneTBB 2021+ uses tbb::filter_mode enum class.
-// TBB 2019 uses tbb::filter::serial_in_order nested enum.
+// oneTBB 2021+ uses tbb::filter_mode; older TBB uses the nested tbb::filter enum.
 #if defined(TBB_VERSION_MAJOR) && TBB_VERSION_MAJOR >= 2021
 #define TBB_FILTER_SERIAL_IN_ORDER tbb::filter_mode::serial_in_order
 #define TBB_FILTER_PARALLEL tbb::filter_mode::parallel
@@ -80,51 +79,49 @@ inline const char* bold() {
 }  // namespace color
 
 enum class PipelineStage {
-    Index,      // Build index only
-    Place,      // Placement only
-    Align,      // Placement + Alignment
-    Genotype,   // Placement + Alignment + Genotyping
-    Consensus,  // + Consensus FASTA generation
-    Full        // Full pipeline
+    Index,
+    Place,
+    Align,
+    Genotype,
+    Consensus,
+    Full
 };
 
 struct Config {
-    std::string panman;  // Guide pangenome (.panman)
-    std::string reads1;  // First read file (FASTQ/FASTA)
-    std::string reads2;  // Second read file for paired-end
+    std::string panman;
+    std::string reads1;
+    std::string reads2;
 
-    std::string output;    // Output prefix
-    std::string index;     // Pre-built index to load (--index)
-    std::string indexOut;  // Where to write the index when building (--index-out)
+    std::string output;
+    std::string index;
+    std::string indexOut;
 
     PipelineStage stopAfter = PipelineStage::Place;
     bool forceReindex = false;
 
-    bool metagenomic = false;  // Metagenomic mode (multi-sample)
-    int topN = 1;              // Report top N placements
-    bool dedupReads = false;   // Deduplicate reads before placement (for amplicon data)
+    bool metagenomic = false;
+    int topN = 1;
+    bool dedupReads = false;
 
     std::string aligner = "minimap2";
 
-    // Index parameters
-    int k = 19;                   // syncmer k
-    int s = 8;                    // syncmer s
-    int l = 3;                    // l-mer size
+    int k = 19;
+    int s = 8;
+    int l = 3;
     int t = 0;                    // syncmer offset
     bool openSyncmer = false;
-    int flankMaskBp = 250;        // Hard mask first/last N bp at genome ends
-    double seedMaskFraction = 0;  // Fraction of most-frequent seeds to mask (0 disables masking)
-    int minSeedQuality = 0;       // Min avg Phred quality for seed region (0=disabled)
-    int trimStart = 0;            // Trim N bases from start of each read (primer removal)
-    int trimEnd = 0;              // Trim N bases from end of each read (primer removal)
-    int minReadSupport = -1;      // Min reads for a seed to be counted; -1 = auto (2 if est. coverage > 3x, else 1)
-    bool hpc = false;             // Homopolymer-compressed seeds
-    bool extentGuard = false;     // Guard seed deletions at genome extent boundaries
+    int flankMaskBp = 250;
+    double seedMaskFraction = 0;  // 0 disables masking
+    int minSeedQuality = 0;
+    int trimStart = 0;
+    int trimEnd = 0;
+    int minReadSupport = -1;      // -1 = auto (2 if est. coverage > 3x, else 1)
+    bool hpc = false;
+    bool extentGuard = false;
 
     int threads = 1;
     int zstdLevel = 7;
 
-    // Metagenomic options
     bool indexPacked = false;
     bool readPacked = false;
     bool indexUncompressed = false;
@@ -153,7 +150,6 @@ struct Config {
     bool pseudochain = false;
     size_t batchSize = 1000000;
 
-    // Utility modes
     std::string dumpNodeId;
     uint32_t dumpRandomNodeIDs = 0;
     std::vector<std::string> dumpSequences;
@@ -165,47 +161,39 @@ struct Config {
     bool writeOCRanks = false;
     int seed = 42;
 
-    std::string batchFile;  // Path to batch file listing samples (one per line: reads1 [reads2])
+    std::string batchFile;
 
-    std::string dumpAllScores;  // Dump all node scores to this file
+    std::string dumpAllScores;
 
-    bool quiet = false;    // Minimal output (errors only)
-    bool verbose = false;  // Extra debug output
-    bool plain = false;    // Plain text output (no colors/unicode)
+    bool quiet = false;
+    bool verbose = false;
+    bool plain = false;
 
-    bool forceLeaf = false;  // Restrict placement to leaf nodes only
+    bool forceLeaf = false;
 
-    // Consensus options
-    bool impute = false;              // Impute N's from parent sequence (ignore _->N mutations)
-    bool noMutationSpectrum = false;  // Skip mutation spectrum filtering in VCF
-    bool baq = false;                 // Enable BAQ (Base Alignment Quality) in mpileup
-    int minDepth = 1;                 // Min high-quality read depth to call a consensus variant
-    double minQual = 30.0;            // Min bcftools variant QUAL to call a consensus variant
+    bool impute = false;              // ignore _->N mutations
+    bool noMutationSpectrum = false;
+    bool baq = false;
+    int minDepth = 1;
+    double minQual = 30.0;
 
-    // Pre-computed substitution spectrum from index (4x4 phred-scaled matrix)
-    // Empty if index has no spectrum or --no-mutation-spectrum is set
-    std::vector<std::vector<double>> substMatrixPhred;
+    std::vector<std::vector<double>> substMatrixPhred;  // 4x4 phred-scaled; empty if unavailable
 
-    // Alignment-based refinement options
-    bool refine = false;           // Enable alignment-based refinement
-    double refineTopPct = 0.01;    // Top X% of nodes to refine (default 1%)
-    int refineMaxTopN = 150;       // Max nodes to align against
-    int refineNeighborRadius = 2;  // Expand to neighbors within N branches
-    int refineMaxNeighborN = 150;  // Max additional nodes from neighbor expansion
+    bool refine = false;
+    double refineTopPct = 0.01;
+    int refineMaxTopN = 150;
+    int refineNeighborRadius = 2;
+    int refineMaxNeighborN = 150;
 };
 
-// Cap'n Proto reader with ZSTD decompression
 class IndexReader : public ::capnp::MessageReader {
    public:
     std::vector<uint8_t> data;
-    // Held for the uncompressed path; the mmap must outlive `reader` (declared after it,
-    // so it is destroyed first), which points directly into the mapped bytes.
+    // mmap must outlive `reader` (declared after it, so destroyed first), which points into it.
     boost::iostreams::mapped_file_source mmapFile;
     std::unique_ptr<::capnp::FlatArrayMessageReader> reader;
 
     explicit IndexReader(const std::string& path, int numThreads = 0) : ::capnp::MessageReader(makeOptions()) {
-        // New-format indexes carry a small uncompressed param header before the payload;
-        // skip it. Old-format indexes (no header) decompress from offset 0.
         index_single_mode::IndexParamsHeader ph;
         const bool hasHeader = index_single_mode::readIndexHeader(path, ph);
         const size_t dataOffset = hasHeader ? index_single_mode::kIndexHeaderSize : 0;
@@ -213,9 +201,7 @@ class IndexReader : public ::capnp::MessageReader {
         const capnp::word* words = nullptr;
         size_t numWords = 0;
         if (hasHeader && ph.uncompressed) {
-            // Uncompressed index: mmap and hand the bytes straight to capnp (zero-copy,
-            // no decompression pass). dataOffset (32) is 8-aligned within the page-aligned
-            // mapping, so the word cast is properly aligned.
+            // dataOffset (32) is 8-aligned within the page-aligned mapping, so the word cast is aligned.
             mmapFile.open(path);
             if (!mmapFile.is_open()) {
                 throw std::runtime_error("Failed to mmap index: " + path);
@@ -296,13 +282,11 @@ class FdReader {
     }
 };
 
-// Load 4x4 substitution matrix from index and convert to phred scale.
-// Returns empty matrix if index has no spectrum data.
+// Returns empty if the index has no spectrum data.
 std::vector<std::vector<double>> loadSubstMatrixFromIndex(LiteIndex::Reader& idx) {
     auto matReader = idx.getSubstitutionMatrix();
     if (matReader.size() != 16) return {};
 
-    // Check if matrix is populated (non-identity)
     bool allZeroOffDiag = true;
     for (int i = 0; i < 4 && allZeroOffDiag; i++)
         for (int j = 0; j < 4; j++)
@@ -312,7 +296,7 @@ std::vector<std::vector<double>> loadSubstMatrixFromIndex(LiteIndex::Reader& idx
             }
     if (allZeroOffDiag) return {};
 
-    // Convert probability matrix to phred: -10 * log10(p)
+    // phred = -10 * log10(p)
     std::vector<std::vector<double>> phred(4, std::vector<double>(4, 0.0));
     for (int i = 0; i < 4; i++)
         for (int j = 0; j < 4; j++) {
@@ -378,11 +362,8 @@ bool buildMgsrIndex(const Config& cfg) {
     return true;
 }
 
-// A cached single-sample index is reusable only if it was built for the same
-// request: matching seeding parameters (k/s/t/l/hpc/open-syncmer) and not older
-// than the panman. Placement reads the seeding params back out of the index, so a
-// stale cache would silently override the user's CLI parameters (or an edited
-// panman). On any mismatch — or an unreadable index — rebuild.
+// Reusable only if seeding params match and the index is newer than the panman: placement
+// reads params back from the index, so a stale cache would silently override CLI params.
 static bool cachedIndexUsable(const Config& cfg) {
     if (fs::exists(cfg.panman)) {
         boost::system::error_code ecIdx, ecPan;
@@ -393,8 +374,6 @@ static bool cachedIndexUsable(const Config& cfg) {
             return false;
         }
     }
-    // Read the seeding params from the small uncompressed header instead of decompressing
-    // the whole (up to GB-scale) payload just to compare six fields.
     index_single_mode::IndexParamsHeader ph;
     if (!index_single_mode::readIndexHeader(cfg.index, ph)) {
         logging::warn("Cached index {} has no readable param header (old format/corrupt); rebuilding.",
@@ -892,9 +871,7 @@ struct BatchEntry {
     std::string prefix;
 };
 
-// Parse a batch file: one sample per line, "reads1 [reads2] [output_prefix]"
-// (whitespace- or tab-separated). The output prefix is optional and auto-derived
-// from reads1 when omitted.
+// One sample per line: "reads1 [reads2] [output_prefix]". Prefix defaults from reads1.
 bool readBatchFiles(const std::string& batchPath, std::vector<BatchEntry>& entries) {
     std::ifstream batchIn(batchPath);
     if (!batchIn.is_open()) {
@@ -1219,9 +1196,7 @@ bool runMetagenomic(const Config& cfg) {
     std::unique_ptr<FdReader> fdReader;
     ::capnp::MessageReader* baseReader = nullptr;
 
-    // Pick the reader by sniffing the format rather than attempting the ZSTD
-    // reader first: MGSR indexes are plain (uncompressed) capnp, so a try-first
-    // approach logged a spurious "Not a valid ZSTD frame" on every run.
+    // Sniff for a ZSTD magic; MGSR indexes are plain capnp, so try-first would log a spurious error.
     bool indexIsZstd = false;
     {
         std::ifstream probe(cfg.index, std::ios::binary);
@@ -1299,8 +1274,7 @@ int runAlignment(const Config& cfg,
 int runGenotyping(const Config& cfg);
 int runConsensus(const Config& cfg);
 
-// refineEnabled is computed per-caller (it can be disabled after the full tree loads),
-// so it's passed in explicitly rather than read from cfg.
+// refineEnabled is passed in, not read from cfg: it can be disabled once the full tree loads.
 static placement::TraversalParams makeTraversalParams(const Config& cfg, bool refineEnabled) {
     placement::TraversalParams p;
     p.seedMaskFraction = cfg.seedMaskFraction;
@@ -1319,7 +1293,6 @@ static placement::TraversalParams makeTraversalParams(const Config& cfg, bool re
 }
 
 int runBatchPlacement(const Config& cfg) {
-    // Parse batch file (shared "reads1 [reads2] [output_prefix]" format with --meta)
     std::vector<BatchEntry> samples;
     if (!readBatchFiles(cfg.batchFile, samples)) return 1;
 
@@ -1330,7 +1303,6 @@ int runBatchPlacement(const Config& cfg) {
 
     output::info("Batch mode: {} samples", samples.size());
 
-    // Load the index once and reuse it for every sample.
     logging::debug("Loading index...");
     IndexReader reader(cfg.index, cfg.threads);
     auto idx = reader.getRoot<LiteIndex>();
@@ -1340,7 +1312,6 @@ int runBatchPlacement(const Config& cfg) {
     tree.initialize(idx.getLiteTree());
     logging::msg("Tree loaded: {} nodes", tree.allLiteNodes.size());
 
-    // Load full tree if refinement is enabled or if running alignment/genotyping
     std::unique_ptr<panmanUtils::TreeGroup> tg;
     panmanUtils::Tree* fullTreePtr = nullptr;
     bool refineEnabled = cfg.refine;
@@ -1371,8 +1342,7 @@ int runBatchPlacement(const Config& cfg) {
         placement::PlacementResult result;
         auto start = std::chrono::high_resolution_clock::now();
         placement::placeLite(result, &tree, reader, s.reads1, s.reads2, outPath, batchParams, fullTreePtr);
-        // Keep per-stage output suppressed through align/genotype too, so the first
-        // sample shows only the compact [i/N] line like the parallel samples below.
+        // Stay quiet through align/genotype so the first sample shows only the compact [i/N] line.
 
         if (result.bestLogContainmentNodeId.empty()) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1432,7 +1402,7 @@ int runBatchPlacement(const Config& cfg) {
     }
     output::config().quiet = false;
 
-    // Process remaining samples in parallel (seed changes already loaded, tree is read-only)
+    // Remaining samples in parallel: seed changes loaded, tree is read-only.
     if (samples.size() > 1) {
         std::atomic<int> atomicSuccess(0), atomicFail(0);
         std::atomic<int> completedCount(1);  // first sample already done
@@ -1523,7 +1493,6 @@ int runBatchPlacement(const Config& cfg) {
     output::done(
         fmt::format("Batch complete: {}/{} placed in {}s", successCount, samples.size(), totalElapsed.count()));
     if (failCount > 0) logging::warn("{} samples failed placement", failCount);
-    // Non-zero exit if any sample failed, matching single-sample and metagenomic modes.
     return failCount > 0 ? 1 : 0;
 }
 
@@ -1544,7 +1513,6 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
     // --dump-all-scores needs the per-node seed scores retained after placement.
     bool storeDiagnostics = !cfg.dumpAllScores.empty();
 
-    // Load full tree if refinement is enabled (needed for genome sequences)
     std::unique_ptr<panmanUtils::TreeGroup> tg;
     panmanUtils::Tree* fullTreePtr = nullptr;
     bool refineEnabled = cfg.refine;
@@ -1584,8 +1552,7 @@ std::optional<placement::PlacementResult> runPlacement(const Config& cfg) {
         std::ofstream outFile(cfg.dumpAllScores);
         if (outFile) {
             outFile << "node\tlogRaw\tlogCosine\tcontainment\tlogContainment\n";
-            // Scores live in the per-call result (metric order 0=logRaw, 1=logCosine,
-            // 2=containment, 3=weightedContainment, 4=logContainment), indexed by node DFS index.
+            // nodeScores metric order: 0=logRaw, 1=logCosine, 2=containment, 3=weightedContainment, 4=logContainment.
             std::vector<std::pair<double, std::string>> allScores;
             for (auto& [id, node] : tree.allLiteNodes) {
                 if (!node || node->nodeIndex >= result.nodeScores.size()) continue;
@@ -1625,7 +1592,6 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
         }
         T = &tg->trees[0];
     }
-    // Use LogContainment as primary placement metric
     std::string nodeId = placement.bestLogContainmentNodeId;
 
     if (nodeId.empty()) {
@@ -1654,7 +1620,6 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
         outFile.close();
     }
 
-    // Create FASTA index (.fai) for htslib/samtools
     if (fai_build(refFileName.c_str()) != 0) {
         logging::err("Failed to create FASTA index for {}", refFileName);
         return 1;
@@ -1664,13 +1629,11 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    // Lightweight FASTQ reader (no seed computation)
     std::vector<std::string> readSequences, readQuals, readNames;
     seeding::readFastqPaired(readSequences, readQuals, readNames, cfg.reads1, cfg.reads2);
 
     logging::debug("Loaded {} reads", readSequences.size());
 
-    // Parallel alignment with direct BAM construction
     bool pairedEndReads = !cfg.reads2.empty();
     if (alignAndWriteBam(readSequences,
                          readQuals,
@@ -1700,7 +1663,6 @@ int runGenotyping(const Config& cfg) {
     std::string mpileupFileName = cfg.output + ".mpileup";
     std::string vcfFileName = cfg.output + ".vcf";
 
-    // Reference sequence and its contig name (node id) from the .ref.fa header.
     std::string bestMatchSequence;
     std::string refName = "ref";
     std::ifstream ref(refFileName);
@@ -1726,7 +1688,6 @@ int runGenotyping(const Config& cfg) {
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
 
-    // Count variant records (lines that aren't headers) for the status line.
     size_t numVariants = 0;
     {
         std::ifstream vcf(vcfFileName);
@@ -1745,7 +1706,6 @@ int runConsensus(const Config& cfg) {
     std::string vcfFileName = cfg.output + ".vcf";
     std::string consensusFileName = cfg.output + ".consensus.fa";
 
-    // Contig name (node id) from the .ref.fa header.
     std::string refName = "ref";
     {
         std::ifstream ref(refFileName);
@@ -2100,11 +2060,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Internal/ancestral nodes are eligible placement references in every stage
-    // (place -> align -> genotype -> consensus); the downstream reference is
-    // materialized from any node id, so an ancestral node closer than the best
-    // leaf improves the consensus. Pass --force-leaf to restrict to observed
-    // leaf genomes.
+    // Internal/ancestral nodes are eligible placement references in every stage; the
+    // reference is materialized from any node id. Pass --force-leaf to restrict to leaves.
 
     // The index path is always derived from the panman (placement -> .idx, metagenomic
     // -> .midx); -o does not affect it. Pass --index to load a specific pre-built index.

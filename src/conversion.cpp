@@ -18,16 +18,12 @@ extern "C" {
 #include <htslib/tbx.h>
 }
 
-// Run a bcftools function in a forked child process. bcftools main_* use global optind
-// and other process-wide state; forking gives each call its own address space for safe
-// parallelism.
+// Run a bcftools function in a forked child. bcftools main_* use global optind and other
+// process-wide state; forking gives each call its own address space for safe parallelism.
 static int run_bcftools_in_fork(int (*func)(int, char**), int argc, char** argv, bool silenceStderr = true) {
-    // Serialize the forks. fork() from a TBB worker (batch mode, --threads > 1)
-    // clones only the calling thread; if another worker holds a stdio/htslib lock
-    // at fork time, the child can deadlock acquiring it (the owner doesn't exist in
-    // the child). glibc/macOS already make malloc fork-safe via atfork handlers, so
-    // the remaining exposure is two bcftools children running concurrently. This
-    // lock allows at most one bcftools fork in flight at a time.
+    // Serialize forks: fork() from a TBB worker clones only the calling thread, so a lock
+    // another worker holds (stdio/htslib) can deadlock the child. This mutex bounds it to one
+    // bcftools fork in flight (malloc is already fork-safe via atfork).
     static std::mutex forkMutex;
     std::lock_guard<std::mutex> forkLock(forkMutex);
 
@@ -313,11 +309,8 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
         qname.resize(qname.size() - 2);
     }
 
-    // R2 of a pair is reverse-complemented upstream (readFastqPaired) before alignment,
-    // so the aligner's rev bit for it is inverted relative to the original fragment.
-    // Report the original read's true strand in the FLAG and TLEN; the stored SEQ/CIGAR
-    // stay in the aligned (forward-reference) orientation, which is what BAM expects for
-    // either strand.
+    // R2 was reverse-complemented upstream, so the aligner's rev bit is inverted vs the original
+    // fragment. Report true strand in FLAG/TLEN; SEQ/CIGAR stay forward-reference, as BAM expects.
     const uint8_t effective_rev = (is_paired && !is_read1) ? static_cast<uint8_t>(!aln->rev) : aln->rev;
     uint16_t flag = compute_sam_flags(is_paired, is_read1, effective_rev, mate_rev, proper_frag, mate_unmapped);
 

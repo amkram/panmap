@@ -68,7 +68,6 @@ constexpr size_t computeHomopolymerHash(char base, int k) {
     return std::min(fHash, rHash);
 }
 
-// Get all 4 canonical homopolymer hashes for a given k
 constexpr std::array<size_t, 4> getHomopolymerHashes(int k) {
     return {computeHomopolymerHash('A', k),
             computeHomopolymerHash('C', k),
@@ -76,8 +75,7 @@ constexpr std::array<size_t, 4> getHomopolymerHashes(int k) {
             computeHomopolymerHash('T', k)};
 }
 
-// Compute average Phred quality score over a k-mer span
-// Quality string uses ASCII encoding: Q = char - 33 (Phred+33)
+// Average Phred quality over a k-mer span. Phred+33 encoding: Q = char - 33.
 inline double avgPhredQuality(const std::string& qual, int64_t startPos, int k) {
     if (qual.empty() || startPos < 0 || startPos + k > static_cast<int64_t>(qual.size())) {
         return 0.0;
@@ -247,8 +245,8 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
                                                  const placement::PlacementGlobalState& state) {
     if (seedChangeSize == 0) [[unlikely]]
         return;
-    constexpr size_t PREFETCH_DISTANCE = 24;  // deeper pipeline (L3 latency ~40 cycles)
-    constexpr size_t BATCH_SIZE = 64;         // cache-line aligned batches
+    constexpr size_t PREFETCH_DISTANCE = 24;
+    constexpr size_t BATCH_SIZE = 64;
     constexpr uint64_t SEG = panmapUtils::LiteTree::SEED_CHANGE_SEGMENT;
     const panmapUtils::LiteTree& tree = *state.liteTree;
 
@@ -264,21 +262,17 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
         const int16_t* Pc = tree.segSeedParent[seg] + local;
         const int16_t* Cc = tree.segSeedChild[seg] + local;
 
-        // Prefetch both seed hashes and hash table buckets
         const size_t initialPrefetchCount = std::min(numChanges, PREFETCH_DISTANCE);
         for (size_t i = 0; i < initialPrefetchCount; ++i) {
             __builtin_prefetch(&H[i], 0, 0);
-            // Prefetch the table this loop actually probes (logReadCounts), not the
-            // read-processing tables that are never read here.
+            // logReadCounts is the only table this loop probes.
             state.logReadCounts.prefetch(H[i]);
         }
 
-        // Batch for instruction pipelining and cache utilization
         for (size_t batch_start = 0; batch_start < numChanges; batch_start += BATCH_SIZE) {
             const size_t batch_end = std::min(batch_start + BATCH_SIZE, numChanges);
 
             for (size_t i = batch_start; i < batch_end; ++i) {
-                // Prefetch far ahead - both data and hash table
                 if (i + PREFETCH_DISTANCE < numChanges) [[likely]] {
                     const uint64_t nextHash = H[i + PREFETCH_DISTANCE];
                     __builtin_prefetch(&H[i + PREFETCH_DISTANCE], 0, 0);
@@ -297,8 +291,8 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
 
                 // Genome-only metrics: computed for all seed changes, even if not in reads.
 
-                // Genome magnitude squared delta: log(1+child)² - log(1+parent)²
-                // Use log-scale to match the log-scaled read vector for proper cosine similarity
+                // Genome magnitude squared delta: log(1+child)² - log(1+parent)².
+                // Log-scale to match the log-scaled read vector for proper cosine similarity.
                 const double magDelta = logChild * logChild - logParent * logParent;
                 childMetrics.genomeMagnitudeSquared += magDelta;
 
@@ -332,9 +326,8 @@ void placement::NodeMetrics::computeChildMetrics(placement::NodeMetrics& childMe
                 // Both vectors in log-space for proper cosine similarity
                 childMetrics.logCosineNumerator += logReadCount * (logChild - logParent);
 
-                // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome.
-                // Weights each seed by 1/(node's genome count), rewarding genomes where matching
-                // seeds are rare/unique. Delta: 1/childCount - 1/parentCount for seeds in reads.
+                // Weighted containment numerator: Σ(1/nodeGenomeCount_i) for seeds in reads ∩ genome,
+                // upweighting genomes where matching seeds are rare. Delta: 1/childCount - 1/parentCount.
                 {
                     const double oldWcContrib = (parentCount > 0) ? (1.0 / parentCount) : 0.0;
                     const double newWcContrib = (childCount > 0) ? (1.0 / childCount) : 0.0;
@@ -357,10 +350,8 @@ using ::panmanUtils::Node;
 using ::panmanUtils::Tree;
 
 
-// Generates a score update function: updates best score/index and tracks ties.
-// Per-node scores are stored separately in PlacementResult::nodeScores (see the
-// BFS scoring block), not on the shared LiteNode, so concurrent batch placements
-// don't race.
+// Score-update fn: updates best score/index and tracks ties. Per-node scores live in
+// PlacementResult::nodeScores (not the shared LiteNode) so batch placements don't race.
 #define DEFINE_UPDATE_SCORE_FUNC(FuncName, nodeScoreField, bestScore, bestNodeIndex, tiedIndices) \
     void PlacementResult::FuncName(uint32_t nodeIndex, double score) {                            \
         double tolerance = std::max(bestScore * 0.0001, 1e-9);                                    \
@@ -491,8 +482,7 @@ std::string getNodeSequenceForRefinement(panmanUtils::Tree* T, const std::string
     return T->getStringFromReference(nodeId, false, true);
 }
 
-// Score a candidate node by aligning reads to its genome sequence
-// Returns negative total edit distance (higher = fewer errors = better)
+// Returns negative total edit distance (higher = fewer errors = better).
 // When pairedEnd=true, reads are interleaved R1_0,R2_0,R1_1,R2_1,...
 int64_t scoreNodeByAlignment(panmanUtils::Tree* fullTree,
                              const std::string& nodeId,
@@ -577,10 +567,8 @@ void refineTopCandidates(panmapUtils::LiteTree* liteTree,
     auto wContainCands = getTopForMetric([&](auto* n) { return nodeScore(n, 3); }, "WeightedContainment");
     auto logContainCands = getTopForMetric([&](auto* n) { return nodeScore(n, 4); }, "LogContainment");
 
-    // Always include the unrefined best node for each metric in its candidate set.
-    // At high coverage, seed scores saturate and the correct node may fall outside
-    // the top-N% cutoff. Including the seed-phase winner ensures refinement always
-    // considers the best unrefined placement.
+    // Always include each metric's unrefined best node: at high coverage seed scores
+    // saturate and the correct node can fall outside the top-N% cutoff.
     if (result.bestLogRawNodeIndex != UINT32_MAX) logRawCands.insert(result.bestLogRawNodeIndex);
     if (result.bestLogCosineNodeIndex != UINT32_MAX) logCosineCands.insert(result.bestLogCosineNodeIndex);
     if (result.bestContainmentNodeIndex != UINT32_MAX) containCands.insert(result.bestContainmentNodeIndex);
@@ -754,7 +742,6 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
     while (!current_nodes.empty()) {
         size_t num_nodes = current_nodes.size();
 
-        // Larger chunks = less overhead, but need enough chunks for load balancing
         size_t grain_size = std::max(size_t(1), num_nodes / (numThreads * 8));
 
         // Pre-allocate empty seed counts for verification disabled case
@@ -773,12 +760,10 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
 
                     if (!node) continue;
 
-                    // Software prefetch for next 4 nodes
                     constexpr size_t PREFETCH_DISTANCE = 4;
                     for (size_t j = 1; j <= PREFETCH_DISTANCE && i + j < r.end(); ++j) {
                         __builtin_prefetch(current_nodes[i + j], 0, 1);
                         __builtin_prefetch(&current_metrics[i + j], 0, 1);
-                        // seedChangeOffset/Size are POD in the node, prefetched above
                     }
 
                     batch_counter++;
@@ -823,9 +808,7 @@ void placeLiteHelperBFS(std::vector<panmapUtils::LiteNode*>& nodes,
                         tls.local_result.updateWeightedContainmentScore(nodeIndex, weightedContainmentScore);
                         tls.local_result.updateLogContainmentScore(nodeIndex, logContainmentScore);
 
-                        // Per-node scores for refinement candidate selection. Written to the
-                        // shared per-call result (not the tree) so concurrent batch placements
-                        // don't race; each node index is written by exactly one thread.
+                        // Refinement candidate scores on the per-call result; each index written by one thread.
                         if (nodeIndex < result.nodeScores.size()) {
                             result.nodeScores[nodeIndex] = {static_cast<float>(logRawScore),
                                                             static_cast<float>(logCosineScore),
@@ -949,12 +932,9 @@ int64_t resolveMinReadSupport(const absl::flat_hash_map<size_t, int64_t, Identit
                               int configuredMinSupport) {
     int64_t minSupport = configuredMinSupport;
     if (minSupport < 0) {
-        // Auto: estimate coverage from the read-count distribution (no genome length
-        // needed). A seed seen in >=2 reads is almost always a genuine genomic k-mer
-        // (random errors rarely recur across reads), and its read count approximates
-        // local depth, so the mean over these seeds estimates coverage. Below ~3x most
-        // true seeds are singletons and must be kept (1); above it singletons are
-        // overwhelmingly errors, so require >=2.
+        // Auto: a seed in >=2 reads is almost always genuine (errors rarely recur), so the
+        // mean read-count over such seeds estimates coverage. Below ~3x keep singletons (1);
+        // above it they are overwhelmingly errors, so require >=2.
         uint64_t multiSeedFreqSum = 0;
         uint64_t multiSeedCount = 0;
         for (const auto& [seedHash, readCount] : seedFreqInReads) {
@@ -1028,9 +1008,8 @@ void placeLite(PlacementResult& result,
 
     auto indexRoot = liteIndex.getRoot<LiteIndex>();
 
-    // Reject a stale index before reading any width-sensitive field (the
-    // nodeChangeOffsets element width changed with the format), so an old .idx
-    // fails with a clear rebuild message instead of a cryptic capnp error.
+    // Reject a stale index before reading any width-sensitive field (nodeChangeOffsets
+    // element width changed with the format), so old .idx gives a clear rebuild message.
     if (indexRoot.getFormatVersion() != panmapUtils::INDEX_FORMAT_VERSION) {
         throw std::runtime_error(fmt::format(
             "Index format version {} is incompatible with this panmap (expects {}). "
@@ -1042,7 +1021,6 @@ void placeLite(PlacementResult& result,
     if (!liteTree->seedChangesLoaded) {
         logging::debug("Loading pre-computed hash deltas from index for {} nodes...", liteTree->allLiteNodes.size());
 
-        // Process nodes in DFS order with direct vector indexing: O(1) access, no hash-map lookup in hot path.
         const size_t numNodes = liteTree->allLiteNodes.size();
 
         // Parallel Pass 1: Count seed changes per node to calculate offsets
@@ -1069,9 +1047,8 @@ void placeLite(PlacementResult& result,
             }
             totalHashDeltas = nodeOffsets[numNodes];
 
-            // Zero-copy: point into the decompressed index (kept mapped for the tree's
-            // lifetime) via toAny(list).getRawBytes() (contiguous little-endian data)
-            // instead of copying every seed-change tuple into a flat array.
+            // Zero-copy: point into the decompressed index (mapped for the tree's lifetime)
+            // via toAny(list).getRawBytes() (contiguous little-endian), not a copied array.
             static_assert(panmapUtils::LiteTree::SEED_CHANGE_SEGMENT == 500'000'000ULL,
                           "SEED_CHANGE_SEGMENT must match the index writer's CAPNP_SPLIT");
             auto hashesReader = indexRoot.getSeedChangeHashes();
@@ -1163,10 +1140,8 @@ void placeLite(PlacementResult& result,
             }
         }
 
-        // Apply homopolymer compression to reads if the index was built with HPC.
-        // When quality filtering is active, compress each quality string in lockstep
-        // (keep the first base's quality per run) so per-seed quality lookups stay
-        // aligned with the compressed sequence coordinates.
+        // HPC-compress reads if the index used HPC; compress each quality string in lockstep
+        // (first base's quality per run) so per-seed quality lookups stay aligned.
         if (params.hpc && !allReadSequences.empty()) {
             logging::info("HPC mode: compressing read sequences");
             const bool compressQual = params.minSeedQuality > 0 && !allReadQualities.empty();
@@ -1348,13 +1323,10 @@ void placeLite(PlacementResult& result,
                     size_t num_cpus = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
                     std::vector<absl::flat_hash_map<size_t, int64_t>> threadLocalMaps(num_cpus);
 
-                    // Pre-allocate capacity to eliminate malloc overhead (~14% of time in malloc).
-                    // Formula: seeds/read * reads/thread * load_factor_headroom.
-                    const size_t avg_seeds_per_read = 50;  // Conservative estimate for syncmers
+                    const size_t avg_seeds_per_read = 50;
                     const size_t reads_per_thread = (dupReadsIndex.size() + num_cpus - 1) / num_cpus;
                     const size_t estimated_seeds = avg_seeds_per_read * reads_per_thread;
-                    // Reserve 1.5x for hash table load factor (typically 0.875 max)
-                    const size_t reserve_capacity = (estimated_seeds * 3) / 2;
+                    const size_t reserve_capacity = (estimated_seeds * 3) / 2;  // 1.5x for load factor
 
                     for (auto& localMap : threadLocalMaps) {
                         localMap.reserve(reserve_capacity);
@@ -1652,10 +1624,8 @@ void placeLite(PlacementResult& result,
 
                             if (syncmers.size() < static_cast<size_t>(params.l)) continue;
 
-                            // Primer-trim: keep only syncmers whose k-mer start is within
-                            // [validStart, validEnd]. Trimming removes contiguous end syncmers,
-                            // so the in-range set is the sub-range [loIdx, hiIdx). No-op when
-                            // trimStart/trimEnd == 0.
+                            // Primer-trim: keep syncmers with k-mer start in [validStart, validEnd]
+                            // (a sub-range [loIdx, hiIdx) since trimming removes contiguous ends).
                             const int seqLen = static_cast<int>(seq.size());
                             const int validStart = params.trimStart;
                             const int validEnd = seqLen - params.trimEnd - params.k;
@@ -1888,9 +1858,8 @@ void placeLite(PlacementResult& result,
     state.root = liteTree->root;
     state.liteTree = liteTree;  // zero-copy seed-change SoA pointers used by computeChildMetrics
 
-    // Precompute inverse genome counts from root's seed changes
-    // g_i = number of genomes containing seed i (root's childCount for that seed)
-    // Used by weighted containment metric to upweight rare/discriminative seeds
+    // Inverse genome counts from root's seed changes: g_i = genomes containing seed i
+    // (root's childCount). Weighted containment uses these to upweight rare seeds.
     if (liteTree->root) {
         liteTree->forEachSeedChange(liteTree->root->seedChangeOffset,
                                     liteTree->root->seedChangeSize,
@@ -1925,9 +1894,8 @@ void placeLite(PlacementResult& result,
             root_level_seed_counts.emplace_back();
         }
 
-        // Refinement (and --dump-all-scores) read per-node seed scores back;
-        // allocate the per-call store (indexed by node DFS index) so the BFS can
-        // fill it without touching the shared tree. Skipped when nothing reads it.
+        // Refinement (and --dump-all-scores) read per-node seed scores back; allocate the
+        // per-call store (by DFS index) so the BFS fills it without touching the shared tree.
         if (params.refineEnabled || params.store_diagnostics) {
             result.nodeScores.assign(liteTree->dfsIndexToNode.size(), {});
         }
@@ -1936,7 +1904,7 @@ void placeLite(PlacementResult& result,
         placeLiteHelperBFS(
             root_level_nodes, root_level_metrics, root_level_seed_counts, state, result, params, nodesProcessed);
 
-        // Lazy ID resolution: only deserialize winning node IDs (eliminates ~1800ms overhead)
+        // Lazy ID resolution: deserialize only the winning node IDs
         result.resolveNodeIds(liteTree);
 
         // Optional refinement: re-score top candidates by full minimap2 alignment.

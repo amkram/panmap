@@ -1,5 +1,3 @@
-// Placement metric tests. The live NodeMetrics getters must equal the independent
-// GroundTruthMetrics oracle within float epsilon. Genome equality is covered in test_index.
 #include <boost/test/unit_test.hpp>
 
 #include "placement.hpp"
@@ -19,9 +17,7 @@ const std::string kTruthNode = "MZ515733.1";
 
 using Change = std::tuple<uint64_t, int64_t, int64_t>;  // (hash, parentCount, childCount)
 
-// Build a PlacementGlobalState from a read seed set, computing the same denominators
-// the live getters and the oracle both divide by. Sharing this state isolates the
-// numerator logic: computeChildMetrics vs oracle::compute.
+// Denominators match what the live getters and oracle both divide by, isolating numerators.
 placement::PlacementGlobalState makeState(const indexUtils::SeedCountMap& readSeeds,
                                           const indexUtils::SeedCountMap& rootGenome) {
     placement::PlacementGlobalState state;
@@ -46,8 +42,6 @@ placement::PlacementGlobalState makeState(const indexUtils::SeedCountMap& readSe
     return state;
 }
 
-// Adapt hand-built seed changes to the zero-copy SoA API: build a single-segment
-// LiteTree view over the changes and call computeChildMetrics.
 void computeChildMetricsFor(placement::NodeMetrics& m,
                             const std::vector<Change>& changes,
                             placement::PlacementGlobalState& state) {
@@ -91,20 +85,19 @@ placement::NodeMetrics accumulateAlongPath(const ts::IndexData& d,
 
 BOOST_AUTO_TEST_SUITE(placement_tests)
 
-// Hand-built seed-change spans run through computeChildMetrics, checked against the oracle.
 BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     const uint64_t H = 0xAAAA;  // a read seed
     const uint64_t X = 0xBBBB;  // not a read seed
 
     placement::PlacementGlobalState state;
-    state.logReadCounts[H] = std::log1p(3.0);  // read count 3
+    state.logReadCounts[H] = std::log1p(3.0);
     state.seedFreqInReads[H] = 3;
     state.readUniqueSeedCount = 1;
-    state.logReadMagnitude = std::log1p(3.0);  // single seed
+    state.logReadMagnitude = std::log1p(3.0);
     state.logContainmentDenominator = std::log1p(3.0);
     state.weightedContainmentDenominator = 1.0;
 
-    // (a) H appears in genome (0 -> 2): all read-interaction numerators update.
+    // (a) H in genome (0 -> 2).
     {
         std::vector<Change> ch = {{H, 0, 2}};
         placement::NodeMetrics m;
@@ -119,10 +112,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
             m.getLogContainmentScore(state.logContainmentDenominator), oracle.logContainmentScore(state), 1e-3);
         BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 1u);
 
-        // Hand-derived ground truth for r=3, g=2 (independently verified, not via the
-        // oracle): logRaw = log(4)/2 / log(4) = 0.5; logCosine = log(4)log(3) /
-        // (log(4)·log(3)) = 1; containment = 1/1 = 1; weightedContainment = (1/2)/1 =
-        // 0.5; logContainment = log(4)/log(4) = 1.
+        // Hand-derived for r=3, g=2: logRaw=0.5, logCosine=1, containment=1, weightedContainment=0.5, logContainment=1.
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), 0.5, 1e-3);
         BOOST_CHECK_CLOSE(m.getLogCosineScore(state.logReadMagnitude), 1.0, 1e-3);
         BOOST_CHECK_CLOSE(m.getContainmentScore(state.readUniqueSeedCount), 1.0, 1e-3);
@@ -130,18 +120,17 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
         BOOST_CHECK_CLOSE(m.getLogContainmentScore(state.logContainmentDenominator), 1.0, 1e-3);
     }
 
-    // (b) Only a non-read seed X changes: read-interaction numerators stay 0,
-    //     but genome magnitude still updates.
+    // (b) Only non-read seed X changes: read numerators stay 0, genome magnitude still updates.
     {
         std::vector<Change> ch = {{X, 0, 5}};
         placement::NodeMetrics m;
         computeChildMetricsFor(m, ch, state);
         BOOST_CHECK_SMALL(m.getLogRawScore(state.logReadMagnitude), 1e-12);
         BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 0u);
-        BOOST_CHECK_GT(m.genomeMagnitudeSquared, 0.0);  // genome-only metric updated
+        BOOST_CHECK_GT(m.genomeMagnitudeSquared, 0.0);
     }
 
-    // (c) freqDelta == 0 but seed present (2 -> 2): no-op for every metric.
+    // (c) freqDelta == 0, seed present (2 -> 2): no-op for every metric.
     {
         std::vector<Change> ch = {{H, 2, 2}};
         placement::NodeMetrics m;
@@ -152,9 +141,6 @@ BOOST_AUTO_TEST_CASE(child_metrics_unit_cases) {
     }
 }
 
-// Multi-seed cases with hand-derived expected scores, independent of the oracle:
-// accumulation over two seeds, and partial containment where a read seed is absent
-// from the node genome.
 BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     const uint64_t H1 = 0x1111, H2 = 0x2222;
     const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
@@ -164,8 +150,7 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     indexUtils::SeedCountMap rootGenome{{H1, 2}, {H2, 2}};
     auto state = makeState(readSeeds, rootGenome);
 
-    // (a) Node genome contains both seeds at count 2 (symmetric r=3,g=2 twice):
-    //     logRaw = (log4/2 + log4/2) / (log4·sqrt2) = 1/sqrt2; the other four scores = 1.
+    // (a) Both seeds in genome at count 2 (symmetric r=3,g=2): logRaw=1/sqrt2, other four scores=1.
     {
         std::vector<Change> ch = {{H1, 0, 2}, {H2, 0, 2}};
         placement::NodeMetrics m;
@@ -176,15 +161,11 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
         BOOST_CHECK_CLOSE(m.getWeightedContainmentScore(state.weightedContainmentDenominator), 1.0, 1e-3);
         BOOST_CHECK_CLOSE(m.getLogContainmentScore(state.logContainmentDenominator), 1.0, 1e-3);
         BOOST_CHECK_EQUAL(m.presenceIntersectionCount, 2u);
-        // The oracle must agree on the same state.
         auto oracle = indexUtils::GroundTruthMetrics::compute({{H1, 2}, {H2, 2}}, state);
         BOOST_CHECK_CLOSE(m.getLogRawScore(state.logReadMagnitude), oracle.logRawScore(state), 1e-3);
     }
 
-    // (b) Node genome contains only H1 (partial): H2 is a read seed missing from the
-    //     genome, so |reads∩genome|/|reads| = 1/2 and every read-interaction score halves:
-    //     logRaw = (log4/2)/(log4·sqrt2) = 1/(2·sqrt2); logCosine = log4·log3 /
-    //     (log4·sqrt2·log3) = 1/sqrt2; containment/weighted/logContainment = 1/2.
+    // (b) Genome has only H1; H2 read seed missing -> containment=1/2, read scores halve (logRaw=1/(2·sqrt2), logCosine=1/sqrt2).
     {
         std::vector<Change> ch = {{H1, 0, 2}};
         placement::NodeMetrics m;
@@ -198,14 +179,11 @@ BOOST_AUTO_TEST_CASE(child_metrics_multiseed_hand_derived) {
     }
 }
 
-// For nodes along the path to a known leaf, the five live getters must equal the oracle
-// computed from the reconstructed genome and the same state.
 BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
     const auto& fix = ts::sharedRSVFixture();
     const auto& d = ts::sharedRSVIndex();
     const auto& tree = *d.liteTree;
 
-    // Reads from the truth genome; seeds extracted the same way as the genome.
     std::string truthGenome = fix.genomeOf(kTruthNode);
     auto reads = ts::generateReads(truthGenome, 150, 200, 777);
     BOOST_REQUIRE(!reads.empty());
@@ -220,11 +198,9 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
     auto fullPath = ts::pathToRoot(tree, targetIdx);
     BOOST_REQUIRE(fullPath.size() >= 2);
 
-    // Root genome supplies the weighted-containment denominator.
     auto rootGenome = ts::reconstructGenomeSeeds({tree.root}, d);
     auto state = makeState(readSeeds, rootGenome);
 
-    // Check several nodes along the path (root, midpoint, leaf).
     std::vector<size_t> checkpoints = {1, fullPath.size() / 2, fullPath.size()};
     int comparisons = 0, nonTrivial = 0;
     for (size_t prefixLen : checkpoints) {
@@ -233,12 +209,11 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
         auto genome = ts::reconstructGenomeSeeds(prefix, d);
         auto oracle = indexUtils::GroundTruthMetrics::compute(genome, state);
 
-        // Genome-only: oracle and live agree on the genome magnitude.
         BOOST_CHECK_CLOSE(live.genomeMagnitudeSquared, oracle.genomeMagnitudeSquared, 1e-3);
         BOOST_CHECK_EQUAL(live.presenceIntersectionCount, oracle.presenceIntersectionCount);
 
-        // A ~0 oracle value only pins live ~0; count the nonzero comparisons so an
-        // all-zero degenerate run (no read/genome overlap) can't pass with trivial checks.
+        // A ~0 oracle value only pins live ~0; count nonzero comparisons so an all-zero
+        // degenerate run (no read/genome overlap) can't pass with trivial checks.
         auto closeOrZero = [&](double a, double b) {
             if (std::abs(b) < 1e-12) {
                 BOOST_CHECK_SMALL(a, 1e-9);
@@ -254,8 +229,7 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
                     oracle.weightedContainmentScore(state));
         closeOrZero(live.getLogContainmentScore(state.logContainmentDenominator), oracle.logContainmentScore(state));
 
-        // At the leaf (full path) the reads came from this genome, so containment must be
-        // substantial, not merely live == oracle.
+        // At the leaf, reads came from this genome, so containment must be substantial.
         if (prefixLen == fullPath.size()) {
             BOOST_TEST(oracle.containmentScore(state) > 0.5);
             BOOST_TEST(live.getContainmentScore(state.readUniqueSeedCount) > 0.5);
@@ -263,14 +237,9 @@ BOOST_AUTO_TEST_CASE(all_metrics_equal_ground_truth_at_nodes) {
         comparisons++;
     }
     BOOST_TEST(comparisons == 3);
-    // At least five comparisons must be against nonzero oracle values, not only ~0.
     BOOST_TEST(nonTrivial >= 5);
 }
 
-// Read-seed state construction: the min-read-support filter and the score denominators
-// (logReadMagnitude / logContainmentDenominator / readUniqueSeedCount) the getters divide
-// by, driven with hand-built seed frequencies and hand-derived expected values. makeState
-// only mimics this path.
 BOOST_AUTO_TEST_CASE(read_seed_state_and_min_support) {
     // resolveMinReadSupport auto-mode (configured = -1).
     {  // High coverage: three seeds seen in >=2 reads, mean count 4 > 3 -> require >=2.
@@ -298,8 +267,7 @@ BOOST_AUTO_TEST_CASE(read_seed_state_and_min_support) {
         BOOST_TEST(placement::resolveMinReadSupport(st.seedFreqInReads, 7) == 7);
     }
 
-    // computeReadSeedMagnitudes with minSupport=2 drops the singleton and builds the
-    // denominators over the surviving seeds only. Hand-derived from a:5, b:3, c:1.
+    // minSupport=2 drops the singleton; denominators over survivors only. Hand-derived from a:5, b:3, c:1.
     {
         placement::PlacementGlobalState st;
         st.seedFreqInReads[0xA1] = 5;
@@ -309,8 +277,8 @@ BOOST_AUTO_TEST_CASE(read_seed_state_and_min_support) {
         const size_t filtered = placement::computeReadSeedMagnitudes(st, 2);
         const double la = std::log1p(5.0), lb = std::log1p(3.0);
 
-        BOOST_TEST(filtered == 1u);                  // c (count 1 < 2) dropped
-        BOOST_TEST(st.readUniqueSeedCount == 2u);    // a, b kept
+        BOOST_TEST(filtered == 1u);
+        BOOST_TEST(st.readUniqueSeedCount == 2u);
         BOOST_TEST(st.totalReadSeedFrequency == 9);  // 5+3+1, counted before the filter
         BOOST_TEST(st.logReadCounts.size() == 2u);
         BOOST_TEST(st.logReadCounts.count(0xC3) == 0u);
