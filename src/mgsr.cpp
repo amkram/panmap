@@ -495,6 +495,8 @@ void mgsr::MgsrLiteTree::initialize(LiteIndex::Reader indexReader,
     lastNodeDFS = allLiteNodes[liteNodesReader[liteNodesReader.size() - 1].getId()];
     lastNodeDFSCollapsed = lastNodeDFS;
 
+    originalNewickString = toNewick();
+
     if (taxonomicMetadataPath != "") {
         fillTaxonIndices(maximumTaxonNumber);
     }
@@ -843,14 +845,15 @@ void mgsr::MgsrLiteTree::collapseIdenticalScoringNodes(const absl::flat_hash_set
                     << prunedSeedDeltasCount.load() << " seed deltas remain." << std::endl;
 }
 
-void mgsr::MgsrLiteTree::buildNewickRecursive(const MgsrLiteNode* node,
+void mgsr::MgsrLiteTree::buildNewickRecursive(MgsrLiteNode* node,
                                               std::ostringstream& oss,
-                                              bool useCollapsed) const {
+                                              size_t& curEdge,
+                                              bool useCollapsed) {
     const auto& childrenList = useCollapsed ? node->collapsedChildren : node->children;
     if (!childrenList.empty()) {
         oss << '(';
         for (size_t i = 0; i < childrenList.size(); ++i) {
-            buildNewickRecursive(childrenList[i], oss, useCollapsed);
+            buildNewickRecursive(childrenList[i], oss, curEdge, useCollapsed);
             if (i < childrenList.size() - 1) {
                 oss << ',';
             }
@@ -858,16 +861,19 @@ void mgsr::MgsrLiteTree::buildNewickRecursive(const MgsrLiteNode* node,
         oss << ')';
     }
 
-    oss << node->identifier << ':' << node->seedDistance;
+    oss << node->identifier << ":1.0{" << curEdge << '}';
+    node->edgeNumber = curEdge;
+    curEdge++;
 }
 
-std::string mgsr::MgsrLiteTree::toNewick(bool useCollapsed) const {
+std::string mgsr::MgsrLiteTree::toNewick(bool useCollapsed) {
     if (!root) {
         return ";";
     }
 
+    size_t curEdge = 0;
     std::ostringstream oss;
-    buildNewickRecursive(root, oss, useCollapsed);
+    buildNewickRecursive(root, oss, curEdge, useCollapsed);
     oss << ';';
 
     return oss.str();

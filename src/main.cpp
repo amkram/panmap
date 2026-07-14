@@ -148,6 +148,7 @@ struct Config {
     int ambiguousScoreThreshold = 0;
     bool breadthRatio = false;
     bool pseudochain = false;
+    bool jplace = false;
     size_t batchSize = 1000000;
 
     std::string dumpNodeId;
@@ -515,6 +516,100 @@ void validateInputFile(const std::string& path, const std::string& description) 
     if (!isFileReadable(path)) throw std::runtime_error("Cannot read " + description + ": " + path);
 }
 
+void writeAssignedReadsOut(std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>>& allAssignedReadsByNode, const std::string& outputFile, const mgsr::MgsrLiteTree& T) {
+  std::ofstream out(outputFile);
+  if (!out.is_open()) {
+      logging::err("Failed to open assigned reads output file: {}", outputFile);
+      return;
+  }
+  for (auto& [node, readIndices] : allAssignedReadsByNode) {
+      out << node->identifier;
+      for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
+          out << "," << identicalNodeId;
+      }
+
+      std::string taxonNames;
+      if (node->taxonIndices.empty()) {
+          taxonNames = ".";
+      } else {
+          bool first = true;
+          for (size_t taxonIndex : node->taxonIndices) {
+              if (!first) taxonNames += ",";
+              taxonNames += T.taxons[taxonIndex];
+              first = false;
+          }
+      }
+
+      std::sort(readIndices.begin(), readIndices.end());
+      out << "\t" << taxonNames << "\t" << readIndices.size() << "\t";
+
+      for (size_t i = 0; i < readIndices.size(); ++i) {
+          out << readIndices[i];
+          if (i != readIndices.size() - 1) {
+              out << ",";
+          }
+      }
+      out << "\n";
+  }
+  out.close();
+}
+
+void writeJplacement(std::ofstream& out, const std::string& readId, const std::vector<mgsr::MgsrLiteNode*>& nodes) {
+  out << "    {\"p\": [\n";
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    std::string identicalSubtreeNodes;
+    for (size_t index = 0; index < nodes[i]->identicalNodeIdentifiers.size(); ++index) {
+      identicalSubtreeNodes += nodes[i]->identicalNodeIdentifiers[index];
+      if (index != nodes[i]->identicalNodeIdentifiers.size() - 1) {
+        identicalSubtreeNodes += ",";
+      }
+    }
+    out << "      [" << nodes[i]->edgeNumber << ", \"" << nodes[i]->identifier << "\", \"" << identicalSubtreeNodes << "\"]";
+    if (i == nodes.size() - 1) {
+      out << "\n";
+    } else {
+      out << ",\n";
+    }
+  }
+  out << "      ],\n";
+  out << "    \"n\": [\"" << readId << "\"]\n";
+  out << "    }"; 
+
+}
+
+void writeAssignedReadsJplace(const std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>>& allAssignedReadsByNode, const std::vector<std::string>& assignedReadsIds, const std::string& outputFile, const mgsr::MgsrLiteTree& T) {
+  std::ofstream out(outputFile);
+  if (!out.is_open()) {
+      logging::err("Failed to open assigned reads Jplace file: {}", outputFile);
+      return;
+  }
+  
+  std::vector<std::vector<mgsr::MgsrLiteNode*>> byRead(assignedReadsIds.size());
+  for (auto& [node, readIndices] : allAssignedReadsByNode) {
+    for (size_t readIndex : readIndices) {
+      byRead[readIndex].push_back(node);
+    }
+  }
+
+  out << "{\n";
+  out << "  \"version\": 3,\n";
+  out << "  \"metadata\": {},\n";
+  out << "  \"fields\": [\"edge_num\", \"node_id\", \"identical_subtree_nodes\"],\n";
+  out << "  \"tree\": \"" << T.originalNewickString << "\",\n";
+  out << "  \"placements\":\n";
+  out << "  [\n";
+  for (size_t i = 0; i < assignedReadsIds.size(); ++i) {
+    writeJplacement(out, assignedReadsIds[i], byRead[i]);
+    if (i == assignedReadsIds.size() - 1) {
+      out << "\n";
+    } else {
+      out << ",\n";
+    }
+  }
+  out << "  ]\n}\n";
+}
+
+
 void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           mgsr::MgsrLiteTree& T,
                           const std::string& readPath1,
@@ -527,6 +622,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           size_t maximumTaxonNumber,
                           double breadthRatio,
                           size_t batchSize,
+                          bool jplace,
                           const std::string& prefix) {
     size_t maxLiveTokens = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism) + 2;
     mgsr::FastqFile fq1(readPath1);
@@ -548,6 +644,8 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
 
     std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> allAssignedReadsByNode;
     std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>> allAssignedReadsByLCANode;
+
+    std::vector<std::string> assignedReadsIds;
 
     struct Batch {
         size_t batchIndex;
@@ -683,6 +781,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                         for (size_t readIndex : batch->readDuplicatesIndex[uniqueReadIndex]) {
                             auto [it, inserted] = batchReadIndexToFastqIndex.emplace(readIndex, totalFastqReadsWritten);
                             if (inserted) {
+                                if (jplace) assignedReadsIds.push_back(batch->names[readIndex]);
                                 assignedReadsFastq << "@" << batch->names[readIndex] << "\n";
                                 assignedReadsFastq << batch->sequences[readIndex] << "\n";
                                 assignedReadsFastq << "+\n";
@@ -728,81 +827,17 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
         kseq_destroy(seq2);
     }
     assignedReadsFastq.close();
-
-    std::ofstream assignedReadsOut(prefix + ".mgsr.assignedReads.out");
-    if (!assignedReadsOut.is_open()) {
-        logging::err("Failed to open assigned reads output file: {}", prefix + ".mgsr.assignedReads.out");
-        return;
-    }
-    for (auto& [node, readIndices] : allAssignedReadsByNode) {
-        assignedReadsOut << node->identifier;
-        for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
-            assignedReadsOut << "," << identicalNodeId;
-        }
-
-        std::string taxonNames;
-        if (node->taxonIndices.empty()) {
-            taxonNames = ".";
-        } else {
-            bool first = true;
-            for (size_t taxonIndex : node->taxonIndices) {
-                if (!first) taxonNames += ",";
-                taxonNames += T.taxons[taxonIndex];
-                first = false;
-            }
-        }
-
-        std::sort(readIndices.begin(), readIndices.end());
-        assignedReadsOut << "\t" << taxonNames << "\t" << readIndices.size() << "\t";
-
-        for (size_t i = 0; i < readIndices.size(); ++i) {
-            assignedReadsOut << readIndices[i];
-            if (i != readIndices.size() - 1) {
-                assignedReadsOut << ",";
-            }
-        }
-        assignedReadsOut << "\n";
-    }
-    assignedReadsOut.close();
     std::cout << totalFastqReadsWritten << " reads written to fastq file" << std::endl;
+   
 
-    std::ofstream assignedReadsLCANodeOut(prefix + ".mgsr.assignedReadsLCANode.out");
-    if (!assignedReadsLCANodeOut.is_open()) {
-        logging::err("Failed to open assigned reads LCA node output file: {}",
-                     prefix + ".mgsr.assignedReadsLCANode.out");
-        return;
-    }
-    for (auto& [node, readIndices] : allAssignedReadsByLCANode) {
-        assignedReadsLCANodeOut << node->identifier;
-        for (const auto& identicalNodeId : node->identicalNodeIdentifiers) {
-            assignedReadsLCANodeOut << "," << identicalNodeId;
-        }
-
-        std::string taxonNames;
-        if (node->taxonIndices.empty()) {
-            taxonNames = ".";
-        } else {
-            bool first = true;
-            for (size_t taxonIndex : node->taxonIndices) {
-                if (!first) taxonNames += ",";
-                taxonNames += T.taxons[taxonIndex];
-                first = false;
-            }
-        }
-
-        std::sort(readIndices.begin(), readIndices.end());
-        assignedReadsLCANodeOut << "\t" << taxonNames << "\t" << readIndices.size() << "\t";
-
-        for (size_t i = 0; i < readIndices.size(); ++i) {
-            assignedReadsLCANodeOut << readIndices[i];
-            if (i != readIndices.size() - 1) {
-                assignedReadsLCANodeOut << ",";
-            }
-        }
-        assignedReadsLCANodeOut << "\n";
+    if (jplace) {
+      writeAssignedReadsJplace(allAssignedReadsByNode, assignedReadsIds, prefix + ".mgsr.assignedReads.jplace", T);
+      writeAssignedReadsJplace(allAssignedReadsByLCANode, assignedReadsIds, prefix + ".mgsr.assignedReadsLCANode.jplace", T);
+    } else {
+      writeAssignedReadsOut(allAssignedReadsByNode, prefix + ".mgsr.assignedReads.out", T);
+      writeAssignedReadsOut(allAssignedReadsByLCANode, prefix + ".mgsr.assignedReadsLCANode.out", T);
     }
 
-    assignedReadsLCANodeOut.close();
 
     if (breadthRatio) {
         std::cout << "Calculating breadth ratio from assigned reads..." << std::endl;
@@ -935,6 +970,16 @@ bool readBatchFiles(const std::string& batchPath, std::vector<BatchEntry>& entri
 }
 
 bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
+    // if (cfg.jplace) {
+    //   auto tg = loadPanMAN(cfg.panman);
+    //   if (!tg || tg->trees.empty()) {
+    //       logging::err("Failed to load pangenome");
+    //       return false;
+    //   }
+    //   panmanUtils::Tree* panmanTree = &tg->trees[0];
+    //   T.originalNewickString = panmanTree->getNewickString(panmanTree->root);
+    // }
+
     auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
 
     auto start_time_buildEulerTour = std::chrono::high_resolution_clock::now();
@@ -978,6 +1023,7 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
                              cfg.maximumTaxonNumber,
                              cfg.breadthRatio,
                              cfg.batchSize,
+                             cfg.jplace,
                              cfg.output);
     } else if (!cfg.batchFile.empty()) {
         std::vector<BatchEntry> batchEntries;
@@ -1008,6 +1054,7 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
                                  cfg.maximumTaxonNumber,
                                  cfg.breadthRatio,
                                  cfg.batchSize,
+                                 cfg.jplace,
                                  entry.prefix);
         }
     }
@@ -1913,6 +1960,7 @@ int main(int argc, char** argv) {
         "Discard reads scoring max score - <int> outside of the max scoring families")(
         "breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")(
         "pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")(
+        "jplace", po::bool_switch(&cfg.jplace), "Output read assignments in jplace format (default: off)")(
         "batch-size",
         po::value<size_t>(&cfg.batchSize)->default_value(1000000),
         "Batch size for filtering and assigning reads");

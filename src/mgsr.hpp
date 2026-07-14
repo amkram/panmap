@@ -284,7 +284,7 @@ struct seedCountDelta {
 class MgsrLiteNode {
    public:
     std::string identifier;
-
+    size_t edgeNumber = 0;
     MgsrLiteNode* parent = nullptr;
     std::vector<MgsrLiteNode*> children;
     uint32_t dfsIndex;
@@ -368,6 +368,7 @@ class MgsrLiteTree {
     std::unordered_map<std::string, MgsrLiteNode*> allLiteNodes;
     std::unordered_set<MgsrLiteNode*> detachedNodes;
     std::vector<std::pair<uint32_t, uint32_t>> blockScalarRanges;
+    std::string originalNewickString;
 
     std::vector<std::string> taxons;
     std::unordered_map<std::string, int> taxonToIndex;
@@ -409,6 +410,8 @@ class MgsrLiteTree {
                     bool lowMemory,
                     bool collapseIdenticalNodes = true);
 
+    std::string getNewickString(MgsrLiteNode* node) const;
+
     void loadTaxonomicMetadata(const std::string& taxonomicMetadataPath,
                                const std::string& taxonomicRank,
                                std::unordered_map<std::string, int>& sampleToTaxonIndex);
@@ -435,8 +438,8 @@ class MgsrLiteTree {
 
     std::unordered_map<size_t, int32_t> getSeedsAtNode(MgsrLiteNode* node, bool useCollapsed = true) const;
 
-    void buildNewickRecursive(const MgsrLiteNode* node, std::ostringstream& oss, bool useCollapsed) const;
-    std::string toNewick(bool useCollapsed = false) const;
+    void buildNewickRecursive(MgsrLiteNode* node, std::ostringstream& oss, size_t& curEdge, bool useCollapsed);
+    std::string toNewick(bool useCollapsed = false);
 
     uint32_t getBlockStartScalar(const uint32_t blockId) const;
     uint32_t getBlockEndScalar(const uint32_t blockId) const;
