@@ -3261,10 +3261,7 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
 }
 
 namespace {
-// Collapse a node's change record to one net entry per position (see the twin in
-// index_single_mode.cpp for the full rationale). The same node-edits-a-seed-then-deletes-its-
-// block case leaves a stale entry that here derefs an already-cleared refOnSyncmers optional
-// -> bad_optional_access. Net kind = final-map membership; restore = first (pre-node) entry.
+// Collapse a node's change record to one net entry per position
 void dedupeSyncmerChangeRecord(
     std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& rec,
     const std::set<uint64_t>& finalMap) {
