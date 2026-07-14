@@ -21,19 +21,16 @@
 
 namespace index_single_mode {
 
-// A small uncompressed header prepended to the .idx so cache-validation can read the
-// seeding params without decompressing the (up to GB-scale) payload -- previously the
-// validation step fully decompressed the index just to read six fields, then the
-// placement step decompressed it a second time.
+// Uncompressed header prepended to the .idx so cache-validation can read the seeding
+// params without decompressing the (up to GB-scale) payload.
 constexpr uint32_t kIndexMagic = 0x31494D50u;  // "PMI1" little-endian
 constexpr uint32_t kIndexHeaderVersion = 1;
 constexpr size_t kIndexHeaderSize = 32;
 struct IndexParamsHeader {
     int32_t k = 0, s = 0, t = 0, l = 0;
     bool hpc = false, open = false;
-    // When set, the payload after the header is raw (unframed) capnp bytes rather than
-    // ZSTD frames, so load can mmap it and hand the bytes straight to capnp (zero-copy,
-    // no decompression pass). Bigger on disk, faster to load.
+    // When set, payload is raw (unframed) capnp bytes, not ZSTD frames, so load can mmap
+    // and hand them straight to capnp (zero-copy). Bigger on disk, faster to load.
     bool uncompressed = false;
 };
 std::array<uint8_t, kIndexHeaderSize> encodeIndexHeader(const IndexParamsHeader& p);
@@ -69,10 +66,8 @@ struct BuildState {
     std::map<uint64_t, uint64_t> gapMap;
     std::unordered_set<uint64_t> invertedBlocks;
 
-    // first/last non-gap scalar positions. Seeds in flank regions (before
-    // firstNonGapScalar or after lastNonGapScalar) are missing data, not true gaps,
-    // so must not be deleted when they become gaps. Permissive by default; only
-    // restricted when extentGuard is on.
+    // first/last non-gap scalar positions. Seeds in flank regions are missing data, not
+    // true gaps, so must not be deleted when they become gaps; permissive unless extentGuard is on.
     uint64_t firstNonGapScalar = 0;
     uint64_t lastNonGapScalar = UINT64_MAX;
 

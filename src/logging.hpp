@@ -106,7 +106,6 @@ inline const char* cross() {
 }
 }  // namespace box
 
-// Spinner frames (Braille pattern, 10 frames at ~80ms = ~12fps)
 inline const char* spinner_frame(int i) {
     static const char* frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
     static const char* plain_frames[] = {"|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"};
@@ -165,8 +164,6 @@ inline void debug(const std::string& msg) {
     std::cerr << style::dim() << msg << style::reset() << "\n";
 }
 
-// Buffered single-line dim stream for routine log lines. detail() visible unless
-// --quiet; trace() only under --verbose.
 class LineBuf {
    public:
     explicit LineBuf(bool enabled) : enabled_(enabled) {}
@@ -181,7 +178,7 @@ class LineBuf {
         return *this;
     }
 
-    // ostream manipulators (std::endl / std::flush) flush the line immediately.
+    // std::endl / std::flush flush the line immediately.
     LineBuf& operator<<(std::ostream& (*)(std::ostream&)) {
         emit();
         return *this;
@@ -211,18 +208,13 @@ inline LineBuf trace() {
     return LineBuf(config().verbose && !config().quiet);
 }
 
-// One-line tool+version banner.
 inline void banner(const std::string& version, const std::string& /*subtitle*/ = "") {
     if (config().quiet) return;
     std::cerr << style::bold() << "panmap" << style::reset() << style::dim() << " " << version << style::reset()
               << "\n\n";
 }
 
-// Stage line columns:
-//   "  ICN  LABEL.  SUBJECT.................  STAT.........    TIME"
-// Subject/stat are left-padded to a min width so columns align across stages;
-// time is right-padded so right edges line up. Input strings must be plain text
-// (no ANSI codes) or the width math breaks; apply styling via the helpers below.
+// Stage-line inputs must be plain text (no ANSI) or the column width math breaks.
 constexpr int kLabelWidth = 6;
 constexpr int kSubjectWidth = 22;
 constexpr int kStatWidth = 14;
@@ -242,8 +234,7 @@ inline std::string pad_left(const std::string& s, int w) {
     return std::string(w - s.size(), ' ') + s;
 }
 
-// Truncate to w columns, keeping the tail (informative end of a path) behind a
-// leading ellipsis. Assumes ASCII content.
+// Keeps the tail behind a leading ellipsis. Assumes ASCII content.
 inline std::string truncate_tail(const std::string& s, int w) {
     if (w <= 0) return "";
     if ((int)s.size() <= w) return s;
@@ -270,9 +261,6 @@ inline void write_status_line(const std::string& icon,
                               const std::string& stat,
                               int64_t ms) {
     if (config().quiet) return;
-    // Subject column flexes to terminal width so stat/time columns stay aligned
-    // across rows; long subjects (paths) are tail-truncated. Non-TTY (piped/log)
-    // keeps the full subject and the original min width.
     int subjectW;
     if (config().isTTY) {
         int iconW = config().plain ? static_cast<int>(icon.size()) : 1;
@@ -312,7 +300,6 @@ inline void done(const std::string& what, int64_t ms) {
               << style::reset() << "\n";
 }
 
-// Trailing blank line before the shell prompt.
 inline void summary(int64_t /*total_ms*/) {
     if (config().quiet) return;
     std::cerr << "\n";
@@ -335,7 +322,6 @@ inline void step(const std::string& msg) {
     std::cerr << style::dim() << "  " << msg << style::reset() << "\n";
 }
 
-// Indeterminate progress message (one line, overwritten in place).
 inline void progress(const std::string& msg) {
     if (config().quiet || !config().isTTY || config().plain) return;
     std::cerr << "\r\033[K" << style::dim() << "  " << msg << style::reset() << std::flush;
@@ -345,9 +331,6 @@ inline void progress_clear() {
     if (config().isTTY && !config().plain) std::cerr << "\r\033[K" << std::flush;
 }
 
-// Progress bar. In-place line:
-//     <spinner> <label>  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━╸    42%  · 1.2s
-// clear() leaves the line empty so the caller can emit a done() line.
 class ProgressBar {
    public:
     ProgressBar(std::string label, uint64_t total) : label_(std::move(label)), total_(total) {
@@ -399,11 +382,10 @@ class ProgressBar {
         std::string pct = fmt::format("{:>3}%", static_cast<int>(frac * 100));
         std::string ela = format_duration(elapsed);
 
-        // Layout: "  <spin> <label-padded> <bar>  <pct>  · <ela>"
         std::string label_padded = label_;
         if ((int)label_padded.size() < kLabelWidth) label_padded.append(kLabelWidth - label_padded.size(), ' ');
 
-        // Reserved visible chars (no ANSI): "  X " + label + " " + bar + "  " + "NNN%" + "  · " + ela
+        // Reserved visible (no ANSI) cols: "  X " + label + " " + bar + "  " + "NNN%" + "  · " + ela
         int reserved = 2 + 1 + 1 + (int)label_padded.size() + 1 + 2 + 4 + 4 + (int)ela.size();
         int width = term_width();
         int bar_w = width - reserved - 2;
@@ -457,10 +439,7 @@ inline bool check_interrupted(bool print_message = true) {
     return false;
 }
 
-// Async-signal-safe handler. Exits immediately on first Ctrl-C/SIGTERM rather than
-// polling a flag: long stages (8M-node index, EM rounds) never poll, so a polite
-// path looks stuck. Outputs are written all-at-once at stage end, so an interrupt
-// mid-stage leaves no partial artifact.
+// Async-signal-safe: _Exit immediately rather than poll a flag (long stages never poll).
 inline void handler(int signum) {
     (void)signum;
     static const char msg[] = "\ninterrupted\n";

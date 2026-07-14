@@ -17,10 +17,8 @@
 
 namespace ts {
 
-// Owns a loaded index. LiteIndex seed-change struct-of-arrays are stored segmented as
-// List(List(...)) in the file, and flattened into plain vectors on load so tests address
-// them by a flat index without touching capnp readers or re-traversing the message.
-// LiteTree is self-contained after initialize() (copies structure).
+// Owns a loaded index. Segmented seed-change SoA (List(List(...)) in the file) is flattened
+// into plain vectors on load so tests address seeds by a flat index. LiteTree self-contained.
 class IndexData {
    public:
     std::unique_ptr<panmapUtils::LiteTree> liteTree;
@@ -77,10 +75,8 @@ class TestIndex {
     IndexData data_;
 };
 
-// Lazily-built, shared, READ-ONLY rsv_4K fixture and its k=15/s=8/t=0/l=1 index. Boost.Test
-// runs a binary's cases serially in one process, so one load+build is reused across cases
-// rather than repeated per case (the fixture load + full index build is the dominant unit-test
-// cost). NEVER use these from a test that MUTATES the tree -- build your own there.
+// Lazily-built, shared, read-only rsv_4K fixture and its k=15/s=8/t=0/l=1 index, reused across
+// cases (load+build dominates unit-test cost). Don't use from a test that mutates the tree.
 const RSVPanmanFixture& sharedRSVFixture();
 const IndexData& sharedRSVIndex();
 

@@ -14,9 +14,8 @@
 
 namespace ts {
 
-// Extract syncmer seeds from a sequence the same way the read/genome paths do:
-// rollingSyncmers(seq, k, s, open=false, t=0), counting only flagged syncmers.
-// countDuplicates=true accumulates frequency; false collapses to presence (count 1).
+// Extract syncmer seeds as the read/genome paths do: rollingSyncmers(seq, k, s, open=false, t=0),
+// counting only flagged syncmers. countDuplicates=false collapses to presence (count 1).
 indexUtils::SeedCountMap extractSeeds(std::string_view seq, int k, int s, bool countDuplicates = true);
 
 // Read a FASTA file and return the concatenated sequence (ignores headers/whitespace).

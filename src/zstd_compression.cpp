@@ -27,8 +27,7 @@ bool compressToFile(const void* inputData,
         frameSize = 64ull * 1024 * 1024;
     }
 
-    // Independent per-chunk frames (not one nbWorkers frame) so decompressFromFile
-    // can inflate them in parallel -- single-frame inflate dominates large-index load.
+    // Independent per-chunk frames so decompressFromFile can inflate them in parallel.
     const size_t numChunks = std::max<size_t>(1, (inputSize + frameSize - 1) / frameSize);
 
     logging::info("Compressing {} bytes to {} with ZSTD level {} using {} threads ({} frames x {} MB)",
@@ -56,7 +55,7 @@ bool compressToFile(const void* inputData,
             return;
         }
         ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, compressionLevel);
-        ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 1);  // one-shot => content-size header written
+        ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 1);
         const size_t r = ZSTD_compress2(cctx, out.data(), out.size(), in + inOff, inLen);
         ZSTD_freeCCtx(cctx);
         if (ZSTD_isError(r)) {
@@ -65,7 +64,7 @@ bool compressToFile(const void* inputData,
             return;
         }
         out.resize(r);
-        out.shrink_to_fit();  // free the compressBound slack so only ~compressed size is held
+        out.shrink_to_fit();
         frames[i] = std::move(out);
     });
 
@@ -78,11 +77,11 @@ bool compressToFile(const void* inputData,
         logging::err("Failed to open output file: {}", outputPath);
         return false;
     }
-    if (headerData != nullptr && headerSize > 0) {  // uncompressed prefix (e.g. index params)
+    if (headerData != nullptr && headerSize > 0) {
         outFile.write(reinterpret_cast<const char*>(headerData), static_cast<std::streamsize>(headerSize));
     }
     size_t compressedSize = 0;
-    for (const auto& f : frames) {  // concatenate frames in order
+    for (const auto& f : frames) {
         outFile.write(reinterpret_cast<const char*>(f.data()), static_cast<std::streamsize>(f.size()));
         if (!outFile) {
             logging::err("Failed to write compressed data to file: {}", outputPath);
@@ -134,11 +133,10 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
     const char* compressedData = mappedFile.data();
     size_t compressedSize = mappedFile.size();
 
-    // Total size = sum over frames; getFrameContentSize on the whole buffer reports
-    // only the first frame (indexes are written multi-frame).
+    // getFrameContentSize reports only the first frame; sum over all frames.
     size_t numFrames = 0;
     unsigned long long decompressedSize = 0;
-    size_t pos = dataOffset;  // skip an uncompressed header prefix, if any
+    size_t pos = dataOffset;
     while (pos < compressedSize) {
         unsigned long long frameCompSize = ZSTD_findFrameCompressedSize(compressedData + pos, compressedSize - pos);
         if (ZSTD_isError(frameCompSize)) {
@@ -170,7 +168,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
         std::vector<std::pair<size_t, size_t>> frameRanges;
         std::vector<std::pair<size_t, size_t>> outputRanges;
 
-        pos = dataOffset;  // frames begin after the uncompressed header
+        pos = dataOffset;
         size_t outPos = 0;
         while (pos < compressedSize) {
             unsigned long long frameCompSize = ZSTD_findFrameCompressedSize(compressedData + pos, compressedSize - pos);
@@ -224,8 +222,7 @@ bool decompressFromFile(const std::string& inputPath, std::vector<uint8_t>& outp
             return false;
         }
 
-        // ZSTD_decompressDCtx handles one frame; walk them for multi-frame input.
-        size_t inPos = dataOffset;  // frames begin after the uncompressed header
+        size_t inPos = dataOffset;
         size_t outPos = 0;
         while (inPos < compressedSize) {
             unsigned long long frameCompSize =
