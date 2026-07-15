@@ -10,6 +10,7 @@
 #include <tbb/enumerable_thread_specific.h>
 #include <random>
 #include <numeric>
+#include <unordered_map>
 #include <algorithm>
 #include <stack>
 #include <bitset>
@@ -3265,6 +3266,42 @@ std::vector<panmapUtils::NewSyncmerRange> mgsr::mgsrIndexBuilder::computeNewSync
     return newSyncmerRanges;
 }
 
+namespace {
+// Collapse a node's change record to one net entry per position
+void dedupeSyncmerChangeRecord(
+    std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& rec,
+    const std::set<uint64_t>& finalMap) {
+    if (rec.size() < 2) return;
+    std::unordered_map<uint64_t, std::pair<panmapUtils::seedChangeType, seeding::rsyncmer_t>> firstTouch;
+    firstTouch.reserve(rec.size());
+    std::vector<uint64_t> order;
+    order.reserve(rec.size());
+    bool anyRepeat = false;
+    for (const auto& [pos, type, rsync] : rec) {
+        auto [it, inserted] = firstTouch.try_emplace(pos, type, rsync);
+        if (inserted)
+            order.push_back(pos);
+        else
+            anyRepeat = true;
+    }
+    if (!anyRepeat) return;
+    std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>> out;
+    out.reserve(order.size());
+    for (uint64_t pos : order) {
+        const auto& [firstType, firstRsync] = firstTouch[pos];
+        const bool finalHas = finalMap.find(pos) != finalMap.end();
+        if (firstType == panmapUtils::seedChangeType::ADD) {
+            if (finalHas) out.emplace_back(pos, panmapUtils::seedChangeType::ADD, seeding::rsyncmer_t());
+        } else {
+            out.emplace_back(pos,
+                             finalHas ? panmapUtils::seedChangeType::SUB : panmapUtils::seedChangeType::DEL,
+                             firstRsync);
+        }
+    }
+    rec = std::move(out);
+}
+}  // namespace
+
 std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>>
 mgsr::mgsrIndexBuilder::computeNewKminmerRanges(
     std::vector<std::tuple<uint64_t, panmapUtils::seedChangeType, seeding::rsyncmer_t>>& refOnSyncmersChangeRecord,
@@ -3590,6 +3627,9 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         if (oldExists && !newExists) {
             if (blockOnSyncmers.find(blockId) != blockOnSyncmers.end()) {
                 for (uint64_t pos : blockOnSyncmers[blockId]) {
+                    // Skip: this position was already deleted earlier in this node (its
+                    // blockOnSyncmers cleanup is deferred), so refOnSyncmers is nullopt here.
+                    if (!refOnSyncmers[pos].has_value()) continue;
                     refOnSyncmersChangeRecord.emplace_back(
                         pos, panmapUtils::seedChangeType::DEL, refOnSyncmers[pos].value());
                     blockOnSyncmersChangeRecord.emplace_back(blockId, pos, panmapUtils::seedChangeType::DEL);
@@ -3602,6 +3642,7 @@ void mgsr::mgsrIndexBuilder::buildIndexHelper(panmanUtils::Node* node,
         }
     }
 
+    dedupeSyncmerChangeRecord(refOnSyncmersChangeRecord, refOnSyncmersMap);
     std::vector<std::pair<std::set<uint64_t>::iterator, std::set<uint64_t>::iterator>> newKminmerRanges =
         computeNewKminmerRanges(refOnSyncmersChangeRecord, dfsIndex);
 
