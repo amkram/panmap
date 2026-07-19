@@ -20,6 +20,8 @@
 #include "3rdparty/bwa/bntseq.h"
 #include "3rdparty/bwa/bwt.h"
 
+extern int bwa_trim_read(int trim_qual, bwa_seq_t *p);
+
 // Aligner-agnostic result structs, mirrored from mm_align.h. Redeclared (not
 // included) so this TU does not pull in minimap2 headers alongside bwa's.
 // Layout must stay in sync with mm_align.h.
