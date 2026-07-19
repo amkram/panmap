@@ -379,6 +379,11 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
              bam_qual.c_str(),
              0);
 
+    if (aln->md) { 
+        bam_aux_append(b, "MD", 'Z', static_cast<int>(strlen(aln->md)) + 1,
+                       reinterpret_cast<const uint8_t*>(aln->md));
+    }
+
     return b;
 }
 
@@ -389,8 +394,8 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
                      const std::string& bamFileName,
                      bool pairedEndReads,
                      int n_threads,
-                     bool useBwa,
-                      const std::string& refName) {
+                     std::string aligner,
+                    const std::string& refName) {
     int n_reads = static_cast<int>(readSequences.size());
 
     std::vector<const char*> read_ptrs(n_reads);
@@ -407,8 +412,14 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
     int n_results = pairedEndReads ? n_reads / 2 : n_reads;
     std::vector<align_pair_result_t> results(n_results);
 
-    auto aligner_fn = useBwa ? bwa_align_reads_direct : align_reads_direct;
+    auto aligner_fn = align_reads_direct;
+    if (aligner == "bwamem") {
+        aligner_fn = bwa_align_reads_direct;
+    } else if (aligner == "bwaaln") {
+        aligner_fn = bwa_aln_align_reads_direct;
+    }
     aligner_fn(reference.c_str(),
+               refName.c_str(),
                n_reads,
                read_ptrs.data(),
                qual_ptrs.data(),
@@ -524,6 +535,8 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
     for (int k = 0; k < n_results; k++) {
         free(results[k].r1.cigar);
         free(results[k].r2.cigar);
+        free(results[k].r1.md);
+        free(results[k].r2.md);
     }
     return rc;
 }

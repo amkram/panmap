@@ -26,6 +26,7 @@ typedef struct {
     uint8_t proper_frag;  // proper pair flag (from minimap2)
     int32_t n_cigar;
     uint32_t* cigar;  // BAM-encoded CIGAR; malloc'd, caller frees
+    char* md;
 } read_align_t;
 
 // Result for a read pair (or single read)
@@ -41,6 +42,7 @@ typedef struct {
 // For single-end: results has n_reads elements.
 // Each result's cigar arrays are malloc'd; caller must free them.
 void align_reads_direct(const char* reference,
+                        const char* refName,
                         int n_reads,
                         const char** reads,
                         const char** quality,
@@ -53,6 +55,7 @@ void align_reads_direct(const char* reference,
 // bwa-mem backend (bwa_align.c); same contract as align_reads_direct. Selected
 // by --aligner bwa. Builds a temporary bwa index for the single reference.
 void bwa_align_reads_direct(const char* reference,
+                            const char* refName,
                             int n_reads,
                             const char** reads,
                             const char** quality,
@@ -61,6 +64,17 @@ void bwa_align_reads_direct(const char* reference,
                             align_pair_result_t* results,
                             bool pairedEndReads,
                             int n_threads);
+
+void bwa_aln_align_reads_direct(const char* reference,
+                                const char* refName,
+                                int n_reads,
+                                const char** reads,
+                                const char** quality,
+                                const char** read_names,
+                                const int* r_lens,
+                                align_pair_result_t* results,
+                                bool pairedEndReads,
+                                int n_threads);
 
 #ifdef __cplusplus
 }

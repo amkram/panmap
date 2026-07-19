@@ -45,5 +45,5 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
                       const std::string& bamFileName,
                       bool pairedEndReads,
                       int n_threads,
-                      bool useBwa = false,
+                      std::string aligner = "minimap2",
                       const std::string& refName = "ref");

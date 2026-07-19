@@ -36,6 +36,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <filesystem>
 
 #include <absl/container/flat_hash_map.h>
 
@@ -149,6 +150,8 @@ struct Config {
     bool breadthRatio = false;
     bool pseudochain = false;
     bool jplace = false;
+    bool alignReads = false;
+    int minNumAlign = 10;
     size_t batchSize = 1000000;
 
     std::string dumpNodeId;
@@ -609,9 +612,114 @@ void writeAssignedReadsJplace(const std::unordered_map<mgsr::MgsrLiteNode*, std:
   out << "  ]\n}\n";
 }
 
+static void alignAssignedReads(
+  panmanUtils::Tree* panmanTree,
+  const std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>>& allAssignedReadsByNode,
+  const std::string& prefix,
+  size_t totalFastqReadsWritten,
+  int minNumAlign,
+  int n_threads
+) {
+  if (minNumAlign < 0) minNumAlign = 0;
+  if (n_threads < 1) n_threads = 1;
+
+  const std::string assignedFastqPath = prefix + ".mgsr.assignedReads.fastq";
+  FILE* fpAln = fopen(assignedFastqPath.c_str(), "r");
+  if (!fpAln) {
+    logging::err("Failed to reopen assigned reads fastq for alignment: {}", assignedFastqPath);
+    return;
+  }
+
+  std::vector<std::string> allSeqs, allNames, allQuals;
+  allSeqs.reserve(totalFastqReadsWritten);
+  allNames.reserve(totalFastqReadsWritten);
+  allQuals.reserve(totalFastqReadsWritten);
+
+  kseq_t* seqAln = kseq_init(fileno(fpAln));
+  int l;
+  while ((l = kseq_read(seqAln)) >= 0) {
+    allSeqs.emplace_back(seqAln->seq.s);
+    allNames.emplace_back(seqAln->name.s);
+    allQuals.emplace_back(seqAln->qual.l > 0 ? seqAln->qual.s
+                                             : std::string(seqAln->seq.l, 'I'));
+  }
+  kseq_destroy(seqAln);
+  fclose(fpAln);
+
+  auto sanitize = [](const std::string& s) {
+    std::string out = s;
+    for (char& c : out)
+      if (c == '/' || c == '\\' || std::isspace((unsigned char)c)) c = '_';
+    return out;
+  };
+
+  const std::string alignDir = prefix + "_mgsr_aligned";
+  std::error_code ec;
+  std::filesystem::create_directories(alignDir, ec);
+  if (ec) {
+    logging::err("Failed to create alignment directory {}: {}", alignDir, ec.message());
+    return;
+  }
+
+  // Write the reference sequences for all nodes to a FASTA file in alignDir
+  const std::string referenceFaPath = (std::filesystem::path(alignDir) / "reference.fa").string();
+  std::ofstream refFaOut(referenceFaPath);
+  if (!refFaOut.is_open()) {
+    logging::err("Failed to open reference FASTA for writing: {}", referenceFaPath);
+    // Not returning: we still want to try to align, but reference file missing will be noted
+  }
+
+
+  size_t nodesAligned = 0, nodesSkipped = 0;
+  for (const auto& [node, readIndices] : allAssignedReadsByNode) {
+    if (readIndices.size() < static_cast<size_t>(minNumAlign)) {
+      ++nodesSkipped;
+      continue;
+    }
+
+    std::string nodeSequence = panmapUtils::getStringFromReference(panmanTree, node->identifier, false);
+
+    // Output node sequence to FASTA file if valid file handle
+    if (refFaOut.is_open()) {
+      refFaOut << ">" << node->identifier << "\n";
+      // Write in lines of max 80 chars for FASTA format
+      for (size_t i = 0; i < nodeSequence.size(); i += 80) {
+        refFaOut << nodeSequence.substr(i, std::min(static_cast<size_t>(80), nodeSequence.size() - i)) << "\n";
+      }
+    }
+
+    std::vector<std::string> nodeSeqs, nodeNames, nodeQuals;
+    nodeSeqs.reserve(readIndices.size());
+    nodeNames.reserve(readIndices.size());
+    nodeQuals.reserve(readIndices.size());
+    for (size_t idx : readIndices) {
+      nodeSeqs.push_back(allSeqs[idx]);
+      nodeNames.push_back(allNames[idx]);
+      nodeQuals.push_back(allQuals[idx]);
+    }
+
+    const std::string bamFileName = (std::filesystem::path(alignDir) / (sanitize(node->identifier) + ".bam")).string();
+
+    int rc = alignAndWriteBam(nodeSeqs, nodeQuals, nodeNames, nodeSequence, bamFileName,
+                              false, n_threads, "bwaaln", node->identifier);
+    if (rc != 0) {
+      logging::warn("Alignment/BAM write failed for node {}", node->identifier);
+    } else {
+      ++nodesAligned;
+    }
+  }
+
+  if (refFaOut.is_open()) refFaOut.close();
+
+  std::cout << "Aligned reads for " << nodesAligned << " nodes ("
+  << nodesSkipped << " below minNumAlign=" << minNumAlign << ")"
+  << std::endl;
+}
+
 
 void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           mgsr::MgsrLiteTree& T,
+                          panmanUtils::Tree* panmanTree,
                           const std::string& readPath1,
                           const std::string& readPath2,
                           double dustThreshold,
@@ -623,6 +731,8 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           double breadthRatio,
                           size_t batchSize,
                           bool jplace,
+                          bool alignReads,
+                          int minNumAlign,
                           const std::string& prefix) {
     size_t maxLiveTokens = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism) + 2;
     mgsr::FastqFile fq1(readPath1);
@@ -830,6 +940,11 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
     std::cout << totalFastqReadsWritten << " reads written to fastq file" << std::endl;
    
 
+    if (alignReads) {
+      int n_threads = static_cast<int>(tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
+      alignAssignedReads(panmanTree, allAssignedReadsByNode, prefix, totalFastqReadsWritten, minNumAlign, n_threads);
+    }
+
     if (jplace) {
       writeAssignedReadsJplace(allAssignedReadsByNode, assignedReadsIds, prefix + ".mgsr.assignedReads.jplace", T);
       writeAssignedReadsJplace(allAssignedReadsByLCANode, assignedReadsIds, prefix + ".mgsr.assignedReadsLCANode.jplace", T);
@@ -970,15 +1085,16 @@ bool readBatchFiles(const std::string& batchPath, std::vector<BatchEntry>& entri
 }
 
 bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManager, const Config& cfg) {
-    // if (cfg.jplace) {
-    //   auto tg = loadPanMAN(cfg.panman);
-    //   if (!tg || tg->trees.empty()) {
-    //       logging::err("Failed to load pangenome");
-    //       return false;
-    //   }
-    //   panmanUtils::Tree* panmanTree = &tg->trees[0];
-    //   T.originalNewickString = panmanTree->getNewickString(panmanTree->root);
-    // }
+    std::unique_ptr<panmanUtils::TreeGroup> tg;
+    panmanUtils::Tree* panmanTree = nullptr;
+    if (cfg.alignReads) {
+        tg = loadPanMAN(cfg.panman);
+        if (!tg || tg->trees.empty()) {
+            logging::err("Failed to load pangenome");
+            return false;
+        }
+        panmanTree = &tg->trees[0];
+    }
 
     auto start_time_filterAndAssign = std::chrono::high_resolution_clock::now();
 
@@ -1013,6 +1129,7 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
     if (!cfg.reads1.empty()) {
         filterAndAssignBatch(threadsManager,
                              T,
+                             panmanTree,
                              cfg.reads1,
                              cfg.reads2,
                              cfg.dust,
@@ -1024,6 +1141,8 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
                              cfg.breadthRatio,
                              cfg.batchSize,
                              cfg.jplace,
+                             cfg.alignReads,
+                             cfg.minNumAlign,
                              cfg.output);
     } else if (!cfg.batchFile.empty()) {
         std::vector<BatchEntry> batchEntries;
@@ -1044,6 +1163,7 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
             }
             filterAndAssignBatch(threadsManager,
                                  T,
+                                 panmanTree,
                                  entry.reads1,
                                  entry.reads2,
                                  cfg.dust,
@@ -1055,6 +1175,8 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
                                  cfg.breadthRatio,
                                  cfg.batchSize,
                                  cfg.jplace,
+                                 cfg.alignReads,
+                                 cfg.minNumAlign,
                                  entry.prefix);
         }
     }
@@ -1689,7 +1811,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
                          bamFileName,
                          pairedEndReads,
                          cfg.threads,
-                         cfg.aligner == "bwa",
+                         cfg.aligner,
                          nodeId) != 0) {
         logging::err("Alignment/BAM write failed for {}", bamFileName);
         return 1;
@@ -1854,7 +1976,7 @@ int main(int argc, char** argv) {
         "stop",
         po::value<std::string>()->default_value("consensus"),
         "Stop after: index|place|align|genotype|consensus")(
-        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa")(
+        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwamem|bwaaln")(
         "dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")(
         "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")(
         "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")(
@@ -1961,6 +2083,10 @@ int main(int argc, char** argv) {
         "breadth-ratio", po::bool_switch(&cfg.breadthRatio), "Calculate observed / expected breadth ratio")(
         "pseudochain", po::bool_switch(&cfg.pseudochain), "Use pseudo-chains for scoring reads (default: off)")(
         "jplace", po::bool_switch(&cfg.jplace), "Output read assignments in jplace format (default: off)")(
+        "align-reads", po::bool_switch(&cfg.alignReads), "Align reads (with bwa-aln with ancient DNA parameters) to their assigned nodes (default: off)")(
+        "min-num-align",
+        po::value<int>(&cfg.minNumAlign)->default_value(10),
+        "Min number of assigned reads to trigger an alignment; only applicable if align-reads is enabled (default: 10)")(
         "batch-size",
         po::value<size_t>(&cfg.batchSize)->default_value(1000000),
         "Batch size for filtering and assigning reads");
@@ -2092,8 +2218,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (cfg.aligner != "minimap2" && cfg.aligner != "bwa") {
-        output::error("Invalid aligner '{}' (expected minimap2 or bwa)", cfg.aligner);
+    if (cfg.aligner != "minimap2" && cfg.aligner != "bwamem" && cfg.aligner != "bwaaln") {
+        output::error("Invalid aligner '{}' (expected minimap2, bwamem, or bwaaln)", cfg.aligner);
         return 1;
     }
 

@@ -577,6 +577,11 @@ set(BWA_SOURCES
     src/3rdparty/bwa/rle.c
     src/3rdparty/bwa/rope.c
     src/3rdparty/bwa/utils.c
+    src/3rdparty/bwa/bwtaln.c
+    src/3rdparty/bwa/bwtgap.c
+    src/3rdparty/bwa/bwase.c
+    src/3rdparty/bwa/bwaseqio.c
+    src/3rdparty/bwa/bamlite.c
 )
 
 add_custom_target(build-deps DEPENDS

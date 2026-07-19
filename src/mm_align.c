@@ -24,6 +24,7 @@ typedef struct {
     uint8_t proper_frag;
     int32_t n_cigar;
     uint32_t* cigar;
+    char* md;
 } read_align_t;
 
 typedef struct {
@@ -283,6 +284,7 @@ static void* align_worker_func(void* arg) {
 }
 
 void align_reads_direct(const char* reference,
+                        const char* refName,
                         int n_reads,
                         const char** reads,
                         const char** quality,
