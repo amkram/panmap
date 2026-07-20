@@ -31,8 +31,8 @@ bwa_seqio_t *bwa_bam_open(const char *fn, int which)
 	bs->which = which;
 	bs->fp = bam_open(fn, "r");
 	if (0 == bs->fp) err_fatal_simple("Couldn't open bam file");
-	h = bam_header_read(bs->fp);
-	bam_header_destroy(h);
+	h = bamlite_bam_header_read(bs->fp);
+	bamlite_bam_header_destroy(h);
 	return bs;
 }
 
@@ -101,7 +101,7 @@ static bwa_seq_t *bwa_read_bam(bwa_seqio_t *bs, int n_needed, int *n, int is_com
 	b = bam_init1();
 	n_seqs = 0;
 	seqs = (bwa_seq_t*)calloc(n_needed, sizeof(bwa_seq_t));
-	while ((res = bam_read1(bs->fp, b)) >= 0) {
+	while ((res = bamlite_bam_read1(bs->fp, b)) >= 0) {
 		uint8_t *s, *q;
 		int go = 0;
 		if ((bs->which & 1) && (b->core.flag & BAM_FREAD1)) go = 1;

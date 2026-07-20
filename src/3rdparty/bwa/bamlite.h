@@ -96,10 +96,10 @@ extern int bam_is_be;
 extern "C" {
 #endif
 
-	bam_header_t *bam_header_init(void);
-	void bam_header_destroy(bam_header_t *header);
-	bam_header_t *bam_header_read(bamFile fp);
-	int bam_read1(bamFile fp, bam1_t *b);
+	bam_header_t *bamlite_bam_header_init(void);
+	void bamlite_bam_header_destroy(bam_header_t *header);
+	bam_header_t *bamlite_bam_header_read(bamFile fp);
+	int bamlite_bam_read1(bamFile fp, bam1_t *b);
 
 #ifdef USE_VERBOSE_ZLIB_WRAPPERS
 	gzFile bamlite_gzopen(const char *fn, const char *mode);
