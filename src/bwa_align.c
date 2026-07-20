@@ -468,12 +468,15 @@ void bwa_aln_align_reads_direct(const char* reference,
 
   bwase_initialize();  // populates g_log_n for mapQ; required because we bypass samse
 
+  // Ancient-DNA defaults: -l 1024 disables the seed (damage clusters at read ends);
+  // -n 0.01 / -o 2 per Oliva et al. 2021 (nf-core/eager); -q 0, trimming is upstream.
   gap_opt_t* opt = gap_init_opt();
-  opt->trim_qual = 15;   // -q15
-  opt->fnr = 0.02f;      // -n0.02 (float form: per-read max_diff derived from fnr)
-  opt->max_diff = -1;
-  opt->seed_len = 1024;  // -l1024, longer than any read => seeding off
-  opt->n_threads = 1;    // we chunk ourselves; keep bwa's internal work-stealing off
+  opt->fnr = 0.01f;      // -n 0.01
+  opt->max_diff = -1;    // use fnr, not a fixed edit distance
+  opt->max_gapo = 2;     // -o 2
+  opt->seed_len = 1024;  // -l 1024
+  opt->trim_qual = 0;    // -q 0
+  opt->n_threads = 1;    // we chunk; bwa's own threading off
 
   if (n_threads < 1) n_threads = 1;
   int n_items = pairedEndReads ? n_reads / 2 : n_reads;

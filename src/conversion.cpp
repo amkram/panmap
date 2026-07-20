@@ -412,10 +412,12 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
     int n_results = pairedEndReads ? n_reads / 2 : n_reads;
     std::vector<align_pair_result_t> results(n_results);
 
+    // "bwa" resolves to bwa aln: for the short, damaged reads panmap targets, aln with
+    // ancient-DNA settings is the field standard, not mem. "bwamem"/"bwaaln" stay explicit.
     auto aligner_fn = align_reads_direct;
     if (aligner == "bwamem") {
         aligner_fn = bwa_align_reads_direct;
-    } else if (aligner == "bwaaln") {
+    } else if (aligner == "bwaaln" || aligner == "bwa") {
         aligner_fn = bwa_aln_align_reads_direct;
     }
     aligner_fn(reference.c_str(),
