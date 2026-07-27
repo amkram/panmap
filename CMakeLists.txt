@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(panmap VERSION 0.1.3)
+project(panmap VERSION 0.2.0)
 
 # Use ccache as compiler launcher when installed: unchanged translation units
 # (notably mgsr.cpp, ~25s at -O3) are served from cache. No-op if ccache is

@@ -55,13 +55,13 @@ static inline void *bam_swap_endian_8p(void *x)
 
 int bam_is_be;
 
-bam_header_t *bam_header_init()
+bam_header_t *bamlite_bam_header_init()
 {
 	bam_is_be = bam_is_big_endian();
 	return (bam_header_t*)calloc(1, sizeof(bam_header_t));
 }
 
-void bam_header_destroy(bam_header_t *header)
+void bamlite_bam_header_destroy(bam_header_t *header)
 {
 	int32_t i;
 	if (header == 0) return;
@@ -75,7 +75,7 @@ void bam_header_destroy(bam_header_t *header)
 	free(header);
 }
 
-bam_header_t *bam_header_read(bamFile fp)
+bam_header_t *bamlite_bam_header_read(bamFile fp)
 {
 	bam_header_t *header;
 	char buf[4];
@@ -84,10 +84,10 @@ bam_header_t *bam_header_read(bamFile fp)
 	// read "BAM1"
 	magic_len = bam_read(fp, buf, 4);
 	if (magic_len != 4 || strncmp(buf, "BAM\001", 4) != 0) {
-		fprintf(stderr, "[bam_header_read] invalid BAM binary header (this is not a BAM file).\n");
+		fprintf(stderr, "[bamlite_bam_header_read] invalid BAM binary header (this is not a BAM file).\n");
 		return NULL;
 	}
-	header = bam_header_init();
+	header = bamlite_bam_header_init();
 	// read plain text and the number of reference sequences
 	if (bam_read(fp, &header->l_text, 4) != 4) goto fail; 
 	if (bam_is_be) bam_swap_endian_4p(&header->l_text);
@@ -110,7 +110,7 @@ bam_header_t *bam_header_read(bamFile fp)
 	}
 	return header;
  fail:
-	bam_header_destroy(header);
+	bamlite_bam_header_destroy(header);
 	return NULL;
 }
 
@@ -132,7 +132,7 @@ static void swap_endian_data(const bam1_core_t *c, int data_len, uint8_t *data)
 	}
 }
 
-__attribute__((weak)) int bam_read1(bamFile fp, bam1_t *b)
+int bamlite_bam_read1(bamFile fp, bam1_t *b)
 {
 	bam1_core_t *c = &b->core;
 	int32_t block_len, ret, i;

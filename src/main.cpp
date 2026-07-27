@@ -702,7 +702,7 @@ static void alignAssignedReads(
     const std::string bamFileName = (std::filesystem::path(alignDir) / (sanitize(node->identifier) + ".bam")).string();
 
     int rc = alignAndWriteBam(nodeSeqs, nodeQuals, nodeNames, nodeSequence, bamFileName,
-                              false, n_threads, "bwaaln", node->identifier);
+                              false, n_threads, "bwa", node->identifier);
     if (rc != 0) {
       logging::warn("Alignment/BAM write failed for node {}", node->identifier);
     } else {
@@ -1978,7 +1978,7 @@ int main(int argc, char** argv) {
         "stop",
         po::value<std::string>()->default_value("consensus"),
         "Stop after: index|place|align|genotype|consensus")(
-        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwamem|bwaaln")(
+        "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa (bwa aln, ancient-DNA settings)")(
         "dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")(
         "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")(
         "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")(
@@ -2223,8 +2223,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (cfg.aligner != "minimap2" && cfg.aligner != "bwamem" && cfg.aligner != "bwaaln") {
-        output::error("Invalid aligner '{}' (expected minimap2, bwamem, or bwaaln)", cfg.aligner);
+    if (cfg.aligner != "minimap2" && cfg.aligner != "bwa") {
+        output::error("Invalid aligner '{}' (expected minimap2 or bwa)", cfg.aligner);
         return 1;
     }
 
