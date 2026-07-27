@@ -7993,10 +7993,12 @@ mgsr::squareEM::squareEM(mgsr::ThreadsManager& threadsManager,
                          double em_delta_threshold,
                          uint32_t em_maximum_iterations,
                          bool useReadWeightedScores,
-                         bool emLeavesOnly) {
+                         bool emLeavesOnly,
+                         double emMinProportionThreshold) {
     this->eta = em_convergence_threshold;
     this->maxChangeThreshold = em_delta_threshold;
     this->maximumIterations = em_maximum_iterations;
+    this->propThresholdToRemove = emMinProportionThreshold;
     this->prefix = prefix;
     numThreads = tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism);
 

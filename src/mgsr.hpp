@@ -1119,7 +1119,8 @@ class squareEM {
              double em_delta_threshold,
              uint32_t em_maximum_iterations,
              bool useReadWeightedScores,
-             bool emLeavesOnly);
+             bool emLeavesOnly,
+             double emMinProportionThreshold);
 
     void runSquareEM();
     bool removeLowPropNodes();

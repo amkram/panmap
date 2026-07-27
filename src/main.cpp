@@ -137,6 +137,7 @@ struct Config {
     double emDeltaThreshold = 0.0;
     uint32_t emMaximumIterations = 1000;
     uint32_t emMaximumRounds = 5;
+    double emMinProportionThreshold = 0.005;
     bool emLeavesOnly = false;
     bool filterAndAssign = false;
     double dust = 100.0;
@@ -1256,7 +1257,8 @@ bool runDeconvolution(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsManage
                             cfg.emDeltaThreshold,
                             cfg.emMaximumIterations,
                             false,
-                            cfg.emLeavesOnly);
+                            cfg.emLeavesOnly,
+                            cfg.emMinProportionThreshold);
 
     auto start_time_squareEM = std::chrono::high_resolution_clock::now();
 
@@ -2050,6 +2052,9 @@ int main(int argc, char** argv) {
         "em-maximum-iterations",
         po::value<uint32_t>(&cfg.emMaximumIterations)->default_value(1000),
         "EM maximum iterations")(
+        "em-min-proportion-threshold",
+        po::value<double>(&cfg.emMinProportionThreshold)->default_value(0.005),
+        "EM removes nodes with proportion less than <float> (default 0.005)")(
         "em-leaves-only", po::bool_switch(&cfg.emLeavesOnly), "Only run EM on leaf (sample) nodes");
 
     po::options_description filterAndAssign("Metagenomic: Filter and Assign");
