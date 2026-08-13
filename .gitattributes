@@ -1,7 +1,2 @@
-# Keep large demo/reference + test data out of `git archive` release tarballs.
-# None are required to BUILD panmap (the test-data copies are now gated behind
-# OPTION_BUILD_TESTS), so excluding them shrinks the GitHub release source tarball
-# that bioconda (and others) download. Tests are run from a git checkout, not a
-# release tarball.
 examples/data/ export-ignore
 src/test/data/ export-ignore
