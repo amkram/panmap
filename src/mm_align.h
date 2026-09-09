@@ -27,6 +27,7 @@ typedef struct {
     int32_t n_cigar;
     uint32_t* cigar;  // BAM-encoded CIGAR; malloc'd, caller frees
     char* md;
+    int32_t nm;
 } read_align_t;
 
 // Result for a read pair (or single read)

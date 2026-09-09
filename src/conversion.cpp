@@ -379,6 +379,8 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
              bam_qual.c_str(),
              0);
 
+    bam_aux_update_int(b, "NM", aln->nm);
+
     if (aln->md) { 
         bam_aux_append(b, "MD", 'Z', static_cast<int>(strlen(aln->md)) + 1,
                        reinterpret_cast<const uint8_t*>(aln->md));

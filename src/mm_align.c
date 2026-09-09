@@ -25,6 +25,7 @@ typedef struct {
     int32_t n_cigar;
     uint32_t* cigar;
     char* md;
+    int32_t nm;
 } read_align_t;
 
 typedef struct {
@@ -198,24 +199,30 @@ int64_t score_reads_vs_reference(
     return -total_errors;
 }
 
-static void extract_align_result(mm_reg1_t* reg, int n_reg, read_align_t* out) {
-    memset(out, 0, sizeof(*out));
-    if (n_reg > 0 && reg && reg[0].p) {
-        mm_reg1_t* r = &reg[0];
-        out->pos = r->rs + 1;
-        out->rs = r->rs;
-        out->re = r->re;
-        out->qs = r->qs;
-        out->qe = r->qe;
-        out->mapq = r->mapq;
-        out->rev = r->rev;
-        out->proper_frag = r->proper_frag;
-        out->n_cigar = r->p->n_cigar;
-        out->cigar = (uint32_t*)malloc(r->p->n_cigar * sizeof(uint32_t));
-        memcpy(out->cigar, r->p->cigar, r->p->n_cigar * sizeof(uint32_t));
-    } else {
-        out->pos = INT_MAX;
-    }
+static void extract_align_result(const mm_idx_t* mi, mm_reg1_t* reg, int n_reg, const char* seq, read_align_t* out) {
+  memset(out, 0, sizeof(*out));
+  if (n_reg > 0 && reg && reg[0].p) {
+      mm_reg1_t* r = &reg[0];
+      out->pos = r->rs + 1;
+      out->rs = r->rs;
+      out->re = r->re;
+      out->qs = r->qs;
+      out->qe = r->qe;
+      out->mapq = r->mapq;
+      out->rev = r->rev;
+      out->proper_frag = r->proper_frag;
+      out->n_cigar = r->p->n_cigar;
+      out->cigar = (uint32_t*)malloc(r->p->n_cigar * sizeof(uint32_t));
+      memcpy(out->cigar, r->p->cigar, r->p->n_cigar * sizeof(uint32_t));
+      
+      out->nm = r->blen - r->mlen + r->p->n_ambi; // Generate the NM tag using minimap2
+      
+      int md_cap = 0;
+      out->md = NULL;
+      mm_gen_MD(NULL, &out->md, &md_cap, mi, r, seq); // Generate the MD tag using minimap2
+  } else {
+      out->pos = INT_MAX;
+  }
 }
 
 typedef struct {
@@ -250,8 +257,8 @@ static void* align_worker_func(void* arg) {
 
             if (n_reg[0] > 0 && n_reg[1] > 0 && reg[0] && reg[1] && reg[0]->score > 0 && reg[1]->score > 0) {
                 res->mapped = 1;
-                extract_align_result(reg[0], n_reg[0], &res->r1);
-                extract_align_result(reg[1], n_reg[1], &res->r2);
+                extract_align_result(w->mi, reg[0], n_reg[0], w->reads[i],&res->r1);
+                extract_align_result(w->mi, reg[1], n_reg[1], w->reads[i + 1], &res->r2);
             } else {
                 res->mapped = 0;
                 res->r1.pos = INT_MAX;
@@ -271,7 +278,7 @@ static void* align_worker_func(void* arg) {
 
             if (n_reg > 0 && reg && reg[0].score > 0 && reg[0].score <= w->r_lens[k]) {
                 res->mapped = 1;
-                extract_align_result(reg, n_reg, &res->r1);
+                extract_align_result(w->mi, reg, n_reg, w->reads[k], &res->r1);
             } else {
                 res->r1.pos = INT_MAX;
             }
