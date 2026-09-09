@@ -11,6 +11,7 @@
 #include "3rdparty/minimap2/kseq.h"
 #include "3rdparty/minimap2/minimap.h"
 #include "3rdparty/minimap2/mmpriv.h"
+#include "alignment_options.h"
 
 // Types from mm_align.h, redeclared here to avoid include path issues
 // when this file is compiled as part of the bwa target (which doesn't have
@@ -51,7 +52,8 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
                                 const char* reference,
                                 int n_reads,
                                 const int* r_lens,
-                                int for_scoring) {
+                                int for_scoring,
+                                const aligner_options_t* options) {
     int avg_len = 150;
     if (n_reads > 0) {
         int64_t total_len = 0;
@@ -108,6 +110,27 @@ static mm_idx_t* setup_minimap2(mm_idxopt_t* iopt,
     } else {
         mm_set_opt("map-hifi", iopt, mopt);
     }
+
+    if (options) {
+      if (options->mm2_k_set)
+        iopt->k = options->mm2_k;
+    
+      if (options->mm2_w_set)
+        iopt->w = options->mm2_w;
+    
+      if (options->mm2_match_set)
+        mopt->a = options->mm2_match;
+    
+      if (options->mm2_mismatch_set)
+        mopt->b = options->mm2_mismatch;
+    
+      if (options->mm2_gap_open_set)
+        mopt->q = options->mm2_gap_open;
+    
+      if (options->mm2_gap_extend_set)
+        mopt->e = options->mm2_gap_extend;
+    }
+    
     mopt->flag |= MM_F_CIGAR;
 
     const char* ref_name = "ref";
@@ -155,7 +178,7 @@ int64_t score_reads_vs_reference(
     mm_idxopt_t iopt;
     mm_mapopt_t mopt;
 
-    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1);
+    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1, NULL);
     if (!mi) return 0;
     mm_tbuf_t* tbuf = mm_tbuf_init();
 
@@ -299,10 +322,11 @@ void align_reads_direct(const char* reference,
                         const int* r_lens,
                         align_pair_result_t* results,
                         bool pairedEndReads,
-                        int n_threads) {
+                        int n_threads,
+                        const aligner_options_t* options) {
     mm_idxopt_t iopt;
     mm_mapopt_t mopt;
-    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1);
+    mm_idx_t* mi = setup_minimap2(&iopt, &mopt, reference, n_reads, r_lens, 1, options);
     if (!mi) return;
 
     if (n_threads < 1) n_threads = 1;

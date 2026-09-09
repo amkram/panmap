@@ -7,6 +7,7 @@
 
 extern "C" {
 #include <htslib/sam.h>
+#include "alignment_options.h"
 }
 
 namespace genotyping {
@@ -45,5 +46,6 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
                       const std::string& bamFileName,
                       bool pairedEndReads,
                       int n_threads,
+                      const aligner_options_t* alignerOptions,
                       std::string aligner = "minimap2",
                       const std::string& refName = "ref");

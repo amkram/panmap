@@ -17,6 +17,7 @@
 #include "3rdparty/bwa/bwase.h"
 #include "3rdparty/bwa/bntseq.h"
 #include "3rdparty/bwa/bwt.h"
+#include "alignment_options.h"
 
 extern int bwa_trim_read(int trim_qual, bwa_seq_t *p);
 
@@ -228,7 +229,8 @@ void bwa_aln_align_reads_direct(const char* reference,
                                 const int* r_lens,
                                 align_pair_result_t* results,
                                 bool pairedEndReads,
-                                int n_threads) {
+                                int n_threads,
+                                const aligner_options_t* options) {
   (void)read_names;
   if (n_reads <= 0 || !reference) return;
 
@@ -262,11 +264,19 @@ void bwa_aln_align_reads_direct(const char* reference,
   // Ancient-DNA defaults: -l 1024 disables the seed (damage clusters at read ends);
   // -n 0.01 / -o 2 per Oliva et al. 2021 (nf-core/eager); -q 0, trimming is upstream.
   gap_opt_t* opt = gap_init_opt();
-  opt->fnr = 0.01f;      // -n 0.01
-  opt->max_diff = -1;    // use fnr, not a fixed edit distance
-  opt->max_gapo = 2;     // -o 2
-  opt->seed_len = 1024;  // -l 1024
-  opt->trim_qual = 0;    // -q 0
+
+  double bwa_n = options ? options->bwaMaxDiff : 0.01;
+  if (bwa_n >= 1.0) {
+    opt->max_diff = (int)bwa_n;
+    opt->fnr = -1.0f;
+  } else {
+    opt->fnr = (float)bwa_n;
+    opt->max_diff = -1;
+  }
+  
+  opt->max_gapo = options ? options->bwaMaxGapOpen : 2;
+  opt->seed_len = options ? options->bwaSeedLength : 1024;
+  opt->trim_qual = options ? options->bwaTrimQual : 0;
   opt->n_threads = 1;    // we chunk; bwa's own threading off
 
   if (n_threads < 1) n_threads = 1;

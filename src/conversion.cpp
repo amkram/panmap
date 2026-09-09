@@ -12,6 +12,7 @@
 extern "C" {
 #include "mm_align.h"
 #include "pileup.h"
+#include "alignment_options.h"
 #include <bcftools/bcftools.h>
 #include <htslib/bgzf.h>
 #include <htslib/sam.h>
@@ -398,8 +399,9 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
                      const std::string& bamFileName,
                      bool pairedEndReads,
                      int n_threads,
+                     const aligner_options_t* alignerOptions,
                      std::string aligner,
-                    const std::string& refName) {
+                     const std::string& refName) {
     int n_reads = static_cast<int>(readSequences.size());
 
     std::vector<const char*> read_ptrs(n_reads);
@@ -427,7 +429,8 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
                r_lens.data(),
                results.data(),
                pairedEndReads,
-               n_threads);
+               n_threads,
+               alignerOptions);
 
     std::string samHeaderStr =
         "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:" + refName + "\tLN:" + std::to_string(reference.length());

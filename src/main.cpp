@@ -105,6 +105,24 @@ struct Config {
     bool dedupReads = false;
 
     std::string aligner = "minimap2";
+    int mm2K = 21;
+    int mm2W = 11;
+    int mm2Match = 2;
+    int mm2Mismatch = 8;
+    int mm2GapOpen = 12;
+    int mm2GapExtend = 2;
+    
+    bool mm2KSet = false;
+    bool mm2WSet = false;
+    bool mm2MatchSet = false;
+    bool mm2MismatchSet = false;
+    bool mm2GapOpenSet = false;
+    bool mm2GapExtendSet = false;
+
+    double bwaMaxDiff = 0.01;
+    int bwaMaxGapOpen = 2;
+    int bwaSeedLength = 1024;
+    int bwaTrimQual = 0;
 
     int k = 19;
     int s = 8;
@@ -615,6 +633,7 @@ void writeAssignedReadsJplace(const std::unordered_map<mgsr::MgsrLiteNode*, std:
 
 static void alignAssignedReads(
   panmanUtils::Tree* panmanTree,
+  const Config& cfg,
   const std::unordered_map<mgsr::MgsrLiteNode*, std::vector<size_t>>& allAssignedReadsByNode,
   const std::string& prefix,
   size_t totalFastqReadsWritten,
@@ -701,8 +720,14 @@ static void alignAssignedReads(
 
     const std::string bamFileName = (std::filesystem::path(alignDir) / (sanitize(node->identifier) + ".bam")).string();
 
+    aligner_options_t alignerOptions{};
+    alignerOptions.bwaMaxDiff = cfg.bwaMaxDiff;
+    alignerOptions.bwaMaxGapOpen = cfg.bwaMaxGapOpen;
+    alignerOptions.bwaSeedLength = cfg.bwaSeedLength;
+    alignerOptions.bwaTrimQual = cfg.bwaTrimQual;
+
     int rc = alignAndWriteBam(nodeSeqs, nodeQuals, nodeNames, nodeSequence, bamFileName,
-                              false, n_threads, "bwa", node->identifier);
+                              false, n_threads, &alignerOptions, "bwa", node->identifier);
     if (rc != 0) {
       logging::warn("Alignment/BAM write failed for node {}", node->identifier);
     } else {
@@ -721,6 +746,7 @@ static void alignAssignedReads(
 void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
                           mgsr::MgsrLiteTree& T,
                           panmanUtils::Tree* panmanTree,
+                          const Config& cfg,
                           const std::string& readPath1,
                           const std::string& readPath2,
                           double dustThreshold,
@@ -943,7 +969,7 @@ void filterAndAssignBatch(mgsr::ThreadsManager& threadsManager,
 
     if (alignReads) {
       int n_threads = static_cast<int>(tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism));
-      alignAssignedReads(panmanTree, allAssignedReadsByNode, prefix, totalFastqReadsWritten, minNumAlign, n_threads);
+      alignAssignedReads(panmanTree, cfg, allAssignedReadsByNode, prefix, totalFastqReadsWritten, minNumAlign, n_threads);
     }
 
     if (jplace) {
@@ -1131,6 +1157,7 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
         filterAndAssignBatch(threadsManager,
                              T,
                              panmanTree,
+                             cfg,
                              cfg.reads1,
                              cfg.reads2,
                              cfg.dust,
@@ -1165,6 +1192,7 @@ bool runFilterAndAssign(mgsr::MgsrLiteTree& T, mgsr::ThreadsManager& threadsMana
             filterAndAssignBatch(threadsManager,
                                  T,
                                  panmanTree,
+                                 cfg,
                                  entry.reads1,
                                  entry.reads2,
                                  cfg.dust,
@@ -1805,6 +1833,27 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
 
     logging::debug("Loaded {} reads", readSequences.size());
 
+    aligner_options_t alignerOptions{};
+
+    alignerOptions.mm2_k = cfg.mm2K;
+    alignerOptions.mm2_w = cfg.mm2W;
+    alignerOptions.mm2_match = cfg.mm2Match;
+    alignerOptions.mm2_mismatch = cfg.mm2Mismatch;
+    alignerOptions.mm2_gap_open = cfg.mm2GapOpen;
+    alignerOptions.mm2_gap_extend = cfg.mm2GapExtend;
+    
+    alignerOptions.mm2_k_set = cfg.mm2KSet;
+    alignerOptions.mm2_w_set = cfg.mm2WSet;
+    alignerOptions.mm2_match_set = cfg.mm2MatchSet;
+    alignerOptions.mm2_mismatch_set = cfg.mm2MismatchSet;
+    alignerOptions.mm2_gap_open_set = cfg.mm2GapOpenSet;
+    alignerOptions.mm2_gap_extend_set = cfg.mm2GapExtendSet;
+
+    alignerOptions.bwaMaxDiff = cfg.bwaMaxDiff;
+    alignerOptions.bwaMaxGapOpen = cfg.bwaMaxGapOpen;
+    alignerOptions.bwaSeedLength = cfg.bwaSeedLength;
+    alignerOptions.bwaTrimQual = cfg.bwaTrimQual;
+
     bool pairedEndReads = !cfg.reads2.empty();
     if (alignAndWriteBam(readSequences,
                          readQuals,
@@ -1813,6 +1862,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
                          bamFileName,
                          pairedEndReads,
                          cfg.threads,
+                         &alignerOptions,
                          cfg.aligner,
                          nodeId) != 0) {
         logging::err("Alignment/BAM write failed for {}", bamFileName);
@@ -2095,6 +2145,40 @@ int main(int argc, char** argv) {
         "batch-size",
         po::value<size_t>(&cfg.batchSize)->default_value(1000000),
         "Batch size for filtering and assigning reads");
+    
+    po::options_description alignerOptions("Aligner options");
+    alignerOptions.add_options()
+      ("mm2-k",
+      po::value<int>(&cfg.mm2K)->default_value(21),
+      "minimap2 k-mer size (default: 21)")
+      ("mm2-w",
+      po::value<int>(&cfg.mm2W)->default_value(11),
+      "minimap2 minimizer window size (default: 11)")
+      ("mm2-match",
+      po::value<int>(&cfg.mm2Match)->default_value(2),
+      "minimap2 match score (default: 2)")
+      ("mm2-mismatch",
+      po::value<int>(&cfg.mm2Mismatch)->default_value(8),
+      "minimap2 mismatch penalty (default: 8)")
+      ("mm2-gap-open",
+      po::value<int>(&cfg.mm2GapOpen)->default_value(12),
+      "minimap2 gap-open penalty (default: 12)")
+      ("mm2-gap-extend",
+      po::value<int>(&cfg.mm2GapExtend)->default_value(2),
+      "minimap2 gap-extension penalty (default: 2)")
+      ("bwa-max-diff",
+      po::value<double>(&cfg.bwaMaxDiff)->default_value(0.01),
+      "bwa maximum edit distance (default: 0.01)")
+      ("bwa-max-gap-open",
+      po::value<int>(&cfg.bwaMaxGapOpen)->default_value(2),
+      "bwa maximum gap open (default: 2)")
+      ("bwa-seed-length",
+      po::value<int>(&cfg.bwaSeedLength)->default_value(1024),
+      "bwa seed length (default: 1024)")
+      ("bwa-trim-qual",
+      po::value<int>(&cfg.bwaTrimQual)->default_value(0),
+      "bwa trim quality (default: 0)");
+      
 
     po::options_description developer("Developer");
     developer.add_options()("dump-sequence", po::value<std::string>(&cfg.dumpNodeId), "Dump node FASTA")(
@@ -2130,10 +2214,10 @@ int main(int argc, char** argv) {
     pos.add("panman", 1).add("reads", -1);
 
     po::options_description all;  // For parsing
-    all.add(visible).add(indexOpts).add(singleSample).add(metagenomic).add(em).add(filterAndAssign).add(developer).add(positional);
+    all.add(visible).add(indexOpts).add(singleSample).add(metagenomic).add(em).add(filterAndAssign).add(alignerOptions).add(developer).add(positional);
 
     po::options_description visible_all;  // For --help-all
-    visible_all.add(visible).add(indexOpts).add(singleSample).add(metagenomic).add(em).add(filterAndAssign).add(developer);
+    visible_all.add(visible).add(indexOpts).add(singleSample).add(metagenomic).add(em).add(filterAndAssign).add(alignerOptions).add(developer);
 
     po::variables_map vm;
     try {
@@ -2149,6 +2233,13 @@ int main(int argc, char** argv) {
         std::cout << visible << "\n";
         return 1;
     }
+
+    cfg.mm2KSet = !vm["mm2-k"].defaulted();
+    cfg.mm2WSet = !vm["mm2-w"].defaulted();
+    cfg.mm2MatchSet = !vm["mm2-match"].defaulted();
+    cfg.mm2MismatchSet = !vm["mm2-mismatch"].defaulted();
+    cfg.mm2GapOpenSet = !vm["mm2-gap-open"].defaulted();
+    cfg.mm2GapExtendSet = !vm["mm2-gap-extend"].defaulted();
 
     // Check for NO_COLOR environment variable (no-color.org standard)
     const char* noColorEnv = std::getenv("NO_COLOR");

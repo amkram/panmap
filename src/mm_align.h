@@ -3,6 +3,7 @@
 #include <minimap2/mmpriv.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "alignment_options.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,7 +52,8 @@ void align_reads_direct(const char* reference,
                         const int* r_lens,
                         align_pair_result_t* results,
                         bool pairedEndReads,
-                        int n_threads);
+                        int n_threads,
+                        const aligner_options_t* alignerOptions);
 
 // bwa aln backend (bwa_align.c); same contract as align_reads_direct. --aligner bwa.
 // Builds a temp bwa index; runs bwa aln with aDNA settings (see bwa_align.c).
@@ -64,7 +66,8 @@ void bwa_aln_align_reads_direct(const char* reference,
                                 const int* r_lens,
                                 align_pair_result_t* results,
                                 bool pairedEndReads,
-                                int n_threads);
+                                int n_threads,
+                                const aligner_options_t* alignerOptions);
 
 #ifdef __cplusplus
 }
