@@ -317,13 +317,15 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
     // Build full CIGAR with soft clips for unaligned query ends
     uint32_t clip5 = aln->rev ? (read_len - aln->qe) : aln->qs;
     uint32_t clip3 = aln->rev ? aln->qs : (read_len - aln->qe);
-
     int full_n_cigar = aln->n_cigar + (clip5 > 0 ? 1 : 0) + (clip3 > 0 ? 1 : 0);
+
     std::vector<uint32_t> full_cigar(full_n_cigar);
     int ci = 0;
     if (clip5 > 0) full_cigar[ci++] = (clip5 << 4) | BAM_CSOFT_CLIP;
     for (int j = 0; j < aln->n_cigar; j++) full_cigar[ci++] = aln->cigar[j];
     if (clip3 > 0) full_cigar[ci++] = (clip3 << 4) | BAM_CSOFT_CLIP;
+    
+
 
     // BAM stores reverse-strand reads as reverse-complemented seq with reversed qual
     std::string bam_seq(read_len, 'N');
@@ -385,7 +387,7 @@ static bam1_t* build_bam_from_result(const std::string& qname_full,
         bam_aux_append(b, "MD", 'Z', static_cast<int>(strlen(aln->md)) + 1,
                        reinterpret_cast<const uint8_t*>(aln->md));
     }
-
+    
     return b;
 }
 

@@ -33,6 +33,7 @@ typedef struct {
     int32_t n_cigar;
     uint32_t* cigar;  // BAM-encoded; malloc'd, caller frees
     char* md;
+    int32_t nm;
 } read_align_t;
 
 typedef struct {
@@ -96,7 +97,7 @@ static int aln_fill_from_seq(read_align_t* out, const bwa_seq_t* s) {
       uint32_t bam_op = (uint32_t)BWA_ALN_OP_TO_BAM[__cigar_op(s->cigar[j])];
       uint32_t oplen = (uint32_t)__cigar_len(s->cigar[j]);
       cig[nc++] = (oplen << 4) | bam_op;
-      if (bam_op == 0 || bam_op == 1) qlen += oplen;
+      if (bam_op == 0 || bam_op == 1 || bam_op == 4) qlen += oplen;
       if (bam_op == 0 || bam_op == 2) ref_span += oplen;
     }
   } else {
@@ -129,6 +130,7 @@ static int aln_fill_from_seq(read_align_t* out, const bwa_seq_t* s) {
   out->n_cigar = nc;
   out->cigar = cig;
   out->md = s->md ? strdup(s->md) : NULL;
+  out->nm = s->nm;
   return 1;
 }
 
