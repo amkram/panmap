@@ -37,19 +37,6 @@ BOOST_AUTO_TEST_CASE(align_and_write_bam_structure) {
     seeding::readFastqPaired(readSequences, readQuals, readNames, ts::dataPath("MZ515733.1.fastq"), "");
     BOOST_REQUIRE(!readSequences.empty());
 
-    aligner_options_t alignerOptions{};
-
-    alignerOptions.mm2_k = cfg.mm2K;
-    alignerOptions.mm2_w = cfg.mm2W;
-    alignerOptions.mm2_match = cfg.mm2Match;
-    alignerOptions.mm2_mismatch = cfg.mm2Mismatch;
-    alignerOptions.mm2_gap_open = cfg.mm2GapOpen;
-    alignerOptions.mm2_gap_extend = cfg.mm2GapExtend;
-
-    alignerOptions.bwaMaxDiff = cfg.bwaMaxDiff;
-    alignerOptions.bwaMaxGapOpen = cfg.bwaMaxGapOpen;
-    alignerOptions.bwaSeedLength = cfg.bwaSeedLength;
-    alignerOptions.bwaTrimQual = cfg.bwaTrimQual;
 
     std::string bamPath = tmpBam();
     alignAndWriteBam(readSequences,
@@ -59,7 +46,7 @@ BOOST_AUTO_TEST_CASE(align_and_write_bam_structure) {
                      bamPath,
                      /*pairedEndReads=*/false,
                      /*n_threads=*/1,
-                     &alignerOptions);
+                     NULL);
 
     BOOST_REQUIRE(std::filesystem::exists(bamPath));
     BOOST_REQUIRE(std::filesystem::file_size(bamPath) > 0);
