@@ -49,3 +49,11 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
                       const aligner_options_t* alignerOptions,
                       std::string aligner = "minimap2",
                       const std::string& refName = "ref");
+
+int maskBam(const std::string& inputBamFileName,
+            const std::string& outputBamFileName,
+            int mask5,
+            int mask3,
+            bool clipMode,
+            int nThreads,
+            const std::string& reference);

@@ -134,6 +134,9 @@ struct Config {
     int minSeedQuality = 0;
     int trimStart = 0;
     int trimEnd = 0;
+    int maskLeft = 0;
+    int maskRight = 0;
+    bool clipMode = false;
     int minReadSupport = -1;      // -1 = auto (2 if est. coverage > 3x, else 1)
     bool hpc = false;
     bool extentGuard = false;
@@ -1808,6 +1811,7 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
     std::string refFileName = cfg.output + ".ref.fa";
     std::string samFileName = cfg.output + ".sam";
     std::string bamFileName = cfg.output + ".bam";
+    std::string maskedBamFileName = cfg.output + ".masked.bam";
 
     {
         std::ofstream outFile(refFileName);
@@ -1869,11 +1873,29 @@ int runAlignment(const Config& cfg, const placement::PlacementResult& placement,
         return 1;
     }
 
+    if (cfg.maskLeft > 0 || cfg.maskRight > 0) {
+      if (maskBam(bamFileName, maskedBamFileName, cfg.maskLeft, cfg.maskRight, cfg.clipMode, cfg.threads, bestMatchSequence) != 0) {
+        logging::err("Masking BAM file failed for {}", maskedBamFileName);
+        return 1;
+      }
+    }
+
     auto elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
 
-    output::done(
-        "align", bamFileName, fmt::format("{} reads", output::fmt_count(readSequences.size())), elapsed.count());
+    if (cfg.maskLeft > 0 || cfg.maskRight > 0) {
+        output::done(
+            "align",
+            fmt::format("{}, {}", bamFileName, maskedBamFileName),
+            fmt::format("{} reads", output::fmt_count(readSequences.size())),
+            elapsed.count());
+    } else {
+        output::done(
+            "align",
+            bamFileName,
+            fmt::format("{} reads", output::fmt_count(readSequences.size())),
+            elapsed.count());
+    }
     return 0;
 }
 
@@ -1881,6 +1903,7 @@ int runGenotyping(const Config& cfg) {
     std::string prefix = cfg.output;
     std::string refFileName = cfg.output + ".ref.fa";
     std::string bamFileName = cfg.output + ".bam";
+    std::string maskedBamFileName = cfg.output + ".masked.bam";
     std::string mpileupFileName = cfg.output + ".mpileup";
     std::string vcfFileName = cfg.output + ".vcf";
 
@@ -1897,10 +1920,17 @@ int runGenotyping(const Config& cfg) {
     }
 
     auto start = std::chrono::high_resolution_clock::now();
-
-    if (createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq, refName) != 0) {
+   
+    if (cfg.maskLeft > 0 || cfg.maskRight > 0) {
+      if (createMplpBcf(prefix, refFileName, bestMatchSequence, maskedBamFileName, mpileupFileName, cfg.baq, refName) != 0) {
         return 1;
     }
+    } else {
+      if (createMplpBcf(prefix, refFileName, bestMatchSequence, bamFileName, mpileupFileName, cfg.baq, refName) != 0) {
+          return 1;
+      }
+    }
+
     if (createVcfWithMutationMatrices(prefix, mpileupFileName, vcfFileName, cfg.substMatrixPhred, cfg.minDepth,
                                       cfg.minQual) != 0) {
         return 1;
@@ -2030,8 +2060,11 @@ int main(int argc, char** argv) {
         "Stop after: index|place|align|genotype|consensus")(
         "aligner,a", po::value<std::string>(&cfg.aligner)->default_value("minimap2"), "Aligner: minimap2|bwa (bwa aln, ancient-DNA settings)")(
         "dedup", po::bool_switch(&cfg.dedupReads), "Deduplicate reads")(
-        "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim read start")(
-        "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim read end")(
+        "trim-start", po::value<int>(&cfg.trimStart)->default_value(0), "Trim <int> bases from the start of the read during placement")(
+        "trim-end", po::value<int>(&cfg.trimEnd)->default_value(0), "Trim <int> bases from the end of the read during placement")(
+        "mask-left", po::value<int>(&cfg.maskLeft)->default_value(0), "Mask <int> bases from the 5' end of the read after alignment")(
+        "mask-right", po::value<int>(&cfg.maskRight)->default_value(0), "Mask <int> bases from the 3' end of the read after alignment")(
+        "clip", po::bool_switch(&cfg.clipMode), "Soft clip the masked bases after alignment (default: masked bases are replaced with Ns and their quality scores are set to \"!\" (quality 0)). Soft clipping masked bases might disrupt downstream mate-pairing during pileup and variant calling. We recommend merging the reads before placement if mate-pairing is required.") (
         "min-seed-quality", po::value<int>(&cfg.minSeedQuality)->default_value(0), "Min seed quality")(
         "min-read-support",
         po::value<int>(&cfg.minReadSupport)->default_value(-1),

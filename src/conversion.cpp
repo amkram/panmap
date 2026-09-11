@@ -543,3 +543,315 @@ int alignAndWriteBam(std::vector<std::string>& readSequences,
     }
     return rc;
 }
+
+struct CigarOp {
+  uint32_t op;
+  uint32_t len;
+};
+
+
+static int consume_query_from_front(std::vector<CigarOp>& ops, int delta) {
+  int refConsumed = 0;
+  int queryConsumed = 0;
+  size_t idx = 0;
+  while (queryConsumed < delta && idx < ops.size()) {
+    uint32_t op = ops[idx].op;
+    bool consumesQuery = op == BAM_CMATCH || op == BAM_CINS || op == BAM_CEQUAL || op == BAM_CDIFF;
+    bool consumesRef = op == BAM_CMATCH || op == BAM_CDEL || op == BAM_CEQUAL || op == BAM_CDIFF;
+    if (consumesQuery) {
+      int take = std::min<int>(ops[idx].len, delta - queryConsumed);
+      queryConsumed += take;
+      if (consumesRef) refConsumed += take;
+      if (take == static_cast<int>(ops[idx].len)) {
+        idx++;
+      } else {
+        ops[idx].len -= take;
+        break;
+      }
+    } else if (op == BAM_CDEL || op == BAM_CREF_SKIP) {
+      refConsumed += ops[idx].len;
+      idx++;
+    } else {
+      idx++;
+    }
+  }
+  ops.erase(ops.begin(), ops.begin() + idx);
+  return refConsumed;
+}
+
+static void consume_query_from_back(std::vector<CigarOp>& ops, int delta) {
+  std::reverse(ops.begin(), ops.end());
+  consume_query_from_front(ops, delta);
+  std::reverse(ops.begin(), ops.end());
+}
+
+
+static bool compute_clipped_cigar(const uint32_t* origCigar, int nOrigCigar, bool reverse, int mask5, int mask3,
+                                  std::vector<CigarOp>& outOps, int& posDelta) {
+  std::vector<CigarOp> ops(nOrigCigar);
+  for (int i = 0; i < nOrigCigar; i++) {
+    ops[i].op = bam_cigar_op(origCigar[i]);
+    ops[i].len = bam_cigar_oplen(origCigar[i]);
+  }
+
+  int leftTarget = reverse ? mask3 : mask5;
+  int rightTarget = reverse ? mask5 : mask3;
+
+  int existingLeft = 0, existingRight = 0;
+  if (!ops.empty() && ops.front().op == BAM_CSOFT_CLIP) {
+    existingLeft = ops.front().len;
+    ops.erase(ops.begin());
+  }
+  if (!ops.empty() && ops.back().op == BAM_CSOFT_CLIP) {
+    existingRight = ops.back().len;
+    ops.pop_back();
+  }
+
+  posDelta = 0;
+  if (leftTarget > existingLeft) {
+    posDelta = consume_query_from_front(ops, leftTarget - existingLeft);
+    existingLeft = leftTarget;
+  }
+  if (rightTarget > existingRight) {
+    consume_query_from_back(ops, rightTarget - existingRight);
+    existingRight = rightTarget;
+  }
+
+  bool hasAlignment = std::any_of(ops.begin(), ops.end(), [](const CigarOp& o) {
+    return o.op == BAM_CMATCH || o.op == BAM_CEQUAL || o.op == BAM_CDIFF || o.op == BAM_CINS;
+  });
+  if (!hasAlignment) return false;
+
+  outOps.clear();
+  if (existingLeft > 0) outOps.push_back({BAM_CSOFT_CLIP, static_cast<uint32_t>(existingLeft)});
+  outOps.insert(outOps.end(), ops.begin(), ops.end());
+  if (existingRight > 0) outOps.push_back({BAM_CSOFT_CLIP, static_cast<uint32_t>(existingRight)});
+  return true;
+}
+
+static bool cigar_unchanged(const uint32_t* orig, int nOrig, const std::vector<CigarOp>& newOps) {
+  if (static_cast<size_t>(nOrig) != newOps.size()) return false;
+  for (int i = 0; i < nOrig; i++) {
+    if (bam_cigar_op(orig[i]) != newOps[i].op || bam_cigar_oplen(orig[i]) != newOps[i].len) return false;
+  }
+  return true;
+}
+
+static void recompute_nm_md(bam1_t* b, const char* ref, int64_t refLen, std::string& mdBuf) {
+  uint32_t* cigar = bam_get_cigar(b);
+  int nCigar = static_cast<int>(b->core.n_cigar);
+  uint8_t* seq = bam_get_seq(b);
+
+  mdBuf.clear();
+  int64_t refPos = b->core.pos;
+  int qPos = 0;
+  int matchRun = 0;
+  int nm = 0;
+
+  auto refBase = [&](int64_t pos) -> char { return (pos < refLen) ? ref[pos] : 'N'; };
+  // toupper wants an int in [0, UCHAR_MAX] or EOF; a plain (signed) char above 127
+  // is UB, hence the unsigned char cast.
+  auto refBaseUpper = [&](int64_t pos) -> char {
+    return static_cast<char>(std::toupper(static_cast<unsigned char>(refBase(pos))));
+  };
+
+  for (int i = 0; i < nCigar; i++) {
+    uint32_t op = bam_cigar_op(cigar[i]);
+    uint32_t len = bam_cigar_oplen(cigar[i]);
+    switch (op) {
+      case BAM_CMATCH:
+      case BAM_CEQUAL:
+      case BAM_CDIFF:
+        for (uint32_t j = 0; j < len; j++, qPos++, refPos++) {
+          int c1 = bam_seqi(seq, qPos);
+          int c2 = seq_nt16_table[static_cast<uint8_t>(refBase(refPos))];
+          // Mirrors samtools calmd: c1==c2 alone isn't enough, since 15==15
+          // would count two N's as a match; c1==0 covers literal '=' in SEQ.
+          bool isMatch = (c1 == c2 && c1 != 15 && c2 != 15) || c1 == 0;
+          if (isMatch) {
+            matchRun++;
+          } else {
+            nm++;
+            mdBuf += std::to_string(matchRun);
+            mdBuf += refBaseUpper(refPos);
+            matchRun = 0;
+          }
+        }
+        break;
+      case BAM_CINS:
+        nm += len;
+        qPos += len;
+        break;
+      case BAM_CDEL:
+        nm += len;
+        mdBuf += std::to_string(matchRun);
+        mdBuf += '^';
+        for (uint32_t j = 0; j < len; j++, refPos++) mdBuf += refBaseUpper(refPos);
+        matchRun = 0;
+        break;
+      case BAM_CREF_SKIP:
+        refPos += len;
+        break;
+      case BAM_CSOFT_CLIP:
+        qPos += len;
+        break;
+      default:
+        break;
+    }
+  }
+  mdBuf += std::to_string(matchRun);
+
+  bam_aux_update_int(b, "NM", nm);
+  bam_aux_update_str(b, "MD", static_cast<int>(mdBuf.size()) + 1, mdBuf.c_str());
+}
+
+static void soft_clip_record(bam1_t* b, int mask5, int mask3, std::string& seqBuf, std::string& qualBuf,
+                             std::vector<uint32_t>& cigarBuf, const char* ref, int64_t refLen, std::string& mdBuf) {
+  int posDelta = 0;
+  std::vector<CigarOp> newOps;
+  bool stillAligned = compute_clipped_cigar(bam_get_cigar(b), static_cast<int>(b->core.n_cigar), bam_is_rev(b), mask5, mask3, newOps, posDelta);
+
+  uint16_t flag = b->core.flag;
+  bool unmap = false;
+  if (!stillAligned) {
+    newOps.clear();
+    posDelta = 0;
+    flag |= BAM_FUNMAP;
+    unmap = true;
+  } else if (posDelta == 0 && cigar_unchanged(bam_get_cigar(b), static_cast<int>(b->core.n_cigar), newOps)) {
+    return;
+  }
+
+  int l = b->core.l_qseq;
+  seqBuf.resize(l);
+  uint8_t* seq = bam_get_seq(b);
+  for (int i = 0; i < l; i++) seqBuf[i] = seq_nt16_str[bam_seqi(seq, i)];
+  qualBuf.assign(reinterpret_cast<char*>(bam_get_qual(b)), l);
+
+  cigarBuf.resize(newOps.size());
+  for (size_t i = 0; i < newOps.size(); i++) cigarBuf[i] = bam_cigar_gen(newOps[i].len, newOps[i].op);
+
+  std::string qname(bam_get_qname(b));
+  hts_pos_t newPos = unmap ? b->core.pos : b->core.pos + posDelta;
+
+  bam_set1(b, qname.size(), qname.c_str(), flag, b->core.tid, newPos, unmap ? 0 : b->core.qual, cigarBuf.size(),
+          cigarBuf.data(), b->core.mtid, b->core.mpos, b->core.isize, l, seqBuf.c_str(), qualBuf.c_str(), 0);
+
+  if (!unmap) recompute_nm_md(b, ref, refLen, mdBuf);
+}
+
+static void hard_mask_ends(bam1_t* b, int mask5, int mask3, const char* ref, int64_t refLen, std::string& mdBuf) {
+  int len = b->core.l_qseq;
+  if (len == 0) return;
+
+  bool rev = bam_is_rev(b);
+  int leftCount = rev ? mask3 : mask5;
+  int rightCount = rev ? mask5 : mask3;
+
+  if (leftCount < 0) leftCount = 0;
+  if (rightCount < 0) rightCount = 0;
+
+  if (leftCount > len) leftCount = len;
+  if (rightCount > len - leftCount) rightCount = len - leftCount;
+
+  uint8_t* seq = bam_get_seq(b);
+  uint8_t* qual = bam_get_qual(b);
+  bool hasQual = qual[0] != 0xff;
+
+  auto setN = [&](int i) {
+    // Two 4-bit bases per byte; even i is the high nibble, odd i the low nibble.
+    if (i & 1) seq[i >> 1] = (seq[i >> 1] & 0xf0) | 0x0f;
+    else       seq[i >> 1] = (seq[i >> 1] & 0x0f) | 0xf0;
+    if (hasQual) qual[i] = 0;
+  };
+  for (int i = 0; i < leftCount; i++) setN(i);
+  for (int i = len - rightCount; i < len; i++) setN(i);
+
+  // recompute new NM and MD tags
+  recompute_nm_md(b, ref, refLen, mdBuf);
+}
+
+int maskBam(const std::string& inputBamFileName,
+           const std::string& outputBamFileName,
+           int mask5,
+           int mask3,
+           bool clipMode,
+           int nThreads,
+           const std::string& reference) {
+  samFile* in = sam_open(inputBamFileName.c_str(), "r");
+  if (!in) {
+    logging::err("Cannot open BAM for masking: {}", inputBamFileName);
+    return 1;
+  }
+  if (nThreads > 1) hts_set_threads(in, nThreads);
+
+  sam_hdr_t* hdr = sam_hdr_read(in);
+  if (!hdr) {
+    logging::err("Cannot read header from: {}", inputBamFileName);
+    sam_close(in);
+    return 1;
+  }
+
+  std::string seqBuf, qualBuf, mdBuf;
+  std::vector<uint32_t> cigarBuf;
+  std::vector<std::pair<hts_pos_t, bam1_t*>> entries;
+  const char* ref = reference.data();
+  int64_t refLen = static_cast<int64_t>(reference.size());
+
+  int rc = 0;
+  int ret = 0;
+  while (true) {
+    bam1_t* b = bam_init1();
+    ret = sam_read1(in, hdr, b);
+    if (ret < 0) {
+      bam_destroy1(b);
+      break;
+    }
+    if (!(b->core.flag & BAM_FUNMAP)) {
+      if (clipMode) {
+        soft_clip_record(b, mask5, mask3, seqBuf, qualBuf, cigarBuf, ref, refLen, mdBuf);
+      } else {
+        hard_mask_ends(b, mask5, mask3, ref, refLen, mdBuf);
+      }
+    }
+    entries.push_back({b->core.pos, b});
+  }
+  if (ret < -1) {
+    logging::err("Error reading record while masking: {}", inputBamFileName);
+    rc = 1;
+  }
+  sam_close(in);
+
+  if (rc == 0) {
+    // input order can't be assumed sorted anymore.
+    std::sort(entries.begin(), entries.end(),
+             [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    samFile* out = sam_open(outputBamFileName.c_str(), "wb");
+    if (!out) {
+      logging::err("Cannot open output BAM for masking: {}", outputBamFileName);
+      rc = 1;
+    } else {
+      if (nThreads > 1) hts_set_threads(out, nThreads);
+      if (sam_hdr_write(out, hdr) < 0) {
+        logging::err("Failed to write header to: {}", outputBamFileName);
+        rc = 1;
+      }
+      for (auto& [pos, rec] : entries) {
+        if (rc == 0 && sam_write1(out, hdr, rec) < 0) {
+          logging::err("Failed writing masked record to: {}", outputBamFileName);
+          rc = 1;
+        }
+      }
+      if (sam_close(out) < 0) rc = 1;
+    }
+  }
+
+  for (auto& [pos, rec] : entries) bam_destroy1(rec);
+  sam_hdr_destroy(hdr);
+
+  if (rc == 0 && sam_index_build(outputBamFileName.c_str(), 0) != 0) {
+    logging::warn("Failed to index masked BAM file: {}", outputBamFileName);
+  }
+  return rc;
+}
